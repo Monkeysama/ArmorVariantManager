@@ -972,17 +972,19 @@ local function load_config_data(body_id)
             loaded_data.parallel_settings = {
                 hp = { enabled = true, priority = 1 },
                 weapon = { enabled = false, priority = 2 },
-                spirit = { enabled = false, priority = 3 },
-                dual_blades = { enabled = false, priority = 4 },
-                switch_axe = { enabled = false, priority = 5 },
-                insect_glaive = { enabled = false, priority = 6 },
-                charge_blade = { enabled = false, priority = 7 },
-                greatsword_type = { enabled = false, priority = 8 },
-                greatsword_level = { enabled = false, priority = 9 },
-                bow_level = { enabled = false, priority = 10 },
-                hammer_level = { enabled = false, priority = 11 }
+                damage = { enabled = false, priority = 3 },
+                spirit = { enabled = false, priority = 4 },
+                dual_blades = { enabled = false, priority = 5 },
+                switch_axe = { enabled = false, priority = 6 },
+                insect_glaive = { enabled = false, priority = 7 },
+                charge_blade = { enabled = false, priority = 8 },
+                greatsword_type = { enabled = false, priority = 9 },
+                greatsword_level = { enabled = false, priority = 10 },
+                bow_level = { enabled = false, priority = 11 },
+                hammer_level = { enabled = false, priority = 12 }
             }
         else
+            if not loaded_data.parallel_settings.damage then loaded_data.parallel_settings.damage = { enabled = false, priority = 3 } end
             if not loaded_data.parallel_settings.spirit then
                 loaded_data.parallel_settings.spirit = { enabled = false, priority = 3 }
             end
@@ -1008,10 +1010,27 @@ local function load_config_data(body_id)
                 loaded_data.parallel_settings.bow_level = { enabled = false, priority = 10 }
             end
             if not loaded_data.parallel_settings.hammer_level then
-                loaded_data.parallel_settings.hammer_level = { enabled = false, priority = 11 }
+                loaded_data.parallel_settings.hammer_level = { enabled = false, priority = 12 }
             end
         end
+        
+        -- 数据迁移：将原来 HP 中的 trigger_on_damage 迁移到新的 damage 节点
+        local migrated_damage = false
+        if loaded_data.transform_rules then
+            for i = #loaded_data.transform_rules, 1, -1 do
+                local r = loaded_data.transform_rules[i]
+                if r.trigger_on_damage then
+                    if not loaded_data.damage_transform_rules then
+                        loaded_data.damage_transform_rules = { { duration = r.duration or 5, targets = r.targets or {} } }
+                    end
+                    table.remove(loaded_data.transform_rules, i)
+                    migrated_damage = true
+                end
+            end
+        end
+        
         if not loaded_data.transform_rules then loaded_data.transform_rules = {} end
+        if not loaded_data.damage_transform_rules then loaded_data.damage_transform_rules = { { duration = 5, targets = {} } } end
         if not loaded_data.weapon_transform_rules then
             loaded_data.weapon_transform_rules = {
                 { state = "sheathed", targets = {} },
@@ -1942,19 +1961,21 @@ re.on_draw_ui(function()
                                 -- 单一条件模式
                                 local c_type_idx = 1
                                 if current_config.transform_type == "hp" then c_type_idx = 1
-                                elseif current_config.transform_type == "weapon" then c_type_idx = 2
-                                elseif current_config.transform_type == "spirit" then c_type_idx = 3
-                                elseif current_config.transform_type == "dual_blades" then c_type_idx = 4
-                                elseif current_config.transform_type == "switch_axe" then c_type_idx = 5
-                                elseif current_config.transform_type == "insect_glaive" then c_type_idx = 6
-                                elseif current_config.transform_type == "charge_blade" then c_type_idx = 7
-                                elseif current_config.transform_type == "greatsword_type" then c_type_idx = 8
-                                elseif current_config.transform_type == "greatsword_level" then c_type_idx = 9
-                                elseif current_config.transform_type == "bow_level" then c_type_idx = 10
-                                elseif current_config.transform_type == "hammer_level" then c_type_idx = 11
+                                elseif current_config.transform_type == "damage" then c_type_idx = 2
+                                elseif current_config.transform_type == "weapon" then c_type_idx = 3
+                                elseif current_config.transform_type == "spirit" then c_type_idx = 4
+                                elseif current_config.transform_type == "dual_blades" then c_type_idx = 5
+                                elseif current_config.transform_type == "switch_axe" then c_type_idx = 6
+                                elseif current_config.transform_type == "insect_glaive" then c_type_idx = 7
+                                elseif current_config.transform_type == "charge_blade" then c_type_idx = 8
+                                elseif current_config.transform_type == "greatsword_type" then c_type_idx = 9
+                                elseif current_config.transform_type == "greatsword_level" then c_type_idx = 10
+                                elseif current_config.transform_type == "bow_level" then c_type_idx = 11
+                                elseif current_config.transform_type == "hammer_level" then c_type_idx = 12
                                 end
                                 local c_type_list = {
                                     T("condition_hp"),
+                                    T("condition_damage"),
                                     T("condition_weapon"),
                                     T("condition_spirit"),
                                     T("condition_dual_blades"),
@@ -1969,15 +1990,16 @@ re.on_draw_ui(function()
                                 local c_changed, c_val = imgui.combo(T("transform_condition_type"), c_type_idx, c_type_list)
                                 if c_changed then
                                     if c_val == 1 then current_config.transform_type = "hp"
-                                    elseif c_val == 2 then current_config.transform_type = "weapon"
-                                    elseif c_val == 3 then current_config.transform_type = "spirit"
-                                    elseif c_val == 4 then current_config.transform_type = "dual_blades"
-                                    elseif c_val == 5 then current_config.transform_type = "switch_axe"
-                                    elseif c_val == 6 then current_config.transform_type = "insect_glaive"
-                                    elseif c_val == 7 then current_config.transform_type = "charge_blade"
-                                    elseif c_val == 8 then current_config.transform_type = "greatsword_type"
-                                    elseif c_val == 9 then current_config.transform_type = "greatsword_level"
-                                    elseif c_val == 10 then current_config.transform_type = "bow_level"
+                                    elseif c_val == 2 then current_config.transform_type = "damage"
+                                    elseif c_val == 3 then current_config.transform_type = "weapon"
+                                    elseif c_val == 4 then current_config.transform_type = "spirit"
+                                    elseif c_val == 5 then current_config.transform_type = "dual_blades"
+                                    elseif c_val == 6 then current_config.transform_type = "switch_axe"
+                                    elseif c_val == 7 then current_config.transform_type = "insect_glaive"
+                                    elseif c_val == 8 then current_config.transform_type = "charge_blade"
+                                    elseif c_val == 9 then current_config.transform_type = "greatsword_type"
+                                    elseif c_val == 10 then current_config.transform_type = "greatsword_level"
+                                    elseif c_val == 11 then current_config.transform_type = "bow_level"
                                     else current_config.transform_type = "hammer_level"
                                     end
                                     save_current_config_to_file(body_id)
@@ -1999,6 +2021,7 @@ re.on_draw_ui(function()
                                     end
                                 end
                                 draw_parallel_setting("hp", T("condition_hp"))
+                                draw_parallel_setting("damage", T("condition_damage"))
                                 draw_parallel_setting("weapon", T("condition_weapon"))
                                 draw_parallel_setting("spirit", T("condition_spirit"))
                                 draw_parallel_setting("dual_blades", T("condition_dual_blades"))
@@ -2058,13 +2081,14 @@ re.on_draw_ui(function()
                                 end
                                 if not current_config.transform_rules then current_config.transform_rules = {} end
                                 if imgui.button(T("add_node")) then
-                                    table.insert(current_config.transform_rules, { threshold = 100, targets = {} })
+                                    table.insert(current_config.transform_rules, { threshold = 50, targets = {} })
                                     save_current_config_to_file(body_id)
                                 end
                                 imgui.separator()
                                 for i, rule in ipairs(current_config.transform_rules) do
                                     imgui.push_id("hp_rule_" .. i)
                                     imgui.spacing()
+
                                     imgui.set_next_item_width(120)
                                     local c_t, v_t_str = imgui.input_text(T("hp_percent") .. "##" .. i, tostring(rule.threshold))
                                     if c_t then
@@ -2077,10 +2101,12 @@ re.on_draw_ui(function()
                                         end
                                     end
                                     imgui.same_line()
+                                    
                                     if imgui.button(T("delete_node") .. "##" .. i) then
                                         table.remove(current_config.transform_rules, i)
                                         save_current_config_to_file(body_id)
                                     end
+                                    
                                     -- 缩进显示 Conditions
                                     imgui.indent(20)
                                     if not rule.targets then rule.targets = {} end
@@ -2093,6 +2119,37 @@ re.on_draw_ui(function()
                                     imgui.separator()
                                     imgui.pop_id()
                                 end
+                            end
+
+                            -- 受击触发规则
+                            local show_damage = (not current_config.is_parallel and current_config.transform_type == "damage") or
+                                           (current_config.is_parallel and current_config.parallel_settings.damage and current_config.parallel_settings.damage.enabled)
+                            if show_damage then
+                                imgui.text(T("condition_damage"))
+                                imgui.separator()
+                                if not current_config.damage_transform_rules then
+                                    current_config.damage_transform_rules = { { duration = 5, targets = {} } }
+                                end
+                                local dmg_rule = current_config.damage_transform_rules[1]
+                                
+                                imgui.spacing()
+                                imgui.set_next_item_width(120)
+                                local c_dur, v_dur_str = imgui.input_text(T("duration") .. "##dmg", tostring(dmg_rule.duration))
+                                if c_dur then
+                                    local num = tonumber(v_dur_str)
+                                    if num then if num < 0 then num = 0 end; dmg_rule.duration = num; save_current_config_to_file(body_id) end
+                                end
+                                imgui.same_line()
+                                imgui.text_colored(T("duration_desc"), 0xFF808080)
+                                
+                                imgui.indent(20)
+                                if not dmg_rule.targets then dmg_rule.targets = {} end
+                                draw_targets_ui(dmg_rule.targets, "damage", 1)
+                                if imgui.button("+ " .. T("add_condition") .. "##dmg_add") then
+                                    table.insert(dmg_rule.targets, { group = "", preset = "" })
+                                    save_current_config_to_file(body_id)
+                                end
+                                imgui.unindent(20)
                             end
 
                             -- 武器规则

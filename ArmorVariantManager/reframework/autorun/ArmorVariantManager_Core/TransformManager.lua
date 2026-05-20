@@ -1,5 +1,8 @@
 local TransformManager = {}
 
+-- 引入独立的受击计时器模块
+local DamageTimer = require("ArmorVariantManager_Core.DamageTimer")
+
 -- =============================================================================
 -- 武器状态模块
 -- =============================================================================
@@ -443,11 +446,13 @@ local last_state_cache = {}
 
 local function get_active_hp_rule(rules, cur_hp)
     if not rules or #rules == 0 then return nil end
-    local sorted = {}
-    for _, r in ipairs(rules) do table.insert(sorted, r) end
-    table.sort(sorted, function(a,b) return a.threshold < b.threshold end)
-    for _, r in ipairs(sorted) do
-        if cur_hp <= r.threshold then return r end
+    local sorted_rules = {}
+    for _, r in ipairs(rules) do table.insert(sorted_rules, r) end
+    table.sort(sorted_rules, function(a, b) return a.threshold < b.threshold end)
+    for _, r in ipairs(sorted_rules) do
+        if cur_hp <= r.threshold then
+            return r
+        end
     end
     return nil
 end
@@ -456,9 +461,16 @@ local function get_active_rule_for_type(t_type, config, character, char_addr)
     if t_type == "hp" then
         local cur_hp = TransformManager.get_character_hp_percent(character)
         if cur_hp and config.transform_rules then
-            return get_active_hp_rule(config.transform_rules, cur_hp), cur_hp
+            local rule = get_active_hp_rule(config.transform_rules, cur_hp)
+            return rule, cur_hp
         end
-    elseif t_type == "weapon" then
+    elseif t_type == "damage" then
+        local cur_hp = TransformManager.get_character_hp_percent(character)
+        if cur_hp and config.damage_transform_rules and config.damage_transform_rules[1] then
+            -- 将独立的伤害规则包裹为列表传入
+            local rule = DamageTimer.evaluate_damage_rules(char_addr, cur_hp, config.damage_transform_rules[1])
+            return rule, "dmg"
+        end
         local drawn = TransformManager.get_character_weapon_drawn(character)
         local target = drawn and "drawn" or "sheathed"
         if config.weapon_transform_rules then
@@ -569,12 +581,14 @@ function TransformManager.apply_transform_rules(char_addr, config, character, ba
             elseif eval.type == "bow_level" then part = part .. "lvl:" .. tostring(extra)
             elseif eval.type == "hammer_level" then part = part .. "lvl:" .. tostring(extra)
             end
-            table.insert(sig_parts, part)
             if rule.targets then
                 for _, tgt in ipairs(rule.targets) do
                     local gname = tgt.group or ""
-                    local pname = tgt.preset
-                    if pname and pname ~= "" then
+                    local pname = tgt.preset or ""
+                    
+                    part = part .. "|" .. gname .. ":" .. pname
+                    
+                    if pname ~= "" then
                         local preset = nil
                         if gname == "" then
                             preset = config.presets and config.presets[pname]
@@ -589,6 +603,7 @@ function TransformManager.apply_transform_rules(char_addr, config, character, ba
                     end
                 end
             end
+            table.insert(sig_parts, part)
         end
     end
     
