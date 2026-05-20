@@ -177,6 +177,31 @@ function TransformManager.set_character_hp_percent(character, percent)
 end
 
 -- =============================================================================
+-- 武器类型获取模块
+-- =============================================================================
+local weapon_type_getter = nil
+
+local function init_weapon_type_reflection(character)
+    if weapon_type_getter then return end
+    local type_def = character:get_type_definition()
+    if not type_def then return end
+    local method = type_def:get_method("get_WeaponType")
+    if method then
+        weapon_type_getter = method
+    end
+end
+
+function TransformManager.get_character_weapon_type(character)
+    if not character then return nil end
+    if not weapon_type_getter then init_weapon_type_reflection(character) end
+    if weapon_type_getter then
+        local ok, wt = pcall(function() return weapon_type_getter:call(character) end)
+        if ok and type(wt) == "number" then return wt end
+    end
+    return nil
+end
+
+-- =============================================================================
 -- 气刃等级模块 (太刀)
 -- =============================================================================
 local spirit_level_getter = nil
@@ -254,7 +279,7 @@ end
 function TransformManager.has_dual_blades_getter() return true end
 
 -- =============================================================================
--- 斩斧状态模块 (Switch Axe)
+-- 斩斧状态模块 (Switch Axe) - 修正模式判断
 -- =============================================================================
 local function get_switch_axe_state_direct(character)
     local ok1, wh = pcall(function() return character:call("get_WeaponHandling") end)
@@ -265,12 +290,15 @@ local function get_switch_axe_state_direct(character)
     if not ok_axe_enh then axe_enh = false end
     local ok_sword_awaken, sword_awaken = pcall(function() return wh:call("get_IsSwordAwaken") end)
     if not ok_sword_awaken then sword_awaken = false end
+    -- 修正：mode == 0 为斧模式，mode == 1 为剑模式
     if mode == 0 then
-        if sword_awaken then return "sword_awakened"
-        else return "sword_normal" end
-    else
+        -- 斧模式
         if axe_enh then return "axe_enhanced"
         else return "axe_normal" end
+    else
+        -- 剑模式
+        if sword_awaken then return "sword_awakened"
+        else return "sword_normal" end
     end
 end
 
@@ -489,7 +517,6 @@ local function get_active_rule_for_type(t_type, config, character, char_addr)
     elseif t_type == "damage" then
         local cur_hp = TransformManager.get_character_hp_percent(character)
         if cur_hp and config.damage_transform_rules and config.damage_transform_rules[1] then
-            -- 将独立的伤害规则包裹为列表传入
             local rule = DamageTimer.evaluate_damage_rules(char_addr, cur_hp, config.damage_transform_rules[1])
             return rule, "dmg"
         end
@@ -570,29 +597,56 @@ end
 
 function TransformManager.apply_transform_rules(char_addr, config, character, base_overrides, merge_overrides_func)
     if not config then return base_overrides, false end
-    local new_overrides = base_overrides
-    local prev_state = last_state_cache[char_addr]
-    local changed = false
+    
+    -- 武器类型映射表：条件类型 -> 所需的 WeaponType 值
+    local weapon_type_required = {
+        spirit = 3,           -- 太刀
+        dual_blades = 2,      -- 双刀
+        switch_axe = 8,       -- 斩斧
+        insect_glaive = 10,   -- 虫棍
+        charge_blade = 9,     -- 盾斧
+        greatsword_type = 0,  -- 大剑
+        greatsword_level = 0, -- 大剑
+        bow_level = 11,       -- 弓箭
+        hammer_level = 4,     -- 大锤
+    }
+    
+    local current_weapon_type = TransformManager.get_character_weapon_type(character)
     
     local types = {}
     if config.is_parallel then
         local sets = config.parallel_settings or {}
         for k, v in pairs(sets) do
             if v.enabled then
+                -- 检查武器类型匹配性
+                local required = weapon_type_required[k]
+                if required and current_weapon_type ~= required then
+                    goto continue_parallel
+                end
                 table.insert(types, { type = k, priority = v.priority or 99 })
+                ::continue_parallel::
             end
         end
         table.sort(types, function(a,b) return a.priority > b.priority end)
     else
-        table.insert(types, { type = config.transform_type or "hp", priority = 1 })
+        local single_type = config.transform_type or "hp"
+        local required = weapon_type_required[single_type]
+        if required and current_weapon_type ~= required then
+            -- 单一模式且武器类型不匹配，不应用任何规则
+            return base_overrides, false
+        end
+        table.insert(types, { type = single_type, priority = 1 })
     end
     
+    local new_overrides = base_overrides
     local sig_parts = {}
+    
     for _, eval in ipairs(types) do
         local rule, extra = get_active_rule_for_type(eval.type, config, character, char_addr)
         if rule then
             local part = eval.type .. ":"
             if eval.type == "hp" then part = part .. "th:" .. tostring(rule.threshold)
+            elseif eval.type == "damage" then part = part .. "dmg"
             elseif eval.type == "weapon" then part = part .. "ws:" .. tostring(extra)
             elseif eval.type == "spirit" then part = part .. "lvl:" .. tostring(extra)
             elseif eval.type == "dual_blades" then part = part .. "st:" .. tostring(extra)
@@ -631,11 +685,14 @@ function TransformManager.apply_transform_rules(char_addr, config, character, ba
     end
     
     local current_sig = #sig_parts > 0 and table.concat(sig_parts, "|") or "none"
-    if prev_state ~= current_sig then
-        changed = true
+    local prev_state = last_state_cache[char_addr]
+    local changed = (prev_state ~= current_sig)
+    
+    if changed then
         last_state_cache[char_addr] = current_sig
+        return new_overrides, true
     end
-    return new_overrides, changed
+    return base_overrides, false
 end
 
 -- 所有模块检测函数全部返回 true，避免 UI 警告
