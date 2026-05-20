@@ -1,5 +1,7 @@
 local mod_name = "ArmorVariantManager"
-local version = "2.1.1"
+-- 开发中遵守
+-- 版本号-开发状态-开发状态标识
+local version = "3.0.0-beta-004"
 local author = "MK,Moon"
 
 -- =============================================================================
@@ -1683,6 +1685,7 @@ re.on_frame(function()
                     local new_overrides, changed = TransformManager.apply_transform_rules(
                         char_addr, config, char, final_overrides, merge_overrides
                     )
+                    
                     if changed then
                         -- 不要把 active_overrides 覆盖掉！
                         -- active_overrides 保存的是基础状态(Base State)，new_overrides 是基础状态叠加变身规则后的结果。
@@ -2154,6 +2157,22 @@ re.on_draw_ui(function()
                                 end
                                 local dmg_rule = current_config.damage_transform_rules[1]
                                 
+                                -- 剩余时间和测试按钮
+                                local char_go_ok, char_go = pcall(function() return character:call("get_GameObject") end)
+                                local char_addr = (char_go_ok and char_go) and tostring(char_go) or tostring(character)
+                                if imgui.button((T("damage_test_btn") or "Test Hit") .. "##test_dmg") then
+                                    local cur_hp = TransformManager.get_character_hp(character)
+                                    if cur_hp then
+                                        TransformManager.set_character_hp(character, cur_hp - 25)
+                                    end
+                                end
+
+                                local remaining = TransformManager.get_damage_remaining_time(char_addr)
+                                if remaining > 0 then
+                                    imgui.text_colored(string.format(T("damage_countdown") or "Countdown: %.1f s", remaining), 0xFF00A0FF)
+                                end
+                                imgui.separator()
+
                                 imgui.spacing()
                                 imgui.set_next_item_width(120)
                                 local c_dur, v_dur_str = imgui.input_text(T("duration") .. "##dmg", tostring(dmg_rule.duration))
