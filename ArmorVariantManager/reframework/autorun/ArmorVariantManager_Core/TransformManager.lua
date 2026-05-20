@@ -1,8 +1,5 @@
 local TransformManager = {}
 
--- 引入独立的受击计时器模块
-local DamageTimer = require("ArmorVariantManager_Core.DamageTimer")
-
 -- =============================================================================
 -- 武器状态模块
 -- =============================================================================
@@ -11,17 +8,14 @@ local weapon_state_getter = nil
 
 local function init_weapon_state_reflection(character)
     if weapon_state_initialized then return end
-
     local type_def = character:get_type_definition()
     if not type_def then return end
-
     local field_weapon_on = type_def:get_field("_IsWeaponOn")
     if field_weapon_on then
         weapon_state_getter = { field = field_weapon_on, is_field = true }
         weapon_state_initialized = true
         return
     end
-
     local method_names = {
         "get_IsWeaponDraw", "get_isWeaponDraw", "isWeaponDraw",
         "isDrawWeapon", "get_IsDrawWeapon"
@@ -34,7 +28,6 @@ local function init_weapon_state_reflection(character)
             return
         end
     end
-
     if type_def:get_method("get_WeaponState") then
         local m = type_def:get_method("get_WeaponState")
         weapon_state_getter = { method = m, is_enum = true, is_field = false }
@@ -47,16 +40,16 @@ function TransformManager.get_character_weapon_drawn(character)
     if not character then return false end
     if not weapon_state_initialized then init_weapon_state_reflection(character) end
     if not weapon_state_getter then return false end
-
     if weapon_state_getter.is_field then
-        return weapon_state_getter.field:get_data(character) == true
+        local res = weapon_state_getter.field:get_data(character)
+        return res == true
     else
         local ok, res = pcall(function() return weapon_state_getter.method:call(character) end)
         if ok and res ~= nil then
             if weapon_state_getter.is_enum then
                 return tonumber(res) > 0
             else
-                return weapon_state_getter.invert and not res or res == true
+                return weapon_state_getter.invert and not res or (res == true)
             end
         end
     end
@@ -73,10 +66,8 @@ local hp_setter = nil
 
 local function init_hp_reflection(character)
     if hp_reflection_initialized then return end
-
     local type_def = character:get_type_definition()
     if not type_def then return end
-
     if type_def:get_method("get_HitPoint") and type_def:get_method("get_MaxHitPoint") then
         hp_getter = type_def:get_method("get_HitPoint")
         max_hp_getter = type_def:get_method("get_MaxHitPoint")
@@ -84,7 +75,6 @@ local function init_hp_reflection(character)
         hp_reflection_initialized = true
         return
     end
-
     if type_def:get_method("get_Health") and type_def:get_method("get_MaxHealth") then
         hp_getter = type_def:get_method("get_Health")
         max_hp_getter = type_def:get_method("get_MaxHealth")
@@ -92,7 +82,6 @@ local function init_hp_reflection(character)
         hp_reflection_initialized = true
         return
     end
-
     if type_def:get_method("get_HunterHealth") then
         local get_hunter_health = type_def:get_method("get_HunterHealth")
         if get_hunter_health then
@@ -106,34 +95,28 @@ local function init_hp_reflection(character)
                         local max_getter = mgr_type:get_method("get_MaxHealth")
                         local setter = mgr_type:get_method("set_Health")
                         if getter and max_getter then
-                            hp_getter = {
-                                call = function(_, target)
-                                    local hunter_health = get_hunter_health:call(target)
-                                    if not hunter_health then return 0 end
-                                    local health_mgr = get_health_mgr:call(hunter_health)
-                                    if not health_mgr then return 0 end
-                                    return getter:call(health_mgr)
-                                end
-                            }
-                            max_hp_getter = {
-                                call = function(_, target)
-                                    local hunter_health = get_hunter_health:call(target)
-                                    if not hunter_health then return 0 end
-                                    local health_mgr = get_health_mgr:call(hunter_health)
-                                    if not health_mgr then return 0 end
-                                    return max_getter:call(health_mgr)
-                                end
-                            }
+                            hp_getter = { call = function(_, target)
+                                local hunter_health = get_hunter_health:call(target)
+                                if not hunter_health then return 0 end
+                                local health_mgr = get_health_mgr:call(hunter_health)
+                                if not health_mgr then return 0 end
+                                return getter:call(health_mgr)
+                            end }
+                            max_hp_getter = { call = function(_, target)
+                                local hunter_health = get_hunter_health:call(target)
+                                if not hunter_health then return 0 end
+                                local health_mgr = get_health_mgr:call(hunter_health)
+                                if not health_mgr then return 0 end
+                                return max_getter:call(health_mgr)
+                            end }
                             if setter then
-                                hp_setter = {
-                                    call = function(_, target, value)
-                                        local hunter_health = get_hunter_health:call(target)
-                                        if not hunter_health then return end
-                                        local health_mgr = get_health_mgr:call(hunter_health)
-                                        if not health_mgr then return end
-                                        setter:call(health_mgr, value)
-                                    end
-                                }
+                                hp_setter = { call = function(_, target, value)
+                                    local hunter_health = get_hunter_health:call(target)
+                                    if not hunter_health then return end
+                                    local health_mgr = get_health_mgr:call(hunter_health)
+                                    if not health_mgr then return end
+                                    setter:call(health_mgr, value)
+                                end }
                             end
                             hp_reflection_initialized = true
                             return
@@ -149,10 +132,8 @@ function TransformManager.get_character_hp_percent(character)
     if not character then return nil end
     if not hp_reflection_initialized then init_hp_reflection(character) end
     if not hp_getter or not max_hp_getter then return nil end
-
     local ok1, hp = pcall(function() return hp_getter:call(character) end)
     local ok2, max_hp = pcall(function() return max_hp_getter:call(character) end)
-
     if ok1 and ok2 and type(hp) == "number" and type(max_hp) == "number" and max_hp > 0 then
         return (hp / max_hp) * 100
     end
@@ -163,7 +144,6 @@ function TransformManager.set_character_hp_percent(character, percent)
     if not character then return end
     if not hp_reflection_initialized then init_hp_reflection(character) end
     if not hp_setter or not max_hp_getter then return end
-
     local ok, max_hp = pcall(function() return max_hp_getter:call(character) end)
     if ok and type(max_hp) == "number" and max_hp > 0 then
         local target_hp = (percent / 100) * max_hp
@@ -175,7 +155,6 @@ end
 -- 气刃等级模块 (太刀)
 -- =============================================================================
 local spirit_level_getter = nil
-
 local function get_spirit_level_direct(character)
     local ok1, wh = pcall(function() return character:call("get_WeaponHandling") end)
     if not ok1 or not wh then return nil end
@@ -195,25 +174,19 @@ local function init_spirit_level_reflection(character)
         if wh_type then
             local get_aura = wh_type:get_method("get_AuraLevel")
             if get_aura then
-                spirit_level_getter = {
-                    call = function(_, target)
-                        local wh = get_wh:call(target)
-                        if not wh then return nil end
-                        local level = get_aura:call(wh)
-                        return type(level) == "number" and level or nil
-                    end
-                }
+                spirit_level_getter = { call = function(_, target)
+                    local wh = get_wh:call(target)
+                    if not wh then return nil end
+                    local level = get_aura:call(wh)
+                    return type(level) == "number" and level or nil
+                end }
                 return
             end
         end
     end
     local direct_aura = type_def:get_method("get_AuraLevel")
     if direct_aura then
-        spirit_level_getter = {
-            call = function(_, target)
-                return direct_aura:call(target)
-            end
-        }
+        spirit_level_getter = { call = function(_, target) return direct_aura:call(target) end }
         return
     end
 end
@@ -291,37 +264,37 @@ local insect_glaive_timestamps = {}
 local function get_insect_glaive_state_direct(character, char_addr)
     local ok1, wh = pcall(function() return character:call("get_WeaponHandling") end)
     if not ok1 or not wh then return "none" end
-
+    
     local function get_lamp(method)
         local ok, val = pcall(function() return wh:call(method) end)
         return ok and val == true or false
     end
-
+    
     local is_white = get_lamp("get_IsWhite")
     local is_orange = get_lamp("get_IsOrange")
     local is_red = get_lamp("get_IsRed")
     local is_triple = get_lamp("get_IsTrippleUp")
-
+    
     if is_triple then return "triple" end
-
+    
     if not insect_glaive_timestamps[char_addr] then insect_glaive_timestamps[char_addr] = {} end
     local stamps = insect_glaive_timestamps[char_addr]
     local current_time = os.clock()
-
+    
     if is_white and not stamps.white then stamps.white = current_time
     elseif not is_white then stamps.white = nil end
     if is_orange and not stamps.orange then stamps.orange = current_time
     elseif not is_orange then stamps.orange = nil end
     if is_red and not stamps.red then stamps.red = current_time
     elseif not is_red then stamps.red = nil end
-
+    
     local active_lamps = {}
     if is_white then table.insert(active_lamps, { name = "white", time = stamps.white }) end
     if is_orange then table.insert(active_lamps, { name = "orange", time = stamps.orange }) end
     if is_red then table.insert(active_lamps, { name = "red", time = stamps.red }) end
-
+    
     if #active_lamps == 0 then return "none" end
-    table.sort(active_lamps, function(a, b) return a.time > b.time end)
+    table.sort(active_lamps, function(a,b) return a.time > b.time end)
     return active_lamps[1].name
 end
 
@@ -340,7 +313,7 @@ function TransformManager.has_insect_glaive_getter() return true end
 local function get_charge_blade_state_direct(character)
     local ok1, wh = pcall(function() return character:call("get_WeaponHandling") end)
     if not ok1 or not wh then return "sword" end
-
+    
     local ok_shield, is_shield = pcall(function() return wh:call("get_IsShieldEnhanced") end)
     if not ok_shield then is_shield = false end
     local ok_axe, is_axe = pcall(function() return wh:call("get_IsAxeEnhanced") end)
@@ -349,11 +322,11 @@ local function get_charge_blade_state_direct(character)
     if not ok_sword then is_sword = false end
     local ok_mode, mode = pcall(function() return wh:call("get_Mode") end)
     if not ok_mode then mode = 0 end
-
+    
     if is_shield and is_axe and is_sword then
         return "triple"
     end
-
+    
     if mode == 0 then
         if is_shield and is_sword then
             return "sword_shield_sword"
@@ -464,17 +437,26 @@ end
 function TransformManager.has_hammer_getter() return true end
 
 -- =============================================================================
--- 规则引擎 (融合受击计时器)
+-- 规则引擎
 -- =============================================================================
 local last_state_cache = {}
+
+local function get_active_hp_rule(rules, cur_hp)
+    if not rules or #rules == 0 then return nil end
+    local sorted = {}
+    for _, r in ipairs(rules) do table.insert(sorted, r) end
+    table.sort(sorted, function(a,b) return a.threshold < b.threshold end)
+    for _, r in ipairs(sorted) do
+        if cur_hp <= r.threshold then return r end
+    end
+    return nil
+end
 
 local function get_active_rule_for_type(t_type, config, character, char_addr)
     if t_type == "hp" then
         local cur_hp = TransformManager.get_character_hp_percent(character)
-        if cur_hp and config.transform_rules and #config.transform_rules > 0 then
-            -- 使用 DamageTimer 模块处理受击触发和持续时间逻辑
-            local rule = DamageTimer.evaluate_hp_rules(char_addr, cur_hp, config.transform_rules)
-            return rule, cur_hp
+        if cur_hp and config.transform_rules then
+            return get_active_hp_rule(config.transform_rules, cur_hp), cur_hp
         end
     elseif t_type == "weapon" then
         local drawn = TransformManager.get_character_weapon_drawn(character)
@@ -556,7 +538,7 @@ function TransformManager.apply_transform_rules(char_addr, config, character, ba
     local new_overrides = base_overrides
     local prev_state = last_state_cache[char_addr]
     local changed = false
-
+    
     local types = {}
     if config.is_parallel then
         local sets = config.parallel_settings or {}
@@ -565,61 +547,51 @@ function TransformManager.apply_transform_rules(char_addr, config, character, ba
                 table.insert(types, { type = k, priority = v.priority or 99 })
             end
         end
-        table.sort(types, function(a, b) return a.priority > b.priority end)
+        table.sort(types, function(a,b) return a.priority > b.priority end)
     else
         table.insert(types, { type = config.transform_type or "hp", priority = 1 })
     end
-
+    
     local sig_parts = {}
     for _, eval in ipairs(types) do
-        local active_rule, extra = get_active_rule_for_type(eval.type, config, character, char_addr)
-        if active_rule then
+        local rule, extra = get_active_rule_for_type(eval.type, config, character, char_addr)
+        if rule then
             local part = eval.type .. ":"
-            if eval.type == "hp" then part = part .. "th:" .. tostring(active_rule.threshold) end
-            if eval.type == "weapon" then part = part .. "ws:" .. tostring(extra) end
-            if eval.type == "spirit" then part = part .. "lvl:" .. tostring(extra) end
-            if eval.type == "dual_blades" then part = part .. "st:" .. tostring(extra) end
-            if eval.type == "switch_axe" then part = part .. "st:" .. tostring(extra) end
-            if eval.type == "insect_glaive" then part = part .. "lamp:" .. tostring(extra) end
-            if eval.type == "charge_blade" then part = part .. "cb:" .. tostring(extra) end
-            if eval.type == "greatsword_type" then part = part .. "type:" .. tostring(extra) end
-            if eval.type == "greatsword_level" then part = part .. "lvl:" .. tostring(extra) end
-            if eval.type == "bow_level" then part = part .. "lvl:" .. tostring(extra) end
-            if eval.type == "hammer_level" then part = part .. "lvl:" .. tostring(extra) end
-
-            -- 将每个 target 的 group 和 preset 加入签名，确保配置变化时能重新应用
-            if active_rule.targets then
-                for _, tgt in ipairs(active_rule.targets) do
-                    local gname = tgt.group or ""
-                    local pname = tgt.preset or ""
-                    part = part .. "|" .. gname .. ":" .. pname
-                end
+            if eval.type == "hp" then part = part .. "th:" .. tostring(rule.threshold)
+            elseif eval.type == "weapon" then part = part .. "ws:" .. tostring(extra)
+            elseif eval.type == "spirit" then part = part .. "lvl:" .. tostring(extra)
+            elseif eval.type == "dual_blades" then part = part .. "st:" .. tostring(extra)
+            elseif eval.type == "switch_axe" then part = part .. "st:" .. tostring(extra)
+            elseif eval.type == "insect_glaive" then part = part .. "lamp:" .. tostring(extra)
+            elseif eval.type == "charge_blade" then part = part .. "cb:" .. tostring(extra)
+            elseif eval.type == "greatsword_type" then part = part .. "type:" .. tostring(extra)
+            elseif eval.type == "greatsword_level" then part = part .. "lvl:" .. tostring(extra)
+            elseif eval.type == "bow_level" then part = part .. "lvl:" .. tostring(extra)
+            elseif eval.type == "hammer_level" then part = part .. "lvl:" .. tostring(extra)
             end
             table.insert(sig_parts, part)
-
-            -- 合并预设数据
-            if active_rule.targets then
-                for _, tgt in ipairs(active_rule.targets) do
+            if rule.targets then
+                for _, tgt in ipairs(rule.targets) do
                     local gname = tgt.group or ""
-                    local pname = tgt.preset or ""
-                    if pname ~= "" then
-                        local preset_data = nil
+                    local pname = tgt.preset
+                    if pname and pname ~= "" then
+                        local preset = nil
                         if gname == "" then
-                            preset_data = config.presets and config.presets[pname]
+                            preset = config.presets and config.presets[pname]
                         else
                             if config.groups and config.groups[gname] and config.groups[gname].presets then
-                                preset_data = config.groups[gname].presets[pname]
+                                preset = config.groups[gname].presets[pname]
                             end
                         end
-                        if preset_data then
-                            new_overrides = merge_overrides_func(new_overrides, preset_data)
+                        if preset then
+                            new_overrides = merge_overrides_func(new_overrides, preset)
                         end
                     end
                 end
             end
         end
     end
-
+    
     local current_sig = #sig_parts > 0 and table.concat(sig_parts, "|") or "none"
     if prev_state ~= current_sig then
         changed = true

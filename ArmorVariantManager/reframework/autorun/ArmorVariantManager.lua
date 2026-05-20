@@ -1,6 +1,6 @@
 local mod_name = "ArmorVariantManager"
-local version = "2.1.2"
-local author = "MK, Moon"
+local version = "2.1.1"
+local author = "MK,Monn"
 
 -- =============================================================================
 -- 多语言与全局配置系统
@@ -20,8 +20,6 @@ local global_config = {
 -- 本地化字典 (从外部模块加载)
 local Localization = require("ArmorVariantManager_Core.Localization")
 local TransformManager = require("ArmorVariantManager_Core.TransformManager")
--- 引入独立的受击计时器模块（融合对方功能）
-local DamageTimer = require("ArmorVariantManager_Core.DamageTimer")
 
 -- 获取本地化字符串
 local function T(key)
@@ -79,7 +77,6 @@ local show_window = true
 local last_body_id = nil
 local body_id_cache = {} -- Key: Character Address, Value: { id: string, last_check: number }
 -- BODY_ID_CACHE_TTL 已移至全局配置 global_config.body_id_ttl
-
 local loaded_configs = {} -- 缓存所有 Body ID 的配置 { [body_id] = config_table }
 local temp_applied_presets = {} -- 记录当前临时应用的预设 (BodyID -> PresetName)
 local active_overrides = {} -- 记录当前生效的配置状态 (BodyID -> { [part_index] = { mesh_enabled=..., materials={...} } })
@@ -90,22 +87,7 @@ local active_overrides = {} -- 记录当前生效的配置状态 (BodyID -> { [p
 --   presets = {
 --     ["PresetName"] = { ... part_data ... },
 --     ...
---   },
---   groups = { ... },
---   transform_type = "hp",
---   is_parallel = false,
---   parallel_settings = { ... },
---   transform_rules = { ... },         -- 每个规则新增字段: trigger_on_damage, duration, keep_until_state_ends
---   weapon_transform_rules = { ... },
---   spirit_transform_rules = { ... },
---   dual_blades_transform_rules = { ... },
---   switch_axe_transform_rules = { ... },
---   insect_glaive_transform_rules = { ... },
---   charge_blade_transform_rules = { ... },
---   greatsword_type_transform_rules = { ... },
---   greatsword_level_transform_rules = { ... },
---   bow_level_transform_rules = { ... },
---   hammer_level_transform_rules = { ... }
+--   }
 -- }
 local current_config = {
     default_preset = "",
@@ -126,7 +108,7 @@ local current_config = {
         bow_level = { enabled = false, priority = 10 },
         hammer_level = { enabled = false, priority = 11 }
     },
-    transform_rules = {},          -- HP 规则，每个规则可包含 trigger_on_damage, duration, keep_until_state_ends
+    transform_rules = {},
     weapon_transform_rules = {
         { state = "sheathed", targets = {} },
         { state = "drawn", targets = {} }
@@ -214,16 +196,14 @@ local current_group_name = "" -- 当前选中的分组名称，空字符串表�
 local selected_group_index = 1 -- 分组下拉框选中的索引
 local group_names_list = {} -- 分组名称列表
 local new_group_name = "" -- 新建分组的名称输入
-
 -- 材质细粒度选择状态
 local is_selection_mode = false -- 是否处于材质勾选模式
 local pending_material_selections = {} -- 临时存储勾选的材质 { [part_idx_str] = { [mat_name] = true } }
 
+-- 辅助函数
 -- 辅助函数：获取类型定义 (Lazy Load)
 local function get_type(name)
-    local t = sdk.find_type_definition(name)
-    if not t then return sdk.find_type_definition(name) end
-    return t
+    return sdk.find_type_definition(name)
 end
 
 -- 辅助函数：深拷贝表
@@ -236,7 +216,7 @@ local function deep_copy_table(orig)
             copy[deep_copy_table(orig_key)] = deep_copy_table(orig_value)
         end
         setmetatable(copy, deep_copy_table(getmetatable(orig)))
-    else
+    else -- number, string, boolean, etc
         copy = orig
     end
     return copy
@@ -271,7 +251,6 @@ local function get_character_body_id(character)
     end
 
     local result_id = nil
-    -- 1. 尝试作为 app.Character 调用 getParts
     local status, body_part = pcall(function() return character:call("getParts", 1) end)
     if status and body_part then
         local name_status, name = pcall(function() return body_part:call("get_Name") end)
@@ -302,16 +281,17 @@ local function get_character_body_id(character)
                     end
                     child = child:call("get_Next")
                 end
-
                 -- 如果存在非 ch00 的 Body ID，优先返回第一个非 ch00 的 ID
                 -- 优先级：Body (结尾为2) > Helm (结尾为1) > Others
                 if #candidates > 0 then
+                    -- 1
                     for _, name in ipairs(candidates) do
                         if not string.find(name, "^ch00") and string.match(name, "2$") then
                             result_id = name; break
                         end
                     end
                     if not result_id then
+                        -- 2
                         for _, name in ipairs(candidates) do
                             if not string.find(name, "^ch00") and string.match(name, "3$") then
                                 result_id = name; break
@@ -319,15 +299,18 @@ local function get_character_body_id(character)
                         end
                     end
                     if not result_id then
+                        -- 3
                         for _, name in ipairs(candidates) do
                             if not string.find(name, "^ch00") and string.match(name, "1$") then
                                 result_id = name; break
                             end
                         end
                     end
+                    -- 3. 保险机制
                     if not result_id then
                         if has_non_ch00 then
                             for _, name in ipairs(candidates) do
+                                -- 如果不是 ch00 (素体)，标记为 true
                                 if not string.find(name, "^ch00") then
                                     result_id = name; break
                                 end
@@ -338,8 +321,6 @@ local function get_character_body_id(character)
                     end
                 end
             end
-
-            -- 3. 保险机制
             if not result_id then
                 local name = game_obj:call("get_Name")
                 local special_names = {
@@ -389,7 +370,6 @@ local scanner = {
 
 local function update_cache_entry(char)
     if not char then return end
-
     -- 尝试获取 GameObject 的地址作为唯一标识
     local game_obj = nil
     if method_cache.Component_get_GameObject then
@@ -398,25 +378,15 @@ local function update_cache_entry(char)
     else
         game_obj = char:call("get_GameObject")
     end
-
-    local key = nil
-    if game_obj then
-        key = tostring(game_obj)
-        -- 过滤掉不绘制的对象 (隐藏对象)
-        local draw_status, is_draw = pcall(function() return game_obj:call("get_Draw") end)
-        if draw_status and is_draw == false then return end
-    else
-        return
-    end
-
+    if not game_obj then return end
+    local key = tostring(game_obj)
+    -- 过滤掉不绘制的对象 (隐藏对象)
+    local draw_status, is_draw = pcall(function() return game_obj:call("get_Draw") end)
+    if draw_status and is_draw == false then return end
     -- 尝试获取 Body ID 来进一步验证
     local body_id = get_character_body_id(char)
     if not body_id then return end
-
-    -- 严格过滤：只保留 ch03 开头的玩家角色
     if not string.find(body_id, "^ch03") then return end
-
-    -- 更新缓存
     character_cache[key] = { char = char, last_seen = os.clock() }
 end
 
@@ -424,7 +394,6 @@ end
 local function tick_scanner()
     local current_time = os.clock()
     local scan_interval = global_config.scan_interval or 2.0
-
     if scanner.state == "IDLE" then
         if (current_time - scanner.last_scan_time > scan_interval) then
             -- 清理过期 Body ID 缓存
@@ -432,13 +401,11 @@ local function tick_scanner()
             for k, v in pairs(body_id_cache) do
                 if current_time - v.last_check > ttl * 2 then body_id_cache[k] = nil end
             end
-
             local scene_manager = sdk.get_native_singleton("via.SceneManager")
             local scene = nil
             if scene_manager then
                 scene = sdk.call_native_func(scene_manager, sdk.find_type_definition("via.SceneManager"), "get_CurrentScene")
             end
-
             if scene then
                 -- 1. 扫描 app.Character (通常数量较少，一次性处理)
                 if type_cache.app_character then
@@ -448,7 +415,6 @@ local function tick_scanner()
                         for _, char in ipairs(list) do update_cache_entry(char) end
                     end
                 end
-
                 -- 2. 开始 via.Transform 扫描 (分帧处理)
                 if method_cache.Scene_findComponents and type_cache.via_transform then
                     local transforms = method_cache.Scene_findComponents:call(scene, type_cache.via_transform)
@@ -472,26 +438,20 @@ local function tick_scanner()
         local batch_size = global_config.scanner_batch_size or 100
         local limit = scanner.index + batch_size - 1
         if limit > scanner.count then limit = scanner.count end
-
         for i = scanner.index, limit do
             -- 防御性编程：使用 pcall 包裹对象的获取和有效性检查
             -- 防止因对象跨帧销毁导致的 sol: runtime error
             local safe_get_transform = function()
                 local t = scanner.transforms[i]
-                if t and sdk.is_managed_object(t) then return t end
-                return nil
+                return (t and sdk.is_managed_object(t)) and t or nil
             end
-
             local status, transform = pcall(safe_get_transform)
-
             if status and transform then
                 -- 极速获取 GameObject
                 local ok, game_obj = pcall(method_cache.Component_get_GameObject.call, method_cache.Component_get_GameObject, transform)
-
                 if ok and game_obj and sdk.is_managed_object(game_obj) then
                     -- 极速获取 Name (再次使用 pcall 确保安全)
                     local name_ok, name = pcall(method_cache.GameObject_get_Name.call, method_cache.GameObject_get_Name, game_obj)
-
                     -- 快速筛选
                     local is_target = false
                     if name_ok and name then
@@ -510,7 +470,6 @@ local function tick_scanner()
                             end
                         end
                     end
-
                     if is_target then
                         -- 找到目标，进一步获取 Character 组件
                         local char = nil
@@ -519,20 +478,16 @@ local function tick_scanner()
                             local char_ok, c = pcall(method_cache.GameObject_getComponent.call, method_cache.GameObject_getComponent, game_obj, type_cache.app_character)
                             if char_ok then char = c end
                         end
-
                         if not char and type_cache.app_hunter_character then
                             local char_ok, c = pcall(method_cache.GameObject_getComponent.call, method_cache.GameObject_getComponent, game_obj, type_cache.app_hunter_character)
                             if char_ok then char = c end
                         end
-
                         if char then update_cache_entry(char) else update_cache_entry(transform) end
                     end
                 end
             end
         end
-
         scanner.index = limit + 1
-
         -- 检查是否完成
         if scanner.index > scanner.count then
             scanner.state = "IDLE"
@@ -545,12 +500,7 @@ end
 local function get_all_characters()
     local chars = {}
     local seen_objs = {} -- 用于去重，Key: GameObject Address
-
-    -- 1. 尝试通过 PlayerManager 获取 (快速，游戏内主要来源)
-    if not type_player_manager then
-        type_player_manager = get_type("app.PlayerManager")
-    end
-
+    if not type_player_manager then type_player_manager = get_type("app.PlayerManager") end
     local pm = get_player_manager()
     if pm then
         -- 遍历 InstancedPlayer (通常包含所有玩家)
@@ -565,9 +515,7 @@ local function get_all_characters()
                         if game_obj_ok and game_obj and sdk.is_managed_object(game_obj) then
                             -- 检查角色是否被游戏原生隐藏 (例如在使用装备箱时)
                             local draw_status, is_draw = pcall(function() return game_obj:call("get_Draw") end)
-                            if draw_status and is_draw == false then
-                                -- 如果游戏隐藏了该角色，跳过处理，不应用 mod 的覆盖状态
-                            else
+                            if not (draw_status and is_draw == false) then
                                 local key = tostring(game_obj)
                                 if not seen_objs[key] then
                                     local bid = get_character_body_id(char)
@@ -582,7 +530,6 @@ local function get_all_characters()
                 end
             end
         end
-
         -- 获取 MasterPlayer (本地玩家)
         local master = pm:call("getMasterPlayer")
         if master then
@@ -591,9 +538,7 @@ local function get_all_characters()
                 local game_obj_ok, game_obj = pcall(function() return char:call("get_GameObject") end)
                 if game_obj_ok and game_obj and sdk.is_managed_object(game_obj) then
                     local draw_status, is_draw = pcall(function() return game_obj:call("get_Draw") end)
-                    if draw_status and is_draw == false then
-                        -- 如果游戏隐藏了该角色，跳过处理，不应用 mod 的覆盖状态
-                    else
+                    if not (draw_status and is_draw == false) then
                         local key = tostring(game_obj)
                         if not seen_objs[key] then
                             local bid = get_character_body_id(char)
@@ -607,12 +552,10 @@ local function get_all_characters()
             end
         end
     end
-
     -- 2. 合并缓存中的结果 (由 scanner 异步更新)
     local current_time = os.clock()
     local scan_interval = global_config.scan_interval or 2.0
     local cache_ttl = scan_interval + CACHE_TTL_BUFFER
-
     for key, data in pairs(character_cache) do
         -- 增加有效性检查
         local is_valid = false
@@ -621,27 +564,22 @@ local function get_all_characters()
             local game_obj_ok, game_obj = pcall(function() return data.char:call("get_GameObject") end)
             if game_obj_ok and game_obj and sdk.is_managed_object(game_obj) then
                 local draw_status, is_draw = pcall(function() return game_obj:call("get_Draw") end)
-                if draw_status and is_draw == false then
-                    is_valid = false -- 如果被隐藏，则视为当前无效
-                else
-                    is_valid = true
-                end
+                is_valid = not (draw_status and is_draw == false)
             end
         end
-
         if is_valid and (current_time - data.last_seen <= cache_ttl) then
             -- 如果 PlayerManager 还没包含这个对象，则添加
             if not seen_objs[key] then
                 table.insert(chars, data.char)
                 seen_objs[key] = true
             end
+        -- 如果游戏隐藏了该角色，跳过处理，不应用 mod 的覆盖状态
         else
             -- 注意：被隐藏的对象会因为 is_valid=false 而在这里被直接移除缓存，
             -- 这是符合预期的，因为当它重新显示时 scanner 会重新捕获它。
             character_cache[key] = nil -- 移除过期或无效条目
         end
     end
-
     return chars
 end
 
@@ -649,20 +587,12 @@ end
 local function get_local_player_character()
     local char = nil
     local current_time = os.clock()
-
-    -- 1. 尝试通过 PlayerManager 获取 (游戏内)
-    if not type_player_manager then
-        type_player_manager = get_type("app.PlayerManager")
-    end
-
+    if not type_player_manager then type_player_manager = get_type("app.PlayerManager") end
     local player_manager = get_player_manager()
     if player_manager then
         local master_player = player_manager:call("getMasterPlayer")
-        if master_player then
-            char = master_player:call("get_Character")
-        end
+        if master_player then char = master_player:call("get_Character") end
     end
-
     -- 2. 如果 PlayerManager 失败，尝试从缓存的角色列表中获取 (主菜单/过场)
     if not char then
         local all_chars = get_all_characters()
@@ -671,21 +601,12 @@ local function get_local_player_character()
             local found_last = false
             if last_valid_local_player then
                 for _, c in ipairs(all_chars) do
-                    if c == last_valid_local_player then
-                        char = c
-                        found_last = true
-                        break
-                    end
+                    if c == last_valid_local_player then char = c; found_last = true; break end
                 end
             end
-
-            -- 如果之前的角色不在列表里，或者之前没有记录，则选择第一个
-            if not found_last then
-                char = all_chars[1]
-            end
+            if not found_last then char = all_chars[1] end
         end
     end
-
     -- 3. 更新或应用宽限期逻辑
     if char then
         -- 只有当对象确实有效时才更新记录
@@ -704,7 +625,6 @@ local function get_local_player_character()
             end
         end
     end
-
     return char
 end
 
@@ -728,72 +648,53 @@ local function update_preset_names_list()
     -- 根据当前分组获取对应的预设列表
     local target_presets = nil
     if current_group_name == "" then
-        if current_config and current_config.presets then
-            target_presets = current_config.presets
-        end
+        target_presets = current_config.presets
     else
-        if current_config and current_config.groups and current_config.groups[current_group_name] then
+        if current_config.groups and current_config.groups[current_group_name] then
             target_presets = current_config.groups[current_group_name].presets or {}
         else
             target_presets = {}
         end
     end
-
     if target_presets then
         for name, _ in pairs(target_presets) do
             table.insert(preset_names_list, name)
         end
         table.sort(preset_names_list)
     end
-
     -- 2. 自动选中当前环境下的默认预设
     local ctx_default = ""
     if current_group_name == "" then
-        ctx_default = current_config and current_config.default_preset or ""
+        ctx_default = current_config.default_preset or ""
     else
-        if current_config and current_config.groups and current_config.groups[current_group_name] then
+        if current_config.groups and current_config.groups[current_group_name] then
             ctx_default = current_config.groups[current_group_name].default_preset or ""
         end
     end
-
     if ctx_default ~= "" then
         local found = false
         for i, name in ipairs(preset_names_list) do
-            if name == ctx_default then
-                selected_preset_index = i
-                found = true
-                break
-            end
+            if name == ctx_default then selected_preset_index = i; found = true; break end
         end
         if not found then selected_preset_index = 1 end
     else
         selected_preset_index = 1
     end
-
-    -- 修正索引异常情况
-    if #preset_names_list == 0 then
-        selected_preset_index = 1
-    elseif selected_preset_index > #preset_names_list then
-        selected_preset_index = 1
-    end
+    if #preset_names_list == 0 then selected_preset_index = 1
+    elseif selected_preset_index > #preset_names_list then selected_preset_index = 1 end
 end
 
 -- 辅助函数：更新分组名称列表 (用于 UI)
 local function update_group_names_list()
     group_names_list = {}
-    if current_config and current_config.groups then
+    if current_config.groups then
         for name, _ in pairs(current_config.groups) do
             table.insert(group_names_list, name)
         end
         table.sort(group_names_list)
     end
-
-    -- 修正选中索引
-    if #group_names_list == 0 then
-        selected_group_index = 1
-    elseif selected_group_index > #group_names_list then
-        selected_group_index = 1
-    end
+    if #group_names_list == 0 then selected_group_index = 1
+    elseif selected_group_index > #group_names_list then selected_group_index = 1 end
 end
 
 -- =============================================================================
@@ -803,16 +704,13 @@ end
 local function get_mesh_component_recursive(game_obj)
     if not game_obj then return nil end
     if not sdk.is_managed_object(game_obj) then return nil end
-
     if not type_mesh then
         type_mesh = get_type("via.render.Mesh")
         if not type_mesh then return nil end
     end
-
     -- 1. 检查自身
     local mesh = game_obj:call("getComponent(System.Type)", type_mesh:get_runtime_type())
     if mesh then return mesh end
-
     -- 2. 检查子节点 (浅层遍历)
     local transform = game_obj:call("get_Transform")
     if transform then
@@ -826,21 +724,14 @@ local function get_mesh_component_recursive(game_obj)
             child = child:call("get_Next")
         end
     end
-
     return nil
 end
 
 -- 辅助函数：获取角色的指定部位对象 (兼容 Transform 模式)
 local function get_character_part(character, part_index)
     if not character then return nil end
-
-    -- 1. 尝试标准接口
-    local status, part_obj = pcall(function()
-        return character:call("getParts", part_index)
-    end)
-
+    local status, part_obj = pcall(function() return character:call("getParts", part_index) end)
     if status and part_obj then return part_obj end
-
     -- 2. 回退模式：遍历 Transform 子节点并根据名称后缀匹配
     local game_obj_status, game_obj = pcall(function() return character:call("get_GameObject") end)
     if game_obj_status and game_obj then
@@ -848,7 +739,6 @@ local function get_character_part(character, part_index)
         if transform then
             local parts_map = {} -- Key: part_index, Value: { obj, name }
             local child = transform:call("get_Child")
-
             while child do
                 local child_obj = child:call("get_GameObject")
                 if child_obj then
@@ -860,7 +750,6 @@ local function get_character_part(character, part_index)
                         if suffix_str then
                             local suffix = tonumber(suffix_str)
                             local last_digit = suffix % 10
-
                             -- 映射规则 (MHWS)
                             -- 1 -> Arm (2)
                             -- 2 -> Body (1)
@@ -868,7 +757,6 @@ local function get_character_part(character, part_index)
                             -- 4 -> Leg (4)
                             -- 5 -> Waist (3)
                             -- 6 -> Slinger (5)
-
                             local target_index = nil
                             if last_digit == 1 then target_index = 2
                             elseif last_digit == 2 then target_index = 1
@@ -877,7 +765,6 @@ local function get_character_part(character, part_index)
                             elseif last_digit == 5 then target_index = 3
                             elseif last_digit == 6 then target_index = 5
                             end
-
                             if target_index then
                                 local mesh = get_mesh_component_recursive(child_obj)
                                 if mesh then
@@ -886,7 +773,6 @@ local function get_character_part(character, part_index)
                                     -- 2. 如果该槽位已有值：
                                     --    a. 如果新值是非 ch00 且旧值是 ch00 -> 替换
                                     --    b. 如果都是非 ch00 或都是 ch00 -> 不替换 (通常第一个找到的有效)
-
                                     local should_replace = true
                                     if parts_map[target_index] then
                                         local old_name = parts_map[target_index].name
@@ -898,7 +784,6 @@ local function get_character_part(character, part_index)
                                             should_replace = false
                                         end
                                     end
-
                                     if should_replace then
                                         parts_map[target_index] = { obj = child_obj, name = name }
                                     end
@@ -909,23 +794,19 @@ local function get_character_part(character, part_index)
                 end
                 child = child:call("get_Next")
             end
-
-            if parts_map[part_index] then
-                return parts_map[part_index].obj
-            end
+            if parts_map[part_index] then return parts_map[part_index].obj end
         end
     end
-
     return nil
 end
 
 -- 辅助函数：检测材质被哪个分组占用
 local function get_material_group_owner(part_index, mat_name)
     if not mat_name then return nil end
-    if not current_config or not current_config.groups then return nil end
+    if not current_config.groups then return nil end
     local s_idx = tostring(part_index)
     for g_name, g_data in pairs(current_config.groups) do
-        if g_data and g_data.mask and g_data.mask[s_idx] and g_data.mask[s_idx][mat_name] then
+        if g_data.mask and g_data.mask[s_idx] and g_data.mask[s_idx][mat_name] then
             return g_name
         end
     end
@@ -949,58 +830,40 @@ end
 -- =============================================================================
 -- 用于记录角色部位上次应用时的状态哈希，避免每帧重复应用导致覆盖游戏的原生临时状态
 local applied_parts_cache = {} -- Key: char GameObject Address, Value: { [part_index] = state_hash }
-
 -- 辅助函数：应用指定预设到指定角色
 local function apply_preset_to_character(character, preset_data, ignore_context, force_apply)
     if not character or not preset_data then return end
     -- 增加有效性检查，防止在对象销毁后访问
     if not sdk.is_managed_object(character) then return end
-
     local char_go = character:call("get_GameObject")
     if not char_go or not sdk.is_managed_object(char_go) then return end
     local char_addr = tostring(char_go)
-
     if not type_mesh then
         type_mesh = get_type("via.render.Mesh")
         if not type_mesh then return end
     end
-
     if not applied_parts_cache[char_addr] then applied_parts_cache[char_addr] = {} end
-
     for i = 0, 5 do
         local part_obj = get_character_part(character, i)
         if part_obj then
             local part_data = preset_data[tostring(i)]
             if part_data then
                 local mesh_component = get_mesh_component_recursive(part_obj)
-
                 if mesh_component then
                     local mat_count = mesh_component:call("get_MaterialNum") or 0
                     local first_mat = mat_count > 0 and mesh_component:call("getMaterialName", 0) or ""
                     local state_hash = tostring(mesh_component) .. "_" .. tostring(mat_count) .. "_" .. first_mat
-
                     local should_apply = force_apply or (applied_parts_cache[char_addr][i] ~= state_hash)
-
-                    if should_apply then
-                        applied_parts_cache[char_addr][i] = state_hash
-                    end
-
+                    if should_apply then applied_parts_cache[char_addr][i] = state_hash end
                     -- 1. 应用 Mesh 整体开关
                     if part_data.mesh_enabled ~= nil then
-                        local current_enabled = mesh_component:call("get_Enabled")
+                        local cur_en = mesh_component:call("get_Enabled")
                         if part_data.mesh_enabled == false then
-                            -- 隐藏，防止游戏原生逻辑(如退出装备箱)将其重置为显示
-                            if current_enabled ~= false then
-                                mesh_component:call("set_Enabled", false)
-                            end
+                            if cur_en ~= false then mesh_component:call("set_Enabled", false) end
                         elseif should_apply then
-                            -- 仅在装备变更或强制刷新时应用，以尊重游戏原生临时隐藏逻辑(如进入装备箱)
-                            if current_enabled ~= true then
-                                mesh_component:call("set_Enabled", true)
-                            end
+                            if cur_en ~= true then mesh_component:call("set_Enabled", true) end
                         end
                     end
-
                     -- 2. 应用材质开关
                     if part_data.materials and mat_count > 0 then
                         for j = 0, mat_count - 1 do
@@ -1008,15 +871,11 @@ local function apply_preset_to_character(character, preset_data, ignore_context,
                             -- 核心逻辑：只应用属于当前显示/操作上下文的材质状态
                             if ignore_context or is_material_in_current_context(i, mat_name) then
                                 local mat_enabled = part_data.materials[mat_name]
-                                local current_mat_enabled = mesh_component:call("getMaterialsEnable", j)
+                                local cur_mat = mesh_component:call("getMaterialsEnable", j)
                                 if mat_enabled == false then
-                                    if current_mat_enabled ~= false then
-                                        mesh_component:call("setMaterialsEnable", j, false)
-                                    end
+                                    if cur_mat ~= false then mesh_component:call("setMaterialsEnable", j, false) end
                                 elseif mat_enabled == true and should_apply then
-                                    if current_mat_enabled ~= true then
-                                        mesh_component:call("setMaterialsEnable", j, true)
-                                    end
+                                    if cur_mat ~= true then mesh_component:call("setMaterialsEnable", j, true) end
                                 end
                             end
                         end
@@ -1036,45 +895,37 @@ end
 local function create_new_group(group_name, body_id)
     if not group_name or group_name == "" then return false end
     if not body_id then return false end
-
     -- 0. 检查是否有勾选材质
     local has_selection = false
-    for k, v in pairs(pending_material_selections) do
-        if next(v) then has_selection = true break end
+    for _, v in pairs(pending_material_selections) do
+        if next(v) then has_selection = true; break end
     end
     if not has_selection then return false end
-
     if not current_config.groups then current_config.groups = {} end
     if current_config.groups[group_name] then return false end -- 重名检查
-
     -- 1. 创建分组结构
     local new_group = {
         mask = deep_copy_table(pending_material_selections),
         presets = {}
     }
-
     -- 2. 保持分组预设列表纯净，不再自动创建 "Initial" 预设。
     -- 用户进入分组后可根据需要手动保存第一个预设。
-
     -- 同时，需要从主列表的所有预设中移除这些材质的控制权，防止数据冗余
     if current_config.presets then
         for _, preset_data in pairs(current_config.presets) do
             for part_idx_str, mats in pairs(new_group.mask) do
                 if preset_data[part_idx_str] and preset_data[part_idx_str].materials then
-                    local p_mats = preset_data[part_idx_str].materials
                     for m_name, _ in pairs(mats) do
-                        p_mats[m_name] = nil
+                        preset_data[part_idx_str].materials[m_name] = nil
                     end
                 end
             end
         end
     end
-
     -- 3. 保存新分组并清空选择
     current_config.groups[group_name] = new_group
     pending_material_selections = {}
     is_selection_mode = false
-
     update_group_names_list()
     save_current_config_to_file(body_id)
     return true
@@ -1086,20 +937,16 @@ local function delete_group(group_name, body_id)
     if not group_name or group_name == "" then return false end
     if not body_id then return false end
     if not current_config.groups or not current_config.groups[group_name] then return false end
-
     -- 归还逻辑：删除分组时直接丢弃分组特有的预设数据
     -- 仅将材质控制权通过清除 mask 的方式归还给主列表（主列表预设中该材质的状态将恢复为默认或通过重新保存来定义）
-
     -- 删除分组
     current_config.groups[group_name] = nil
-
     -- 如果当前在被删除的分组，切换回主列表
     if current_group_name == group_name then
         current_group_name = ""
         selected_group_index = 1
         update_preset_names_list()
     end
-
     update_group_names_list()
     save_current_config_to_file(body_id)
     return true
@@ -1111,27 +958,15 @@ end
 -- 辅助函数：仅加载配置数据，不更新 UI 状态
 local function load_config_data(body_id)
     if not body_id then return nil end
-
-    -- 优先从缓存读取
-    if loaded_configs[body_id] then
-        return loaded_configs[body_id]
-    end
-
+    if loaded_configs[body_id] then return loaded_configs[body_id] end
     local path = get_config_path(body_id)
     local loaded_data = json.load_file(path)
-
     if loaded_data then
         -- 确保结构完整
         if not loaded_data.presets then loaded_data.presets = {} end
         if not loaded_data.default_preset then loaded_data.default_preset = "" end
         if not loaded_data.groups then loaded_data.groups = {} end
         if not loaded_data.transform_type then loaded_data.transform_type = "hp" end
-        if not loaded_data.weapon_transform_rules then
-            loaded_data.weapon_transform_rules = {
-                { state = "sheathed", targets = {} },
-                { state = "drawn", targets = {} }
-            }
-        end
         if loaded_data.is_parallel == nil then loaded_data.is_parallel = false end
         if not loaded_data.parallel_settings then
             loaded_data.parallel_settings = {
@@ -1148,7 +983,6 @@ local function load_config_data(body_id)
                 hammer_level = { enabled = false, priority = 11 }
             }
         else
-            -- 兼容旧版缺失的武器类型
             if not loaded_data.parallel_settings.spirit then
                 loaded_data.parallel_settings.spirit = { enabled = false, priority = 3 }
             end
@@ -1177,22 +1011,13 @@ local function load_config_data(body_id)
                 loaded_data.parallel_settings.hammer_level = { enabled = false, priority = 11 }
             end
         end
-        if not loaded_data.transform_rules then loaded_data.transform_rules = {}
-        else
-            -- 迁移旧版规则，为每个规则添加扩展字段（如果缺失）
-            for _, r in ipairs(loaded_data.transform_rules) do
-                if r.trigger_on_damage == nil then r.trigger_on_damage = false end
-                if r.duration == nil then r.duration = 0 end
-                if r.keep_until_state_ends == nil then r.keep_until_state_ends = false end
-                -- 兼容旧版预设迁移
-                if r.preset and type(r.preset) == "string" and not r.targets then
-                    r.targets = { { group = "", preset = r.preset } }
-                    r.preset = nil
-                end
-            end
+        if not loaded_data.transform_rules then loaded_data.transform_rules = {} end
+        if not loaded_data.weapon_transform_rules then
+            loaded_data.weapon_transform_rules = {
+                { state = "sheathed", targets = {} },
+                { state = "drawn", targets = {} }
+            }
         end
-
-        -- 确保各武器规则表存在
         if not loaded_data.spirit_transform_rules then
             loaded_data.spirit_transform_rules = {
                 { level = 1, targets = {} },
@@ -1270,12 +1095,10 @@ local function load_config_data(body_id)
                 { level = 3, targets = {} }
             }
         end
-
         -- 写入缓存
         loaded_configs[body_id] = loaded_data
         return loaded_data
     end
-
     return nil
 end
 
@@ -1284,15 +1107,12 @@ local function merge_preset_into_overrides(body_id, preset_data)
     if not body_id or not preset_data then return end
     if not active_overrides[body_id] then active_overrides[body_id] = {} end
     local overrides = active_overrides[body_id]
-
     for p_idx, p_data in pairs(preset_data) do
         if not overrides[p_idx] then overrides[p_idx] = { materials = {} } end
-
         -- 合并 Mesh 整体开关
         if p_data.mesh_enabled ~= nil then
             overrides[p_idx].mesh_enabled = p_data.mesh_enabled
         end
-
         -- 合并材质开关
         if p_data.materials then
             if not overrides[p_idx].materials then overrides[p_idx].materials = {} end
@@ -1307,7 +1127,6 @@ end
 local function merge_overrides(base_data, add_data)
     local result = deep_copy_table(base_data) or {}
     if not add_data then return result end
-
     for p_idx, p_data in pairs(add_data) do
         if not result[p_idx] then result[p_idx] = { materials = {} } end
         if p_data.mesh_enabled ~= nil then
@@ -1323,23 +1142,18 @@ local function merge_overrides(base_data, add_data)
     return result
 end
 
--- =============================================================================
 -- Transform Rules Application Logic
--- =============================================================================
 -- 辅助函数：应用一个 Body ID 的所有默认预设 (主列表 + 所有分组)
 local function apply_all_defaults(body_id)
     local config = load_config_data(body_id)
     if not config then return end
-
     -- 彻底重置该 Body 的复合状态
     active_overrides[body_id] = {}
-
     -- 1. 首先合并主列表默认预设
     if config.default_preset and config.default_preset ~= "" and config.presets then
         local def = config.presets[config.default_preset]
         if def then merge_preset_into_overrides(body_id, def) end
     end
-
     -- 2. 然后合并所有有效分组的默认预设 (增量合并)
     if config.groups then
         for _, g_data in pairs(config.groups) do
@@ -1354,12 +1168,10 @@ end
 -- 辅助函数：获取当前分组的预设数据
 local function get_current_preset_data(preset_name)
     if current_group_name == "" then
-        if current_config and current_config.presets then
-            return current_config.presets[preset_name]
-        end
+        return current_config.presets and current_config.presets[preset_name]
     else
-        if current_config and current_config.groups and current_config.groups[current_group_name] then
-            return current_config.groups[current_group_name].presets[preset_name]
+        if current_config.groups and current_config.groups[current_group_name] then
+            return current_config.groups[current_group_name].presets and current_config.groups[current_group_name].presets[preset_name]
         end
     end
     return nil
@@ -1369,14 +1181,12 @@ end
 local function apply_preset(preset_name)
     local preset_data = get_current_preset_data(preset_name)
     if not preset_data then return end
-
     local current_body_id = get_body_id()
     if current_body_id then
         -- 使用合并逻辑更新复合状态
         merge_preset_into_overrides(current_body_id, preset_data)
         temp_applied_presets[current_body_id] = preset_name
     end
-
     local all_chars = get_all_characters()
     for _, char in ipairs(all_chars) do
         local char_body_id = get_character_body_id(char)
@@ -1390,7 +1200,6 @@ end
 -- 辅助函数：加载指定 Body ID 的配置 (用于 UI 和本地玩家)
 local function load_body_config(body_id)
     if not body_id then return false end
-
     -- 1. 重置当前内存配置，确保切换到新 Body 时不残留旧数据
     current_config = {
         default_preset = "",
@@ -1476,20 +1285,16 @@ local function load_body_config(body_id)
             { level = 3, targets = {} }
         }
     }
-
     -- 2. 尝试加载数据
     local data = load_config_data(body_id)
-
     if data then
         current_config = data
         -- 写入缓存，避免重复尝试加载
         loaded_configs[body_id] = current_config
     end
-
     -- 3. 始终更新 UI 列表索引和名称列表，即使加载失败也要清除 UI
     update_group_names_list()
     update_preset_names_list()
-
     if data then
         -- 核心修复：调用 apply_all_defaults 进行全量合并加载
         apply_all_defaults(body_id)
@@ -1501,10 +1306,8 @@ end
 -- 辅助函数：保存配置到文件
 local function save_current_config_to_file(body_id)
     if not body_id then return end
-
     -- 更新缓存
     loaded_configs[body_id] = current_config
-
     local path = get_config_path(body_id)
     json.dump_file(path, current_config)
 end
@@ -1513,28 +1316,22 @@ end
 local function save_preset(preset_name, body_id)
     if not body_id then body_id = get_body_id() end
     if not body_id then return false end
-
     local character = get_local_player_character()
     if not character then return false end
-
     if not type_mesh then
         type_mesh = get_type("via.render.Mesh")
         if not type_mesh then return false end
     end
-
     local new_preset_data = {}
-
     for i = 0, 5 do
         local part_obj = get_character_part(character, i)
         if part_obj then
             local mesh_component = get_mesh_component_recursive(part_obj)
-
             if mesh_component then
                 local part_data = {
                     mesh_enabled = mesh_component:call("get_Enabled"),
                     materials = {}
                 }
-
                 local mat_count = mesh_component:call("get_MaterialNum")
                 if mat_count then
                     for j = 0, mat_count - 1 do
@@ -1546,7 +1343,6 @@ local function save_preset(preset_name, body_id)
                         end
                     end
                 end
-
                 -- 只有当该部位包含有效材质或整体开关被管理时才存入
                 if next(part_data.materials) or current_group_name == "" then
                     new_preset_data[tostring(i)] = part_data
@@ -1554,7 +1350,6 @@ local function save_preset(preset_name, body_id)
             end
         end
     end
-
     -- 保存到当前分组或主列表
     if current_group_name == "" then
         -- 保存到主列表
@@ -1572,7 +1367,6 @@ local function save_preset(preset_name, body_id)
         end
         current_config.groups[current_group_name].presets[preset_name] = new_preset_data
     end
-
     update_preset_names_list()
     save_current_config_to_file(body_id)
     return true
@@ -1581,31 +1375,22 @@ end
 -- 辅助函数：自动查找匹配的预设
 local function find_auto_preset(target_body_id)
     if not target_body_id then return false, "No Body ID" end
-
     -- 1. 获取当前 Body (Part 1) 的材质特征
     local character = get_local_player_character()
     if not character or not sdk.is_managed_object(character) then return false, "No Character" end
-
     local body_part = get_character_part(character, 1) -- 1 is Body
     if not body_part then return false, "Body part not found" end
-
     local mesh = get_mesh_component_recursive(body_part)
     if not mesh then return false, "Mesh not found" end
-
     local current_mats = {}
     local mat_count = mesh:call("get_MaterialNum")
     if not mat_count or mat_count == 0 then return false, "No materials on Body" end
-
     for i = 0, mat_count - 1 do
         local name = mesh:call("getMaterialName", i)
-        if name then
-            current_mats[name] = true
-        end
+        if name then current_mats[name] = true end
     end
-
     -- 2. 遍历所有 JSON 文件
     if not fs or not fs.glob then return false, "fs.glob missing" end
-
     -- 尝试更广泛的搜索路径，包含反斜杠版本
     -- 注意：fs.glob 使用正则表达式，因此必须使用 valid regex syntax
     -- * -> .*
@@ -1617,22 +1402,14 @@ local function find_auto_preset(target_body_id)
         "ArmorVariantManager\\\\.*\\.json",
         "data/ArmorVariantManager/.*\\.json"
     }
-
     local files = {}
-
     for _, pattern in ipairs(search_patterns) do
         local found = fs.glob(pattern)
         if found and #found > 0 then
-            for _, f in ipairs(found) do
-                table.insert(files, f)
-            end
+            for _, f in ipairs(found) do table.insert(files, f) end
         end
     end
-
-    if #files == 0 then
-        return false, "No preset files found"
-    end
-
+    if #files == 0 then return false, "No preset files found" end
     for _, file in ipairs(files) do
         -- 排除自身
         if not string.find(file, target_body_id) then
@@ -1645,38 +1422,22 @@ local function find_auto_preset(target_body_id)
                 data_prefix = "reframework/data/"
                 s, e = string.find(file, data_prefix)
             end
-
-            if e then
-                load_path = string.sub(file, e + 1)
-            end
-
+            if e then load_path = string.sub(file, e + 1) end
             local data = json.load_file(load_path)
-            if not data then
-                data = json.load_file(file)
-            end
-
+            if not data then data = json.load_file(file) end
             if data and data.presets then
                 -- 获取第一个预设
                 local first_preset = nil
-                for _, preset in pairs(data.presets) do
-                    first_preset = preset
-                    break
-                end
-
+                for _, preset in pairs(data.presets) do first_preset = preset; break end
                 -- 检查 Body (1) 的材质匹配度
                 if first_preset and first_preset["1"] and first_preset["1"].materials then
                     local preset_mats = first_preset["1"].materials
                     local match = true
                     local match_count = 0
-
                     for mat_name, _ in pairs(preset_mats) do
-                        if not current_mats[mat_name] then
-                            match = false
-                            break
-                        end
+                        if not current_mats[mat_name] then match = false; break end
                         match_count = match_count + 1
                     end
-
                     if match and match_count > 0 then
                         -- 找到匹配！
                         current_config = data
@@ -1688,19 +1449,106 @@ local function find_auto_preset(target_body_id)
             end
         end
     end
-
     return false, "No matching preset found"
 end
 
+-- 辅助函数：安全地获取组件并控制可见性
+local function draw_mesh_toggle(game_object, label, body_id, part_index)
+    if not game_object then return end
+    if not sdk.is_managed_object(game_object) then return end
+    if not type_mesh then
+        type_mesh = get_type("via.render.Mesh")
+        if not type_mesh then
+            imgui.text_colored(label .. " " .. T("type_loading"), 0xFF808080)
+            return
+        end
+    end
+    -- 获取 Mesh 组件
+    local mesh_component = game_object:call("getComponent(System.Type)", type_mesh:get_runtime_type())
+    if mesh_component then
+        if imgui.tree_node(label) then
+            -- 1. 整体 Mesh 开关
+            local is_enabled = mesh_component:call("get_Enabled")
+            local changed, new_value = imgui.checkbox(T("enable_mesh"), is_enabled)
+            if changed then
+                mesh_component:call("set_Enabled", new_value)
+                -- 更新 active_overrides
+                if body_id and part_index then
+                    local s_idx = tostring(part_index)
+                    if not active_overrides[body_id] then active_overrides[body_id] = {} end
+                    if not active_overrides[body_id][s_idx] then active_overrides[body_id][s_idx] = { materials = {} } end
+                    active_overrides[body_id][s_idx].mesh_enabled = new_value
+                end
+            end
+            -- 2. 遍历材质
+            local mat_count = mesh_component:call("get_MaterialNum")
+            if mat_count and mat_count > 0 then
+                imgui.separator()
+                imgui.text(T("materials") .. " (" .. tostring(mat_count) .. "):")
+                local s_idx = tostring(part_index)
+                for i = 0, mat_count - 1 do
+                    local mat_name = mesh_component:call("getMaterialName", i)
+                    if mat_name then
+                        local is_mat_enabled = mesh_component:call("getMaterialsEnable", i)
+                        local owner = get_material_group_owner(part_index, mat_name)
+                        -- A. 分组创建模式 (勾选要独立出去的材质)
+                        if is_selection_mode then
+                            local is_selected = pending_material_selections[s_idx] and pending_material_selections[s_idx][mat_name]
+                            if owner then
+                                -- 已被其他分组占用的材质只读显示
+                                imgui.text_colored(string.format("[%d] %s (%s: %s)", i, mat_name, T("already_in_group"), owner), 0xFF808080)
+                            else
+                                local changed_sel, new_sel = imgui.checkbox(string.format("[%d] %s", i, mat_name), is_selected or false)
+                                if changed_sel then
+                                    if not pending_material_selections[s_idx] then pending_material_selections[s_idx] = {} end
+                                    pending_material_selections[s_idx][mat_name] = new_sel
+                                end
+                            end
+                        else
+                            -- B. 正常管理模式 (根据上下文显示材质)
+                            if is_material_in_current_context(part_index, mat_name) then
+                                local mat_label = string.format("[%d] %s", i, mat_name)
+                                local mat_changed, mat_new_val = imgui.checkbox(mat_label, is_mat_enabled)
+                                if mat_changed then
+                                    mesh_component:call("setMaterialsEnable", i, mat_new_val)
+                                    if body_id and part_index then
+                                        if not active_overrides[body_id] then active_overrides[body_id] = {} end
+                                        if not active_overrides[body_id][s_idx] then active_overrides[body_id][s_idx] = { materials = {} } end
+                                        if not active_overrides[body_id][s_idx].materials then active_overrides[body_id][s_idx].materials = {} end
+                                        active_overrides[body_id][s_idx].materials[mat_name] = mat_new_val
+                                    end
+                                end
+                            else
+                                -- 显示已被分组管理的材质（置灰显示所有者）
+                                if current_group_name == "" and owner then
+                                    imgui.text_colored(string.format("[%d] %s (%s: %s)", i, mat_name, T("already_in_group"), owner), 0xFF804040)
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+            imgui.tree_pop()
+        end
+    else
+        -- 如果没有 Mesh 组件，显示禁用状态的文本
+        imgui.text_colored(label .. " " .. T("no_mesh"), 0xFF808080)
+    end
+end
+
+-- Debug 状态
+local show_debug_window = false
+
 -- =============================================================================
--- UI 辅助函数
 -- =============================================================================
+
 -- 辅助函数：在 UI 中绘制条件的目标列表（捕获外部的 body_id 和 current_config）
 local function draw_targets_ui(targets, rule_type, rule_idx)
     for j, target in ipairs(targets) do
         imgui.push_id(rule_type .. "_" .. rule_idx .. "_target_" .. j)
 
         -- 分组选择
+        -- 准备分组下拉框的数据
         local all_groups = { "" }
         local all_groups_display = { T("main_list") or "Main" }
         if current_config.groups then
@@ -1757,19 +1605,16 @@ local function draw_targets_ui(targets, rule_type, rule_idx)
     end
 end
 
--- Debug 状态
-local show_debug_window = false
-
 -- =============================================================================
 -- 每一帧执行
 -- =============================================================================
+-- temp_applied_presets 已在文件头部定义
 re.on_frame(function()
     -- 0. 执行分帧扫描器
     tick_scanner()
 
     -- 1. 维护本地玩家 UI 状态
     local local_body_id = get_body_id()
-
     if local_body_id then
         if local_body_id ~= last_body_id then
             -- 修正重置顺序：先更新 ID，再重置状态，最后执行加载
@@ -1782,26 +1627,24 @@ re.on_frame(function()
         last_body_id = nil
     end
 
-    -- 2. 遍历所有玩家并应用配置（含变身规则）
+    -- 遍历所有角色并应用规则引擎
+    -- 2. 遍历所有玩家并应用配置
     local all_chars = get_all_characters()
     for _, char in ipairs(all_chars) do
         local char_body_id = get_character_body_id(char)
         if char_body_id then
             -- 加载配置 (如果尚未加载)
             local config = load_config_data(char_body_id)
-
             -- 初始化 active_overrides (如果不存在)
             -- 无论是进入场景还是切换装备，如果没有状态记录，则全量加载默认项
             if not active_overrides[char_body_id] then
                 apply_all_defaults(char_body_id)
             end
-
             -- 应用 active_overrides 和变身规则
             if active_overrides[char_body_id] then
                 if char and sdk.is_managed_object(char) then
                     local char_go_ok, char_go = pcall(function() return char:call("get_GameObject") end)
                     local char_addr = (char_go_ok and char_go) and tostring(char_go) or tostring(char)
-
                     local final_overrides = active_overrides[char_body_id]
                     local new_overrides, changed = TransformManager.apply_transform_rules(
                         char_addr, config, char, final_overrides, merge_overrides
@@ -1819,15 +1662,16 @@ end)
 -- =============================================================================
 -- UI 绘制
 -- =============================================================================
+-- UI 绘制回调
 re.on_draw_ui(function()
     if imgui.tree_node(T("mod_name")) then
         imgui.text_colored(string.format(T("version") .. ": %s | " .. T("author") .. ": %s", version, author), 0xFF808080)
         imgui.separator()
 
-        -- 调试窗口（默认隐藏，需要时取消注释）
-        -- local changed, val = imgui.checkbox("Debug Mode", show_debug_window)
+        -- 仅在调试模式下打印错误，避免刷屏
+        -- 调试模式开关 (默认隐藏，需要时取消注释)
+        -- local changed, val = imgui.checkbox(T("debug_mode") or "Debug Mode", show_debug_window)
         -- if changed then show_debug_window = val end
-
         if show_debug_window then
             if imgui.tree_node("Debug Info") then
                 local all_chars = get_all_characters()
@@ -1869,12 +1713,13 @@ re.on_draw_ui(function()
             local character = get_local_player_character()
             if character and sdk.is_managed_object(character) then
                 local body_id = get_body_id()
+                -- imgui.text(T("current_body_id") .. tostring(body_id))
                 if body_id then
                     -- ========== 预设管理区域 ==========
                     if imgui.tree_node(T("presets_manager") .. " (" .. body_id .. ")") then
                         -- 使用 pcall 包裹整个预设管理区域，防止 UI 脚本报错导致 ImGui Mismatch 崩溃
                         local ui_status, ui_err = pcall(function()
-                            -- 准备数据
+                            -- 1. 准备数据
                             local full_group_list = {T("main_list")}
                             for _, gname in ipairs(group_names_list) do table.insert(full_group_list, gname) end
                             local current_group_combo_index = 1
@@ -1884,7 +1729,8 @@ re.on_draw_ui(function()
                                 end
                             end
 
-                            -- 预设与分组选择 (左右分区布局)
+                            -- 2. 预设与分组选择 (左右分区布局 - 已对调位置)
+                            -- 使用分行对齐策略，确保文字标签在同一水平线上
                             if imgui.begin_table("PresetsLayout", 2, 512) then
                                 imgui.table_setup_column("PresetArea", 2048, 1.0)
                                 imgui.table_setup_column("GroupArea", 2048, 1.0)
@@ -2007,6 +1853,7 @@ re.on_draw_ui(function()
                             end
 
                             -- 分组材质预览
+                            -- 4. 分组预览 (保持在下方)
                             if current_group_name ~= "" then
                                 local group_data = current_config.groups[current_group_name]
                                 if group_data and group_data.mask and imgui.tree_node(T("materials") .. " in " .. current_group_name) then
@@ -2020,7 +1867,7 @@ re.on_draw_ui(function()
                                 end
                             end
 
-                            -- 自动查找预设（仅在没有任何预设数据时显示）
+                            -- C. 自动查找 (仅在没有任何预设数据时显示)
                             local has_any_data = (next(current_config.presets) ~= nil)
                             if not has_any_data and current_config.groups then
                                 for _, g in pairs(current_config.groups) do
@@ -2038,6 +1885,7 @@ re.on_draw_ui(function()
                         end)
                         if not ui_status then
                             imgui.text_colored("UI Error: " .. tostring(ui_err), 0xFFFF0000)
+                            -- 注意：只有在确定表格处于开启状态时才需要闭合。但在复杂的 UI 异常中盲目闭合可能导致 ImGui 崩溃
                             pcall(imgui.end_table)
                         end
                         imgui.tree_pop()
@@ -2048,7 +1896,7 @@ re.on_draw_ui(function()
                     -- ========== 变身管理区域 ==========
                     if imgui.tree_node(T("transform_manager") .. " (" .. body_id .. ")") then
                         local inner_status, inner_err = pcall(function()
-                            -- 模块状态提示（所有武器模块均已内置，无需警告，但保留函数调用以便将来调试）
+                            -- 模块状态提示
                             if not TransformManager.is_hp_module_initialized() then
                                 imgui.text_colored(T("hp_module_not_found"), 0xFF0000FF)
                             end
@@ -2081,7 +1929,7 @@ re.on_draw_ui(function()
                             end
                             imgui.separator()
 
-                            -- 模式选择：单一条件 / 并行条件
+                            -- 模式选择
                             local mode_text = current_config.is_parallel and T("current_mode_parallel") or T("current_mode_selection")
                             imgui.text(mode_text)
                             local parallel_btn_text = current_config.is_parallel and T("switch_to_selection") or T("switch_to_parallel")
@@ -2165,7 +2013,7 @@ re.on_draw_ui(function()
                             end
                             imgui.separator()
 
-                            -- 辅助函数：显示某个规则类型的配置（用于武器规则等）
+                            -- 辅助函数：显示某个规则类型的配置
                             local function show_rule_list(rules, rule_type, get_display_name_func)
                                 if not rules then return end
                                 for i, rule in ipairs(rules) do
@@ -2177,7 +2025,20 @@ re.on_draw_ui(function()
                                     if not rule.targets then rule.targets = {} end
                                     draw_targets_ui(rule.targets, rule_type, i)
                                     if imgui.button("+ " .. T("add_condition") .. "##add_" .. rule_type .. "_" .. i) then
-                                        table.insert(rule.targets, { group = "", preset = "" })
+                                        -- 修复：获取当前上下文的默认预设
+                                        local function get_current_default_preset()
+                                            if current_group_name == "" then
+                                                return current_config.default_preset or ""
+                                            else
+                                                local group = current_config.groups and current_config.groups[current_group_name]
+                                                if group then
+                                                    return group.default_preset or ""
+                                                end
+                                            end
+                                            return ""
+                                        end
+                                        local default_preset = get_current_default_preset()
+                                        table.insert(rule.targets, { group = "", preset = default_preset })
                                         save_current_config_to_file(body_id)
                                     end
                                     imgui.unindent(20)
@@ -2186,11 +2047,11 @@ re.on_draw_ui(function()
                                 end
                             end
 
-                            -- ========== HP 规则（含受击触发、持续时间、状态保持） ==========
+                            -- HP 规则
                             local show_hp = (not current_config.is_parallel and current_config.transform_type == "hp") or
                                            (current_config.is_parallel and current_config.parallel_settings.hp and current_config.parallel_settings.hp.enabled)
                             if show_hp then
-                                -- 当前生命值百分比展示（调试用）
+                                -- 当前生命值百分比展示 (调试用)
                                 local cur_hp = TransformManager.get_character_hp_percent(character)
                                 if cur_hp then
                                     imgui.text(string.format(T("cur_hp_percent"), cur_hp))
@@ -2208,110 +2069,58 @@ re.on_draw_ui(function()
                                     end
                                     imgui.separator()
                                 end
-
                                 if not current_config.transform_rules then current_config.transform_rules = {} end
-                                local rules = current_config.transform_rules
-
                                 if imgui.button(T("add_node")) then
-                                    -- 新增节点时初始化扩展字段（受击触发默认关闭，阈值默认50，持续时间0，状态保持关闭）
-                                    table.insert(rules, {
-                                        threshold = 50,
-                                        targets = {},
-                                        trigger_on_damage = false,
-                                        duration = 0,
-                                        keep_until_state_ends = false
-                                    })
+                                    table.insert(current_config.transform_rules, { threshold = 100, targets = {} })
                                     save_current_config_to_file(body_id)
                                 end
                                 imgui.separator()
-
-                                for i, rule in ipairs(rules) do
-                                    imgui.push_id("transform_rule_" .. i)
+                                for i, rule in ipairs(current_config.transform_rules) do
+                                    imgui.push_id("hp_rule_" .. i)
                                     imgui.spacing()
-
-                                    -- 声明所有可能被 goto 跳过的局部变量（提升到顶部，修复语法错误）
-                                    local c_dmg, v_dmg
-                                    local c_t, v_t_str
-                                    local c_dur, v_dur_str
-                                    local c_keep, v_keep
-
-                                    -- 受击触发复选框
-                                    if rule.trigger_on_damage == nil then rule.trigger_on_damage = false end
-                                    c_dmg, v_dmg = imgui.checkbox(T("trigger_on_damage") .. "##" .. i, rule.trigger_on_damage)
-                                    if c_dmg then
-                                        rule.trigger_on_damage = v_dmg
-                                        save_current_config_to_file(body_id)
-                                    end
-                                    imgui.same_line()
-                                    imgui.text_colored(T("trigger_on_damage_desc"), 0xFF808080)
-                                    imgui.spacing()
-
-                                    if not rule.trigger_on_damage then
-                                        -- 传统血量阈值输入
-                                        imgui.set_next_item_width(120)
-                                        c_t, v_t_str = imgui.input_text(T("hp_percent") .. "##" .. i, tostring(rule.threshold))
-                                        if c_t then
-                                            local num = tonumber(v_t_str)
-                                            if num then
-                                                if num < 1 then num = 1 end
-                                                if num > 100 then num = 100 end
-                                                rule.threshold = num
-                                                save_current_config_to_file(body_id)
-                                            end
-                                        end
-                                        imgui.same_line()
-                                    end
-
-                                    -- 删除节点按钮
-                                    if imgui.button(T("delete_node") .. "##" .. i) then
-                                        table.remove(rules, i)
-                                        save_current_config_to_file(body_id)
-                                        imgui.pop_id()
-                                        goto continue_hp_rule
-                                    end
-
-                                    -- 持续时间输入
-                                    if rule.duration == nil then rule.duration = 0 end
                                     imgui.set_next_item_width(120)
-                                    c_dur, v_dur_str = imgui.input_text(T("duration") .. "##" .. i, tostring(rule.duration))
-                                    if c_dur then
-                                        local num = tonumber(v_dur_str)
+                                    local c_t, v_t_str = imgui.input_text(T("hp_percent") .. "##" .. i, tostring(rule.threshold))
+                                    if c_t then
+                                        local num = tonumber(v_t_str)
                                         if num then
-                                            if num < 0 then num = 0 end
-                                            rule.duration = num
+                                            if num < 1 then num = 1 end
+                                            if num > 100 then num = 100 end
+                                            rule.threshold = num
                                             save_current_config_to_file(body_id)
                                         end
                                     end
                                     imgui.same_line()
-                                    imgui.text_colored(T("duration_desc"), 0xFF808080)
-
-                                    -- 状态保持复选框（仅对非受击触发规则显示）
-                                    if not rule.trigger_on_damage then
-                                        if rule.keep_until_state_ends == nil then rule.keep_until_state_ends = false end
-                                        c_keep, v_keep = imgui.checkbox(T("keep_state") .. "##" .. i, rule.keep_until_state_ends)
-                                        if c_keep then
-                                            rule.keep_until_state_ends = v_keep
-                                            save_current_config_to_file(body_id)
-                                        end
+                                    if imgui.button(T("delete_node") .. "##" .. i) then
+                                        table.remove(current_config.transform_rules, i)
+                                        save_current_config_to_file(body_id)
                                     end
-
-                                    -- 条件目标列表（分组 + 预设）
+                                    -- 缩进显示 Conditions
                                     imgui.indent(20)
                                     if not rule.targets then rule.targets = {} end
                                     draw_targets_ui(rule.targets, "hp", i)
                                     if imgui.button("+ " .. T("add_condition") .. "##hp_add_" .. i) then
-                                        table.insert(rule.targets, { group = "", preset = "" })
+                                        local function get_current_default_preset()
+                                            if current_group_name == "" then
+                                                return current_config.default_preset or ""
+                                            else
+                                                local group = current_config.groups and current_config.groups[current_group_name]
+                                                if group then
+                                                    return group.default_preset or ""
+                                                end
+                                            end
+                                            return ""
+                                        end
+                                        local default_preset = get_current_default_preset()
+                                        table.insert(rule.targets, { group = "", preset = default_preset })
                                         save_current_config_to_file(body_id)
                                     end
                                     imgui.unindent(20)
                                     imgui.separator()
-
-                                    ::continue_hp_rule::
                                     imgui.pop_id()
                                 end
                             end
 
-                            -- ========== 武器规则 ==========
+                            -- 武器规则
                             local show_weapon = (not current_config.is_parallel and current_config.transform_type == "weapon") or
                                                (current_config.is_parallel and current_config.parallel_settings.weapon and current_config.parallel_settings.weapon.enabled)
                             if show_weapon then
@@ -2329,7 +2138,7 @@ re.on_draw_ui(function()
                                 end)
                             end
 
-                            -- ========== 太刀气刃规则 ==========
+                            -- 气刃规则
                             local show_spirit = (not current_config.is_parallel and current_config.transform_type == "spirit") or
                                                (current_config.is_parallel and current_config.parallel_settings.spirit and current_config.parallel_settings.spirit.enabled)
                             if show_spirit then
@@ -2354,7 +2163,7 @@ re.on_draw_ui(function()
                                 end)
                             end
 
-                            -- ========== 双刀鬼人规则 ==========
+                            -- 双刀鬼人规则
                             local show_dual = (not current_config.is_parallel and current_config.transform_type == "dual_blades") or
                                              (current_config.is_parallel and current_config.parallel_settings.dual_blades and current_config.parallel_settings.dual_blades.enabled)
                             if show_dual then
@@ -2381,7 +2190,7 @@ re.on_draw_ui(function()
                                 end)
                             end
 
-                            -- ========== 斩斧规则 ==========
+                            -- 斩斧规则
                             local show_switch_axe = (not current_config.is_parallel and current_config.transform_type == "switch_axe") or
                                                    (current_config.is_parallel and current_config.parallel_settings.switch_axe and current_config.parallel_settings.switch_axe.enabled)
                             if show_switch_axe then
@@ -2411,7 +2220,7 @@ re.on_draw_ui(function()
                                 end)
                             end
 
-                            -- ========== 虫棍灯色规则 ==========
+                            -- 虫棍灯色规则
                             local show_insect_glaive = (not current_config.is_parallel and current_config.transform_type == "insect_glaive") or
                                                       (current_config.is_parallel and current_config.parallel_settings.insect_glaive and current_config.parallel_settings.insect_glaive.enabled)
                             if show_insect_glaive then
@@ -2444,7 +2253,7 @@ re.on_draw_ui(function()
                                 end)
                             end
 
-                            -- ========== 盾斧规则 ==========
+                            -- 盾斧规则
                             local show_charge_blade = (not current_config.is_parallel and current_config.transform_type == "charge_blade") or
                                                      (current_config.is_parallel and current_config.parallel_settings.charge_blade and current_config.parallel_settings.charge_blade.enabled)
                             if show_charge_blade then
@@ -2483,7 +2292,7 @@ re.on_draw_ui(function()
                                 end)
                             end
 
-                            -- ========== 大剑蓄力类型规则 ==========
+                            -- 大剑蓄力类型规则
                             local show_greatsword_type = (not current_config.is_parallel and current_config.transform_type == "greatsword_type") or
                                                         (current_config.is_parallel and current_config.parallel_settings.greatsword_type and current_config.parallel_settings.greatsword_type.enabled)
                             if show_greatsword_type then
@@ -2517,7 +2326,7 @@ re.on_draw_ui(function()
                                 end)
                             end
 
-                            -- ========== 大剑蓄力等级规则 ==========
+                            -- 大剑蓄力等级规则
                             local show_greatsword_level = (not current_config.is_parallel and current_config.transform_type == "greatsword_level") or
                                                          (current_config.is_parallel and current_config.parallel_settings.greatsword_level and current_config.parallel_settings.greatsword_level.enabled)
                             if show_greatsword_level then
@@ -2537,7 +2346,7 @@ re.on_draw_ui(function()
                                 end)
                             end
 
-                            -- ========== 弓箭蓄力等级规则 ==========
+                            -- 弓箭蓄力等级规则
                             local show_bow_level = (not current_config.is_parallel and current_config.transform_type == "bow_level") or
                                                   (current_config.is_parallel and current_config.parallel_settings.bow_level and current_config.parallel_settings.bow_level.enabled)
                             if show_bow_level then
@@ -2567,7 +2376,7 @@ re.on_draw_ui(function()
                                 end)
                             end
 
-                            -- ========== 大锤蓄力等级规则 ==========
+                            -- 大锤蓄力等级规则
                             local show_hammer_level = (not current_config.is_parallel and current_config.transform_type == "hammer_level") or
                                                      (current_config.is_parallel and current_config.parallel_settings.hammer_level and current_config.parallel_settings.hammer_level.enabled)
                             if show_hammer_level then
@@ -2606,6 +2415,7 @@ re.on_draw_ui(function()
                     imgui.separator()
 
                     -- ========== 防具部位列表 ==========
+                    -- 1. 遍历防具部位 (Helm, Body, Arm, Waist, Leg)
                     local armor_parts = {
                         [0] = T("helm"),
                         [1] = T("body"),
@@ -2619,12 +2429,15 @@ re.on_draw_ui(function()
                             local part_obj = get_character_part(character, i)
                             local part_name = armor_parts[i]
                             if part_obj then
+                                -- 尝试获取 Mesh 组件 (支持递归查找)
                                 local mesh_comp = get_mesh_component_recursive(part_obj)
                                 if mesh_comp then
+                                    -- 使用拥有 Mesh 的 GameObject 进行绘制
                                     local mesh_game_obj = mesh_comp:call("get_GameObject")
                                     local obj_name = mesh_game_obj:call("get_Name")
                                     draw_mesh_toggle(mesh_game_obj, string.format("%s [%s]", part_name, obj_name), body_id, i)
                                 else
+                                    -- 虽然找到了部位对象，但没有 Mesh
                                     local obj_name = part_obj:call("get_Name")
                                     imgui.text_colored(string.format("%s [%s] (No Mesh)", part_name, obj_name), 0xFF808080)
                                 end
@@ -2639,6 +2452,7 @@ re.on_draw_ui(function()
 
                     -- ========== 语言切换 ==========
                     if imgui.tree_node(T("language")) then
+                        -- 使用 Checkbox 模拟 RadioButton (因为 radio_button 可能不可用)
                         local is_en = global_config.language == "en"
                         local changed_en, new_en = imgui.checkbox("English", is_en)
                         if changed_en and new_en then
@@ -2688,7 +2502,6 @@ re.on_draw_ui(function()
                 imgui.text_colored(T("waiting_for_player"), 0xFF0000FF)
             end
         end)
-
         -- 如果发生错误，显示错误信息
         if not status then
             imgui.text_colored(T("lua_error") .. tostring(err), 0xFF0000FF)
@@ -2696,155 +2509,3 @@ re.on_draw_ui(function()
         imgui.tree_pop()
     end
 end)
-
--- ==========================================================
--- 受击触发与倒计时独立状态机 (Damage Timer Module)
--- 功能：无视固定血量，在角色受到伤害的瞬间触发特定规则并开始倒计时
--- ==========================================================
-
-local DamageTimer = {}
-
--- 计时器状态存储：key = char_addr, value = { rule, end_time, finished, is_healed, was_damage_triggered }
-local timer_states = {}
--- 上一帧血量记录：用于检测受击
-local last_frame_hp = {}
-
---- 评估 HP 规则（受击触发、持续时间、状态保持）
---- @param char_addr string 角色地址（用于状态存储）
---- @param cur_hp number 当前血量百分比
---- @param rules table 规则列表，每个规则包含 threshold, targets, trigger_on_damage, duration, keep_until_state_ends
---- @return table|nil 匹配的规则，如果没有匹配则返回 nil
-function DamageTimer.evaluate_hp_rules(char_addr, cur_hp, rules)
-    if not rules or #rules == 0 then return nil end
-    if not cur_hp then return nil end
-
-    -- 1. 检测受击状态 (对比上一帧血量，降低超过0.1视为受伤)
-    local prev_hp = last_frame_hp[char_addr]
-    local took_damage = false
-    if prev_hp and (prev_hp - cur_hp) > 0.1 then
-        took_damage = true
-    end
-    last_frame_hp[char_addr] = cur_hp
-
-    -- 2. 获取当前角色身上的计时器状态
-    local current_time = os.clock()
-    local current_timer = timer_states[char_addr]
-
-    -- 【重要修复】：如果用户在 UI 面板中途修改了触发类型（如从“血量触发”改为“受击触发”），立刻废除旧的残留计时状态
-    if current_timer and current_timer.rule then
-        if current_timer.was_damage_triggered ~= current_timer.rule.trigger_on_damage then
-            current_timer = nil
-            timer_states[char_addr] = nil
-        end
-    end
-
-    -- 3. 匹配最高优先级的规则
-    -- 优先级规则：受击触发规则 > 血量阈值规则（阈值小的优先级高）
-    local matched_rule = nil
-    local sorted_rules = {}
-    for _, r in ipairs(rules) do
-        table.insert(sorted_rules, r)
-    end
-    table.sort(sorted_rules, function(a, b)
-        if a.trigger_on_damage and not b.trigger_on_damage then return true end
-        if not a.trigger_on_damage and b.trigger_on_damage then return false end
-        if not a.trigger_on_damage and not b.trigger_on_damage then
-            return (a.threshold or 100) < (b.threshold or 100)
-        end
-        return false
-    end)
-
-    for _, r in ipairs(sorted_rules) do
-        if r.trigger_on_damage then
-            if took_damage then
-                matched_rule = r
-                break
-            end
-        else
-            if cur_hp <= (r.threshold or 0) then
-                matched_rule = r
-                break
-            end
-        end
-    end
-
-    -- 4. 保护处于激活状态的受击倒计时（持续时间尚未结束的受击规则优先保持）
-    if current_timer and not current_timer.finished and current_timer.was_damage_triggered then
-        local is_time_valid = (current_timer.end_time == 0) or (current_time < current_timer.end_time)
-        if is_time_valid then
-            -- 除非再次受击触发了新的受击规则，否则保持当前倒计时不受其他规则干扰
-            if not (took_damage and matched_rule and matched_rule.trigger_on_damage) then
-                matched_rule = current_timer.rule
-            end
-        end
-    end
-
-    -- 5. 状态机更新
-    if matched_rule then
-        -- 如果是新受击，或者规则变了，或者还没有计时器，则重启/新建计时器
-        if (matched_rule.trigger_on_damage and took_damage) or not current_timer or current_timer.rule ~= matched_rule then
-            current_timer = {
-                rule = matched_rule,
-                end_time = (matched_rule.duration and matched_rule.duration > 0) and (current_time + matched_rule.duration) or 0,
-                finished = false,
-                is_healed = false,
-                was_damage_triggered = matched_rule.trigger_on_damage -- 严格记录启动时的触发类型
-            }
-            timer_states[char_addr] = current_timer
-        else
-            -- 规则没变，持续激活状态
-            current_timer.is_healed = false
-        end
-    else
-        -- 没有任何规则匹配当前状态，标记为已恢复健康
-        if current_timer then
-            current_timer.is_healed = true
-        end
-    end
-
-    -- 6. 输出判定结果
-    if current_timer and not current_timer.finished then
-        local rule = current_timer.rule
-        local has_timer = (current_timer.end_time > 0)
-        local is_timer_running = has_timer and (current_time < current_timer.end_time)
-        local is_state_active = (matched_rule == rule)
-
-        local should_show = false
-
-        if rule.trigger_on_damage then
-            -- 受击触发：纯看计时器
-            if has_timer then
-                should_show = is_timer_running
-            else
-                should_show = true -- 如果持续时间设为0，则永久变身
-            end
-        else
-            -- 传统血量阈值触发：看计时器与当前血量状态
-            if has_timer then
-                if rule.keep_until_state_ends then
-                    should_show = is_timer_running or is_state_active
-                else
-                    should_show = is_timer_running
-                end
-            else
-                -- 无计时器且不是受击触发：纯看当前血量
-                should_show = is_state_active
-            end
-        end
-
-        if should_show then
-            return rule
-        else
-            current_timer.finished = true
-        end
-    end
-
-    -- 7. 垃圾回收：计时器结束且已恢复健康时清除状态
-    if current_timer and current_timer.finished and current_timer.is_healed then
-        timer_states[char_addr] = nil
-    end
-
-    return nil
-end
-
-return DamageTimer

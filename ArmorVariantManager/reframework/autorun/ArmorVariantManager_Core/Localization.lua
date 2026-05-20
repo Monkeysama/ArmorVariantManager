@@ -167,13 +167,7 @@ local Localization = {
         ["hammer_level_1"] = "Level 1",
         ["hammer_level_2"] = "Level 2",
         ["hammer_level_3"] = "Level 3",
-        ["hammer_module_not_found"] = "Hammer Module: Not Found",
-        -- New timer/damage fields
-        ["duration"] = "Duration (s)",
-        ["duration_desc"] = "(0 = Infinite)",
-        ["keep_state"] = "Keep until state ends",
-        ["trigger_on_damage"] = "Trigger on Damage",
-        ["trigger_on_damage_desc"] = "(Ignores HP %, triggers instantly on hit)"
+        ["hammer_module_not_found"] = "Hammer Module: Not Found"
     },
     ["zh"] = {
         ["mod_name"] = "装备差分管理器",
@@ -343,13 +337,7 @@ local Localization = {
         ["hammer_level_1"] = "等级1",
         ["hammer_level_2"] = "等级2",
         ["hammer_level_3"] = "等级3",
-        ["hammer_module_not_found"] = "大锤模块未找到",
-        -- New timer/damage fields
-        ["duration"] = "持续时间(秒)",
-        ["duration_desc"] = "(填 0 表示不限时)",
-        ["keep_state"] = "当前状态结束前持续显示",
-        ["trigger_on_damage"] = "受击瞬间触发",
-        ["trigger_on_damage_desc"] = "(无视血量百分比，每次挨打立刻触发变身)"
+        ["hammer_module_not_found"] = "大锤模块未找到"
     }
 }
 
