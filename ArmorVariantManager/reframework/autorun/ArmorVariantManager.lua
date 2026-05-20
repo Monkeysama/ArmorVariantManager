@@ -1210,8 +1210,15 @@ local function apply_preset(preset_name)
     for _, char in ipairs(all_chars) do
         local char_body_id = get_character_body_id(char)
         if char_body_id and char_body_id == current_body_id then
+            -- 当用户手动应用预设时，重新计算包含变身规则在内的最终状态
+            local config = load_config_data(char_body_id)
+            local char_go_ok, char_go = pcall(function() return char:call("get_GameObject") end)
+            local char_addr = (char_go_ok and char_go) and tostring(char_go) or tostring(char)
+            local new_overrides, _ = TransformManager.apply_transform_rules(
+                char_addr, config, char, active_overrides[current_body_id], merge_overrides
+            )
             -- 立即应用复合后的总状态，并忽略材质上下文过滤
-            apply_preset_to_character(char, active_overrides[current_body_id], true, true)
+            apply_preset_to_character(char, new_overrides, true, true)
         end
     end
 end
@@ -1658,6 +1665,14 @@ re.on_frame(function()
             -- 无论是进入场景还是切换装备，如果没有状态记录，则全量加载默认项
             if not active_overrides[char_body_id] then
                 apply_all_defaults(char_body_id)
+                
+                -- 当更换装备/第一次加载时，强制重算并应用一次变身规则，防止默认模型覆盖掉规则
+                local char_go_ok, char_go = pcall(function() return char:call("get_GameObject") end)
+                local char_addr = (char_go_ok and char_go) and tostring(char_go) or tostring(char)
+                local new_overrides, _ = TransformManager.apply_transform_rules(
+                    char_addr, config, char, active_overrides[char_body_id], merge_overrides
+                )
+                apply_preset_to_character(char, new_overrides, true, true)
             end
             -- 应用 active_overrides 和变身规则
             if active_overrides[char_body_id] then
@@ -1669,8 +1684,15 @@ re.on_frame(function()
                         char_addr, config, char, final_overrides, merge_overrides
                     )
                     if changed then
-                        active_overrides[char_body_id] = new_overrides
+                        -- 不要把 active_overrides 覆盖掉！
+                        -- active_overrides 保存的是基础状态(Base State)，new_overrides 是基础状态叠加变身规则后的结果。
+                        -- 如果覆盖了，基础状态就会丢失，导致变身永远无法回退。
                         apply_preset_to_character(char, new_overrides, true, true)
+                    else
+                        -- 变身状态未改变时，也需要检查并应用
+                        -- 因为玩家可能在装备箱更换了防具导致网格更新，需要重新覆盖为当前变身/默认状态
+                        -- 传入 force_apply=false，通过 hash 对比网格是否有变动
+                        apply_preset_to_character(char, new_overrides, true, false)
                     end
                 end
             end

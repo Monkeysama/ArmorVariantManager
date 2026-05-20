@@ -8,6 +8,26 @@ local DamageTimer = require("ArmorVariantManager_Core.DamageTimer")
 -- =============================================================================
 local weapon_state_initialized = false
 local weapon_state_getter = nil
+local type_hunter_character = nil
+
+local function get_hunter_character(character)
+    if not character then return nil end
+    local type_name = character:get_type_definition():get_name()
+    if type_name and string.find(type_name, "HunterCharacter") then return character end
+    
+    if not type_hunter_character then
+        type_hunter_character = sdk.typeof("app.HunterCharacter")
+    end
+    
+    local ok, game_obj = pcall(function() return character:call("get_GameObject") end)
+    if ok and game_obj and type_hunter_character then
+        local hc_ok, hc = pcall(function() return game_obj:call("getComponent(System.Type)", type_hunter_character) end)
+        if hc_ok and hc then
+            return hc
+        end
+    end
+    return character
+end
 
 local function init_weapon_state_reflection(character)
     if weapon_state_initialized then return end
@@ -41,13 +61,15 @@ end
 
 function TransformManager.get_character_weapon_drawn(character)
     if not character then return false end
-    if not weapon_state_initialized then init_weapon_state_reflection(character) end
+    local target_char = get_hunter_character(character)
+    if not weapon_state_initialized then init_weapon_state_reflection(target_char) end
     if not weapon_state_getter then return false end
     if weapon_state_getter.is_field then
-        local res = weapon_state_getter.field:get_data(character)
-        return res == true
+        local ok, res = pcall(function() return weapon_state_getter.field:get_data(target_char) end)
+        if ok then return res == true end
+        return false
     else
-        local ok, res = pcall(function() return weapon_state_getter.method:call(character) end)
+        local ok, res = pcall(function() return weapon_state_getter.method:call(target_char) end)
         if ok and res ~= nil then
             if weapon_state_getter.is_enum then
                 return tonumber(res) > 0
@@ -471,6 +493,7 @@ local function get_active_rule_for_type(t_type, config, character, char_addr)
             local rule = DamageTimer.evaluate_damage_rules(char_addr, cur_hp, config.damage_transform_rules[1])
             return rule, "dmg"
         end
+    elseif t_type == "weapon" then
         local drawn = TransformManager.get_character_weapon_drawn(character)
         local target = drawn and "drawn" or "sheathed"
         if config.weapon_transform_rules then
