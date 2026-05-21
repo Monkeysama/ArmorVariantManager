@@ -16,11 +16,13 @@ local function get_switch_axe_state_direct(character)
     local ok_sword_awaken, sword_awaken = pcall(function() return wh:call("get_IsSwordAwaken") end)
     if not ok_sword_awaken then sword_awaken = false end
     if mode == 0 then
-        if sword_awaken then return "sword_awakened"
-        else return "sword_normal" end
-    else
+        -- 斧模式
         if axe_enh then return "axe_enhanced"
         else return "axe_normal" end
+    else
+        -- 剑模式
+        if sword_awaken then return "sword_awakened"
+        else return "sword_normal" end
     end
 end
 
