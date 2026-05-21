@@ -47,6 +47,31 @@ function TransformManager.has_bow_getter() return ConditionRegistry.bow_level.ha
 function TransformManager.has_hammer_getter() return ConditionRegistry.hammer_level.has_getter() end
 
 -- =============================================================================
+-- 武器类型获取模块 (用于过滤不匹配的武器条件)
+-- =============================================================================
+local weapon_type_getter = nil
+
+local function init_weapon_type_reflection(character)
+    if weapon_type_getter then return end
+    local type_def = character:get_type_definition()
+    if not type_def then return end
+    local method = type_def:get_method("get_WeaponType")
+    if method then
+        weapon_type_getter = method
+    end
+end
+
+function TransformManager.get_character_weapon_type(character)
+    if not character then return nil end
+    if not weapon_type_getter then init_weapon_type_reflection(character) end
+    if weapon_type_getter then
+        local ok, wt = pcall(function() return weapon_type_getter:call(character) end)
+        if ok and type(wt) == "number" then return wt end
+    end
+    return nil
+end
+
+-- =============================================================================
 -- 规则引擎
 -- =============================================================================
 local last_state_cache = {}
@@ -64,6 +89,21 @@ end
 function TransformManager.apply_transform_rules(char_addr, config, character, active_overrides, merge_overrides)
     if not active_overrides then return active_overrides, false end
     
+    -- 武器类型映射表：条件类型 -> 所需的 WeaponType 值
+    local weapon_type_required = {
+        spirit = 3,           -- 太刀
+        dual_blades = 2,      -- 双刀
+        switch_axe = 8,       -- 斩斧
+        insect_glaive = 10,   -- 虫棍
+        charge_blade = 9,     -- 盾斧
+        greatsword_type = 0,  -- 大剑
+        greatsword_level = 0, -- 大剑
+        bow_level = 11,       -- 弓箭
+        hammer_level = 4,     -- 大锤
+    }
+    
+    local current_weapon_type = TransformManager.get_character_weapon_type(character)
+    
     local active_rules = {} -- 收集所有激活的规则，格式: { rule = node, priority = number }
     local current_states = {} -- 记录每个条件类型的当前状态，用于缓存比对
     
@@ -71,21 +111,31 @@ function TransformManager.apply_transform_rules(char_addr, config, character, ac
         -- 并行模式：遍历所有启用的条件类型
         for t_type, p_setting in pairs(config.parallel_settings) do
             if p_setting.enabled then
+                -- 检查武器类型匹配性
+                local required = weapon_type_required[t_type]
+                if required and current_weapon_type ~= required then
+                    goto continue_parallel
+                end
+                
                 local rule, cur_state = get_active_rule_for_type(t_type, config, character, char_addr)
                 if cur_state ~= nil then current_states[t_type] = cur_state end
                 if rule then
                     table.insert(active_rules, { rule = rule, priority = p_setting.priority })
                 end
+                ::continue_parallel::
             end
         end
     else
         -- 单一模式：只评估当前选中的条件类型
         local t_type = config.transform_type
         if t_type then
-            local rule, cur_state = get_active_rule_for_type(t_type, config, character, char_addr)
-            if cur_state ~= nil then current_states[t_type] = cur_state end
-            if rule then
-                table.insert(active_rules, { rule = rule, priority = 1 })
+            local required = weapon_type_required[t_type]
+            if not (required and current_weapon_type ~= required) then
+                local rule, cur_state = get_active_rule_for_type(t_type, config, character, char_addr)
+                if cur_state ~= nil then current_states[t_type] = cur_state end
+                if rule then
+                    table.insert(active_rules, { rule = rule, priority = 1 })
+                end
             end
         end
     end
@@ -140,9 +190,6 @@ function TransformManager.apply_transform_rules(char_addr, config, character, ac
             end
         end
     end
-
-    -- 如果强制每次应用预设，忽略 changed
-    -- changed = true
 
     return new_overrides, changed
 end
