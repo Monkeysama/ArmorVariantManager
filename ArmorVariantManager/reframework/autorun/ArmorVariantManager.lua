@@ -1,8 +1,8 @@
 local mod_name = "ArmorVariantManager"
 -- 开发中遵守
 -- 版本号-开发状态-开发状态标识
-local version = "3.0.0-beta-004"
-local author = "MK,Moon"
+local version = "3.0.0-beta-005"
+local author = "MK,Moon,推大"
 
 -- =============================================================================
 -- 多语言与全局配置系统
@@ -987,6 +987,7 @@ local function load_config_data(body_id)
             }
         else
             if not loaded_data.parallel_settings.damage then loaded_data.parallel_settings.damage = { enabled = false, priority = 3 } end
+            if not loaded_data.parallel_settings.weapon then loaded_data.parallel_settings.weapon = { enabled = false, priority = 2 } end
             if not loaded_data.parallel_settings.spirit then
                 loaded_data.parallel_settings.spirit = { enabled = false, priority = 3 }
             end
@@ -2046,8 +2047,8 @@ re.on_draw_ui(function()
                                     end
                                 end
                                 draw_parallel_setting("hp", T("condition_hp"))
-                                draw_parallel_setting("damage", T("condition_damage"))
                                 draw_parallel_setting("weapon", T("condition_weapon"))
+                                draw_parallel_setting("damage", T("condition_damage"))
                                 draw_parallel_setting("spirit", T("condition_spirit"))
                                 draw_parallel_setting("dual_blades", T("condition_dual_blades"))
                                 draw_parallel_setting("switch_axe", T("condition_switch_axe"))
@@ -2147,6 +2148,25 @@ re.on_draw_ui(function()
                             end
 
                             -- 受击触发规则
+                            -- 武器规则
+                            local show_weapon = (not current_config.is_parallel and current_config.transform_type == "weapon") or
+                                               (current_config.is_parallel and current_config.parallel_settings.weapon and current_config.parallel_settings.weapon.enabled)
+                            if show_weapon then
+                                local is_drawn = TransformManager.get_character_weapon_drawn(character)
+                                imgui.text((T("condition_weapon") or "Weapon State") .. ": " .. (is_drawn and T("weapon_drawn") or T("weapon_sheathed")))
+                                imgui.separator()
+                                if not current_config.weapon_transform_rules then
+                                    current_config.weapon_transform_rules = {
+                                        { state = "sheathed", targets = {} },
+                                        { state = "drawn", targets = {} }
+                                    }
+                                end
+                                show_rule_list(current_config.weapon_transform_rules, "weapon", function(rule)
+                                    return rule.state == "sheathed" and T("weapon_sheathed") or T("weapon_drawn")
+                                end)
+                            end
+
+                            -- 受击规则
                             local show_damage = (not current_config.is_parallel and current_config.transform_type == "damage") or
                                            (current_config.is_parallel and current_config.parallel_settings.damage and current_config.parallel_settings.damage.enabled)
                             if show_damage then
@@ -2174,41 +2194,93 @@ re.on_draw_ui(function()
                                 imgui.separator()
 
                                 imgui.spacing()
-                                imgui.set_next_item_width(120)
-                                local c_dur, v_dur_str = imgui.input_text(T("duration") .. "##dmg", tostring(dmg_rule.duration))
-                                if c_dur then
-                                    local num = tonumber(v_dur_str)
-                                    if num then if num < 0 then num = 0 end; dmg_rule.duration = num; save_current_config_to_file(body_id) end
-                                end
-                                imgui.same_line()
-                                imgui.text_colored(T("duration_desc"), 0xFF808080)
                                 
-                                imgui.indent(20)
-                                if not dmg_rule.targets then dmg_rule.targets = {} end
-                                draw_targets_ui(dmg_rule.targets, "damage", 1)
-                                if imgui.button("+ " .. T("add_condition") .. "##dmg_add") then
-                                    table.insert(dmg_rule.targets, { group = "", preset = "" })
-                                    save_current_config_to_file(body_id)
-                                end
-                                imgui.unindent(20)
-                            end
+                                if dmg_rule.condition_delay == nil then dmg_rule.condition_delay = 0 end
+                                if dmg_rule.mode == nil then dmg_rule.mode = 1 end
+                                if dmg_rule.loop_inactive_time == nil then dmg_rule.loop_inactive_time = 0 end
+                                if dmg_rule.loop_count == nil then dmg_rule.loop_count = 0 end
+                                if dmg_rule.chain_loop_count == nil then dmg_rule.chain_loop_count = 1 end
+                                if dmg_rule.chain_nodes == nil then dmg_rule.chain_nodes = { { duration = 1, targets = {} } } end
+                                if dmg_rule.duration == nil then dmg_rule.duration = 5 end
 
-                            -- 武器规则
-                            local show_weapon = (not current_config.is_parallel and current_config.transform_type == "weapon") or
-                                               (current_config.is_parallel and current_config.parallel_settings.weapon and current_config.parallel_settings.weapon.enabled)
-                            if show_weapon then
-                                local is_drawn = TransformManager.get_character_weapon_drawn(character)
-                                imgui.text((T("condition_weapon") or "Weapon State") .. ": " .. (is_drawn and T("weapon_drawn") or T("weapon_sheathed")))
+                                imgui.set_next_item_width(120)
+                                local c_delay, v_delay_str = imgui.input_text(T("condition_delay") .. "##dmg", tostring(dmg_rule.condition_delay))
+                                if c_delay then local num = tonumber(v_delay_str); if num then dmg_rule.condition_delay = math.max(0, num); save_current_config_to_file(body_id) end end
+                                imgui.spacing()
+
+                                local modes = { T("mode_normal"), T("mode_loop"), T("mode_chain") }
+                                imgui.set_next_item_width(150)
+                                local c_m, v_m = imgui.combo(T("action_mode") .. "##dmg", dmg_rule.mode, modes)
+                                if c_m then dmg_rule.mode = v_m; save_current_config_to_file(body_id) end
                                 imgui.separator()
-                                if not current_config.weapon_transform_rules then
-                                    current_config.weapon_transform_rules = {
-                                        { state = "sheathed", targets = {} },
-                                        { state = "drawn", targets = {} }
-                                    }
+
+                                if dmg_rule.mode == 1 or dmg_rule.mode == 2 then
+                                    imgui.set_next_item_width(120)
+                                    local c_dur, v_dur_str = imgui.input_text(T("duration") .. "##dmg", tostring(dmg_rule.duration))
+                                    if c_dur then
+                                        local num = tonumber(v_dur_str)
+                                        if num then if num < 0 then num = 0 end; dmg_rule.duration = num; save_current_config_to_file(body_id) end
+                                    end
+                                    imgui.same_line()
+                                    imgui.text_colored(T("duration_desc"), 0xFF808080)
+
+                                    if dmg_rule.mode == 2 then
+                                        imgui.set_next_item_width(120)
+                                        local c_in, v_in_str = imgui.input_text(T("loop_inactive_time") .. "##dmg", tostring(dmg_rule.loop_inactive_time))
+                                        if c_in then local num = tonumber(v_in_str); if num then dmg_rule.loop_inactive_time = math.max(0, num); save_current_config_to_file(body_id) end end
+
+                                        imgui.same_line(); imgui.set_next_item_width(120)
+                                        local c_lc, v_lc_str = imgui.input_text(T("loop_count") .. "##dmg", tostring(dmg_rule.loop_count))
+                                        if c_lc then local num = tonumber(v_lc_str); if num then dmg_rule.loop_count = math.max(0, num); save_current_config_to_file(body_id) end end
+                                        imgui.same_line(); imgui.text_colored(T("loop_count_desc"), 0xFF808080)
+                                    end
+                                    
+                                    imgui.indent(20)
+                                    if not dmg_rule.targets then dmg_rule.targets = {} end
+                                    draw_targets_ui(dmg_rule.targets, "damage", 1)
+                                    if imgui.button("+ " .. T("add_condition") .. "##dmg_add") then
+                                        table.insert(dmg_rule.targets, { group = "", preset = "" })
+                                        save_current_config_to_file(body_id)
+                                    end
+                                    imgui.unindent(20)
+                                    
+                                elseif dmg_rule.mode == 3 then
+                                    imgui.set_next_item_width(120)
+                                    local c_clc, v_clc_str = imgui.input_text(T("chain_loop_count") .. "##dmg", tostring(dmg_rule.chain_loop_count))
+                                    if c_clc then local num = tonumber(v_clc_str); if num then dmg_rule.chain_loop_count = math.max(0, num); save_current_config_to_file(body_id) end end
+                                    imgui.same_line(); imgui.text_colored(T("loop_count_desc"), 0xFF808080)
+
+                                    for n_idx, node in ipairs(dmg_rule.chain_nodes) do
+                                        imgui.push_id("dmg_chain_node_" .. n_idx)
+                                        imgui.spacing()
+                                        imgui.text(T("chain_node") .. " " .. n_idx)
+                                        imgui.same_line()
+                                        if imgui.button(T("delete_chain_node")) then
+                                            table.remove(dmg_rule.chain_nodes, n_idx)
+                                            save_current_config_to_file(body_id)
+                                        end
+
+                                        imgui.set_next_item_width(120)
+                                        local c_ndur, v_ndur_str = imgui.input_text(T("duration") .. "##ndur", tostring(node.duration))
+                                        if c_ndur then local num = tonumber(v_ndur_str); if num then node.duration = math.max(0, num); save_current_config_to_file(body_id) end end
+                                        
+                                        imgui.indent(20)
+                                        if not node.targets then node.targets = {} end
+                                        draw_targets_ui(node.targets, "damage_chain_" .. n_idx, 1)
+                                        if imgui.button("+ " .. T("add_condition") .. "##dmg_chain_add_" .. n_idx) then
+                                            table.insert(node.targets, { group = "", preset = "" })
+                                            save_current_config_to_file(body_id)
+                                        end
+                                        imgui.unindent(20)
+                                        imgui.separator()
+                                        imgui.pop_id()
+                                    end
+
+                                    if imgui.button("+ " .. T("add_chain_node") .. "##dmg_chain_add") then
+                                        table.insert(dmg_rule.chain_nodes, { duration = 1, targets = {} })
+                                        save_current_config_to_file(body_id)
+                                    end
                                 end
-                                show_rule_list(current_config.weapon_transform_rules, "weapon", function(rule)
-                                    return rule.state == "sheathed" and T("weapon_sheathed") or T("weapon_drawn")
-                                end)
                             end
 
                             -- 气刃规则
