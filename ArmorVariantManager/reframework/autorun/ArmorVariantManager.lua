@@ -2,7 +2,7 @@ local mod_name = "ArmorVariantManager"
 -- 开发中遵守
 -- 版本号-开发状态-开发状态标识
 local version = "3.0.0-beta-005"
-local author = "MK,Moon,推大"
+local author = "MK,Moon,AZUSA"
 
 -- =============================================================================
 -- 多语言与全局配置系统
@@ -2147,7 +2147,6 @@ re.on_draw_ui(function()
                                 end
                             end
 
-                            -- 受击触发规则
                             -- 武器规则
                             local show_weapon = (not current_config.is_parallel and current_config.transform_type == "weapon") or
                                                (current_config.is_parallel and current_config.parallel_settings.weapon and current_config.parallel_settings.weapon.enabled)
