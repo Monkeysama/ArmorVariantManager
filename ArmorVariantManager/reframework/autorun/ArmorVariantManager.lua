@@ -1941,35 +1941,43 @@ re.on_draw_ui(function()
                     -- ========== 变身管理区域 ==========
                     if imgui.tree_node(T("transform_manager") .. " (" .. body_id .. ")") then
                         local inner_status, inner_err = pcall(function()
-                            -- 模块状态提示
-                            if not TransformManager.is_hp_module_initialized() then
+                            -- 模块状态提示（选中条件或启用了该条件时才提示）
+                            local function should_show_warning(type_key)
+                                if current_config.is_parallel then
+                                    return current_config.parallel_settings and current_config.parallel_settings[type_key] and current_config.parallel_settings[type_key].enabled
+                                else
+                                    return current_config.transform_type == type_key
+                                end
+                            end
+
+                            if should_show_warning("hp") and not TransformManager.is_hp_module_initialized() then
                                 imgui.text_colored(T("hp_module_not_found"), 0xFF0000FF)
                             end
-                            if not TransformManager.has_weapon_getter() then
+                            if should_show_warning("weapon") and not TransformManager.has_weapon_getter() then
                                 imgui.text_colored(T("weapon_module_not_found"), 0xFF0000FF)
                             end
-                            if not TransformManager.has_spirit_getter() then
+                            if should_show_warning("spirit") and not TransformManager.has_spirit_getter() then
                                 imgui.text_colored(T("spirit_module_not_found"), 0xFF0000FF)
                             end
-                            if not TransformManager.has_dual_blades_getter() then
+                            if should_show_warning("dual_blades") and not TransformManager.has_dual_blades_getter() then
                                 imgui.text_colored(T("dual_module_not_found"), 0xFF0000FF)
                             end
-                            if not TransformManager.has_switch_axe_getter() then
+                            if should_show_warning("switch_axe") and not TransformManager.has_switch_axe_getter() then
                                 imgui.text_colored(T("switch_axe_module_not_found"), 0xFF0000FF)
                             end
-                            if not TransformManager.has_insect_glaive_getter() then
+                            if should_show_warning("insect_glaive") and not TransformManager.has_insect_glaive_getter() then
                                 imgui.text_colored(T("insect_glaive_module_not_found"), 0xFF0000FF)
                             end
-                            if not TransformManager.has_charge_blade_getter() then
+                            if should_show_warning("charge_blade") and not TransformManager.has_charge_blade_getter() then
                                 imgui.text_colored(T("charge_blade_module_not_found"), 0xFF0000FF)
                             end
-                            if not TransformManager.has_greatsword_getter() then
+                            if should_show_warning("greatsword_type") and not TransformManager.has_greatsword_getter() then
                                 imgui.text_colored(T("greatsword_module_not_found"), 0xFF0000FF)
                             end
-                            if not TransformManager.has_bow_getter() then
+                            if should_show_warning("bow_level") and not TransformManager.has_bow_getter() then
                                 imgui.text_colored(T("bow_module_not_found"), 0xFF0000FF)
                             end
-                            if not TransformManager.has_hammer_getter() then
+                            if should_show_warning("hammer_level") and not TransformManager.has_hammer_getter() then
                                 imgui.text_colored(T("hammer_module_not_found"), 0xFF0000FF)
                             end
                             imgui.separator()
