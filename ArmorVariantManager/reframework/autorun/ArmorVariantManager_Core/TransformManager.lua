@@ -107,6 +107,8 @@ function TransformManager.apply_transform_rules(char_addr, config, character, ac
     local active_rules = {} -- 收集所有激活的规则，格式: { rule = node, priority = number }
     local current_states = {} -- 记录每个条件类型的当前状态，用于缓存比对
     
+    if not config then return active_overrides, false end
+    
     if config.is_parallel then
         -- 并行模式：遍历所有启用的条件类型
         for t_type, p_setting in pairs(config.parallel_settings) do

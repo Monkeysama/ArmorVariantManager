@@ -1,7 +1,7 @@
 local mod_name = "ArmorVariantManager"
 -- 开发中遵守
 -- 版本号-开发状态-开发状态标识
-local version = "3.0.0-beta-005"
+local version = "3.1.0-beta-006"
 local author = "MK,Moon,AZUSA"
 
 -- =============================================================================
@@ -227,6 +227,99 @@ end
 -- 辅助函数：获取玩家管理器单例
 local function get_player_manager()
     return sdk.get_managed_singleton("app.PlayerManager")
+end
+
+-- 武器 ID 缓存
+local weapon_id_cache = {}
+
+local function find_weapons_in_hierarchy(transform, depth, results)
+    if depth > 5 then return end
+    local child = transform:call("get_Child")
+    while child do
+        local child_obj = child:call("get_GameObject")
+        if child_obj then
+            local name = child_obj:call("get_Name")
+            -- 如果节点名叫 Wp_Parent 或 WpSub_Parent，则视为当前激活的主武器部件
+            -- 排除包含 Reserve 的节点，过滤掉副武器
+            if name and (name == "Wp_Parent" or name == "WpSub_Parent") then
+                local wp_transform = child_obj:call("get_Transform")
+                if wp_transform then
+                    local wp_child = wp_transform:call("get_Child")
+                    while wp_child do
+                        local wp_child_obj = wp_child:call("get_GameObject")
+                        if wp_child_obj then
+                            local wp_name = wp_child_obj:call("get_Name")
+                            if wp_name and string.match(wp_name, "^it%d%d%d%d") then
+                                table.insert(results, { name = wp_name, obj = wp_child_obj })
+                            end
+                        end
+                        wp_child = wp_child:call("get_Next")
+                    end
+                end
+            end
+            
+            -- 直接回退匹配 it 格式（仅当该节点本身是武器模型时，且我们未在父节点层级捕获）
+            if name and string.match(name, "^it%d%d%d%d_%d%d%d%d") then
+                local already_added = false
+                for _, v in ipairs(results) do
+                    if v.name == name then already_added = true; break end
+                end
+                if not already_added then
+                    table.insert(results, { name = name, obj = child_obj })
+                end
+            end
+            
+            -- 递归查找子节点。如果当前节点是ReserveParent，就停止向下递归，从而屏蔽副武器
+            if not (name and string.match(name, "Reserve")) then
+                find_weapons_in_hierarchy(child, depth + 1, results)
+            end
+        end
+        child = child:call("get_Next")
+    end
+end
+
+local function get_character_weapon_id(character)
+    if not character then return nil, nil end
+    if not sdk.is_managed_object(character) then return nil, nil end
+
+    local cache_key = nil
+    local game_obj_status_cache, game_obj_cache = pcall(function() return character:call("get_GameObject") end)
+    if game_obj_status_cache and game_obj_cache then
+        cache_key = tostring(game_obj_cache)
+    else
+        cache_key = tostring(character)
+    end
+
+    local cached = weapon_id_cache[cache_key]
+    local current_time = os.clock()
+    local ttl = global_config.body_id_ttl or 1.0
+    
+    if cached and (current_time - cached.last_check < ttl) then
+        if cached.objs and #cached.objs > 0 and sdk.is_managed_object(cached.objs[1]) then
+            return cached.id, cached.objs
+        end
+    end
+
+    local results = {}
+    if game_obj_status_cache and game_obj_cache then
+        local transform = game_obj_cache:call("get_Transform")
+        if transform then
+            find_weapons_in_hierarchy(transform, 0, results)
+        end
+    end
+
+    if #results > 0 then
+        -- 在收集的结果中，优先过滤出那些父节点不是直接匹配回退机制的（或者更简单，因为我们已经截断了 Reserve 的遍历，所以这里面的就是当前激活的武器部件）
+        -- 使用第一个武器的名称去掉 _0 或 _1 作为基础 ID
+        local base_id = string.gsub(results[1].name, "_%d$", "")
+        local objs = {}
+        for _, v in ipairs(results) do table.insert(objs, v.obj) end
+        weapon_id_cache[cache_key] = { id = base_id, objs = objs, last_check = current_time }
+        return base_id, objs
+    end
+
+    weapon_id_cache[cache_key] = { id = nil, objs = nil, last_check = current_time }
+    return nil, nil
 end
 
 -- =============================================================================
@@ -630,8 +723,18 @@ local function get_local_player_character()
     return char
 end
 
+local is_weapon_mode = false
+
+local function is_weapon_id(id)
+    return id and (string.match(id, "^wp%d%d") ~= nil or string.match(id, "^it%d%d%d%d") ~= nil)
+end
+
 -- 辅助函数：获取当前本地玩家 Body 的 ID (Name) - 兼容旧接口
 local function get_body_id()
+    if is_weapon_mode then
+        local id, _ = get_character_weapon_id(get_local_player_character())
+        return id
+    end
     return get_character_body_id(get_local_player_character())
 end
 
@@ -711,19 +814,19 @@ local function get_mesh_component_recursive(game_obj)
         if not type_mesh then return nil end
     end
     -- 1. 检查自身
-    local mesh = game_obj:call("getComponent(System.Type)", type_mesh:get_runtime_type())
-    if mesh then return mesh end
+    local ok_mesh, mesh = pcall(function() return game_obj:call("getComponent(System.Type)", type_mesh:get_runtime_type()) end)
+    if ok_mesh and mesh then return mesh end
     -- 2. 检查子节点 (浅层遍历)
-    local transform = game_obj:call("get_Transform")
-    if transform then
-        local child = transform:call("get_Child")
-        while child do
-            local child_obj = child:call("get_GameObject")
-            if child_obj then
-                mesh = child_obj:call("getComponent(System.Type)", type_mesh:get_runtime_type())
-                if mesh then return mesh end
+    local ok_transform, transform = pcall(function() return game_obj:call("get_Transform") end)
+    if ok_transform and transform then
+        local ok_child, child = pcall(function() return transform:call("get_Child") end)
+        while ok_child and child do
+            local ok_child_obj, child_obj = pcall(function() return child:call("get_GameObject") end)
+            if ok_child_obj and child_obj then
+                local ok_c_mesh, c_mesh = pcall(function() return child_obj:call("getComponent(System.Type)", type_mesh:get_runtime_type()) end)
+                if ok_c_mesh and c_mesh then return c_mesh end
             end
-            child = child:call("get_Next")
+            ok_child, child = pcall(function() return child:call("get_Next") end)
         end
     end
     return nil
@@ -832,8 +935,10 @@ end
 -- =============================================================================
 -- 用于记录角色部位上次应用时的状态哈希，避免每帧重复应用导致覆盖游戏的原生临时状态
 local applied_parts_cache = {} -- Key: char GameObject Address, Value: { [part_index] = state_hash }
--- 辅助函数：应用指定预设到指定角色
-local function apply_preset_to_character(character, preset_data, ignore_context, force_apply)
+local applied_weapon_cache = {} -- Key: char GameObject Address, Value: state_hash
+
+-- 辅助函数：应用指定预设到指定角色的防具
+local function apply_preset_to_armor(character, preset_data, ignore_context, force_apply)
     if not character or not preset_data then return end
     -- 增加有效性检查，防止在对象销毁后访问
     if not sdk.is_managed_object(character) then return end
@@ -878,6 +983,69 @@ local function apply_preset_to_character(character, preset_data, ignore_context,
                                     if cur_mat ~= false then mesh_component:call("setMaterialsEnable", j, false) end
                                 elseif mat_enabled == true and should_apply then
                                     if cur_mat ~= true then mesh_component:call("setMaterialsEnable", j, true) end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+end
+
+-- 辅助函数：应用指定预设到指定角色的武器
+local function apply_preset_to_weapon(character, weapon_objs, preset_data, ignore_context, force_apply)
+    if not character or not weapon_objs or not preset_data then return end
+    if not sdk.is_managed_object(character) then return end
+    local char_go = character:call("get_GameObject")
+    if not char_go or not sdk.is_managed_object(char_go) then return end
+    local char_addr = tostring(char_go)
+    if not type_mesh then
+        type_mesh = get_type("via.render.Mesh")
+        if not type_mesh then return end
+    end
+    
+    for idx, w_obj in ipairs(weapon_objs) do
+        if sdk.is_managed_object(w_obj) then
+            -- 加上一个安全调用，防止武器对象在这一帧刚刚被销毁
+            -- 注意：w_obj 本身已经是 GameObject，所以不能调用 get_GameObject()
+            local ok_alive, _ = pcall(function() return w_obj:call("get_Name") end)
+            if ok_alive then
+                local p_idx = tostring(idx - 1)
+                local part_data = preset_data[p_idx]
+                if part_data then
+                    local mesh_component = get_mesh_component_recursive(w_obj)
+                    if mesh_component then
+                        local mat_count = mesh_component:call("get_MaterialNum") or 0
+                        local first_mat = mat_count > 0 and mesh_component:call("getMaterialName", 0) or ""
+                        local state_hash = tostring(mesh_component) .. "_" .. tostring(mat_count) .. "_" .. first_mat
+                        
+                        if not applied_weapon_cache[char_addr] then applied_weapon_cache[char_addr] = {} end
+                        
+                        local should_apply = force_apply or (applied_weapon_cache[char_addr][p_idx] ~= state_hash)
+                        if should_apply then applied_weapon_cache[char_addr][p_idx] = state_hash end
+
+                        -- 1. 应用 Mesh 整体开关
+                        if part_data.mesh_enabled ~= nil then
+                            local cur_en = mesh_component:call("get_Enabled")
+                            if part_data.mesh_enabled == false then
+                                if cur_en ~= false then mesh_component:call("set_Enabled", false) end
+                            elseif should_apply then
+                                if cur_en ~= true then mesh_component:call("set_Enabled", true) end
+                            end
+                        end
+                        -- 2. 应用材质开关
+                        if part_data.materials and mat_count > 0 then
+                            for j = 0, mat_count - 1 do
+                                local mat_name = mesh_component:call("getMaterialName", j)
+                                if ignore_context or is_material_in_current_context(idx - 1, mat_name) then
+                                    local mat_enabled = part_data.materials[mat_name]
+                                    local cur_mat = mesh_component:call("getMaterialsEnable", j)
+                                    if mat_enabled == false then
+                                        if cur_mat ~= false then mesh_component:call("setMaterialsEnable", j, false) end
+                                    elseif mat_enabled == true and should_apply then
+                                        if cur_mat ~= true then mesh_component:call("setMaterialsEnable", j, true) end
+                                    end
                                 end
                             end
                         end
@@ -1211,17 +1379,30 @@ local function apply_preset(preset_name)
     end
     local all_chars = get_all_characters()
     for _, char in ipairs(all_chars) do
-        local char_body_id = get_character_body_id(char)
-        if char_body_id and char_body_id == current_body_id then
-            -- 当用户手动应用预设时，重新计算包含变身规则在内的最终状态
-            local config = load_config_data(char_body_id)
-            local char_go_ok, char_go = pcall(function() return char:call("get_GameObject") end)
-            local char_addr = (char_go_ok and char_go) and tostring(char_go) or tostring(char)
-            local new_overrides, _ = TransformManager.apply_transform_rules(
-                char_addr, config, char, active_overrides[current_body_id], merge_overrides
-            )
-            -- 立即应用复合后的总状态，并忽略材质上下文过滤
-            apply_preset_to_character(char, new_overrides, true, true)
+        if is_weapon_id(current_body_id) then
+            local char_weapon_id, w_objs = get_character_weapon_id(char)
+            if char_weapon_id and char_weapon_id == current_body_id then
+                local config = load_config_data(char_weapon_id)
+                local char_go_ok, char_go = pcall(function() return char:call("get_GameObject") end)
+                local char_addr = (char_go_ok and char_go) and tostring(char_go) or tostring(char)
+                local new_overrides, _ = TransformManager.apply_transform_rules(
+                    char_addr, config, char, active_overrides[current_body_id], merge_overrides
+                )
+                apply_preset_to_weapon(char, w_objs, new_overrides, true, true)
+            end
+        else
+            local char_body_id = get_character_body_id(char)
+            if char_body_id and char_body_id == current_body_id then
+                -- 当用户手动应用预设时，重新计算包含变身规则在内的最终状态
+                local config = load_config_data(char_body_id)
+                local char_go_ok, char_go = pcall(function() return char:call("get_GameObject") end)
+                local char_addr = (char_go_ok and char_go) and tostring(char_go) or tostring(char)
+                local new_overrides, _ = TransformManager.apply_transform_rules(
+                    char_addr, config, char, active_overrides[current_body_id], merge_overrides
+                )
+                -- 立即应用复合后的总状态，并忽略材质上下文过滤
+                apply_preset_to_armor(char, new_overrides, true, true)
+            end
         end
     end
 end
@@ -1352,29 +1533,58 @@ local function save_preset(preset_name, body_id)
         if not type_mesh then return false end
     end
     local new_preset_data = {}
-    for i = 0, 5 do
-        local part_obj = get_character_part(character, i)
-        if part_obj then
-            local mesh_component = get_mesh_component_recursive(part_obj)
-            if mesh_component then
-                local part_data = {
-                    mesh_enabled = mesh_component:call("get_Enabled"),
-                    materials = {}
-                }
-                local mat_count = mesh_component:call("get_MaterialNum")
-                if mat_count then
-                    for j = 0, mat_count - 1 do
-                        local mat_name = mesh_component:call("getMaterialName", j)
-                        -- 核心逻辑：创建预设时，只保存属于当前上下文管理的材质
-                        if is_material_in_current_context(i, mat_name) then
-                            local is_mat_enabled = mesh_component:call("getMaterialsEnable", j)
-                            part_data.materials[mat_name] = is_mat_enabled
+    
+    if is_weapon_id(body_id) then
+        local w_id, w_objs = get_character_weapon_id(character)
+        if w_objs then
+            for idx, w_obj in ipairs(w_objs) do
+                local mesh_component = get_mesh_component_recursive(w_obj)
+                if mesh_component then
+                    local part_data = {
+                        mesh_enabled = mesh_component:call("get_Enabled"),
+                        materials = {}
+                    }
+                    local mat_count = mesh_component:call("get_MaterialNum")
+                    if mat_count then
+                        for j = 0, mat_count - 1 do
+                            local mat_name = mesh_component:call("getMaterialName", j)
+                            if is_material_in_current_context(idx - 1, mat_name) then
+                                local is_mat_enabled = mesh_component:call("getMaterialsEnable", j)
+                                part_data.materials[mat_name] = is_mat_enabled
+                            end
                         end
                     end
+                    if next(part_data.materials) or current_group_name == "" then
+                        new_preset_data[tostring(idx - 1)] = part_data
+                    end
                 end
-                -- 只有当该部位包含有效材质或整体开关被管理时才存入
-                if next(part_data.materials) or current_group_name == "" then
-                    new_preset_data[tostring(i)] = part_data
+            end
+        end
+    else
+        for i = 0, 5 do
+            local part_obj = get_character_part(character, i)
+            if part_obj then
+                local mesh_component = get_mesh_component_recursive(part_obj)
+                if mesh_component then
+                    local part_data = {
+                        mesh_enabled = mesh_component:call("get_Enabled"),
+                        materials = {}
+                    }
+                    local mat_count = mesh_component:call("get_MaterialNum")
+                    if mat_count then
+                        for j = 0, mat_count - 1 do
+                            local mat_name = mesh_component:call("getMaterialName", j)
+                            -- 核心逻辑：创建预设时，只保存属于当前上下文管理的材质
+                            if is_material_in_current_context(i, mat_name) then
+                                local is_mat_enabled = mesh_component:call("getMaterialsEnable", j)
+                                part_data.materials[mat_name] = is_mat_enabled
+                            end
+                        end
+                    end
+                    -- 只有当该部位包含有效材质或整体开关被管理时才存入
+                    if next(part_data.materials) or current_group_name == "" then
+                        new_preset_data[tostring(i)] = part_data
+                    end
                 end
             end
         end
@@ -1660,43 +1870,68 @@ re.on_frame(function()
     -- 2. 遍历所有玩家并应用配置
     local all_chars = get_all_characters()
     for _, char in ipairs(all_chars) do
+        -- 处理防具
         local char_body_id = get_character_body_id(char)
         if char_body_id then
-            -- 加载配置 (如果尚未加载)
             local config = load_config_data(char_body_id)
-            -- 初始化 active_overrides (如果不存在)
-            -- 无论是进入场景还是切换装备，如果没有状态记录，则全量加载默认项
-            if not active_overrides[char_body_id] then
-                apply_all_defaults(char_body_id)
-                
-                -- 当更换装备/第一次加载时，强制重算并应用一次变身规则，防止默认模型覆盖掉规则
-                local char_go_ok, char_go = pcall(function() return char:call("get_GameObject") end)
-                local char_addr = (char_go_ok and char_go) and tostring(char_go) or tostring(char)
-                local new_overrides, _ = TransformManager.apply_transform_rules(
-                    char_addr, config, char, active_overrides[char_body_id], merge_overrides
-                )
-                apply_preset_to_character(char, new_overrides, true, true)
-            end
-            -- 应用 active_overrides 和变身规则
-            if active_overrides[char_body_id] then
-                if char and sdk.is_managed_object(char) then
+            if config then
+                if not active_overrides[char_body_id] then
+                    apply_all_defaults(char_body_id)
                     local char_go_ok, char_go = pcall(function() return char:call("get_GameObject") end)
                     local char_addr = (char_go_ok and char_go) and tostring(char_go) or tostring(char)
-                    local final_overrides = active_overrides[char_body_id]
-                    local new_overrides, changed = TransformManager.apply_transform_rules(
-                        char_addr, config, char, final_overrides, merge_overrides
+                    local new_overrides, _ = TransformManager.apply_transform_rules(
+                        char_addr, config, char, active_overrides[char_body_id], merge_overrides
                     )
-                    
-                    if changed then
-                        -- 不要把 active_overrides 覆盖掉！
-                        -- active_overrides 保存的是基础状态(Base State)，new_overrides 是基础状态叠加变身规则后的结果。
-                        -- 如果覆盖了，基础状态就会丢失，导致变身永远无法回退。
-                        apply_preset_to_character(char, new_overrides, true, true)
-                    else
-                        -- 变身状态未改变时，也需要检查并应用
-                        -- 因为玩家可能在装备箱更换了防具导致网格更新，需要重新覆盖为当前变身/默认状态
-                        -- 传入 force_apply=false，通过 hash 对比网格是否有变动
-                        apply_preset_to_character(char, new_overrides, true, false)
+                    apply_preset_to_armor(char, new_overrides, true, true)
+                end
+                if active_overrides[char_body_id] then
+                    if char and sdk.is_managed_object(char) then
+                        local char_go_ok, char_go = pcall(function() return char:call("get_GameObject") end)
+                        local char_addr = (char_go_ok and char_go) and tostring(char_go) or tostring(char)
+                        local final_overrides = active_overrides[char_body_id]
+                        local new_overrides, changed = TransformManager.apply_transform_rules(
+                            char_addr, config, char, final_overrides, merge_overrides
+                        )
+                        
+                        if changed then
+                            apply_preset_to_armor(char, new_overrides, true, true)
+                        else
+                            apply_preset_to_armor(char, new_overrides, true, false)
+                        end
+                    end
+                end
+            end
+        end
+
+        -- 处理武器
+        local char_weapon_id, w_objs = get_character_weapon_id(char)
+        if char_weapon_id and w_objs then
+            local config = load_config_data(char_weapon_id)
+            -- 只有成功加载到 config 才进行后续处理，避免新武器暂无配置时报错
+            if config then
+                if not active_overrides[char_weapon_id] then
+                    apply_all_defaults(char_weapon_id)
+                    local char_go_ok, char_go = pcall(function() return char:call("get_GameObject") end)
+                    local char_addr = (char_go_ok and char_go) and tostring(char_go) or tostring(char)
+                    local new_overrides, _ = TransformManager.apply_transform_rules(
+                        char_addr, config, char, active_overrides[char_weapon_id], merge_overrides
+                    )
+                    apply_preset_to_weapon(char, w_objs, new_overrides, true, true)
+                end
+                if active_overrides[char_weapon_id] then
+                    if char and sdk.is_managed_object(char) then
+                        local char_go_ok, char_go = pcall(function() return char:call("get_GameObject") end)
+                        local char_addr = (char_go_ok and char_go) and tostring(char_go) or tostring(char)
+                        local final_overrides = active_overrides[char_weapon_id]
+                        local new_overrides, changed = TransformManager.apply_transform_rules(
+                            char_addr, config, char, final_overrides, merge_overrides
+                        )
+                        
+                        if changed then
+                            apply_preset_to_weapon(char, w_objs, new_overrides, true, true)
+                        else
+                            apply_preset_to_weapon(char, w_objs, new_overrides, true, false)
+                        end
                     end
                 end
             end
@@ -1755,6 +1990,29 @@ re.on_draw_ui(function()
 
         -- 使用 pcall 包裹核心绘制逻辑，防止 Lua 错误导致 ImGui 状态异常
         local status, err = pcall(function()
+            -- 模式切换 Tabs (使用 Radio Button 替代 Tab Bar，因为 REFramework 某些版本不支持 begin_tab_bar)
+            local armor_mode_text = T("armor_mode") or "Armor Variant"
+            local weapon_mode_text = T("weapon_mode") or "Weapon Variant"
+            
+            -- 使用 Checkbox 模拟切换，因为部分版本也没有 radio_button
+            local changed_armor, new_armor = imgui.checkbox(armor_mode_text, not is_weapon_mode)
+            if changed_armor and new_armor then
+                if is_weapon_mode ~= false then
+                    is_weapon_mode = false
+                    last_body_id = nil
+                end
+            end
+            
+            imgui.same_line()
+            local changed_weapon, new_weapon = imgui.checkbox(weapon_mode_text, is_weapon_mode)
+            if changed_weapon and new_weapon then
+                if is_weapon_mode ~= true then
+                    is_weapon_mode = true
+                    last_body_id = nil
+                end
+            end
+            imgui.separator()
+
             local character = get_local_player_character()
             if character and sdk.is_managed_object(character) then
                 local body_id = get_body_id()
@@ -2566,38 +2824,62 @@ re.on_draw_ui(function()
 
                     imgui.separator()
 
-                    -- ========== 防具部位列表 ==========
-                    -- 1. 遍历防具部位 (Helm, Body, Arm, Waist, Leg)
-                    local armor_parts = {
-                        [0] = T("helm"),
-                        [1] = T("body"),
-                        [2] = T("arm"),
-                        [3] = T("waist"),
-                        [4] = T("leg"),
-                        [5] = T("slinger")
-                    }
-                    if imgui.tree_node(T("armor_parts")) then
-                        for i = 0, 5 do
-                            local part_obj = get_character_part(character, i)
-                            local part_name = armor_parts[i]
-                            if part_obj then
-                                -- 尝试获取 Mesh 组件 (支持递归查找)
-                                local mesh_comp = get_mesh_component_recursive(part_obj)
-                                if mesh_comp then
-                                    -- 使用拥有 Mesh 的 GameObject 进行绘制
-                                    local mesh_game_obj = mesh_comp:call("get_GameObject")
-                                    local obj_name = mesh_game_obj:call("get_Name")
-                                    draw_mesh_toggle(mesh_game_obj, string.format("%s [%s]", part_name, obj_name), body_id, i)
-                                else
-                                    -- 虽然找到了部位对象，但没有 Mesh
-                                    local obj_name = part_obj:call("get_Name")
-                                    imgui.text_colored(string.format("%s [%s] (No Mesh)", part_name, obj_name), 0xFF808080)
+                    -- ========== 防具/武器部位列表 ==========
+                    if is_weapon_mode then
+                        if imgui.tree_node(T("weapon_parts") or "Weapon Parts") then
+                            local w_id, w_objs = get_character_weapon_id(character)
+                            if w_objs and #w_objs > 0 then
+                                for idx, w_obj in ipairs(w_objs) do
+                                    if sdk.is_managed_object(w_obj) then
+                                        local mesh_comp = get_mesh_component_recursive(w_obj)
+                                        if mesh_comp then
+                                            local mesh_game_obj = mesh_comp:call("get_GameObject")
+                                            local obj_name = mesh_game_obj:call("get_Name")
+                                            draw_mesh_toggle(mesh_game_obj, string.format("Weapon %d [%s]", idx - 1, obj_name), body_id, tostring(idx - 1))
+                                        else
+                                            local obj_name = w_obj:call("get_Name")
+                                            imgui.text_colored(string.format("Weapon %d [%s] (No Mesh)", idx - 1, obj_name), 0xFF808080)
+                                        end
+                                    end
                                 end
                             else
-                                imgui.text_colored(part_name .. " " .. T("not_equipped"), 0xFF808080)
+                                imgui.text_colored("Weapon " .. T("not_equipped"), 0xFF808080)
                             end
+                            imgui.tree_pop()
                         end
-                        imgui.tree_pop()
+                    else
+                        -- 1. 遍历防具部位 (Helm, Body, Arm, Waist, Leg)
+                        local armor_parts = {
+                            [0] = T("helm"),
+                            [1] = T("body"),
+                            [2] = T("arm"),
+                            [3] = T("waist"),
+                            [4] = T("leg"),
+                            [5] = T("slinger")
+                        }
+                        if imgui.tree_node(T("armor_parts")) then
+                            for i = 0, 5 do
+                                local part_obj = get_character_part(character, i)
+                                local part_name = armor_parts[i]
+                                if part_obj then
+                                    -- 尝试获取 Mesh 组件 (支持递归查找)
+                                    local mesh_comp = get_mesh_component_recursive(part_obj)
+                                    if mesh_comp then
+                                        -- 使用拥有 Mesh 的 GameObject 进行绘制
+                                        local mesh_game_obj = mesh_comp:call("get_GameObject")
+                                        local obj_name = mesh_game_obj:call("get_Name")
+                                        draw_mesh_toggle(mesh_game_obj, string.format("%s [%s]", part_name, obj_name), body_id, i)
+                                    else
+                                        -- 虽然找到了部位对象，但没有 Mesh
+                                        local obj_name = part_obj:call("get_Name")
+                                        imgui.text_colored(string.format("%s [%s] (No Mesh)", part_name, obj_name), 0xFF808080)
+                                    end
+                                else
+                                    imgui.text_colored(part_name .. " " .. T("not_equipped"), 0xFF808080)
+                                end
+                            end
+                            imgui.tree_pop()
+                        end
                     end
 
                     imgui.separator()

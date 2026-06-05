@@ -1,5 +1,8 @@
 local Localization = {
     ["en"] = {
+        ["armor_mode"] = "Armor Variant",
+        ["weapon_mode"] = "Weapon Variant",
+        ["weapon_parts"] = "Current Weapon Parts",
         ["mod_name"] = "Armor Variant Manager",
         ["version"] = "Version",
         ["author"] = "Author",
@@ -196,6 +199,9 @@ local Localization = {
         ["delete_chain_node"] = "Del Node"
     },
     ["zh"] = {
+        ["armor_mode"] = "装备差分",
+        ["weapon_mode"] = "武器差分",
+        ["weapon_parts"] = "当前武器部件",
         ["mod_name"] = "装备差分管理器",
         ["version"] = "版本",
         ["author"] = "作者",
