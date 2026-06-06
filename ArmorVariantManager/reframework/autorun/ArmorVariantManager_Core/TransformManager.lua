@@ -76,6 +76,10 @@ end
 -- =============================================================================
 local last_state_cache = {}
 
+function TransformManager.clear_last_state_cache()
+    last_state_cache = {}
+end
+
 local function get_active_rule_for_type(t_type, config, character, char_addr)
     -- 处理所有基于插件的逻辑
     local handler = ConditionRegistry[t_type]
@@ -151,8 +155,10 @@ function TransformManager.apply_transform_rules(char_addr, config, character, ac
         state_signature = state_signature .. t .. ":" .. tostring(current_states[t]) .. "|"
     end
     
-    local changed = (last_state_cache[char_addr] ~= state_signature)
-    last_state_cache[char_addr] = state_signature
+    -- 状态缓存的 Key，加上 config_id（区分防具和武器）
+    local cache_key = char_addr .. "_" .. tostring(config)
+    local changed = (last_state_cache[cache_key] ~= state_signature)
+    last_state_cache[cache_key] = state_signature
     
     local new_overrides = {}
     for p, data in pairs(active_overrides) do

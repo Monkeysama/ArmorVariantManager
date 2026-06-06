@@ -1,7 +1,7 @@
 local mod_name = "ArmorVariantManager"
 -- 开发中遵守
 -- 版本号-开发状态-开发状态标识
-local version = "3.1.0-beta-006"
+local version = "3.1.0-beta-007d"
 local author = "MK,Moon,AZUSA"
 
 -- =============================================================================
@@ -967,7 +967,7 @@ local function apply_preset_to_armor(character, preset_data, ignore_context, for
                         local cur_en = mesh_component:call("get_Enabled")
                         if part_data.mesh_enabled == false then
                             if cur_en ~= false then mesh_component:call("set_Enabled", false) end
-                        elseif should_apply then
+                        elseif part_data.mesh_enabled == true then
                             if cur_en ~= true then mesh_component:call("set_Enabled", true) end
                         end
                     end
@@ -981,7 +981,7 @@ local function apply_preset_to_armor(character, preset_data, ignore_context, for
                                 local cur_mat = mesh_component:call("getMaterialsEnable", j)
                                 if mat_enabled == false then
                                     if cur_mat ~= false then mesh_component:call("setMaterialsEnable", j, false) end
-                                elseif mat_enabled == true and should_apply then
+                                elseif mat_enabled == true then
                                     if cur_mat ~= true then mesh_component:call("setMaterialsEnable", j, true) end
                                 end
                             end
@@ -1026,29 +1026,29 @@ local function apply_preset_to_weapon(character, weapon_objs, preset_data, ignor
                         if should_apply then applied_weapon_cache[char_addr][p_idx] = state_hash end
 
                         -- 1. 应用 Mesh 整体开关
-                        if part_data.mesh_enabled ~= nil then
-                            local cur_en = mesh_component:call("get_Enabled")
-                            if part_data.mesh_enabled == false then
-                                if cur_en ~= false then mesh_component:call("set_Enabled", false) end
-                            elseif should_apply then
-                                if cur_en ~= true then mesh_component:call("set_Enabled", true) end
-                            end
-                        end
-                        -- 2. 应用材质开关
-                        if part_data.materials and mat_count > 0 then
-                            for j = 0, mat_count - 1 do
-                                local mat_name = mesh_component:call("getMaterialName", j)
-                                if ignore_context or is_material_in_current_context(idx - 1, mat_name) then
-                                    local mat_enabled = part_data.materials[mat_name]
-                                    local cur_mat = mesh_component:call("getMaterialsEnable", j)
-                                    if mat_enabled == false then
-                                        if cur_mat ~= false then mesh_component:call("setMaterialsEnable", j, false) end
-                                    elseif mat_enabled == true and should_apply then
-                                        if cur_mat ~= true then mesh_component:call("setMaterialsEnable", j, true) end
-                                    end
-                                end
-                            end
-                        end
+                         if part_data.mesh_enabled ~= nil then
+                             local cur_en = mesh_component:call("get_Enabled")
+                             if part_data.mesh_enabled == false then
+                                 if cur_en ~= false then mesh_component:call("set_Enabled", false) end
+                             elseif part_data.mesh_enabled == true then
+                                 if cur_en ~= true then mesh_component:call("set_Enabled", true) end
+                             end
+                         end
+                         -- 2. 应用材质开关
+                         if part_data.materials and mat_count > 0 then
+                             for j = 0, mat_count - 1 do
+                                 local mat_name = mesh_component:call("getMaterialName", j)
+                                 if ignore_context or is_material_in_current_context(idx - 1, mat_name) then
+                                     local mat_enabled = part_data.materials[mat_name]
+                                     local cur_mat = mesh_component:call("getMaterialsEnable", j)
+                                     if mat_enabled == false then
+                                         if cur_mat ~= false then mesh_component:call("setMaterialsEnable", j, false) end
+                                     elseif mat_enabled == true then
+                                         if cur_mat ~= true then mesh_component:call("setMaterialsEnable", j, true) end
+                                     end
+                                 end
+                             end
+                         end
                     end
                 end
             end
@@ -1520,6 +1520,16 @@ local function save_current_config_to_file(body_id)
     loaded_configs[body_id] = current_config
     local path = get_config_path(body_id)
     json.dump_file(path, current_config)
+    
+    -- 清除 active_overrides 缓存，强制下一帧重新合并所有默认预设
+    if active_overrides[body_id] then
+        active_overrides[body_id] = nil
+    end
+    
+    -- 清除状态机缓存，强制下一帧重新应用最新的预设内容
+    if TransformManager.clear_last_state_cache then
+        TransformManager.clear_last_state_cache()
+    end
 end
 
 -- 辅助函数：捕获当前状态为新预设
