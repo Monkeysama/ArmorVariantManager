@@ -1,7 +1,7 @@
 local mod_name = "ArmorVariantManager"
 -- 开发中遵守
 -- 版本号-开发状态-开发状态标识
-local version = "3.1.0-beta-007d"
+local version = "3.1.0-beta-008"
 local author = "MK,Moon,AZUSA"
 
 -- =============================================================================
@@ -1793,6 +1793,7 @@ local show_debug_window = false
 
 -- 辅助函数：在 UI 中绘制条件的目标列表（捕获外部的 body_id 和 current_config）
 local function draw_targets_ui(targets, rule_type, rule_idx)
+    local body_id = last_body_id
     for j, target in ipairs(targets) do
         imgui.push_id(rule_type .. "_" .. rule_idx .. "_target_" .. j)
 
@@ -1832,10 +1833,18 @@ local function draw_targets_ui(targets, rule_type, rule_idx)
             end
         end
         table.sort(target_presets)
+        
         local p_idx = 1
+        local found = false
         for idx, p in ipairs(target_presets) do
-            if p == target.preset then p_idx = idx; break end
+            if p == target.preset then p_idx = idx; found = true; break end
         end
+        
+        if not found and #target_presets > 0 then
+            target.preset = target_presets[1]
+            save_current_config_to_file(body_id)
+        end
+        
         if #target_presets == 0 then table.insert(target_presets, "None") end
 
         imgui.set_next_item_width(150)

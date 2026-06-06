@@ -199,7 +199,7 @@ local Localization = {
         ["delete_chain_node"] = "Del Node"
     },
     ["zh"] = {
-        ["armor_mode"] = "装备差分",
+        ["armor_mode"] = "防具差分",
         ["weapon_mode"] = "武器差分",
         ["weapon_parts"] = "当前武器部件",
         ["mod_name"] = "装备差分管理器",
