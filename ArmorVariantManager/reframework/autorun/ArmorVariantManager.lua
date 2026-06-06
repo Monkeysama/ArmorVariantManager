@@ -1,5 +1,5 @@
 ﻿local mod_name = "ArmorVariantManager"
-local version = "3.0.0"
+local version = "3.1.0"
 local author = "MK,Moon,AZUSA"
 local global_config_path = "ArmorVariantManager/GlobalSettings.json"
 local global_config = {
@@ -170,6 +170,81 @@ local function deep_copy_table(orig)
 end
 local function get_player_manager()
     return sdk.get_managed_singleton("app.PlayerManager")
+end
+local weapon_id_cache = {}
+local function find_weapons_in_hierarchy(transform, depth, results)
+    if depth > 5 then return end
+    local child = transform:call("get_Child")
+    while child do
+        local child_obj = child:call("get_GameObject")
+        if child_obj then
+            local name = child_obj:call("get_Name")
+            if name and (name == "Wp_Parent" or name == "WpSub_Parent") then
+                local wp_transform = child_obj:call("get_Transform")
+                if wp_transform then
+                    local wp_child = wp_transform:call("get_Child")
+                    while wp_child do
+                        local wp_child_obj = wp_child:call("get_GameObject")
+                        if wp_child_obj then
+                            local wp_name = wp_child_obj:call("get_Name")
+                            if wp_name and string.match(wp_name, "^it%d%d%d%d") then
+                                table.insert(results, { name = wp_name, obj = wp_child_obj })
+                            end
+                        end
+                        wp_child = wp_child:call("get_Next")
+                    end
+                end
+            end
+            if name and string.match(name, "^it%d%d%d%d_%d%d%d%d") then
+                local already_added = false
+                for _, v in ipairs(results) do
+                    if v.name == name then already_added = true; break end
+                end
+                if not already_added then
+                    table.insert(results, { name = name, obj = child_obj })
+                end
+            end
+            if not (name and string.match(name, "Reserve")) then
+                find_weapons_in_hierarchy(child, depth + 1, results)
+            end
+        end
+        child = child:call("get_Next")
+    end
+end
+local function get_character_weapon_id(character)
+    if not character then return nil, nil end
+    if not sdk.is_managed_object(character) then return nil, nil end
+    local cache_key = nil
+    local game_obj_status_cache, game_obj_cache = pcall(function() return character:call("get_GameObject") end)
+    if game_obj_status_cache and game_obj_cache then
+        cache_key = tostring(game_obj_cache)
+    else
+        cache_key = tostring(character)
+    end
+    local cached = weapon_id_cache[cache_key]
+    local current_time = os.clock()
+    local ttl = global_config.body_id_ttl or 1.0
+    if cached and (current_time - cached.last_check < ttl) then
+        if cached.objs and #cached.objs > 0 and sdk.is_managed_object(cached.objs[1]) then
+            return cached.id, cached.objs
+        end
+    end
+    local results = {}
+    if game_obj_status_cache and game_obj_cache then
+        local transform = game_obj_cache:call("get_Transform")
+        if transform then
+            find_weapons_in_hierarchy(transform, 0, results)
+        end
+    end
+    if #results > 0 then
+        local base_id = string.gsub(results[1].name, "_%d$", "")
+        local objs = {}
+        for _, v in ipairs(results) do table.insert(objs, v.obj) end
+        weapon_id_cache[cache_key] = { id = base_id, objs = objs, last_check = current_time }
+        return base_id, objs
+    end
+    weapon_id_cache[cache_key] = { id = nil, objs = nil, last_check = current_time }
+    return nil, nil
 end
 local function get_character_body_id(character)
     if not character then return nil end
@@ -503,7 +578,15 @@ local function get_local_player_character()
     end
     return char
 end
+local is_weapon_mode = false
+local function is_weapon_id(id)
+    return id and (string.match(id, "^wp%d%d") ~= nil or string.match(id, "^it%d%d%d%d") ~= nil)
+end
 local function get_body_id()
+    if is_weapon_mode then
+        local id, _ = get_character_weapon_id(get_local_player_character())
+        return id
+    end
     return get_character_body_id(get_local_player_character())
 end
 local function get_config_path(body_id)
@@ -566,18 +649,18 @@ local function get_mesh_component_recursive(game_obj)
         type_mesh = get_type("via.render.Mesh")
         if not type_mesh then return nil end
     end
-    local mesh = game_obj:call("getComponent(System.Type)", type_mesh:get_runtime_type())
-    if mesh then return mesh end
-    local transform = game_obj:call("get_Transform")
-    if transform then
-        local child = transform:call("get_Child")
-        while child do
-            local child_obj = child:call("get_GameObject")
-            if child_obj then
-                mesh = child_obj:call("getComponent(System.Type)", type_mesh:get_runtime_type())
-                if mesh then return mesh end
+    local ok_mesh, mesh = pcall(function() return game_obj:call("getComponent(System.Type)", type_mesh:get_runtime_type()) end)
+    if ok_mesh and mesh then return mesh end
+    local ok_transform, transform = pcall(function() return game_obj:call("get_Transform") end)
+    if ok_transform and transform then
+        local ok_child, child = pcall(function() return transform:call("get_Child") end)
+        while ok_child and child do
+            local ok_child_obj, child_obj = pcall(function() return child:call("get_GameObject") end)
+            if ok_child_obj and child_obj then
+                local ok_c_mesh, c_mesh = pcall(function() return child_obj:call("getComponent(System.Type)", type_mesh:get_runtime_type()) end)
+                if ok_c_mesh and c_mesh then return c_mesh end
             end
-            child = child:call("get_Next")
+            ok_child, child = pcall(function() return child:call("get_Next") end)
         end
     end
     return nil
@@ -658,7 +741,8 @@ local function is_material_in_current_context(part_index, mat_name)
     end
 end
 local applied_parts_cache = {}
-local function apply_preset_to_character(character, preset_data, ignore_context, force_apply)
+local applied_weapon_cache = {}
+local function apply_preset_to_armor(character, preset_data, ignore_context, force_apply)
     if not character or not preset_data then return end
     if not sdk.is_managed_object(character) then return end
     local char_go = character:call("get_GameObject")
@@ -685,7 +769,7 @@ local function apply_preset_to_character(character, preset_data, ignore_context,
                         local cur_en = mesh_component:call("get_Enabled")
                         if part_data.mesh_enabled == false then
                             if cur_en ~= false then mesh_component:call("set_Enabled", false) end
-                        elseif should_apply then
+                        elseif part_data.mesh_enabled == true then
                             if cur_en ~= true then mesh_component:call("set_Enabled", true) end
                         end
                     end
@@ -697,11 +781,64 @@ local function apply_preset_to_character(character, preset_data, ignore_context,
                                 local cur_mat = mesh_component:call("getMaterialsEnable", j)
                                 if mat_enabled == false then
                                     if cur_mat ~= false then mesh_component:call("setMaterialsEnable", j, false) end
-                                elseif mat_enabled == true and should_apply then
+                                elseif mat_enabled == true then
                                     if cur_mat ~= true then mesh_component:call("setMaterialsEnable", j, true) end
                                 end
                             end
                         end
+                    end
+                end
+            end
+        end
+    end
+end
+local function apply_preset_to_weapon(character, weapon_objs, preset_data, ignore_context, force_apply)
+    if not character or not weapon_objs or not preset_data then return end
+    if not sdk.is_managed_object(character) then return end
+    local char_go = character:call("get_GameObject")
+    if not char_go or not sdk.is_managed_object(char_go) then return end
+    local char_addr = tostring(char_go)
+    if not type_mesh then
+        type_mesh = get_type("via.render.Mesh")
+        if not type_mesh then return end
+    end
+    for idx, w_obj in ipairs(weapon_objs) do
+        if sdk.is_managed_object(w_obj) then
+            local ok_alive, _ = pcall(function() return w_obj:call("get_Name") end)
+            if ok_alive then
+                local p_idx = tostring(idx - 1)
+                local part_data = preset_data[p_idx]
+                if part_data then
+                    local mesh_component = get_mesh_component_recursive(w_obj)
+                    if mesh_component then
+                        local mat_count = mesh_component:call("get_MaterialNum") or 0
+                        local first_mat = mat_count > 0 and mesh_component:call("getMaterialName", 0) or ""
+                        local state_hash = tostring(mesh_component) .. "_" .. tostring(mat_count) .. "_" .. first_mat
+                        if not applied_weapon_cache[char_addr] then applied_weapon_cache[char_addr] = {} end
+                        local should_apply = force_apply or (applied_weapon_cache[char_addr][p_idx] ~= state_hash)
+                        if should_apply then applied_weapon_cache[char_addr][p_idx] = state_hash end
+                         if part_data.mesh_enabled ~= nil then
+                             local cur_en = mesh_component:call("get_Enabled")
+                             if part_data.mesh_enabled == false then
+                                 if cur_en ~= false then mesh_component:call("set_Enabled", false) end
+                             elseif part_data.mesh_enabled == true then
+                                 if cur_en ~= true then mesh_component:call("set_Enabled", true) end
+                             end
+                         end
+                         if part_data.materials and mat_count > 0 then
+                             for j = 0, mat_count - 1 do
+                                 local mat_name = mesh_component:call("getMaterialName", j)
+                                 if ignore_context or is_material_in_current_context(idx - 1, mat_name) then
+                                     local mat_enabled = part_data.materials[mat_name]
+                                     local cur_mat = mesh_component:call("getMaterialsEnable", j)
+                                     if mat_enabled == false then
+                                         if cur_mat ~= false then mesh_component:call("setMaterialsEnable", j, false) end
+                                     elseif mat_enabled == true then
+                                         if cur_mat ~= true then mesh_component:call("setMaterialsEnable", j, true) end
+                                     end
+                                 end
+                             end
+                         end
                     end
                 end
             end
@@ -985,15 +1122,28 @@ local function apply_preset(preset_name)
     end
     local all_chars = get_all_characters()
     for _, char in ipairs(all_chars) do
-        local char_body_id = get_character_body_id(char)
-        if char_body_id and char_body_id == current_body_id then
-            local config = load_config_data(char_body_id)
-            local char_go_ok, char_go = pcall(function() return char:call("get_GameObject") end)
-            local char_addr = (char_go_ok and char_go) and tostring(char_go) or tostring(char)
-            local new_overrides, _ = TransformManager.apply_transform_rules(
-                char_addr, config, char, active_overrides[current_body_id], merge_overrides
-            )
-            apply_preset_to_character(char, new_overrides, true, true)
+        if is_weapon_id(current_body_id) then
+            local char_weapon_id, w_objs = get_character_weapon_id(char)
+            if char_weapon_id and char_weapon_id == current_body_id then
+                local config = load_config_data(char_weapon_id)
+                local char_go_ok, char_go = pcall(function() return char:call("get_GameObject") end)
+                local char_addr = (char_go_ok and char_go) and tostring(char_go) or tostring(char)
+                local new_overrides, _ = TransformManager.apply_transform_rules(
+                    char_addr, config, char, active_overrides[current_body_id], merge_overrides
+                )
+                apply_preset_to_weapon(char, w_objs, new_overrides, true, true)
+            end
+        else
+            local char_body_id = get_character_body_id(char)
+            if char_body_id and char_body_id == current_body_id then
+                local config = load_config_data(char_body_id)
+                local char_go_ok, char_go = pcall(function() return char:call("get_GameObject") end)
+                local char_addr = (char_go_ok and char_go) and tostring(char_go) or tostring(char)
+                local new_overrides, _ = TransformManager.apply_transform_rules(
+                    char_addr, config, char, active_overrides[current_body_id], merge_overrides
+                )
+                apply_preset_to_armor(char, new_overrides, true, true)
+            end
         end
     end
 end
@@ -1101,6 +1251,12 @@ local function save_current_config_to_file(body_id)
     loaded_configs[body_id] = current_config
     local path = get_config_path(body_id)
     json.dump_file(path, current_config)
+    if active_overrides[body_id] then
+        active_overrides[body_id] = nil
+    end
+    if TransformManager.clear_last_state_cache then
+        TransformManager.clear_last_state_cache()
+    end
 end
 local function save_preset(preset_name, body_id)
     if not body_id then body_id = get_body_id() end
@@ -1112,27 +1268,55 @@ local function save_preset(preset_name, body_id)
         if not type_mesh then return false end
     end
     local new_preset_data = {}
-    for i = 0, 5 do
-        local part_obj = get_character_part(character, i)
-        if part_obj then
-            local mesh_component = get_mesh_component_recursive(part_obj)
-            if mesh_component then
-                local part_data = {
-                    mesh_enabled = mesh_component:call("get_Enabled"),
-                    materials = {}
-                }
-                local mat_count = mesh_component:call("get_MaterialNum")
-                if mat_count then
-                    for j = 0, mat_count - 1 do
-                        local mat_name = mesh_component:call("getMaterialName", j)
-                        if is_material_in_current_context(i, mat_name) then
-                            local is_mat_enabled = mesh_component:call("getMaterialsEnable", j)
-                            part_data.materials[mat_name] = is_mat_enabled
+    if is_weapon_id(body_id) then
+        local w_id, w_objs = get_character_weapon_id(character)
+        if w_objs then
+            for idx, w_obj in ipairs(w_objs) do
+                local mesh_component = get_mesh_component_recursive(w_obj)
+                if mesh_component then
+                    local part_data = {
+                        mesh_enabled = mesh_component:call("get_Enabled"),
+                        materials = {}
+                    }
+                    local mat_count = mesh_component:call("get_MaterialNum")
+                    if mat_count then
+                        for j = 0, mat_count - 1 do
+                            local mat_name = mesh_component:call("getMaterialName", j)
+                            if is_material_in_current_context(idx - 1, mat_name) then
+                                local is_mat_enabled = mesh_component:call("getMaterialsEnable", j)
+                                part_data.materials[mat_name] = is_mat_enabled
+                            end
                         end
                     end
+                    if next(part_data.materials) or current_group_name == "" then
+                        new_preset_data[tostring(idx - 1)] = part_data
+                    end
                 end
-                if next(part_data.materials) or current_group_name == "" then
-                    new_preset_data[tostring(i)] = part_data
+            end
+        end
+    else
+        for i = 0, 5 do
+            local part_obj = get_character_part(character, i)
+            if part_obj then
+                local mesh_component = get_mesh_component_recursive(part_obj)
+                if mesh_component then
+                    local part_data = {
+                        mesh_enabled = mesh_component:call("get_Enabled"),
+                        materials = {}
+                    }
+                    local mat_count = mesh_component:call("get_MaterialNum")
+                    if mat_count then
+                        for j = 0, mat_count - 1 do
+                            local mat_name = mesh_component:call("getMaterialName", j)
+                            if is_material_in_current_context(i, mat_name) then
+                                local is_mat_enabled = mesh_component:call("getMaterialsEnable", j)
+                                part_data.materials[mat_name] = is_mat_enabled
+                            end
+                        end
+                    end
+                    if next(part_data.materials) or current_group_name == "" then
+                        new_preset_data[tostring(i)] = part_data
+                    end
                 end
             end
         end
@@ -1295,6 +1479,7 @@ local function draw_mesh_toggle(game_object, label, body_id, part_index)
 end
 local show_debug_window = false
 local function draw_targets_ui(targets, rule_type, rule_idx)
+    local body_id = last_body_id
     for j, target in ipairs(targets) do
         imgui.push_id(rule_type .. "_" .. rule_idx .. "_target_" .. j)
         local all_groups = { "" }
@@ -1329,8 +1514,13 @@ local function draw_targets_ui(targets, rule_type, rule_idx)
         end
         table.sort(target_presets)
         local p_idx = 1
+        local found = false
         for idx, p in ipairs(target_presets) do
-            if p == target.preset then p_idx = idx; break end
+            if p == target.preset then p_idx = idx; found = true; break end
+        end
+        if not found and #target_presets > 0 then
+            target.preset = target_presets[1]
+            save_current_config_to_file(body_id)
         end
         if #target_presets == 0 then table.insert(target_presets, "None") end
         imgui.set_next_item_width(150)
@@ -1365,27 +1555,59 @@ re.on_frame(function()
         local char_body_id = get_character_body_id(char)
         if char_body_id then
             local config = load_config_data(char_body_id)
-            if not active_overrides[char_body_id] then
-                apply_all_defaults(char_body_id)
-                local char_go_ok, char_go = pcall(function() return char:call("get_GameObject") end)
-                local char_addr = (char_go_ok and char_go) and tostring(char_go) or tostring(char)
-                local new_overrides, _ = TransformManager.apply_transform_rules(
-                    char_addr, config, char, active_overrides[char_body_id], merge_overrides
-                )
-                apply_preset_to_character(char, new_overrides, true, true)
-            end
-            if active_overrides[char_body_id] then
-                if char and sdk.is_managed_object(char) then
+            if config then
+                if not active_overrides[char_body_id] then
+                    apply_all_defaults(char_body_id)
                     local char_go_ok, char_go = pcall(function() return char:call("get_GameObject") end)
                     local char_addr = (char_go_ok and char_go) and tostring(char_go) or tostring(char)
-                    local final_overrides = active_overrides[char_body_id]
-                    local new_overrides, changed = TransformManager.apply_transform_rules(
-                        char_addr, config, char, final_overrides, merge_overrides
+                    local new_overrides, _ = TransformManager.apply_transform_rules(
+                        char_addr, config, char, active_overrides[char_body_id], merge_overrides
                     )
-                    if changed then
-                        apply_preset_to_character(char, new_overrides, true, true)
-                    else
-                        apply_preset_to_character(char, new_overrides, true, false)
+                    apply_preset_to_armor(char, new_overrides, true, true)
+                end
+                if active_overrides[char_body_id] then
+                    if char and sdk.is_managed_object(char) then
+                        local char_go_ok, char_go = pcall(function() return char:call("get_GameObject") end)
+                        local char_addr = (char_go_ok and char_go) and tostring(char_go) or tostring(char)
+                        local final_overrides = active_overrides[char_body_id]
+                        local new_overrides, changed = TransformManager.apply_transform_rules(
+                            char_addr, config, char, final_overrides, merge_overrides
+                        )
+                        if changed then
+                            apply_preset_to_armor(char, new_overrides, true, true)
+                        else
+                            apply_preset_to_armor(char, new_overrides, true, false)
+                        end
+                    end
+                end
+            end
+        end
+        local char_weapon_id, w_objs = get_character_weapon_id(char)
+        if char_weapon_id and w_objs then
+            local config = load_config_data(char_weapon_id)
+            if config then
+                if not active_overrides[char_weapon_id] then
+                    apply_all_defaults(char_weapon_id)
+                    local char_go_ok, char_go = pcall(function() return char:call("get_GameObject") end)
+                    local char_addr = (char_go_ok and char_go) and tostring(char_go) or tostring(char)
+                    local new_overrides, _ = TransformManager.apply_transform_rules(
+                        char_addr, config, char, active_overrides[char_weapon_id], merge_overrides
+                    )
+                    apply_preset_to_weapon(char, w_objs, new_overrides, true, true)
+                end
+                if active_overrides[char_weapon_id] then
+                    if char and sdk.is_managed_object(char) then
+                        local char_go_ok, char_go = pcall(function() return char:call("get_GameObject") end)
+                        local char_addr = (char_go_ok and char_go) and tostring(char_go) or tostring(char)
+                        local final_overrides = active_overrides[char_weapon_id]
+                        local new_overrides, changed = TransformManager.apply_transform_rules(
+                            char_addr, config, char, final_overrides, merge_overrides
+                        )
+                        if changed then
+                            apply_preset_to_weapon(char, w_objs, new_overrides, true, true)
+                        else
+                            apply_preset_to_weapon(char, w_objs, new_overrides, true, false)
+                        end
                     end
                 end
             end
@@ -1432,6 +1654,24 @@ re.on_draw_ui(function()
             end
         end
         local status, err = pcall(function()
+            local armor_mode_text = T("armor_mode") or "Armor Variant"
+            local weapon_mode_text = T("weapon_mode") or "Weapon Variant"
+            local changed_armor, new_armor = imgui.checkbox(armor_mode_text, not is_weapon_mode)
+            if changed_armor and new_armor then
+                if is_weapon_mode ~= false then
+                    is_weapon_mode = false
+                    last_body_id = nil
+                end
+            end
+            imgui.same_line()
+            local changed_weapon, new_weapon = imgui.checkbox(weapon_mode_text, is_weapon_mode)
+            if changed_weapon and new_weapon then
+                if is_weapon_mode ~= true then
+                    is_weapon_mode = true
+                    last_body_id = nil
+                end
+            end
+            imgui.separator()
             local character = get_local_player_character()
             if character and sdk.is_managed_object(character) then
                 local body_id = get_body_id()
@@ -2159,33 +2399,57 @@ re.on_draw_ui(function()
                         imgui.tree_pop()
                     end
                     imgui.separator()
-                    local armor_parts = {
-                        [0] = T("helm"),
-                        [1] = T("body"),
-                        [2] = T("arm"),
-                        [3] = T("waist"),
-                        [4] = T("leg"),
-                        [5] = T("slinger")
-                    }
-                    if imgui.tree_node(T("armor_parts")) then
-                        for i = 0, 5 do
-                            local part_obj = get_character_part(character, i)
-                            local part_name = armor_parts[i]
-                            if part_obj then
-                                local mesh_comp = get_mesh_component_recursive(part_obj)
-                                if mesh_comp then
-                                    local mesh_game_obj = mesh_comp:call("get_GameObject")
-                                    local obj_name = mesh_game_obj:call("get_Name")
-                                    draw_mesh_toggle(mesh_game_obj, string.format("%s [%s]", part_name, obj_name), body_id, i)
-                                else
-                                    local obj_name = part_obj:call("get_Name")
-                                    imgui.text_colored(string.format("%s [%s] (No Mesh)", part_name, obj_name), 0xFF808080)
+                    if is_weapon_mode then
+                        if imgui.tree_node(T("weapon_parts") or "Weapon Parts") then
+                            local w_id, w_objs = get_character_weapon_id(character)
+                            if w_objs and #w_objs > 0 then
+                                for idx, w_obj in ipairs(w_objs) do
+                                    if sdk.is_managed_object(w_obj) then
+                                        local mesh_comp = get_mesh_component_recursive(w_obj)
+                                        if mesh_comp then
+                                            local mesh_game_obj = mesh_comp:call("get_GameObject")
+                                            local obj_name = mesh_game_obj:call("get_Name")
+                                            draw_mesh_toggle(mesh_game_obj, string.format("Weapon %d [%s]", idx - 1, obj_name), body_id, tostring(idx - 1))
+                                        else
+                                            local obj_name = w_obj:call("get_Name")
+                                            imgui.text_colored(string.format("Weapon %d [%s] (No Mesh)", idx - 1, obj_name), 0xFF808080)
+                                        end
+                                    end
                                 end
                             else
-                                imgui.text_colored(part_name .. " " .. T("not_equipped"), 0xFF808080)
+                                imgui.text_colored("Weapon " .. T("not_equipped"), 0xFF808080)
                             end
+                            imgui.tree_pop()
                         end
-                        imgui.tree_pop()
+                    else
+                        local armor_parts = {
+                            [0] = T("helm"),
+                            [1] = T("body"),
+                            [2] = T("arm"),
+                            [3] = T("waist"),
+                            [4] = T("leg"),
+                            [5] = T("slinger")
+                        }
+                        if imgui.tree_node(T("armor_parts")) then
+                            for i = 0, 5 do
+                                local part_obj = get_character_part(character, i)
+                                local part_name = armor_parts[i]
+                                if part_obj then
+                                    local mesh_comp = get_mesh_component_recursive(part_obj)
+                                    if mesh_comp then
+                                        local mesh_game_obj = mesh_comp:call("get_GameObject")
+                                        local obj_name = mesh_game_obj:call("get_Name")
+                                        draw_mesh_toggle(mesh_game_obj, string.format("%s [%s]", part_name, obj_name), body_id, i)
+                                    else
+                                        local obj_name = part_obj:call("get_Name")
+                                        imgui.text_colored(string.format("%s [%s] (No Mesh)", part_name, obj_name), 0xFF808080)
+                                    end
+                                else
+                                    imgui.text_colored(part_name .. " " .. T("not_equipped"), 0xFF808080)
+                                end
+                            end
+                            imgui.tree_pop()
+                        end
                     end
                     imgui.separator()
                     if imgui.tree_node(T("language")) then

@@ -58,6 +58,9 @@ function TransformManager.get_character_weapon_type(character)
     return nil
 end
 local last_state_cache = {}
+function TransformManager.clear_last_state_cache()
+    last_state_cache = {}
+end
 local function get_active_rule_for_type(t_type, config, character, char_addr)
     local handler = ConditionRegistry[t_type]
     if handler then
@@ -81,6 +84,7 @@ function TransformManager.apply_transform_rules(char_addr, config, character, ac
     local current_weapon_type = TransformManager.get_character_weapon_type(character)
     local active_rules = {}
     local current_states = {}
+    if not config then return active_overrides, false end
     if config.is_parallel then
         for t_type, p_setting in pairs(config.parallel_settings) do
             if p_setting.enabled then
@@ -116,8 +120,9 @@ function TransformManager.apply_transform_rules(char_addr, config, character, ac
     for _, t in ipairs(sorted_types) do
         state_signature = state_signature .. t .. ":" .. tostring(current_states[t]) .. "|"
     end
-    local changed = (last_state_cache[char_addr] ~= state_signature)
-    last_state_cache[char_addr] = state_signature
+    local cache_key = char_addr .. "_" .. tostring(config)
+    local changed = (last_state_cache[cache_key] ~= state_signature)
+    last_state_cache[cache_key] = state_signature
     local new_overrides = {}
     for p, data in pairs(active_overrides) do
         new_overrides[p] = { mesh_enabled = data.mesh_enabled, materials = {} }
