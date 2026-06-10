@@ -82,6 +82,9 @@ local body_id_cache = {} -- Key: Character Address, Value: { id: string, last_ch
 local loaded_configs = {} -- 缓存所有 Body ID 的配置 { [body_id] = config_table }
 local temp_applied_presets = {} -- 记录当前临时应用的预设 (BodyID -> PresetName)
 local active_overrides = {} -- 记录当前生效的配置状态 (BodyID -> { [part_index] = { mesh_enabled=..., materials={...} } })
+-- 记录各分组当前选中的预设名 (BodyID -> { [""] = "主列表预设名", ["分组名"] = "预设名" })
+-- 用于全局分组切换时全量重算，确保其他分组的当前预设也一起被应用
+local active_group_presets = {}
 
 -- 当前 Body 的配置数据结构 (用于 UI 编辑):
 -- {
@@ -198,9 +201,12 @@ local current_group_name = "" -- 当前选中的分组名称，空字符串表�
 local selected_group_index = 1 -- 分组下拉框选中的索引
 local group_names_list = {} -- 分组名称列表
 local new_group_name = "" -- 新建分组的名称输入
+local new_group_is_global = false -- 新建分组时是否勾选了全局分组
 -- 材质细粒度选择状态
 local is_selection_mode = false -- 是否处于材质勾选模式
 local pending_material_selections = {} -- 临时存储勾选的材质 { [part_idx_str] = { [mat_name] = true } }
+-- 材质过滤输入框状态 { [part_index] = "filter_text" }
+local mat_filter_text = {}
 
 -- 辅助函数
 -- 辅助函数：获取类型定义 (Lazy Load)
@@ -905,32 +911,84 @@ local function get_character_part(character, part_index)
     return nil
 end
 
--- 辅助函数：检测材质被哪个分组占用
+-- 辅助函数：检测材质被哪个分组占用（全局组不计入归属，只有普通组才独占材质）
 local function get_material_group_owner(part_index, mat_name)
     if not mat_name then return nil end
     if not current_config.groups then return nil end
     local s_idx = tostring(part_index)
     for g_name, g_data in pairs(current_config.groups) do
-        if g_data.mask and g_data.mask[s_idx] and g_data.mask[s_idx][mat_name] then
-            return g_name
+        if not g_data.is_global then
+            if g_data.mask and g_data.mask[s_idx] and g_data.mask[s_idx][mat_name] then
+                return g_name
+            end
         end
     end
     return nil
 end
 
+-- 辅助函数：检测材质被哪些全局分组的 mask 覆盖（用于 UI 提示）
+local function get_material_global_groups(part_index, mat_name)
+    if not mat_name then return {} end
+    if not current_config.groups then return {} end
+    local s_idx = tostring(part_index)
+    local result = {}
+    for g_name, g_data in pairs(current_config.groups) do
+        if g_data.is_global and g_data.mask and g_data.mask[s_idx] and g_data.mask[s_idx][mat_name] then
+            table.insert(result, g_name)
+        end
+    end
+    return result
+end
+
 -- 辅助函数：判断材质是否属于当前 UI 上下文 (主列表或当前分组)
 local function is_material_in_current_context(part_index, mat_name)
-    local owner = get_material_group_owner(part_index, mat_name)
     if current_group_name == "" then
-        -- 主列表只管理未被任何分组占用的材质
+        -- 主列表只管理未被任何普通分组占用的材质
+        local owner = get_material_group_owner(part_index, mat_name)
         return owner == nil
     else
-        -- 分组只管理属于它自己的材质
-        return owner == current_group_name
+        local g_data = current_config.groups and current_config.groups[current_group_name]
+        if g_data and g_data.is_global then
+            -- 全局分组：用 mask 直接判断是否在该组内
+            local s_idx = tostring(part_index)
+            return g_data.mask and g_data.mask[s_idx] and g_data.mask[s_idx][mat_name] == true
+        else
+            -- 普通分组：通过归属判定
+            local owner = get_material_group_owner(part_index, mat_name)
+            return owner == current_group_name
+        end
     end
 end
 
--- =============================================================================
+-- 辅助函数：判断某材质是否被全局分组的当前预设锁定为隐藏
+-- 返回 true 表示被全局隐藏，此时不允许将其显示出来
+-- 注意：当前上下文本身就是全局分组时不做限制，允许在其内部自由编辑
+local function is_globally_hidden(part_index, mat_name)
+    -- 在全局分组上下文内操作时，不施加任何限制
+    if current_group_name ~= "" and current_config.groups
+        and current_config.groups[current_group_name]
+        and current_config.groups[current_group_name].is_global then
+        return false
+    end
+    if not current_config.groups then return false end
+    local s_idx = tostring(part_index)
+    local body_id = get_body_id()
+    local active_saved = (body_id and active_group_presets[body_id]) or {}
+    for g_name, g_data in pairs(current_config.groups) do
+        if g_data.is_global and g_data.mask and g_data.mask[s_idx] and g_data.mask[s_idx][mat_name] then
+            -- 优先用用户当前选中的预设，fallback 到默认预设
+            local pname = active_saved[g_name]
+            if not pname or pname == "" then pname = g_data.default_preset end
+            if pname and pname ~= "" and g_data.presets and g_data.presets[pname] then
+                local def = g_data.presets[pname]
+                if def[s_idx] and def[s_idx].materials and def[s_idx].materials[mat_name] == false then
+                    return true
+                end
+            end
+        end
+    end
+    return false
+end
 -- 预设应用函数
 -- =============================================================================
 -- 用于记录角色部位上次应用时的状态哈希，避免每帧重复应用导致覆盖游戏的原生临时状态
@@ -982,7 +1040,12 @@ local function apply_preset_to_armor(character, preset_data, ignore_context, for
                                 if mat_enabled == false then
                                     if cur_mat ~= false then mesh_component:call("setMaterialsEnable", j, false) end
                                 elseif mat_enabled == true then
-                                    if cur_mat ~= true then mesh_component:call("setMaterialsEnable", j, true) end
+                                    -- 全局隐藏锁：即使意图是显示，被全局分组锁定的材质强制隐藏
+                                    if is_globally_hidden(i, mat_name) then
+                                        if cur_mat ~= false then mesh_component:call("setMaterialsEnable", j, false) end
+                                    else
+                                        if cur_mat ~= true then mesh_component:call("setMaterialsEnable", j, true) end
+                                    end
                                 end
                             end
                         end
@@ -1062,7 +1125,7 @@ end
 -- 分组管理核心函数
 -- 辅助函数：创建新分组
 -- 辅助函数：创建材质级新分组
-local function create_new_group(group_name, body_id)
+local function create_new_group(group_name, body_id, is_global)
     if not group_name or group_name == "" then return false end
     if not body_id then return false end
     -- 0. 检查是否有勾选材质
@@ -1076,17 +1139,19 @@ local function create_new_group(group_name, body_id)
     -- 1. 创建分组结构
     local new_group = {
         mask = deep_copy_table(pending_material_selections),
-        presets = {}
+        presets = {},
+        is_global = is_global == true
     }
-    -- 2. 保持分组预设列表纯净，不再自动创建 "Initial" 预设。
-    -- 用户进入分组后可根据需要手动保存第一个预设。
-    -- 同时，需要从主列表的所有预设中移除这些材质的控制权，防止数据冗余
-    if current_config.presets then
-        for _, preset_data in pairs(current_config.presets) do
-            for part_idx_str, mats in pairs(new_group.mask) do
-                if preset_data[part_idx_str] and preset_data[part_idx_str].materials then
-                    for m_name, _ in pairs(mats) do
-                        preset_data[part_idx_str].materials[m_name] = nil
+    -- 2. 只有普通分组才需要从主列表/其他普通分组预设中剥离材质控制权
+    -- 全局分组允许 mask 与其他分组重叠，不做剥离
+    if not new_group.is_global then
+        if current_config.presets then
+            for _, preset_data in pairs(current_config.presets) do
+                for part_idx_str, mats in pairs(new_group.mask) do
+                    if preset_data[part_idx_str] and preset_data[part_idx_str].materials then
+                        for m_name, _ in pairs(mats) do
+                            preset_data[part_idx_str].materials[m_name] = nil
+                        end
                     end
                 end
             end
@@ -1333,23 +1398,77 @@ local function merge_overrides(base_data, add_data)
 end
 
 -- Transform Rules Application Logic
+-- 辅助函数：将全局分组预设合并进 overrides，只锁隐藏项（true 项跳过，不干预）
+-- 全局分组只操作材质级别，不锁定 mesh_enabled（避免整体隐藏整个部件）
+-- 注意：全局隐藏项会强制覆盖已有的 true（确保最高优先级）
+local function merge_global_preset_into_overrides(body_id, preset_data)
+    if not body_id or not preset_data then return end
+    if not active_overrides[body_id] then active_overrides[body_id] = {} end
+    local overrides = active_overrides[body_id]
+    for p_idx, p_data in pairs(preset_data) do
+        if p_data.materials then
+            if not overrides[p_idx] then overrides[p_idx] = { materials = {} } end
+            if not overrides[p_idx].materials then overrides[p_idx].materials = {} end
+            for mat_name, is_enabled in pairs(p_data.materials) do
+                if is_enabled == false then
+                    -- 强制覆盖：全局隐藏具有最高优先级，无论之前是否为 true
+                    overrides[p_idx].materials[mat_name] = false
+                end
+                -- is_enabled == true 时跳过，不干预普通分组已写入的值
+            end
+        end
+    end
+end
+
 -- 辅助函数：应用一个 Body ID 的所有默认预设 (主列表 + 所有分组)
+-- 合并顺序：主列表 → 普通分组 → 全局分组（最后）
 local function apply_all_defaults(body_id)
     local config = load_config_data(body_id)
     if not config then return end
     -- 彻底重置该 Body 的复合状态
     active_overrides[body_id] = {}
+    -- 同步初始化 active_group_presets，使 is_globally_hidden 等函数能找到正确的预设
+    if not active_group_presets[body_id] then active_group_presets[body_id] = {} end
     -- 1. 首先合并主列表默认预设
     if config.default_preset and config.default_preset ~= "" and config.presets then
         local def = config.presets[config.default_preset]
-        if def then merge_preset_into_overrides(body_id, def) end
+        if def then
+            merge_preset_into_overrides(body_id, def)
+            -- 记录主列表当前预设（key 为空字符串）
+            if not active_group_presets[body_id][""] or active_group_presets[body_id][""] == "" then
+                active_group_presets[body_id][""] = config.default_preset
+            end
+        end
     end
-    -- 2. 然后合并所有有效分组的默认预设 (增量合并)
+    -- 2. 合并所有普通分组的默认预设
     if config.groups then
-        for _, g_data in pairs(config.groups) do
-            if g_data.default_preset and g_data.default_preset ~= "" and g_data.presets then
-                local g_def = g_data.presets[g_data.default_preset]
-                if g_def then merge_preset_into_overrides(body_id, g_def) end
+        for g_name, g_data in pairs(config.groups) do
+            if not g_data.is_global then
+                if g_data.default_preset and g_data.default_preset ~= "" and g_data.presets then
+                    local g_def = g_data.presets[g_data.default_preset]
+                    if g_def then
+                        merge_preset_into_overrides(body_id, g_def)
+                        if not active_group_presets[body_id][g_name] or active_group_presets[body_id][g_name] == "" then
+                            active_group_presets[body_id][g_name] = g_data.default_preset
+                        end
+                    end
+                end
+            end
+        end
+    end
+    -- 3. 最后合并所有全局分组的默认预设（只锁隐藏项，强制覆盖）
+    if config.groups then
+        for g_name, g_data in pairs(config.groups) do
+            if g_data.is_global then
+                if g_data.default_preset and g_data.default_preset ~= "" and g_data.presets then
+                    local g_def = g_data.presets[g_data.default_preset]
+                    if g_def then
+                        merge_global_preset_into_overrides(body_id, g_def)
+                        if not active_group_presets[body_id][g_name] or active_group_presets[body_id][g_name] == "" then
+                            active_group_presets[body_id][g_name] = g_data.default_preset
+                        end
+                    end
+                end
             end
         end
     end
@@ -1373,8 +1492,70 @@ local function apply_preset(preset_name)
     if not preset_data then return end
     local current_body_id = get_body_id()
     if current_body_id then
-        -- 使用合并逻辑更新复合状态
-        merge_preset_into_overrides(current_body_id, preset_data)
+        -- 记录当前分组的选中预设（用于全局分组全量重算时恢复）
+        if not active_group_presets[current_body_id] then active_group_presets[current_body_id] = {} end
+        active_group_presets[current_body_id][current_group_name] = preset_name
+
+        -- 判断当前是否为全局分组
+        local is_current_global = (current_group_name ~= "" and current_config.groups
+            and current_config.groups[current_group_name]
+            and current_config.groups[current_group_name].is_global)
+
+        if is_current_global then
+            -- 全局分组预设切换：全量重算（不自动更新 default_preset，只有用户点"设为默认"才更新）
+            active_overrides[current_body_id] = {}
+            local saved = active_group_presets[current_body_id] or {}
+            -- 1. 主列表当前预设
+            local main_preset_name = saved[""]
+            if main_preset_name and main_preset_name ~= "" and current_config.presets and current_config.presets[main_preset_name] then
+                merge_preset_into_overrides(current_body_id, current_config.presets[main_preset_name])
+            elseif current_config.default_preset and current_config.default_preset ~= "" and current_config.presets then
+                local def = current_config.presets[current_config.default_preset]
+                if def then merge_preset_into_overrides(current_body_id, def) end
+            end
+            -- 2. 普通分组的当前预设
+            if current_config.groups then
+                for g_name, g_data in pairs(current_config.groups) do
+                    if not g_data.is_global then
+                        local gp_name = saved[g_name]
+                        if gp_name and gp_name ~= "" and g_data.presets and g_data.presets[gp_name] then
+                            merge_preset_into_overrides(current_body_id, g_data.presets[gp_name])
+                        elseif g_data.default_preset and g_data.default_preset ~= "" and g_data.presets then
+                            local g_def = g_data.presets[g_data.default_preset]
+                            if g_def then merge_preset_into_overrides(current_body_id, g_def) end
+                        end
+                    end
+                end
+            end
+            -- 3. 所有全局分组（只锁隐藏项），当前切换的全局组用新 preset_name
+            if current_config.groups then
+                for g_name, g_data in pairs(current_config.groups) do
+                    if g_data.is_global then
+                        local gp_name = (g_name == current_group_name) and preset_name or saved[g_name]
+                        if not gp_name or gp_name == "" then gp_name = g_data.default_preset end
+                        if gp_name and gp_name ~= "" and g_data.presets and g_data.presets[gp_name] then
+                            merge_global_preset_into_overrides(current_body_id, g_data.presets[gp_name])
+                        end
+                    end
+                end
+            end
+        else
+            -- 普通分组/主列表：增量合并当前预设数据，再叠加全局锁
+            merge_preset_into_overrides(current_body_id, preset_data)
+            if current_config.groups then
+                for g_name, g_data in pairs(current_config.groups) do
+                    if g_data.is_global and g_data.presets then
+                        -- 优先用用户当前选中的预设（active_group_presets），fallback 到默认预设
+                        local active_saved = active_group_presets[current_body_id] or {}
+                        local gp_name = active_saved[g_name]
+                        if not gp_name or gp_name == "" then gp_name = g_data.default_preset end
+                        if gp_name and gp_name ~= "" and g_data.presets[gp_name] then
+                            merge_global_preset_into_overrides(current_body_id, g_data.presets[gp_name])
+                        end
+                    end
+                end
+            end
+        end
         temp_applied_presets[current_body_id] = preset_name
     end
     local all_chars = get_all_characters()
@@ -1393,14 +1574,12 @@ local function apply_preset(preset_name)
         else
             local char_body_id = get_character_body_id(char)
             if char_body_id and char_body_id == current_body_id then
-                -- 当用户手动应用预设时，重新计算包含变身规则在内的最终状态
                 local config = load_config_data(char_body_id)
                 local char_go_ok, char_go = pcall(function() return char:call("get_GameObject") end)
                 local char_addr = (char_go_ok and char_go) and tostring(char_go) or tostring(char)
                 local new_overrides, _ = TransformManager.apply_transform_rules(
                     char_addr, config, char, active_overrides[current_body_id], merge_overrides
                 )
-                -- 立即应用复合后的总状态，并忽略材质上下文过滤
                 apply_preset_to_armor(char, new_overrides, true, true)
             end
         end
@@ -1551,15 +1730,27 @@ local function save_preset(preset_name, body_id)
                 local mesh_component = get_mesh_component_recursive(w_obj)
                 if mesh_component then
                     local part_data = {
-                        mesh_enabled = mesh_component:call("get_Enabled"),
                         materials = {}
                     }
+                    -- 全局分组不保存 mesh_enabled，避免整体隐藏部件
+                    local is_global_ctx = (current_group_name ~= "" and current_config.groups
+                        and current_config.groups[current_group_name]
+                        and current_config.groups[current_group_name].is_global)
+                    if not is_global_ctx then
+                        part_data.mesh_enabled = mesh_component:call("get_Enabled")
+                    end
                     local mat_count = mesh_component:call("get_MaterialNum")
                     if mat_count then
                         for j = 0, mat_count - 1 do
                             local mat_name = mesh_component:call("getMaterialName", j)
                             if is_material_in_current_context(idx - 1, mat_name) then
-                                local is_mat_enabled = mesh_component:call("getMaterialsEnable", j)
+                                -- 优先读意图值（active_overrides），避免全局锁导致游戏状态是 false 而丢失用户意图
+                                local s_idx = tostring(idx - 1)
+                                local intent = active_overrides[body_id]
+                                    and active_overrides[body_id][s_idx]
+                                    and active_overrides[body_id][s_idx].materials
+                                    and active_overrides[body_id][s_idx].materials[mat_name]
+                                local is_mat_enabled = (intent ~= nil) and intent or mesh_component:call("getMaterialsEnable", j)
                                 part_data.materials[mat_name] = is_mat_enabled
                             end
                         end
@@ -1577,21 +1768,31 @@ local function save_preset(preset_name, body_id)
                 local mesh_component = get_mesh_component_recursive(part_obj)
                 if mesh_component then
                     local part_data = {
-                        mesh_enabled = mesh_component:call("get_Enabled"),
                         materials = {}
                     }
+                    -- 全局分组不保存 mesh_enabled，避免整体隐藏部件
+                    local is_global_ctx = (current_group_name ~= "" and current_config.groups
+                        and current_config.groups[current_group_name]
+                        and current_config.groups[current_group_name].is_global)
+                    if not is_global_ctx then
+                        part_data.mesh_enabled = mesh_component:call("get_Enabled")
+                    end
                     local mat_count = mesh_component:call("get_MaterialNum")
                     if mat_count then
                         for j = 0, mat_count - 1 do
                             local mat_name = mesh_component:call("getMaterialName", j)
-                            -- 核心逻辑：创建预设时，只保存属于当前上下文管理的材质
                             if is_material_in_current_context(i, mat_name) then
-                                local is_mat_enabled = mesh_component:call("getMaterialsEnable", j)
+                                -- 优先读意图值（active_overrides），避免全局锁导致游戏状态是 false 而丢失用户意图
+                                local s_idx_j = tostring(i)
+                                local intent = active_overrides[body_id]
+                                    and active_overrides[body_id][s_idx_j]
+                                    and active_overrides[body_id][s_idx_j].materials
+                                    and active_overrides[body_id][s_idx_j].materials[mat_name]
+                                local is_mat_enabled = (intent ~= nil) and intent or mesh_component:call("getMaterialsEnable", j)
                                 part_data.materials[mat_name] = is_mat_enabled
                             end
                         end
                     end
-                    -- 只有当该部位包含有效材质或整体开关被管理时才存入
                     if next(part_data.materials) or current_group_name == "" then
                         new_preset_data[tostring(i)] = part_data
                     end
@@ -1729,48 +1930,212 @@ local function draw_mesh_toggle(game_object, label, body_id, part_index)
                     active_overrides[body_id][s_idx].mesh_enabled = new_value
                 end
             end
+
             -- 2. 遍历材质
             local mat_count = mesh_component:call("get_MaterialNum")
             if mat_count and mat_count > 0 then
+                local s_idx = tostring(part_index)
+
+                -- 辅助：判断某材质在当前模式下是否"可操作"（过滤后可见且未被普通分组占用）
+                local function mat_is_operable(mn)
+                    local flt = mat_filter_text[part_index] or ""
+                    if flt ~= "" and not string.find(string.lower(mn), string.lower(flt), 1, true) then
+                        return false
+                    end
+                    if is_selection_mode then
+                        return get_material_group_owner(part_index, mn) == nil
+                    else
+                        return is_material_in_current_context(part_index, mn)
+                    end
+                end
+
+                -- 全选 / 反选 / 过滤框：与"启用模型"checkbox 同行
+                imgui.same_line()
+                if imgui.button(T("select_all") .. "##sa_" .. s_idx) then
+                    -- 收集所有可操作材质的当前状态
+                    local all_on = true
+                    for k = 0, mat_count - 1 do
+                        local mn = mesh_component:call("getMaterialName", k)
+                        if mn and mat_is_operable(mn) then
+                            if is_selection_mode then
+                                if not (pending_material_selections[s_idx] and pending_material_selections[s_idx][mn]) then
+                                    all_on = false; break
+                                end
+                            else
+                                -- 优先用意图值判断全选状态
+                                local intent = (active_overrides[body_id]
+                                    and active_overrides[body_id][s_idx]
+                                    and active_overrides[body_id][s_idx].materials
+                                    and active_overrides[body_id][s_idx].materials[mn])
+                                local cur_on = (intent ~= nil) and intent or mesh_component:call("getMaterialsEnable", k)
+                                if not cur_on then
+                                    all_on = false; break
+                                end
+                            end
+                        end
+                    end
+                    local target_val = not all_on
+                    for k = 0, mat_count - 1 do
+                        local mn = mesh_component:call("getMaterialName", k)
+                        if mn and mat_is_operable(mn) then
+                            if is_selection_mode then
+                                if not pending_material_selections[s_idx] then pending_material_selections[s_idx] = {} end
+                                pending_material_selections[s_idx][mn] = target_val or nil
+                            else
+                                -- 全局隐藏锁：意图值正常存储，渲染时应用锁
+                                local render_val
+                                if target_val == true and is_globally_hidden(part_index, mn) then
+                                    render_val = false
+                                else
+                                    render_val = target_val
+                                end
+                                mesh_component:call("setMaterialsEnable", k, render_val)
+                                if body_id then
+                                    if not active_overrides[body_id] then active_overrides[body_id] = {} end
+                                    if not active_overrides[body_id][s_idx] then active_overrides[body_id][s_idx] = { materials = {} } end
+                                    if not active_overrides[body_id][s_idx].materials then active_overrides[body_id][s_idx].materials = {} end
+                                    active_overrides[body_id][s_idx].materials[mn] = target_val  -- 存意图值
+                                end
+                            end
+                        end
+                    end
+                end
+
+                imgui.same_line()
+
+                -- 反选按钮：将可操作材质的当前状态取反
+                if imgui.button(T("invert_select") .. "##inv_" .. s_idx) then
+                    for k = 0, mat_count - 1 do
+                        local mn = mesh_component:call("getMaterialName", k)
+                        if mn and mat_is_operable(mn) then
+                            if is_selection_mode then
+                                if not pending_material_selections[s_idx] then pending_material_selections[s_idx] = {} end
+                                local cur = pending_material_selections[s_idx][mn]
+                                pending_material_selections[s_idx][mn] = (not cur) or nil
+                            else
+                                local cur = mesh_component:call("getMaterialsEnable", k)
+                                local nv = not cur
+                                -- 全局隐藏锁：意图值正常存储，渲染时应用锁
+                                local render_val
+                                if nv == true and is_globally_hidden(part_index, mn) then
+                                    render_val = false
+                                else
+                                    render_val = nv
+                                end
+                                mesh_component:call("setMaterialsEnable", k, render_val)
+                                if body_id then
+                                    if not active_overrides[body_id] then active_overrides[body_id] = {} end
+                                    if not active_overrides[body_id][s_idx] then active_overrides[body_id][s_idx] = { materials = {} } end
+                                    if not active_overrides[body_id][s_idx].materials then active_overrides[body_id][s_idx].materials = {} end
+                                    active_overrides[body_id][s_idx].materials[mn] = nv  -- 存意图值
+                                end
+                            end
+                        end
+                    end
+                end
+
+                -- 过滤输入框（与全选/反选同行）
+                imgui.same_line()
+                imgui.set_next_item_width(140)
+                local flt_cur = mat_filter_text[part_index] or ""
+                local flt_changed, flt_val = imgui.input_text("##matflt_" .. s_idx, flt_cur)
+                if flt_changed then mat_filter_text[part_index] = flt_val end
+                if flt_cur ~= "" then
+                    imgui.same_line()
+                    if imgui.button("x##fltclr_" .. s_idx) then mat_filter_text[part_index] = "" end
+                end
+
+                -- 材质列表
                 imgui.separator()
                 imgui.text(T("materials") .. " (" .. tostring(mat_count) .. "):")
-                local s_idx = tostring(part_index)
+
+                -- 材质列表（过滤后显示）
+                local filter_str = string.lower(mat_filter_text[part_index] or "")
                 for i = 0, mat_count - 1 do
                     local mat_name = mesh_component:call("getMaterialName", i)
                     if mat_name then
-                        local is_mat_enabled = mesh_component:call("getMaterialsEnable", i)
-                        local owner = get_material_group_owner(part_index, mat_name)
-                        -- A. 分组创建模式 (勾选要独立出去的材质)
-                        if is_selection_mode then
-                            local is_selected = pending_material_selections[s_idx] and pending_material_selections[s_idx][mat_name]
-                            if owner then
-                                -- 已被其他分组占用的材质只读显示
-                                imgui.text_colored(string.format("[%d] %s (%s: %s)", i, mat_name, T("already_in_group"), owner), 0xFF808080)
-                            else
-                                local changed_sel, new_sel = imgui.checkbox(string.format("[%d] %s", i, mat_name), is_selected or false)
-                                if changed_sel then
-                                    if not pending_material_selections[s_idx] then pending_material_selections[s_idx] = {} end
-                                    pending_material_selections[s_idx][mat_name] = new_sel
-                                end
-                            end
-                        else
-                            -- B. 正常管理模式 (根据上下文显示材质)
-                            if is_material_in_current_context(part_index, mat_name) then
-                                local mat_label = string.format("[%d] %s", i, mat_name)
-                                local mat_changed, mat_new_val = imgui.checkbox(mat_label, is_mat_enabled)
-                                if mat_changed then
-                                    mesh_component:call("setMaterialsEnable", i, mat_new_val)
-                                    if body_id and part_index then
-                                        if not active_overrides[body_id] then active_overrides[body_id] = {} end
-                                        if not active_overrides[body_id][s_idx] then active_overrides[body_id][s_idx] = { materials = {} } end
-                                        if not active_overrides[body_id][s_idx].materials then active_overrides[body_id][s_idx].materials = {} end
-                                        active_overrides[body_id][s_idx].materials[mat_name] = mat_new_val
+                        -- 过滤：名称不含关键字则跳过
+                        if filter_str == "" or string.find(string.lower(mat_name), filter_str, 1, true) then
+                            local is_mat_enabled = mesh_component:call("getMaterialsEnable", i)
+                            local owner = get_material_group_owner(part_index, mat_name)
+                            local global_groups = get_material_global_groups(part_index, mat_name)
+                            -- A. 分组创建模式
+                            if is_selection_mode then
+                                local is_selected = pending_material_selections[s_idx] and pending_material_selections[s_idx][mat_name]
+                                if owner then
+                                    imgui.text_colored(string.format("[%d] %s (%s: %s)", i, mat_name, T("already_in_group"), owner), 0xFF808080)
+                                else
+                                    local changed_sel, new_sel = imgui.checkbox(string.format("[%d] %s", i, mat_name), is_selected or false)
+                                    if changed_sel then
+                                        if not pending_material_selections[s_idx] then pending_material_selections[s_idx] = {} end
+                                        pending_material_selections[s_idx][mat_name] = new_sel
+                                    end
+                                    if #global_groups > 0 then
+                                        local bid_hint = get_body_id()
+                                        local ag_saved = (bid_hint and active_group_presets[bid_hint]) or {}
+                                        for _, gname in ipairs(global_groups) do
+                                            local g_data = current_config.groups and current_config.groups[gname]
+                                            local pname = ag_saved[gname]
+                                            if not pname or pname == "" then pname = g_data and g_data.default_preset end
+                                            local def_preset = g_data and pname and g_data.presets and g_data.presets[pname]
+                                            local global_hidden = def_preset and def_preset[s_idx] and def_preset[s_idx].materials and (def_preset[s_idx].materials[mat_name] == false)
+                                            if global_hidden then
+                                                imgui.same_line()
+                                                imgui.text_colored(string.format(T("in_global_group_hidden"), gname), 0xFF4080FF)
+                                            else
+                                                imgui.same_line()
+                                                imgui.text_colored(string.format(T("in_global_group_visible"), gname), 0xFF80C0FF)
+                                            end
+                                        end
                                     end
                                 end
                             else
-                                -- 显示已被分组管理的材质（置灰显示所有者）
-                                if current_group_name == "" and owner then
-                                    imgui.text_colored(string.format("[%d] %s (%s: %s)", i, mat_name, T("already_in_group"), owner), 0xFF804040)
+                                -- B. 正常管理模式
+                                if is_material_in_current_context(part_index, mat_name) then
+                                    local mat_label = string.format("[%d] %s", i, mat_name)
+                                    -- 优先用 active_overrides 里的意图值显示 checkbox，避免全局锁强制隐藏后 checkbox 跳回未勾选
+                                    local intent_val = (active_overrides[body_id]
+                                        and active_overrides[body_id][s_idx]
+                                        and active_overrides[body_id][s_idx].materials
+                                        and active_overrides[body_id][s_idx].materials[mat_name])
+                                    local display_val = (intent_val ~= nil) and intent_val or is_mat_enabled
+                                    local mat_changed, mat_new_val = imgui.checkbox(mat_label, display_val)
+                                    if mat_changed then
+                                        -- 记录用户意图值到 active_overrides（全局锁不影响存储的意图）
+                                        if body_id and part_index then
+                                            if not active_overrides[body_id] then active_overrides[body_id] = {} end
+                                            if not active_overrides[body_id][s_idx] then active_overrides[body_id][s_idx] = { materials = {} } end
+                                            if not active_overrides[body_id][s_idx].materials then active_overrides[body_id][s_idx].materials = {} end
+                                            active_overrides[body_id][s_idx].materials[mat_name] = mat_new_val
+                                        end
+                                        -- 实际渲染时应用全局锁：被全局隐藏的材质始终保持隐藏
+                                        local render_val
+                                        if mat_new_val == true and is_globally_hidden(part_index, mat_name) then
+                                            render_val = false
+                                        else
+                                            render_val = mat_new_val
+                                        end
+                                        mesh_component:call("setMaterialsEnable", i, render_val)
+                                    end
+                                    if #global_groups > 0 then
+                                        local bid_hint2 = get_body_id()
+                                        local ag_saved2 = (bid_hint2 and active_group_presets[bid_hint2]) or {}
+                                        for _, gname in ipairs(global_groups) do
+                                            local g_data = current_config.groups and current_config.groups[gname]
+                                            local pname2 = ag_saved2[gname]
+                                            if not pname2 or pname2 == "" then pname2 = g_data and g_data.default_preset end
+                                            local def_preset = g_data and pname2 and g_data.presets and g_data.presets[pname2]
+                                            local global_hidden = def_preset and def_preset[s_idx] and def_preset[s_idx].materials and (def_preset[s_idx].materials[mat_name] == false)
+                                            if global_hidden then
+                                                imgui.same_line()
+                                                imgui.text_colored(string.format(T("in_global_group_hidden"), gname), 0xFF4080FF)
+                                            end
+                                        end
+                                    end
+                                else
+                                    if current_group_name == "" and owner then
+                                        imgui.text_colored(string.format("[%d] %s (%s: %s)", i, mat_name, T("already_in_group"), owner), 0xFF804040)
+                                    end
                                 end
                             end
                         end
@@ -1801,10 +2166,15 @@ local function draw_targets_ui(targets, rule_type, rule_idx)
         -- 准备分组下拉框的数据
         local all_groups = { "" }
         local all_groups_display = { T("main_list") or "Main" }
+        local global_label_t = T("global_group_label") or "[Global]"
         if current_config.groups then
-            for gname, _ in pairs(current_config.groups) do
+            for gname, g_data in pairs(current_config.groups) do
                 table.insert(all_groups, gname)
-                table.insert(all_groups_display, gname)
+                if g_data.is_global then
+                    table.insert(all_groups_display, global_label_t .. " " .. gname)
+                else
+                    table.insert(all_groups_display, gname)
+                end
             end
         end
         local g_idx = 1
@@ -2042,8 +2412,16 @@ re.on_draw_ui(function()
                         -- 使用 pcall 包裹整个预设管理区域，防止 UI 脚本报错导致 ImGui Mismatch 崩溃
                         local ui_status, ui_err = pcall(function()
                             -- 1. 准备数据
+                            local global_label = T("global_group_label") or "[Global]"
                             local full_group_list = {T("main_list")}
-                            for _, gname in ipairs(group_names_list) do table.insert(full_group_list, gname) end
+                            for _, gname in ipairs(group_names_list) do
+                                local g_data = current_config.groups and current_config.groups[gname]
+                                if g_data and g_data.is_global then
+                                    table.insert(full_group_list, global_label .. " " .. gname)
+                                else
+                                    table.insert(full_group_list, gname)
+                                end
+                            end
                             local current_group_combo_index = 1
                             if current_group_name ~= "" then
                                 for i, gname in ipairs(group_names_list) do
@@ -2159,17 +2537,28 @@ re.on_draw_ui(function()
                                     imgui.text_colored(T("selection_mode_desc") .. " ", 0xFF00FFFF)
                                     local cg, gtext = imgui.input_text(T("name") .. "##gn", new_group_name)
                                     if cg then new_group_name = gtext end
+                                    -- 全局分组勾选框
+                                    local cg_global, new_is_global = imgui.checkbox(T("is_global_group") .. "##gisgl", new_group_is_global)
+                                    if cg_global then new_group_is_global = new_is_global end
+                                    if new_group_is_global then
+                                        imgui.same_line()
+                                        imgui.text_colored(T("is_global_group_desc"), 0xFF80FFFF)
+                                    end
                                     if imgui.button(T("confirm_creation") .. "##gconfirm") then
-                                        if new_group_name ~= "" and create_new_group(new_group_name, body_id) then
+                                        if new_group_name ~= "" and create_new_group(new_group_name, body_id, new_group_is_global) then
                                             current_group_name = new_group_name
                                             new_group_name = ""
+                                            new_group_is_global = false
                                             is_selection_mode = false
                                             update_group_names_list()
                                             update_preset_names_list()
                                         end
                                     end
                                     imgui.same_line()
-                                    if imgui.button(T("cancel") .. "##gcancel") then is_selection_mode = false end
+                                    if imgui.button(T("cancel") .. "##gcancel") then
+                                        is_selection_mode = false
+                                        new_group_is_global = false
+                                    end
                                 end
                                 imgui.end_table()
                             end
