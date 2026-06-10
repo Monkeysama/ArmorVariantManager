@@ -45,6 +45,13 @@ local Localization = {
         ["auto_find_preset"] = "Auto Find Preset",
         ["no_body_part"] = "No Body Part Detected",
 
+        -- 武器差分新增
+        ["weapon_mode"] = "Weapon Variant",
+        ["armor_mode"] = "Armor Variant",
+        ["weapon_parts"] = "Weapon Parts",
+        ["weapon_type"] = "Weapon Type",
+        ["weapon_not_equipped"] = "(No Weapon Equipped)",
+
         -- 变身管理
         ["transform_manager"] = "Transform Manager",
         ["current_state"] = "Current State",
@@ -154,6 +161,13 @@ local Localization = {
         ["lua_error"] = "Lua 错误: ",
         ["auto_find_preset"] = "自动查找预设",
         ["no_body_part"] = "未检测到身体部位",
+
+        -- 武器差分新增
+        ["weapon_mode"] = "武器差分",
+        ["armor_mode"] = "防具差分",
+        ["weapon_parts"] = "武器部件",
+        ["weapon_type"] = "武器类型",
+        ["weapon_not_equipped"] = "(未装备武器)",
 
         -- 变身管理
         ["transform_manager"] = "变身管理",

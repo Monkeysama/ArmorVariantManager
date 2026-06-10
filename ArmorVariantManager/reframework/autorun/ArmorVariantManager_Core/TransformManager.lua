@@ -1,6 +1,7 @@
 -- TransformManager.lua
 local TransformManager = {}
 
+-- 引入条件注册表（所有条件模块）
 local ConditionRegistry = {
     weapon = require("ArmorVariantManager_Core.Conditions.Condition_Weapon"),
     scroll = require("ArmorVariantManager_Core.Conditions.Condition_Scroll"),
@@ -14,9 +15,7 @@ local ConditionRegistry = {
     monster_hp = require("ArmorVariantManager_Core.Conditions.Condition_MonsterHP")
 }
 
-local last_state_cache = {}
-
--- 本地化支持
+-- 本地化支持（用于显示当前状态）
 local Localization = require("ArmorVariantManager_Core.Localization")
 local global_config_path = "ArmorVariantManager/GlobalSettings.json"
 local function get_language()
@@ -34,6 +33,19 @@ local function T(key)
     return dict[key] or tostring(key)
 end
 
+-- 状态缓存（避免每帧重复评估相同状态）
+local last_state_cache = {}
+
+-- 清除指定角色的状态缓存
+function TransformManager.clear_cache(char_addr)
+    if char_addr then
+        last_state_cache[char_addr] = nil
+    else
+        last_state_cache = {}
+    end
+end
+
+-- 获取指定条件类型的激活规则（内部函数）
 local function get_active_rule_for_type(t_type, config, character, char_addr)
     local handler = ConditionRegistry[t_type]
     if handler then
@@ -42,36 +54,48 @@ local function get_active_rule_for_type(t_type, config, character, char_addr)
     return nil, nil
 end
 
+-- 核心函数：应用变身规则，返回最终的 overrides 和是否变化
 function TransformManager.apply_transform_rules(char_addr, config, character, active_overrides, merge_overrides)
-    if not active_overrides then return active_overrides, false end
+    if not active_overrides then
+        return active_overrides, false
+    end
 
-    local active_rules = {}
-    local current_states = {}
+    local active_rules = {}        -- { rule, priority }
+    local current_states = {}      -- 记录每个条件类型的当前状态（用于缓存签名）
 
     if config.is_parallel then
+        -- 并行模式：遍历所有启用的条件
         for t_type, p_setting in pairs(config.parallel_settings or {}) do
             if p_setting.enabled and ConditionRegistry[t_type] then
                 local rule, cur_state = get_active_rule_for_type(t_type, config, character, char_addr)
-                if cur_state ~= nil then current_states[t_type] = cur_state end
+                if cur_state ~= nil then
+                    current_states[t_type] = cur_state
+                end
                 if rule then
                     table.insert(active_rules, { rule = rule, priority = p_setting.priority or 1 })
                 end
             end
         end
     else
+        -- 单一模式：只评估当前选中的条件类型
         local t_type = config.transform_type
         if t_type and ConditionRegistry[t_type] then
             local rule, cur_state = get_active_rule_for_type(t_type, config, character, char_addr)
-            if cur_state ~= nil then current_states[t_type] = cur_state end
+            if cur_state ~= nil then
+                current_states[t_type] = cur_state
+            end
             if rule then
                 table.insert(active_rules, { rule = rule, priority = 1 })
             end
         end
     end
 
+    -- 生成状态签名（用于判断是否变化）
     local state_signature = ""
     local sorted_types = {}
-    for t, _ in pairs(current_states) do table.insert(sorted_types, t) end
+    for t, _ in pairs(current_states) do
+        table.insert(sorted_types, t)
+    end
     table.sort(sorted_types)
     for _, t in ipairs(sorted_types) do
         state_signature = state_signature .. t .. ":" .. tostring(current_states[t]) .. "|"
@@ -79,14 +103,18 @@ function TransformManager.apply_transform_rules(char_addr, config, character, ac
     local changed = (last_state_cache[char_addr] ~= state_signature)
     last_state_cache[char_addr] = state_signature
 
+    -- 复制当前 overrides 作为基础
     local new_overrides = {}
     for p, data in pairs(active_overrides) do
         new_overrides[p] = { mesh_enabled = data.mesh_enabled, materials = {} }
         if data.materials then
-            for m, en in pairs(data.materials) do new_overrides[p].materials[m] = en end
+            for m, en in pairs(data.materials) do
+                new_overrides[p].materials[m] = en
+            end
         end
     end
 
+    -- 按优先级排序（高优先级后应用，实现覆盖）
     if #active_rules > 0 then
         table.sort(active_rules, function(a, b) return a.priority > b.priority end)
         for _, active_item in ipairs(active_rules) do
@@ -113,41 +141,23 @@ function TransformManager.apply_transform_rules(char_addr, config, character, ac
                 end
             end
         end
-    else
-        local default_preset_name = config.default_preset
-        if default_preset_name and default_preset_name ~= "" then
-            local default_preset_data = nil
-            if config.presets then
-                default_preset_data = config.presets[default_preset_name]
-            end
-            if default_preset_data then
-                new_overrides = merge_overrides(new_overrides, default_preset_data)
-            end
-        end
     end
 
     return new_overrides, changed
 end
 
+-- 获取当前状态的显示字符串（用于 UI）
 function TransformManager.get_current_state_display(config, character)
     if not config then return "" end
     if config.is_parallel then
+        -- 并行模式下不显示单一状态，返回空字符串
         return ""
     end
 
-    local local_char = character or (function()
-        local pm = sdk.get_managed_singleton("snow.player.PlayerManager")
-        if pm and pm.getMasterPlayer then
-            local master = pm:call("getMasterPlayer")
-            if master then return master:call("get_GameObject") end
-        end
-        return nil
-    end)()
-
     local t_type = config.transform_type
     if t_type and ConditionRegistry[t_type] then
-        local _, state = get_active_rule_for_type(t_type, config, local_char, "")
-        if state then
+        local _, state = get_active_rule_for_type(t_type, config, character, "")
+        if state ~= nil then
             if t_type == "weapon" then
                 return (state == "sheathed") and T("weapon_sheathed") or T("weapon_drawn")
             elseif t_type == "scroll" then
@@ -226,6 +236,7 @@ function TransformManager.get_current_state_display(config, character)
     return T("no_active_condition") or "None"
 end
 
+-- 获取当前状态的原始值（用于 UI 中的阈值比较等）
 function TransformManager.get_current_raw_state(config, character)
     if not config then return nil end
     if config.is_parallel then return nil end
@@ -235,14 +246,7 @@ function TransformManager.get_current_raw_state(config, character)
     return state
 end
 
-function TransformManager.clear_cache(char_addr)
-    if char_addr then
-        last_state_cache[char_addr] = nil
-    else
-        last_state_cache = {}
-    end
-end
-
+-- 以下函数用于 UI 判断模块是否可用（总是返回 true，因为所有条件模块已实现）
 function TransformManager.has_weapon_getter() return true end
 function TransformManager.has_scroll_getter() return true end
 function TransformManager.has_longsword_getter() return true end
