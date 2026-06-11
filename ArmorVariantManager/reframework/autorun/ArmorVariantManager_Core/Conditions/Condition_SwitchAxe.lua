@@ -1,4 +1,4 @@
-﻿local M = {}
+local M = {}
 M.id = "switch_axe"
 local function get_switch_axe_state_direct(character)
     local ok1, wh = pcall(function() return character:call("get_WeaponHandling") end)

@@ -1,4 +1,4 @@
-﻿local M = {}
+local M = {}
 M.id = "insect_glaive"
 local insect_glaive_timestamps = {}
 local function get_insect_glaive_state_direct(character, char_addr)

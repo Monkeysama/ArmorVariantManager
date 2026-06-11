@@ -1,4 +1,4 @@
-﻿local M = {}
+local M = {}
 M.id = "damage"
 local timer_states = {}
 local last_frame_hp = {}

@@ -1,4 +1,4 @@
-﻿local M = {}
+local M = {}
 M.id = "greatsword_type"
 local function get_greatsword_charge_type_direct(character)
     local ok1, wh = pcall(function() return character:call("get_WeaponHandling") end)

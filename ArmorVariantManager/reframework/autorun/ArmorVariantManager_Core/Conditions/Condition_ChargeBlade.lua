@@ -1,4 +1,4 @@
-﻿local M = {}
+local M = {}
 M.id = "charge_blade"
 local function get_charge_blade_state_direct(character)
     local ok1, wh = pcall(function() return character:call("get_WeaponHandling") end)

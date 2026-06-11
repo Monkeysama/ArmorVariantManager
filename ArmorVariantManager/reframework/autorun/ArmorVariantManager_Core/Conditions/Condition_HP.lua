@@ -1,4 +1,4 @@
-﻿local M = {}
+local M = {}
 M.id = "hp"
 local hp_reflection_initialized = false
 local hp_getter = nil

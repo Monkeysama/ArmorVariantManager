@@ -1,4 +1,4 @@
-﻿local TransformManager = {}
+local TransformManager = {}
 local ConditionRegistry = {
     hp = require("ArmorVariantManager_Core.Conditions.Condition_HP"),
     damage = require("ArmorVariantManager_Core.Conditions.Condition_Damage"),
@@ -157,6 +157,51 @@ function TransformManager.apply_transform_rules(char_addr, config, character, ac
             end
         end
     end
-    return new_overrides, changed
+    local activated_targets = {}
+    if #active_rules > 0 then
+        for _, active_item in ipairs(active_rules) do
+            local rule = active_item.rule
+            if rule.targets then
+                for _, target in ipairs(rule.targets) do
+                    local g_name = target.group or ""
+                    local p_name = target.preset
+                    if p_name and p_name ~= "None" then
+                        activated_targets[g_name] = p_name
+                    end
+                end
+            end
+        end
+    end
+    local all_targeted_groups = {}
+    local all_rules_tables = {
+        config.transform_rules,
+        config.damage_transform_rules,
+        config.weapon_transform_rules,
+        config.spirit_transform_rules,
+        config.dual_blades_transform_rules,
+        config.switch_axe_transform_rules,
+        config.insect_glaive_transform_rules,
+        config.charge_blade_transform_rules,
+        config.greatsword_type_transform_rules,
+        config.greatsword_level_transform_rules,
+        config.bow_level_transform_rules,
+        config.hammer_level_transform_rules
+    }
+    for _, rules_table in ipairs(all_rules_tables) do
+        if rules_table then
+            for _, rule in ipairs(rules_table) do
+                if rule.targets then
+                    for _, target in ipairs(rule.targets) do
+                        local g_name = target.group or ""
+                        local p_name = target.preset
+                        if p_name and p_name ~= "None" then
+                            all_targeted_groups[g_name] = true
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return new_overrides, changed, activated_targets, all_targeted_groups
 end
 return TransformManager

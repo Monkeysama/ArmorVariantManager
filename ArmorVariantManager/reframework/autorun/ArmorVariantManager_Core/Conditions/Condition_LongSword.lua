@@ -1,4 +1,4 @@
-﻿local M = {}
+local M = {}
 M.id = "spirit"
 local spirit_level_getter = nil
 local function get_spirit_level_direct(character)

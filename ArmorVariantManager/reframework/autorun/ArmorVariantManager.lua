@@ -1,5 +1,5 @@
-﻿local mod_name = "ArmorVariantManager"
-local version = "3.1.0"
+local mod_name = "ArmorVariantManager"
+local version = "3.2.0"
 local author = "MK,Moon,AZUSA"
 local global_config_path = "ArmorVariantManager/GlobalSettings.json"
 local global_config = {
@@ -48,6 +48,7 @@ local body_id_cache = {}
 local loaded_configs = {}
 local temp_applied_presets = {}
 local active_overrides = {}
+local active_group_presets = {}
 local current_config = {
     default_preset = "",
     presets = {},
@@ -149,8 +150,13 @@ local current_group_name = ""
 local selected_group_index = 1
 local group_names_list = {}
 local new_group_name = ""
+local new_group_is_global = false
 local is_selection_mode = false
 local pending_material_selections = {}
+local mat_filter_text = {}
+local sort_mode = nil
+local sort_temp_list = {}
+local sort_selected_index = 1
 local function get_type(name)
     return sdk.find_type_definition(name)
 end
@@ -596,33 +602,57 @@ end
 local function update_preset_names_list()
     preset_names_list = {}
     local target_presets = nil
+    local target_order = nil
     if current_group_name == "" then
         target_presets = current_config.presets
+        target_order = current_config.preset_order
     else
         if current_config.groups and current_config.groups[current_group_name] then
             target_presets = current_config.groups[current_group_name].presets or {}
+            target_order = current_config.groups[current_group_name].preset_order
         else
             target_presets = {}
         end
     end
     if target_presets then
-        for name, _ in pairs(target_presets) do
-            table.insert(preset_names_list, name)
+        if target_order and #target_order > 0 then
+            local added = {}
+            for _, name in ipairs(target_order) do
+                if target_presets[name] then
+                    table.insert(preset_names_list, name)
+                    added[name] = true
+                end
+            end
+            for name, _ in pairs(target_presets) do
+                if not added[name] then
+                    table.insert(preset_names_list, name)
+                end
+            end
+        else
+            for name, _ in pairs(target_presets) do
+                table.insert(preset_names_list, name)
+            end
+            table.sort(preset_names_list)
         end
-        table.sort(preset_names_list)
     end
-    local ctx_default = ""
-    if current_group_name == "" then
-        ctx_default = current_config.default_preset or ""
-    else
-        if current_config.groups and current_config.groups[current_group_name] then
-            ctx_default = current_config.groups[current_group_name].default_preset or ""
+    local current_body_id = get_body_id and get_body_id() or nil
+    local active_preset_name = ""
+    if current_body_id and active_group_presets[current_body_id] then
+        active_preset_name = active_group_presets[current_body_id][current_group_name] or ""
+    end
+    if active_preset_name == "" then
+        if current_group_name == "" then
+            active_preset_name = current_config.default_preset or ""
+        else
+            if current_config.groups and current_config.groups[current_group_name] then
+                active_preset_name = current_config.groups[current_group_name].default_preset or ""
+            end
         end
     end
-    if ctx_default ~= "" then
+    if active_preset_name ~= "" then
         local found = false
         for i, name in ipairs(preset_names_list) do
-            if name == ctx_default then selected_preset_index = i; found = true; break end
+            if name == active_preset_name then selected_preset_index = i; found = true; break end
         end
         if not found then selected_preset_index = 1 end
     else
@@ -634,10 +664,25 @@ end
 local function update_group_names_list()
     group_names_list = {}
     if current_config.groups then
-        for name, _ in pairs(current_config.groups) do
-            table.insert(group_names_list, name)
+        if current_config.group_order and #current_config.group_order > 0 then
+            local added = {}
+            for _, name in ipairs(current_config.group_order) do
+                if current_config.groups[name] then
+                    table.insert(group_names_list, name)
+                    added[name] = true
+                end
+            end
+            for name, _ in pairs(current_config.groups) do
+                if not added[name] then
+                    table.insert(group_names_list, name)
+                end
+            end
+        else
+            for name, _ in pairs(current_config.groups) do
+                table.insert(group_names_list, name)
+            end
+            table.sort(group_names_list)
         end
-        table.sort(group_names_list)
     end
     if #group_names_list == 0 then selected_group_index = 1
     elseif selected_group_index > #group_names_list then selected_group_index = 1 end
@@ -726,19 +771,64 @@ local function get_material_group_owner(part_index, mat_name)
     if not current_config.groups then return nil end
     local s_idx = tostring(part_index)
     for g_name, g_data in pairs(current_config.groups) do
-        if g_data.mask and g_data.mask[s_idx] and g_data.mask[s_idx][mat_name] then
-            return g_name
+        if not g_data.is_global then
+            if g_data.mask and g_data.mask[s_idx] and g_data.mask[s_idx][mat_name] then
+                return g_name
+            end
         end
     end
     return nil
 end
+local function get_material_global_groups(part_index, mat_name)
+    if not mat_name then return {} end
+    if not current_config.groups then return {} end
+    local s_idx = tostring(part_index)
+    local result = {}
+    for g_name, g_data in pairs(current_config.groups) do
+        if g_data.is_global and g_data.mask and g_data.mask[s_idx] and g_data.mask[s_idx][mat_name] then
+            table.insert(result, g_name)
+        end
+    end
+    return result
+end
 local function is_material_in_current_context(part_index, mat_name)
-    local owner = get_material_group_owner(part_index, mat_name)
     if current_group_name == "" then
+        local owner = get_material_group_owner(part_index, mat_name)
         return owner == nil
     else
-        return owner == current_group_name
+        local g_data = current_config.groups and current_config.groups[current_group_name]
+        if g_data and g_data.is_global then
+            local s_idx = tostring(part_index)
+            return g_data.mask and g_data.mask[s_idx] and g_data.mask[s_idx][mat_name] == true
+        else
+            local owner = get_material_group_owner(part_index, mat_name)
+            return owner == current_group_name
+        end
     end
+end
+local function is_globally_hidden(part_index, mat_name)
+    if current_group_name ~= "" and current_config.groups
+        and current_config.groups[current_group_name]
+        and current_config.groups[current_group_name].is_global then
+        return false
+    end
+    if not current_config.groups then return false end
+    local s_idx = tostring(part_index)
+    local body_id = get_body_id()
+    local active_saved = (body_id and active_group_presets[body_id]) or {}
+    for g_name, g_data in pairs(current_config.groups) do
+        if g_data.is_global and g_data.mask and g_data.mask[s_idx] and g_data.mask[s_idx][mat_name] then
+            local pname = active_saved[g_name]
+            if not pname or pname == "" then pname = g_data.default_preset end
+            if pname and pname ~= "" and g_data.presets and g_data.presets[pname] then
+                local def = g_data.presets[pname]
+                if def[s_idx] and def[s_idx].materials and def[s_idx].materials[mat_name] == false then
+                    return true
+                end
+            end
+        end
+    end
+    return false
 end
 local applied_parts_cache = {}
 local applied_weapon_cache = {}
@@ -782,7 +872,11 @@ local function apply_preset_to_armor(character, preset_data, ignore_context, for
                                 if mat_enabled == false then
                                     if cur_mat ~= false then mesh_component:call("setMaterialsEnable", j, false) end
                                 elseif mat_enabled == true then
-                                    if cur_mat ~= true then mesh_component:call("setMaterialsEnable", j, true) end
+                                    if is_globally_hidden(i, mat_name) then
+                                        if cur_mat ~= false then mesh_component:call("setMaterialsEnable", j, false) end
+                                    else
+                                        if cur_mat ~= true then mesh_component:call("setMaterialsEnable", j, true) end
+                                    end
                                 end
                             end
                         end
@@ -845,7 +939,7 @@ local function apply_preset_to_weapon(character, weapon_objs, preset_data, ignor
         end
     end
 end
-local function create_new_group(group_name, body_id)
+local function create_new_group(group_name, body_id, is_global)
     if not group_name or group_name == "" then return false end
     if not body_id then return false end
     local has_selection = false
@@ -857,20 +951,25 @@ local function create_new_group(group_name, body_id)
     if current_config.groups[group_name] then return false end
     local new_group = {
         mask = deep_copy_table(pending_material_selections),
-        presets = {}
+        presets = {},
+        is_global = is_global == true
     }
-    if current_config.presets then
-        for _, preset_data in pairs(current_config.presets) do
-            for part_idx_str, mats in pairs(new_group.mask) do
-                if preset_data[part_idx_str] and preset_data[part_idx_str].materials then
-                    for m_name, _ in pairs(mats) do
-                        preset_data[part_idx_str].materials[m_name] = nil
+    if not new_group.is_global then
+        if current_config.presets then
+            for _, preset_data in pairs(current_config.presets) do
+                for part_idx_str, mats in pairs(new_group.mask) do
+                    if preset_data[part_idx_str] and preset_data[part_idx_str].materials then
+                        for m_name, _ in pairs(mats) do
+                            preset_data[part_idx_str].materials[m_name] = nil
+                        end
                     end
                 end
             end
         end
     end
     current_config.groups[group_name] = new_group
+    if not current_config.group_order then current_config.group_order = {} end
+    table.insert(current_config.group_order, group_name)
     pending_material_selections = {}
     is_selection_mode = false
     update_group_names_list()
@@ -882,6 +981,14 @@ local function delete_group(group_name, body_id)
     if not body_id then return false end
     if not current_config.groups or not current_config.groups[group_name] then return false end
     current_config.groups[group_name] = nil
+    if current_config.group_order then
+        for i = #current_config.group_order, 1, -1 do
+            if current_config.group_order[i] == group_name then
+                table.remove(current_config.group_order, i)
+                break
+            end
+        end
+    end
     if current_group_name == group_name then
         current_group_name = ""
         selected_group_index = 1
@@ -893,13 +1000,21 @@ local function delete_group(group_name, body_id)
 end
 local function load_config_data(body_id)
     if not body_id then return nil end
-    if loaded_configs[body_id] then return loaded_configs[body_id] end
+    if loaded_configs[body_id] then
+        if loaded_configs[body_id] == "LOAD_FAILED" then return nil end
+        return loaded_configs[body_id]
+    end
     local path = get_config_path(body_id)
     local loaded_data = json.load_file(path)
     if loaded_data then
         if not loaded_data.presets then loaded_data.presets = {} end
         if not loaded_data.default_preset then loaded_data.default_preset = "" end
         if not loaded_data.groups then loaded_data.groups = {} end
+        if not loaded_data.group_order then loaded_data.group_order = {} end
+        if not loaded_data.preset_order then loaded_data.preset_order = {} end
+        for _, g_data in pairs(loaded_data.groups) do
+            if not g_data.preset_order then g_data.preset_order = {} end
+        end
         if not loaded_data.transform_type then loaded_data.transform_type = "hp" end
         if loaded_data.is_parallel == nil then loaded_data.is_parallel = false end
         if not loaded_data.parallel_settings then
@@ -1049,6 +1164,7 @@ local function load_config_data(body_id)
         loaded_configs[body_id] = loaded_data
         return loaded_data
     end
+    loaded_configs[body_id] = "LOAD_FAILED"
     return nil
 end
 local function merge_preset_into_overrides(body_id, preset_data)
@@ -1085,19 +1201,63 @@ local function merge_overrides(base_data, add_data)
     end
     return result
 end
+local function merge_global_preset_into_overrides(body_id, preset_data)
+    if not body_id or not preset_data then return end
+    if not active_overrides[body_id] then active_overrides[body_id] = {} end
+    local overrides = active_overrides[body_id]
+    for p_idx, p_data in pairs(preset_data) do
+        if p_data.materials then
+            if not overrides[p_idx] then overrides[p_idx] = { materials = {} } end
+            if not overrides[p_idx].materials then overrides[p_idx].materials = {} end
+            for mat_name, is_enabled in pairs(p_data.materials) do
+                if is_enabled == false then
+                    overrides[p_idx].materials[mat_name] = false
+                end
+            end
+        end
+    end
+end
 local function apply_all_defaults(body_id)
     local config = load_config_data(body_id)
     if not config then return end
     active_overrides[body_id] = {}
+    if not active_group_presets[body_id] then active_group_presets[body_id] = {} end
     if config.default_preset and config.default_preset ~= "" and config.presets then
         local def = config.presets[config.default_preset]
-        if def then merge_preset_into_overrides(body_id, def) end
+        if def then
+            merge_preset_into_overrides(body_id, def)
+            if not active_group_presets[body_id][""] or active_group_presets[body_id][""] == "" then
+                active_group_presets[body_id][""] = config.default_preset
+            end
+        end
     end
     if config.groups then
-        for _, g_data in pairs(config.groups) do
-            if g_data.default_preset and g_data.default_preset ~= "" and g_data.presets then
-                local g_def = g_data.presets[g_data.default_preset]
-                if g_def then merge_preset_into_overrides(body_id, g_def) end
+        for g_name, g_data in pairs(config.groups) do
+            if not g_data.is_global then
+                if g_data.default_preset and g_data.default_preset ~= "" and g_data.presets then
+                    local g_def = g_data.presets[g_data.default_preset]
+                    if g_def then
+                        merge_preset_into_overrides(body_id, g_def)
+                        if not active_group_presets[body_id][g_name] or active_group_presets[body_id][g_name] == "" then
+                            active_group_presets[body_id][g_name] = g_data.default_preset
+                        end
+                    end
+                end
+            end
+        end
+    end
+    if config.groups then
+        for g_name, g_data in pairs(config.groups) do
+            if g_data.is_global then
+                if g_data.default_preset and g_data.default_preset ~= "" and g_data.presets then
+                    local g_def = g_data.presets[g_data.default_preset]
+                    if g_def then
+                        merge_global_preset_into_overrides(body_id, g_def)
+                        if not active_group_presets[body_id][g_name] or active_group_presets[body_id][g_name] == "" then
+                            active_group_presets[body_id][g_name] = g_data.default_preset
+                        end
+                    end
+                end
             end
         end
     end
@@ -1117,7 +1277,60 @@ local function apply_preset(preset_name)
     if not preset_data then return end
     local current_body_id = get_body_id()
     if current_body_id then
-        merge_preset_into_overrides(current_body_id, preset_data)
+        if not active_group_presets[current_body_id] then active_group_presets[current_body_id] = {} end
+        active_group_presets[current_body_id][current_group_name] = preset_name
+        local is_current_global = (current_group_name ~= "" and current_config.groups
+            and current_config.groups[current_group_name]
+            and current_config.groups[current_group_name].is_global)
+        if is_current_global then
+            active_overrides[current_body_id] = {}
+            local saved = active_group_presets[current_body_id] or {}
+            local main_preset_name = saved[""]
+            if main_preset_name and main_preset_name ~= "" and current_config.presets and current_config.presets[main_preset_name] then
+                merge_preset_into_overrides(current_body_id, current_config.presets[main_preset_name])
+            elseif current_config.default_preset and current_config.default_preset ~= "" and current_config.presets then
+                local def = current_config.presets[current_config.default_preset]
+                if def then merge_preset_into_overrides(current_body_id, def) end
+            end
+            if current_config.groups then
+                for g_name, g_data in pairs(current_config.groups) do
+                    if not g_data.is_global then
+                        local gp_name = saved[g_name]
+                        if gp_name and gp_name ~= "" and g_data.presets and g_data.presets[gp_name] then
+                            merge_preset_into_overrides(current_body_id, g_data.presets[gp_name])
+                        elseif g_data.default_preset and g_data.default_preset ~= "" and g_data.presets then
+                            local g_def = g_data.presets[g_data.default_preset]
+                            if g_def then merge_preset_into_overrides(current_body_id, g_def) end
+                        end
+                    end
+                end
+            end
+            if current_config.groups then
+                for g_name, g_data in pairs(current_config.groups) do
+                    if g_data.is_global then
+                        local gp_name = (g_name == current_group_name) and preset_name or saved[g_name]
+                        if not gp_name or gp_name == "" then gp_name = g_data.default_preset end
+                        if gp_name and gp_name ~= "" and g_data.presets and g_data.presets[gp_name] then
+                            merge_global_preset_into_overrides(current_body_id, g_data.presets[gp_name])
+                        end
+                    end
+                end
+            end
+        else
+            merge_preset_into_overrides(current_body_id, preset_data)
+            if current_config.groups then
+                for g_name, g_data in pairs(current_config.groups) do
+                    if g_data.is_global and g_data.presets then
+                        local active_saved = active_group_presets[current_body_id] or {}
+                        local gp_name = active_saved[g_name]
+                        if not gp_name or gp_name == "" then gp_name = g_data.default_preset end
+                        if gp_name and gp_name ~= "" and g_data.presets[gp_name] then
+                            merge_global_preset_into_overrides(current_body_id, g_data.presets[gp_name])
+                        end
+                    end
+                end
+            end
+        end
         temp_applied_presets[current_body_id] = preset_name
     end
     local all_chars = get_all_characters()
@@ -1275,15 +1488,25 @@ local function save_preset(preset_name, body_id)
                 local mesh_component = get_mesh_component_recursive(w_obj)
                 if mesh_component then
                     local part_data = {
-                        mesh_enabled = mesh_component:call("get_Enabled"),
                         materials = {}
                     }
+                    local is_global_ctx = (current_group_name ~= "" and current_config.groups
+                        and current_config.groups[current_group_name]
+                        and current_config.groups[current_group_name].is_global)
+                    if not is_global_ctx then
+                        part_data.mesh_enabled = mesh_component:call("get_Enabled")
+                    end
                     local mat_count = mesh_component:call("get_MaterialNum")
                     if mat_count then
                         for j = 0, mat_count - 1 do
                             local mat_name = mesh_component:call("getMaterialName", j)
                             if is_material_in_current_context(idx - 1, mat_name) then
-                                local is_mat_enabled = mesh_component:call("getMaterialsEnable", j)
+                                local s_idx = tostring(idx - 1)
+                                local intent = active_overrides[body_id]
+                                    and active_overrides[body_id][s_idx]
+                                    and active_overrides[body_id][s_idx].materials
+                                    and active_overrides[body_id][s_idx].materials[mat_name]
+                                local is_mat_enabled = (intent ~= nil) and intent or mesh_component:call("getMaterialsEnable", j)
                                 part_data.materials[mat_name] = is_mat_enabled
                             end
                         end
@@ -1301,15 +1524,25 @@ local function save_preset(preset_name, body_id)
                 local mesh_component = get_mesh_component_recursive(part_obj)
                 if mesh_component then
                     local part_data = {
-                        mesh_enabled = mesh_component:call("get_Enabled"),
                         materials = {}
                     }
+                    local is_global_ctx = (current_group_name ~= "" and current_config.groups
+                        and current_config.groups[current_group_name]
+                        and current_config.groups[current_group_name].is_global)
+                    if not is_global_ctx then
+                        part_data.mesh_enabled = mesh_component:call("get_Enabled")
+                    end
                     local mat_count = mesh_component:call("get_MaterialNum")
                     if mat_count then
                         for j = 0, mat_count - 1 do
                             local mat_name = mesh_component:call("getMaterialName", j)
                             if is_material_in_current_context(i, mat_name) then
-                                local is_mat_enabled = mesh_component:call("getMaterialsEnable", j)
+                                local s_idx_j = tostring(i)
+                                local intent = active_overrides[body_id]
+                                    and active_overrides[body_id][s_idx_j]
+                                    and active_overrides[body_id][s_idx_j].materials
+                                    and active_overrides[body_id][s_idx_j].materials[mat_name]
+                                local is_mat_enabled = (intent ~= nil) and intent or mesh_component:call("getMaterialsEnable", j)
                                 part_data.materials[mat_name] = is_mat_enabled
                             end
                         end
@@ -1323,6 +1556,10 @@ local function save_preset(preset_name, body_id)
     end
     if current_group_name == "" then
         if not current_config.presets then current_config.presets = {} end
+        if not current_config.presets[preset_name] then
+            if not current_config.preset_order then current_config.preset_order = {} end
+            table.insert(current_config.preset_order, preset_name)
+        end
         current_config.presets[preset_name] = new_preset_data
     else
         if not current_config.groups then current_config.groups = {} end
@@ -1331,6 +1568,12 @@ local function save_preset(preset_name, body_id)
         end
         if not current_config.groups[current_group_name].presets then
             current_config.groups[current_group_name].presets = {}
+        end
+        if not current_config.groups[current_group_name].presets[preset_name] then
+            if not current_config.groups[current_group_name].preset_order then
+                current_config.groups[current_group_name].preset_order = {}
+            end
+            table.insert(current_config.groups[current_group_name].preset_order, preset_name)
         end
         current_config.groups[current_group_name].presets[preset_name] = new_preset_data
     end
@@ -1430,41 +1673,185 @@ local function draw_mesh_toggle(game_object, label, body_id, part_index)
             end
             local mat_count = mesh_component:call("get_MaterialNum")
             if mat_count and mat_count > 0 then
+                local s_idx = tostring(part_index)
+                local function mat_is_operable(mn)
+                    local flt = mat_filter_text[part_index] or ""
+                    if flt ~= "" and not string.find(string.lower(mn), string.lower(flt), 1, true) then
+                        return false
+                    end
+                    if is_selection_mode then
+                        return get_material_group_owner(part_index, mn) == nil
+                    else
+                        return is_material_in_current_context(part_index, mn)
+                    end
+                end
+                imgui.same_line()
+                if imgui.button(T("select_all") .. "##sa_" .. s_idx) then
+                    local all_on = true
+                    for k = 0, mat_count - 1 do
+                        local mn = mesh_component:call("getMaterialName", k)
+                        if mn and mat_is_operable(mn) then
+                            if is_selection_mode then
+                                if not (pending_material_selections[s_idx] and pending_material_selections[s_idx][mn]) then
+                                    all_on = false; break
+                                end
+                            else
+                                local intent = (active_overrides[body_id]
+                                    and active_overrides[body_id][s_idx]
+                                    and active_overrides[body_id][s_idx].materials
+                                    and active_overrides[body_id][s_idx].materials[mn])
+                                local cur_on = (intent ~= nil) and intent or mesh_component:call("getMaterialsEnable", k)
+                                if not cur_on then
+                                    all_on = false; break
+                                end
+                            end
+                        end
+                    end
+                    local target_val = not all_on
+                    for k = 0, mat_count - 1 do
+                        local mn = mesh_component:call("getMaterialName", k)
+                        if mn and mat_is_operable(mn) then
+                            if is_selection_mode then
+                                if not pending_material_selections[s_idx] then pending_material_selections[s_idx] = {} end
+                                pending_material_selections[s_idx][mn] = target_val or nil
+                            else
+                                local render_val
+                                if target_val == true and is_globally_hidden(part_index, mn) then
+                                    render_val = false
+                                else
+                                    render_val = target_val
+                                end
+                                mesh_component:call("setMaterialsEnable", k, render_val)
+                                if body_id then
+                                    if not active_overrides[body_id] then active_overrides[body_id] = {} end
+                                    if not active_overrides[body_id][s_idx] then active_overrides[body_id][s_idx] = { materials = {} } end
+                                    if not active_overrides[body_id][s_idx].materials then active_overrides[body_id][s_idx].materials = {} end
+                                    active_overrides[body_id][s_idx].materials[mn] = target_val
+                                end
+                            end
+                        end
+                    end
+                end
+                imgui.same_line()
+                if imgui.button(T("invert_select") .. "##inv_" .. s_idx) then
+                    for k = 0, mat_count - 1 do
+                        local mn = mesh_component:call("getMaterialName", k)
+                        if mn and mat_is_operable(mn) then
+                            if is_selection_mode then
+                                if not pending_material_selections[s_idx] then pending_material_selections[s_idx] = {} end
+                                local cur = pending_material_selections[s_idx][mn]
+                                pending_material_selections[s_idx][mn] = (not cur) or nil
+                            else
+                                local cur = mesh_component:call("getMaterialsEnable", k)
+                                local nv = not cur
+                                local render_val
+                                if nv == true and is_globally_hidden(part_index, mn) then
+                                    render_val = false
+                                else
+                                    render_val = nv
+                                end
+                                mesh_component:call("setMaterialsEnable", k, render_val)
+                                if body_id then
+                                    if not active_overrides[body_id] then active_overrides[body_id] = {} end
+                                    if not active_overrides[body_id][s_idx] then active_overrides[body_id][s_idx] = { materials = {} } end
+                                    if not active_overrides[body_id][s_idx].materials then active_overrides[body_id][s_idx].materials = {} end
+                                    active_overrides[body_id][s_idx].materials[mn] = nv
+                                end
+                            end
+                        end
+                    end
+                end
+                imgui.same_line()
+                imgui.set_next_item_width(140)
+                local flt_cur = mat_filter_text[part_index] or ""
+                local flt_changed, flt_val = imgui.input_text("##matflt_" .. s_idx, flt_cur)
+                if flt_changed then mat_filter_text[part_index] = flt_val end
+                if flt_cur ~= "" then
+                    imgui.same_line()
+                    if imgui.button("x##fltclr_" .. s_idx) then mat_filter_text[part_index] = "" end
+                end
                 imgui.separator()
                 imgui.text(T("materials") .. " (" .. tostring(mat_count) .. "):")
-                local s_idx = tostring(part_index)
+                local filter_str = string.lower(mat_filter_text[part_index] or "")
                 for i = 0, mat_count - 1 do
                     local mat_name = mesh_component:call("getMaterialName", i)
                     if mat_name then
-                        local is_mat_enabled = mesh_component:call("getMaterialsEnable", i)
-                        local owner = get_material_group_owner(part_index, mat_name)
-                        if is_selection_mode then
-                            local is_selected = pending_material_selections[s_idx] and pending_material_selections[s_idx][mat_name]
-                            if owner then
-                                imgui.text_colored(string.format("[%d] %s (%s: %s)", i, mat_name, T("already_in_group"), owner), 0xFF808080)
-                            else
-                                local changed_sel, new_sel = imgui.checkbox(string.format("[%d] %s", i, mat_name), is_selected or false)
-                                if changed_sel then
-                                    if not pending_material_selections[s_idx] then pending_material_selections[s_idx] = {} end
-                                    pending_material_selections[s_idx][mat_name] = new_sel
-                                end
-                            end
-                        else
-                            if is_material_in_current_context(part_index, mat_name) then
-                                local mat_label = string.format("[%d] %s", i, mat_name)
-                                local mat_changed, mat_new_val = imgui.checkbox(mat_label, is_mat_enabled)
-                                if mat_changed then
-                                    mesh_component:call("setMaterialsEnable", i, mat_new_val)
-                                    if body_id and part_index then
-                                        if not active_overrides[body_id] then active_overrides[body_id] = {} end
-                                        if not active_overrides[body_id][s_idx] then active_overrides[body_id][s_idx] = { materials = {} } end
-                                        if not active_overrides[body_id][s_idx].materials then active_overrides[body_id][s_idx].materials = {} end
-                                        active_overrides[body_id][s_idx].materials[mat_name] = mat_new_val
+                        if filter_str == "" or string.find(string.lower(mat_name), filter_str, 1, true) then
+                            local is_mat_enabled = mesh_component:call("getMaterialsEnable", i)
+                            local owner = get_material_group_owner(part_index, mat_name)
+                            local global_groups = get_material_global_groups(part_index, mat_name)
+                            if is_selection_mode then
+                                local is_selected = pending_material_selections[s_idx] and pending_material_selections[s_idx][mat_name]
+                                if owner and not new_group_is_global then
+                                    imgui.text_colored(string.format("[%d] %s (%s: %s)", i, mat_name, T("already_in_group"), owner), 0xFF808080)
+                                else
+                                    local changed_sel, new_sel = imgui.checkbox(string.format("[%d] %s", i, mat_name), is_selected or false)
+                                    if changed_sel then
+                                        if not pending_material_selections[s_idx] then pending_material_selections[s_idx] = {} end
+                                        pending_material_selections[s_idx][mat_name] = new_sel
+                                    end
+                                    if #global_groups > 0 then
+                                        local bid_hint = get_body_id()
+                                        local ag_saved = (bid_hint and active_group_presets[bid_hint]) or {}
+                                        for _, gname in ipairs(global_groups) do
+                                            local g_data = current_config.groups and current_config.groups[gname]
+                                            local pname = ag_saved[gname]
+                                            if not pname or pname == "" then pname = g_data and g_data.default_preset end
+                                            local def_preset = g_data and pname and g_data.presets and g_data.presets[pname]
+                                            local global_hidden = def_preset and def_preset[s_idx] and def_preset[s_idx].materials and (def_preset[s_idx].materials[mat_name] == false)
+                                            if global_hidden then
+                                                imgui.same_line()
+                                                imgui.text_colored(string.format(T("in_global_group_hidden"), gname), 0xFF4080FF)
+                                            else
+                                                imgui.same_line()
+                                                imgui.text_colored(string.format(T("in_global_group_visible"), gname), 0xFF80C0FF)
+                                            end
+                                        end
                                     end
                                 end
                             else
-                                if current_group_name == "" and owner then
-                                    imgui.text_colored(string.format("[%d] %s (%s: %s)", i, mat_name, T("already_in_group"), owner), 0xFF804040)
+                                if is_material_in_current_context(part_index, mat_name) then
+                                    local mat_label = string.format("[%d] %s", i, mat_name)
+                                    local intent_val = (active_overrides[body_id]
+                                        and active_overrides[body_id][s_idx]
+                                        and active_overrides[body_id][s_idx].materials
+                                        and active_overrides[body_id][s_idx].materials[mat_name])
+                                    local display_val = (intent_val ~= nil) and intent_val or is_mat_enabled
+                                    local mat_changed, mat_new_val = imgui.checkbox(mat_label, display_val)
+                                    if mat_changed then
+                                        if body_id and part_index then
+                                            if not active_overrides[body_id] then active_overrides[body_id] = {} end
+                                            if not active_overrides[body_id][s_idx] then active_overrides[body_id][s_idx] = { materials = {} } end
+                                            if not active_overrides[body_id][s_idx].materials then active_overrides[body_id][s_idx].materials = {} end
+                                            active_overrides[body_id][s_idx].materials[mat_name] = mat_new_val
+                                        end
+                                        local render_val
+                                        if mat_new_val == true and is_globally_hidden(part_index, mat_name) then
+                                            render_val = false
+                                        else
+                                            render_val = mat_new_val
+                                        end
+                                        mesh_component:call("setMaterialsEnable", i, render_val)
+                                    end
+                                    if #global_groups > 0 then
+                                        local bid_hint2 = get_body_id()
+                                        local ag_saved2 = (bid_hint2 and active_group_presets[bid_hint2]) or {}
+                                        for _, gname in ipairs(global_groups) do
+                                            local g_data = current_config.groups and current_config.groups[gname]
+                                            local pname2 = ag_saved2[gname]
+                                            if not pname2 or pname2 == "" then pname2 = g_data and g_data.default_preset end
+                                            local def_preset = g_data and pname2 and g_data.presets and g_data.presets[pname2]
+                                            local global_hidden = def_preset and def_preset[s_idx] and def_preset[s_idx].materials and (def_preset[s_idx].materials[mat_name] == false)
+                                            if global_hidden then
+                                                imgui.same_line()
+                                                imgui.text_colored(string.format(T("in_global_group_hidden"), gname), 0xFF4080FF)
+                                            end
+                                        end
+                                    end
+                                else
+                                    if current_group_name == "" and owner then
+                                        imgui.text_colored(string.format("[%d] %s (%s: %s)", i, mat_name, T("already_in_group"), owner), 0xFF804040)
+                                    end
                                 end
                             end
                         end
@@ -1484,10 +1871,29 @@ local function draw_targets_ui(targets, rule_type, rule_idx)
         imgui.push_id(rule_type .. "_" .. rule_idx .. "_target_" .. j)
         local all_groups = { "" }
         local all_groups_display = { T("main_list") or "Main" }
+        local global_label_t = T("global_group_label") or "[Global]"
         if current_config.groups then
+            local ordered_gnames = {}
+            local in_order = {}
+            if current_config.group_order then
+                for _, gname in ipairs(current_config.group_order) do
+                    if current_config.groups[gname] then
+                        table.insert(ordered_gnames, gname)
+                        in_order[gname] = true
+                    end
+                end
+            end
             for gname, _ in pairs(current_config.groups) do
+                if not in_order[gname] then table.insert(ordered_gnames, gname) end
+            end
+            for _, gname in ipairs(ordered_gnames) do
+                local g_data = current_config.groups[gname]
                 table.insert(all_groups, gname)
-                table.insert(all_groups_display, gname)
+                if g_data.is_global then
+                    table.insert(all_groups_display, global_label_t .. " " .. gname)
+                else
+                    table.insert(all_groups_display, gname)
+                end
             end
         end
         local g_idx = 1
@@ -1505,14 +1911,36 @@ local function draw_targets_ui(targets, rule_type, rule_idx)
         local target_presets = {}
         if target.group == "" or target.group == nil then
             if current_config.presets then
-                for pname, _ in pairs(current_config.presets) do table.insert(target_presets, pname) end
+                local in_order = {}
+                if current_config.preset_order then
+                    for _, pname in ipairs(current_config.preset_order) do
+                        if current_config.presets[pname] then
+                            table.insert(target_presets, pname)
+                            in_order[pname] = true
+                        end
+                    end
+                end
+                for pname, _ in pairs(current_config.presets) do
+                    if not in_order[pname] then table.insert(target_presets, pname) end
+                end
             end
         else
             if current_config.groups and current_config.groups[target.group] and current_config.groups[target.group].presets then
-                for pname, _ in pairs(current_config.groups[target.group].presets) do table.insert(target_presets, pname) end
+                local g_data = current_config.groups[target.group]
+                local in_order = {}
+                if g_data.preset_order then
+                    for _, pname in ipairs(g_data.preset_order) do
+                        if g_data.presets[pname] then
+                            table.insert(target_presets, pname)
+                            in_order[pname] = true
+                        end
+                    end
+                end
+                for pname, _ in pairs(g_data.presets) do
+                    if not in_order[pname] then table.insert(target_presets, pname) end
+                end
             end
         end
-        table.sort(target_presets)
         local p_idx = 1
         local found = false
         for idx, p in ipairs(target_presets) do
@@ -1543,12 +1971,18 @@ re.on_frame(function()
     if local_body_id then
         if local_body_id ~= last_body_id then
             last_body_id = local_body_id
-            active_overrides[local_body_id] = nil
-            temp_applied_presets[local_body_id] = nil
-            load_body_config(local_body_id)
+            if active_overrides[local_body_id] then
+                local data = load_config_data(local_body_id)
+                if data then
+                    current_config = data
+                end
+                update_group_names_list()
+                update_preset_names_list()
+            else
+                temp_applied_presets[local_body_id] = nil
+                load_body_config(local_body_id)
+            end
         end
-    else
-        last_body_id = nil
     end
     local all_chars = get_all_characters()
     for _, char in ipairs(all_chars) do
@@ -1560,9 +1994,21 @@ re.on_frame(function()
                     apply_all_defaults(char_body_id)
                     local char_go_ok, char_go = pcall(function() return char:call("get_GameObject") end)
                     local char_addr = (char_go_ok and char_go) and tostring(char_go) or tostring(char)
-                    local new_overrides, _ = TransformManager.apply_transform_rules(
+                    local new_overrides, _, activated_targets, all_targeted_groups = TransformManager.apply_transform_rules(
                         char_addr, config, char, active_overrides[char_body_id], merge_overrides
                     )
+                    if not active_group_presets[char_body_id] then active_group_presets[char_body_id] = {} end
+                    if config.groups then
+                        for g_name, g_data in pairs(config.groups) do
+                            if g_data.is_global then
+                                if activated_targets and activated_targets[g_name] then
+                                    active_group_presets[char_body_id][g_name] = activated_targets[g_name]
+                                elseif all_targeted_groups and all_targeted_groups[g_name] then
+                                    active_group_presets[char_body_id][g_name] = g_data.default_preset or ""
+                                end
+                            end
+                        end
+                    end
                     apply_preset_to_armor(char, new_overrides, true, true)
                 end
                 if active_overrides[char_body_id] then
@@ -1570,9 +2016,21 @@ re.on_frame(function()
                         local char_go_ok, char_go = pcall(function() return char:call("get_GameObject") end)
                         local char_addr = (char_go_ok and char_go) and tostring(char_go) or tostring(char)
                         local final_overrides = active_overrides[char_body_id]
-                        local new_overrides, changed = TransformManager.apply_transform_rules(
+                        local new_overrides, changed, activated_targets, all_targeted_groups = TransformManager.apply_transform_rules(
                             char_addr, config, char, final_overrides, merge_overrides
                         )
+                        if not active_group_presets[char_body_id] then active_group_presets[char_body_id] = {} end
+                        if config.groups then
+                            for g_name, g_data in pairs(config.groups) do
+                                if g_data.is_global then
+                                    if activated_targets and activated_targets[g_name] then
+                                        active_group_presets[char_body_id][g_name] = activated_targets[g_name]
+                                    elseif all_targeted_groups and all_targeted_groups[g_name] then
+                                        active_group_presets[char_body_id][g_name] = g_data.default_preset or ""
+                                    end
+                                end
+                            end
+                        end
                         if changed then
                             apply_preset_to_armor(char, new_overrides, true, true)
                         else
@@ -1661,6 +2119,8 @@ re.on_draw_ui(function()
                 if is_weapon_mode ~= false then
                     is_weapon_mode = false
                     last_body_id = nil
+                    current_group_name = ""
+                    body_id_cache = {}
                 end
             end
             imgui.same_line()
@@ -1669,6 +2129,8 @@ re.on_draw_ui(function()
                 if is_weapon_mode ~= true then
                     is_weapon_mode = true
                     last_body_id = nil
+                    current_group_name = ""
+                    weapon_id_cache = {}
                 end
             end
             imgui.separator()
@@ -1678,8 +2140,16 @@ re.on_draw_ui(function()
                 if body_id then
                     if imgui.tree_node(T("presets_manager") .. " (" .. body_id .. ")") then
                         local ui_status, ui_err = pcall(function()
+                            local global_label = T("global_group_label") or "[Global]"
                             local full_group_list = {T("main_list")}
-                            for _, gname in ipairs(group_names_list) do table.insert(full_group_list, gname) end
+                            for _, gname in ipairs(group_names_list) do
+                                local g_data = current_config.groups and current_config.groups[gname]
+                                if g_data and g_data.is_global then
+                                    table.insert(full_group_list, global_label .. " " .. gname)
+                                else
+                                    table.insert(full_group_list, gname)
+                                end
+                            end
                             local current_group_combo_index = 1
                             if current_group_name ~= "" then
                                 for i, gname in ipairs(group_names_list) do
@@ -1725,11 +2195,25 @@ re.on_draw_ui(function()
                                         if current_group_name == "" then
                                             current_config.presets[current_preset_name] = nil
                                             if current_config.default_preset == current_preset_name then current_config.default_preset = "" end
+                                            if current_config.preset_order then
+                                                for pi = #current_config.preset_order, 1, -1 do
+                                                    if current_config.preset_order[pi] == current_preset_name then
+                                                        table.remove(current_config.preset_order, pi); break
+                                                    end
+                                                end
+                                            end
                                         else
                                             if current_config.groups[current_group_name] then
                                                 current_config.groups[current_group_name].presets[current_preset_name] = nil
                                                 if current_config.groups[current_group_name].default_preset == current_preset_name then
                                                     current_config.groups[current_group_name].default_preset = ""
+                                                end
+                                                if current_config.groups[current_group_name].preset_order then
+                                                    for pi = #current_config.groups[current_group_name].preset_order, 1, -1 do
+                                                        if current_config.groups[current_group_name].preset_order[pi] == current_preset_name then
+                                                            table.remove(current_config.groups[current_group_name].preset_order, pi); break
+                                                        end
+                                                    end
                                                 end
                                             end
                                         end
@@ -1745,9 +2229,20 @@ re.on_draw_ui(function()
                                         end
                                         save_current_config_to_file(body_id)
                                     end
+                                    imgui.same_line()
                                     if ctx_default == current_preset_name then
-                                        imgui.same_line()
-                                        imgui.text_colored(T("is_default"), 0xFF00FF00)
+                                        imgui.text_colored(T("selected_and_default"), 0xFF00FF00)
+                                    else
+                                        imgui.text_colored(T("selected_not_default"), 0xFF00CCFF)
+                                    end
+                                    imgui.same_line()
+                                    if imgui.button(T("sort") .. "##p_sort") then
+                                        sort_mode = "preset"
+                                        sort_temp_list = {}
+                                        for _, pn in ipairs(preset_names_list) do
+                                            table.insert(sort_temp_list, pn)
+                                        end
+                                        sort_selected_index = selected_preset_index
                                     end
                                 end
                                 imgui.spacing()
@@ -1763,6 +2258,15 @@ re.on_draw_ui(function()
                                         end
                                     end
                                 end
+                                if #preset_names_list > 0 then
+                                    imgui.same_line()
+                                    if imgui.button(T("overwrite_preset") .. "##p_overwrite") then
+                                        local current_preset_name = preset_names_list[selected_preset_index]
+                                        if current_preset_name and current_preset_name ~= "" then
+                                            save_preset(current_preset_name, body_id)
+                                        end
+                                    end
+                                end
                                 imgui.table_next_column()
                                 if not is_selection_mode then
                                     if imgui.button(T("start_selection") .. "##right") then
@@ -1775,22 +2279,48 @@ re.on_draw_ui(function()
                                             delete_group(current_group_name, body_id)
                                         end
                                     end
+                                    if current_config.groups and next(current_config.groups) then
+                                        imgui.same_line()
+                                        if imgui.button(T("sort") .. "##g_sort") then
+                                            sort_mode = "group"
+                                            sort_temp_list = {}
+                                            for _, gn in ipairs(group_names_list) do
+                                                table.insert(sort_temp_list, gn)
+                                            end
+                                            sort_selected_index = 1
+                                            if current_group_name ~= "" then
+                                                for gi, gn in ipairs(sort_temp_list) do
+                                                    if gn == current_group_name then sort_selected_index = gi; break end
+                                                end
+                                            end
+                                        end
+                                    end
                                 else
                                     imgui.text_colored(T("selection_mode") .. " ", 0xFF00FFFF)
                                     imgui.text_colored(T("selection_mode_desc") .. " ", 0xFF00FFFF)
                                     local cg, gtext = imgui.input_text(T("name") .. "##gn", new_group_name)
                                     if cg then new_group_name = gtext end
+                                    local cg_global, new_is_global = imgui.checkbox(T("is_global_group") .. "##gisgl", new_group_is_global)
+                                    if cg_global then new_group_is_global = new_is_global end
+                                    if new_group_is_global then
+                                        imgui.same_line()
+                                        imgui.text_colored(T("is_global_group_desc"), 0xFF80FFFF)
+                                    end
                                     if imgui.button(T("confirm_creation") .. "##gconfirm") then
-                                        if new_group_name ~= "" and create_new_group(new_group_name, body_id) then
+                                        if new_group_name ~= "" and create_new_group(new_group_name, body_id, new_group_is_global) then
                                             current_group_name = new_group_name
                                             new_group_name = ""
+                                            new_group_is_global = false
                                             is_selection_mode = false
                                             update_group_names_list()
                                             update_preset_names_list()
                                         end
                                     end
                                     imgui.same_line()
-                                    if imgui.button(T("cancel") .. "##gcancel") then is_selection_mode = false end
+                                    if imgui.button(T("cancel") .. "##gcancel") then
+                                        is_selection_mode = false
+                                        new_group_is_global = false
+                                    end
                                 end
                                 imgui.end_table()
                             end
@@ -1824,6 +2354,91 @@ re.on_draw_ui(function()
                         if not ui_status then
                             imgui.text_colored("UI Error: " .. tostring(ui_err), 0xFFFF0000)
                             pcall(imgui.end_table)
+                        end
+                        if sort_mode then
+                            imgui.separator()
+                            local sort_title = (sort_mode == "group") and (T("sort") .. " - " .. T("group")) or (T("sort") .. " - " .. T("preset"))
+                            imgui.text_colored(sort_title, 0xFF00FFFF)
+                            imgui.spacing()
+                            if sort_selected_index and sort_selected_index >= 1 and sort_selected_index <= #sort_temp_list then
+                                imgui.text_colored(T("sort_hint_selected") .. ": " .. sort_temp_list[sort_selected_index], 0xFFFFFF80)
+                            else
+                                imgui.text_colored(T("sort_hint_click"), 0xFF808080)
+                            end
+                            imgui.spacing()
+                            for si, sname in ipairs(sort_temp_list) do
+                                if si <= 1 then imgui.begin_disabled() end
+                                if imgui.button(T("move_up") .. "##su_" .. si) then
+                                    if si > 1 then
+                                        sort_temp_list[si], sort_temp_list[si - 1] = sort_temp_list[si - 1], sort_temp_list[si]
+                                        if sort_selected_index == si then sort_selected_index = si - 1
+                                        elseif sort_selected_index == si - 1 then sort_selected_index = si end
+                                    end
+                                end
+                                if si <= 1 then imgui.end_disabled() end
+                                imgui.same_line()
+                                if si >= #sort_temp_list then imgui.begin_disabled() end
+                                if imgui.button(T("move_down") .. "##sd_" .. si) then
+                                    if si < #sort_temp_list then
+                                        sort_temp_list[si], sort_temp_list[si + 1] = sort_temp_list[si + 1], sort_temp_list[si]
+                                        if sort_selected_index == si then sort_selected_index = si + 1
+                                        elseif sort_selected_index == si + 1 then sort_selected_index = si end
+                                    end
+                                end
+                                if si >= #sort_temp_list then imgui.end_disabled() end
+                                imgui.same_line()
+                                if si == sort_selected_index then
+                                    imgui.push_style_color(21, 0xFF00AAFF)
+                                end
+                                if imgui.button(tostring(si) .. ". " .. sname .. "##sn_" .. si) then
+                                    sort_selected_index = si
+                                end
+                                if si == sort_selected_index then
+                                    imgui.pop_style_color(1)
+                                end
+                                if sort_selected_index and sort_selected_index ~= si and sort_selected_index >= 1 and sort_selected_index <= #sort_temp_list then
+                                    imgui.same_line()
+                                    if imgui.button(T("sort_insert_here") .. "##si_" .. si) then
+                                        local item = table.remove(sort_temp_list, sort_selected_index)
+                                        table.insert(sort_temp_list, si, item)
+                                        sort_selected_index = si
+                                    end
+                                end
+                            end
+                            imgui.spacing()
+                            if imgui.button(T("sort_confirm") .. "##sort_ok") then
+                                if sort_mode == "group" then
+                                    current_config.group_order = {}
+                                    for _, gn in ipairs(sort_temp_list) do
+                                        table.insert(current_config.group_order, gn)
+                                    end
+                                    update_group_names_list()
+                                elseif sort_mode == "preset" then
+                                    if current_group_name == "" then
+                                        current_config.preset_order = {}
+                                        for _, pn in ipairs(sort_temp_list) do
+                                            table.insert(current_config.preset_order, pn)
+                                        end
+                                    else
+                                        local g = current_config.groups and current_config.groups[current_group_name]
+                                        if g then
+                                            g.preset_order = {}
+                                            for _, pn in ipairs(sort_temp_list) do
+                                                table.insert(g.preset_order, pn)
+                                            end
+                                        end
+                                    end
+                                    update_preset_names_list()
+                                end
+                                save_current_config_to_file(body_id)
+                                sort_mode = nil
+                                sort_temp_list = {}
+                            end
+                            imgui.same_line()
+                            if imgui.button(T("sort_cancel") .. "##sort_no") then
+                                sort_mode = nil
+                                sort_temp_list = {}
+                            end
                         end
                         imgui.tree_pop()
                     end

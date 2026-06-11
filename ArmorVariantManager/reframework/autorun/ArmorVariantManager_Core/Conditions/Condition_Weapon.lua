@@ -1,4 +1,4 @@
-﻿local M = {}
+local M = {}
 M.id = "weapon"
 local weapon_state_initialized = false
 local weapon_state_getter = nil
