@@ -199,7 +199,58 @@ function TransformManager.apply_transform_rules(char_addr, config, character, ac
         end
     end
 
-    return new_overrides, changed
+    -- 返回第三个值：变身规则激活的所有 target（分组→预设名映射）
+    -- 用于让主循环同步 active_group_presets，确保全局分组状态一致
+    local activated_targets = {}
+    if #active_rules > 0 then
+        for _, active_item in ipairs(active_rules) do
+            local rule = active_item.rule
+            if rule.targets then
+                for _, target in ipairs(rule.targets) do
+                    local g_name = target.group or ""
+                    local p_name = target.preset
+                    if p_name and p_name ~= "None" then
+                        activated_targets[g_name] = p_name
+                    end
+                end
+            end
+        end
+    end
+
+    -- 返回第四个值：所有变身规则中涉及的分组集合（无论是否激活）
+    -- 用于区分"没有配置变身规则"和"规则未激活需要回退"两种情况
+    local all_targeted_groups = {}
+    local all_rules_tables = {
+        config.transform_rules,
+        config.damage_transform_rules,
+        config.weapon_transform_rules,
+        config.spirit_transform_rules,
+        config.dual_blades_transform_rules,
+        config.switch_axe_transform_rules,
+        config.insect_glaive_transform_rules,
+        config.charge_blade_transform_rules,
+        config.greatsword_type_transform_rules,
+        config.greatsword_level_transform_rules,
+        config.bow_level_transform_rules,
+        config.hammer_level_transform_rules
+    }
+    for _, rules_table in ipairs(all_rules_tables) do
+        if rules_table then
+            for _, rule in ipairs(rules_table) do
+                if rule.targets then
+                    for _, target in ipairs(rule.targets) do
+                        local g_name = target.group or ""
+                        local p_name = target.preset
+                        if p_name and p_name ~= "None" then
+                            all_targeted_groups[g_name] = true
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    return new_overrides, changed, activated_targets, all_targeted_groups
 end
 
 return TransformManager

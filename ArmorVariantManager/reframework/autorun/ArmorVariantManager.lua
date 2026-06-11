@@ -1,7 +1,7 @@
 local mod_name = "ArmorVariantManager"
 -- 开发中遵守
 -- 版本号-开发状态-开发状态标识
-local version = "3.1.0-beta-008"
+local version = "3.2.0-beta-001"
 local author = "MK,Moon,AZUSA"
 
 -- =============================================================================
@@ -207,6 +207,10 @@ local is_selection_mode = false -- 是否处于材质勾选模式
 local pending_material_selections = {} -- 临时存储勾选的材质 { [part_idx_str] = { [mat_name] = true } }
 -- 材质过滤输入框状态 { [part_index] = "filter_text" }
 local mat_filter_text = {}
+-- 排序面板状态
+local sort_mode = nil -- nil: 不显示, "group": 分组排序, "preset": 预设排序
+local sort_temp_list = {} -- 排序临时列表（可自由上下移动）
+local sort_selected_index = 1 -- 排序面板中当前选中的项目索引
 
 -- 辅助函数
 -- 辅助函数：获取类型定义 (Lazy Load)
@@ -756,36 +760,64 @@ end
 -- 辅助函数：更新预设名称列表 (用于 UI)
 local function update_preset_names_list()
     preset_names_list = {}
-    -- 根据当前分组获取对应的预设列表
+    -- 根据当前分组获取对应的预设列表和排序
     local target_presets = nil
+    local target_order = nil
     if current_group_name == "" then
         target_presets = current_config.presets
+        target_order = current_config.preset_order
     else
         if current_config.groups and current_config.groups[current_group_name] then
             target_presets = current_config.groups[current_group_name].presets or {}
+            target_order = current_config.groups[current_group_name].preset_order
         else
             target_presets = {}
         end
     end
     if target_presets then
-        for name, _ in pairs(target_presets) do
-            table.insert(preset_names_list, name)
+        -- 优先按 order 排序，fallback 按字母排序
+        if target_order and #target_order > 0 then
+            -- 先按 order 中的顺序添加
+            local added = {}
+            for _, name in ipairs(target_order) do
+                if target_presets[name] then
+                    table.insert(preset_names_list, name)
+                    added[name] = true
+                end
+            end
+            -- 再添加 order 中没有的（新建但还没排序的）
+            for name, _ in pairs(target_presets) do
+                if not added[name] then
+                    table.insert(preset_names_list, name)
+                end
+            end
+        else
+            for name, _ in pairs(target_presets) do
+                table.insert(preset_names_list, name)
+            end
+            table.sort(preset_names_list)
         end
-        table.sort(preset_names_list)
     end
-    -- 2. 自动选中当前环境下的默认预设
-    local ctx_default = ""
-    if current_group_name == "" then
-        ctx_default = current_config.default_preset or ""
-    else
-        if current_config.groups and current_config.groups[current_group_name] then
-            ctx_default = current_config.groups[current_group_name].default_preset or ""
+    -- 2. 自动选中当前分组的活跃预设（优先用 active_group_presets，fallback 到默认预设）
+    local current_body_id = get_body_id and get_body_id() or nil
+    local active_preset_name = ""
+    if current_body_id and active_group_presets[current_body_id] then
+        active_preset_name = active_group_presets[current_body_id][current_group_name] or ""
+    end
+    -- 如果 active_group_presets 中没有记录，fallback 到默认预设
+    if active_preset_name == "" then
+        if current_group_name == "" then
+            active_preset_name = current_config.default_preset or ""
+        else
+            if current_config.groups and current_config.groups[current_group_name] then
+                active_preset_name = current_config.groups[current_group_name].default_preset or ""
+            end
         end
     end
-    if ctx_default ~= "" then
+    if active_preset_name ~= "" then
         local found = false
         for i, name in ipairs(preset_names_list) do
-            if name == ctx_default then selected_preset_index = i; found = true; break end
+            if name == active_preset_name then selected_preset_index = i; found = true; break end
         end
         if not found then selected_preset_index = 1 end
     else
@@ -799,10 +831,26 @@ end
 local function update_group_names_list()
     group_names_list = {}
     if current_config.groups then
-        for name, _ in pairs(current_config.groups) do
-            table.insert(group_names_list, name)
+        -- 优先按 group_order 排序，fallback 按字母排序
+        if current_config.group_order and #current_config.group_order > 0 then
+            local added = {}
+            for _, name in ipairs(current_config.group_order) do
+                if current_config.groups[name] then
+                    table.insert(group_names_list, name)
+                    added[name] = true
+                end
+            end
+            for name, _ in pairs(current_config.groups) do
+                if not added[name] then
+                    table.insert(group_names_list, name)
+                end
+            end
+        else
+            for name, _ in pairs(current_config.groups) do
+                table.insert(group_names_list, name)
+            end
+            table.sort(group_names_list)
         end
-        table.sort(group_names_list)
     end
     if #group_names_list == 0 then selected_group_index = 1
     elseif selected_group_index > #group_names_list then selected_group_index = 1 end
@@ -1159,6 +1207,9 @@ local function create_new_group(group_name, body_id, is_global)
     end
     -- 3. 保存新分组并清空选择
     current_config.groups[group_name] = new_group
+    -- 维护 group_order：新建分组追加到末尾
+    if not current_config.group_order then current_config.group_order = {} end
+    table.insert(current_config.group_order, group_name)
     pending_material_selections = {}
     is_selection_mode = false
     update_group_names_list()
@@ -1176,6 +1227,15 @@ local function delete_group(group_name, body_id)
     -- 仅将材质控制权通过清除 mask 的方式归还给主列表（主列表预设中该材质的状态将恢复为默认或通过重新保存来定义）
     -- 删除分组
     current_config.groups[group_name] = nil
+    -- 维护 group_order：从数组中移除
+    if current_config.group_order then
+        for i = #current_config.group_order, 1, -1 do
+            if current_config.group_order[i] == group_name then
+                table.remove(current_config.group_order, i)
+                break
+            end
+        end
+    end
     -- 如果当前在被删除的分组，切换回主列表
     if current_group_name == group_name then
         current_group_name = ""
@@ -1193,7 +1253,11 @@ end
 -- 辅助函数：仅加载配置数据，不更新 UI 状态
 local function load_config_data(body_id)
     if not body_id then return nil end
-    if loaded_configs[body_id] then return loaded_configs[body_id] end
+    if loaded_configs[body_id] then
+        -- 如果缓存的是加载失败标记，返回 nil（不再重试）
+        if loaded_configs[body_id] == "LOAD_FAILED" then return nil end
+        return loaded_configs[body_id]
+    end
     local path = get_config_path(body_id)
     local loaded_data = json.load_file(path)
     if loaded_data then
@@ -1201,6 +1265,12 @@ local function load_config_data(body_id)
         if not loaded_data.presets then loaded_data.presets = {} end
         if not loaded_data.default_preset then loaded_data.default_preset = "" end
         if not loaded_data.groups then loaded_data.groups = {} end
+        if not loaded_data.group_order then loaded_data.group_order = {} end
+        if not loaded_data.preset_order then loaded_data.preset_order = {} end
+        -- 确保各分组也有 preset_order
+        for _, g_data in pairs(loaded_data.groups) do
+            if not g_data.preset_order then g_data.preset_order = {} end
+        end
         if not loaded_data.transform_type then loaded_data.transform_type = "hp" end
         if loaded_data.is_parallel == nil then loaded_data.is_parallel = false end
         if not loaded_data.parallel_settings then
@@ -1354,6 +1424,8 @@ local function load_config_data(body_id)
         loaded_configs[body_id] = loaded_data
         return loaded_data
     end
+    -- 加载失败（文件不存在或为空）：缓存标记，避免每帧重复尝试并产生日志错误
+    loaded_configs[body_id] = "LOAD_FAILED"
     return nil
 end
 
@@ -1804,6 +1876,11 @@ local function save_preset(preset_name, body_id)
     if current_group_name == "" then
         -- 保存到主列表
         if not current_config.presets then current_config.presets = {} end
+        -- 维护 preset_order：如果是新预设则追加到末尾
+        if not current_config.presets[preset_name] then
+            if not current_config.preset_order then current_config.preset_order = {} end
+            table.insert(current_config.preset_order, preset_name)
+        end
         current_config.presets[preset_name] = new_preset_data
     else
         -- 保存到当前分组
@@ -1814,6 +1891,13 @@ local function save_preset(preset_name, body_id)
         -- 确保 presets 表存在
         if not current_config.groups[current_group_name].presets then
             current_config.groups[current_group_name].presets = {}
+        end
+        -- 维护分组的 preset_order：如果是新预设则追加到末尾
+        if not current_config.groups[current_group_name].presets[preset_name] then
+            if not current_config.groups[current_group_name].preset_order then
+                current_config.groups[current_group_name].preset_order = {}
+            end
+            table.insert(current_config.groups[current_group_name].preset_order, preset_name)
         end
         current_config.groups[current_group_name].presets[preset_name] = new_preset_data
     end
@@ -2062,7 +2146,8 @@ local function draw_mesh_toggle(game_object, label, body_id, part_index)
                             -- A. 分组创建模式
                             if is_selection_mode then
                                 local is_selected = pending_material_selections[s_idx] and pending_material_selections[s_idx][mat_name]
-                                if owner then
+                                if owner and not new_group_is_global then
+                                    -- 普通分组不能选择已被其他普通分组占用的材质
                                     imgui.text_colored(string.format("[%d] %s (%s: %s)", i, mat_name, T("already_in_group"), owner), 0xFF808080)
                                 else
                                     local changed_sel, new_sel = imgui.checkbox(string.format("[%d] %s", i, mat_name), is_selected or false)
@@ -2163,12 +2248,27 @@ local function draw_targets_ui(targets, rule_type, rule_idx)
         imgui.push_id(rule_type .. "_" .. rule_idx .. "_target_" .. j)
 
         -- 分组选择
-        -- 准备分组下拉框的数据
+        -- 准备分组下拉框的数据（按 group_order 排序）
         local all_groups = { "" }
         local all_groups_display = { T("main_list") or "Main" }
         local global_label_t = T("global_group_label") or "[Global]"
         if current_config.groups then
-            for gname, g_data in pairs(current_config.groups) do
+            -- 按 group_order 排序，fallback 字母序
+            local ordered_gnames = {}
+            local in_order = {}
+            if current_config.group_order then
+                for _, gname in ipairs(current_config.group_order) do
+                    if current_config.groups[gname] then
+                        table.insert(ordered_gnames, gname)
+                        in_order[gname] = true
+                    end
+                end
+            end
+            for gname, _ in pairs(current_config.groups) do
+                if not in_order[gname] then table.insert(ordered_gnames, gname) end
+            end
+            for _, gname in ipairs(ordered_gnames) do
+                local g_data = current_config.groups[gname]
                 table.insert(all_groups, gname)
                 if g_data.is_global then
                     table.insert(all_groups_display, global_label_t .. " " .. gname)
@@ -2191,18 +2291,42 @@ local function draw_targets_ui(targets, rule_type, rule_idx)
 
         imgui.same_line()
 
-        -- 预设选择
+        -- 预设选择（按 preset_order 排序）
         local target_presets = {}
         if target.group == "" or target.group == nil then
             if current_config.presets then
-                for pname, _ in pairs(current_config.presets) do table.insert(target_presets, pname) end
+                -- 按 preset_order 排序，fallback 字母序
+                local in_order = {}
+                if current_config.preset_order then
+                    for _, pname in ipairs(current_config.preset_order) do
+                        if current_config.presets[pname] then
+                            table.insert(target_presets, pname)
+                            in_order[pname] = true
+                        end
+                    end
+                end
+                for pname, _ in pairs(current_config.presets) do
+                    if not in_order[pname] then table.insert(target_presets, pname) end
+                end
             end
         else
             if current_config.groups and current_config.groups[target.group] and current_config.groups[target.group].presets then
-                for pname, _ in pairs(current_config.groups[target.group].presets) do table.insert(target_presets, pname) end
+                local g_data = current_config.groups[target.group]
+                -- 按分组的 preset_order 排序，fallback 字母序
+                local in_order = {}
+                if g_data.preset_order then
+                    for _, pname in ipairs(g_data.preset_order) do
+                        if g_data.presets[pname] then
+                            table.insert(target_presets, pname)
+                            in_order[pname] = true
+                        end
+                    end
+                end
+                for pname, _ in pairs(g_data.presets) do
+                    if not in_order[pname] then table.insert(target_presets, pname) end
+                end
             end
         end
-        table.sort(target_presets)
         
         local p_idx = 1
         local found = false
@@ -2245,15 +2369,24 @@ re.on_frame(function()
     local local_body_id = get_body_id()
     if local_body_id then
         if local_body_id ~= last_body_id then
-            -- 修正重置顺序：先更新 ID，再重置状态，最后执行加载
             last_body_id = local_body_id
-            active_overrides[local_body_id] = nil
-            temp_applied_presets[local_body_id] = nil
-            load_body_config(local_body_id)
+            -- 如果该 body_id 已有 active_overrides（说明之前已加载过），只更新 UI 不重置状态
+            if active_overrides[local_body_id] then
+                -- 仅更新 UI 配置和列表
+                local data = load_config_data(local_body_id)
+                if data then
+                    current_config = data
+                end
+                update_group_names_list()
+                update_preset_names_list()
+            else
+                -- 全新加载：重置状态并应用默认预设
+                temp_applied_presets[local_body_id] = nil
+                load_body_config(local_body_id)
+            end
         end
-    else
-        last_body_id = nil
     end
+    -- 当 local_body_id 为 nil 时不重置 last_body_id，避免模型短暂重建期间丢失状态
 
     -- 遍历所有角色并应用规则引擎
     -- 2. 遍历所有玩家并应用配置
@@ -2268,9 +2401,25 @@ re.on_frame(function()
                     apply_all_defaults(char_body_id)
                     local char_go_ok, char_go = pcall(function() return char:call("get_GameObject") end)
                     local char_addr = (char_go_ok and char_go) and tostring(char_go) or tostring(char)
-                    local new_overrides, _ = TransformManager.apply_transform_rules(
+                    local new_overrides, _, activated_targets, all_targeted_groups = TransformManager.apply_transform_rules(
                         char_addr, config, char, active_overrides[char_body_id], merge_overrides
                     )
+                    -- 同步变身规则激活的分组预设到 active_group_presets
+                    -- 只对变身规则中实际涉及的全局分组做回退，未配置规则的全局分组保持用户手动选择
+                    if not active_group_presets[char_body_id] then active_group_presets[char_body_id] = {} end
+                    if config.groups then
+                        for g_name, g_data in pairs(config.groups) do
+                            if g_data.is_global then
+                                if activated_targets and activated_targets[g_name] then
+                                    active_group_presets[char_body_id][g_name] = activated_targets[g_name]
+                                elseif all_targeted_groups and all_targeted_groups[g_name] then
+                                    -- 该全局分组被变身规则覆盖，但当前无规则激活，回退为默认预设
+                                    active_group_presets[char_body_id][g_name] = g_data.default_preset or ""
+                                end
+                                -- 未被任何变身规则 target 的全局分组：保持 active_group_presets 不变
+                            end
+                        end
+                    end
                     apply_preset_to_armor(char, new_overrides, true, true)
                 end
                 if active_overrides[char_body_id] then
@@ -2278,9 +2427,25 @@ re.on_frame(function()
                         local char_go_ok, char_go = pcall(function() return char:call("get_GameObject") end)
                         local char_addr = (char_go_ok and char_go) and tostring(char_go) or tostring(char)
                         local final_overrides = active_overrides[char_body_id]
-                        local new_overrides, changed = TransformManager.apply_transform_rules(
+                        local new_overrides, changed, activated_targets, all_targeted_groups = TransformManager.apply_transform_rules(
                             char_addr, config, char, final_overrides, merge_overrides
                         )
+                        -- 同步变身规则激活的分组预设到 active_group_presets
+                        -- 只对变身规则中实际涉及的全局分组做回退，未配置规则的全局分组保持用户手动选择
+                        if not active_group_presets[char_body_id] then active_group_presets[char_body_id] = {} end
+                        if config.groups then
+                            for g_name, g_data in pairs(config.groups) do
+                                if g_data.is_global then
+                                    if activated_targets and activated_targets[g_name] then
+                                        active_group_presets[char_body_id][g_name] = activated_targets[g_name]
+                                    elseif all_targeted_groups and all_targeted_groups[g_name] then
+                                        -- 该全局分组被变身规则覆盖，但当前无规则激活，回退为默认预设
+                                        active_group_presets[char_body_id][g_name] = g_data.default_preset or ""
+                                    end
+                                    -- 未被任何变身规则 target 的全局分组：保持 active_group_presets 不变
+                                end
+                            end
+                        end
                         
                         if changed then
                             apply_preset_to_armor(char, new_overrides, true, true)
@@ -2389,6 +2554,9 @@ re.on_draw_ui(function()
                 if is_weapon_mode ~= false then
                     is_weapon_mode = false
                     last_body_id = nil
+                    current_group_name = ""
+                    -- 切换到防具模式时清除防具ID缓存，确保立即重新扫描
+                    body_id_cache = {}
                 end
             end
             
@@ -2398,6 +2566,9 @@ re.on_draw_ui(function()
                 if is_weapon_mode ~= true then
                     is_weapon_mode = true
                     last_body_id = nil
+                    current_group_name = ""
+                    -- 切换到武器模式时清除武器ID缓存，确保立即重新扫描
+                    weapon_id_cache = {}
                 end
             end
             imgui.separator()
@@ -2477,11 +2648,27 @@ re.on_draw_ui(function()
                                         if current_group_name == "" then
                                             current_config.presets[current_preset_name] = nil
                                             if current_config.default_preset == current_preset_name then current_config.default_preset = "" end
+                                            -- 维护 preset_order
+                                            if current_config.preset_order then
+                                                for pi = #current_config.preset_order, 1, -1 do
+                                                    if current_config.preset_order[pi] == current_preset_name then
+                                                        table.remove(current_config.preset_order, pi); break
+                                                    end
+                                                end
+                                            end
                                         else
                                             if current_config.groups[current_group_name] then
                                                 current_config.groups[current_group_name].presets[current_preset_name] = nil
                                                 if current_config.groups[current_group_name].default_preset == current_preset_name then
                                                     current_config.groups[current_group_name].default_preset = ""
+                                                end
+                                                -- 维护分组 preset_order
+                                                if current_config.groups[current_group_name].preset_order then
+                                                    for pi = #current_config.groups[current_group_name].preset_order, 1, -1 do
+                                                        if current_config.groups[current_group_name].preset_order[pi] == current_preset_name then
+                                                            table.remove(current_config.groups[current_group_name].preset_order, pi); break
+                                                        end
+                                                    end
                                                 end
                                             end
                                         end
@@ -2497,9 +2684,23 @@ re.on_draw_ui(function()
                                         end
                                         save_current_config_to_file(body_id)
                                     end
+                                    -- 预设状态提示
+                                    imgui.same_line()
                                     if ctx_default == current_preset_name then
-                                        imgui.same_line()
-                                        imgui.text_colored(T("is_default"), 0xFF00FF00)
+                                        imgui.text_colored(T("selected_and_default"), 0xFF00FF00)
+                                    else
+                                        imgui.text_colored(T("selected_not_default"), 0xFF00CCFF)
+                                    end
+                                    -- 排序按钮
+                                    imgui.same_line()
+                                    if imgui.button(T("sort") .. "##p_sort") then
+                                        sort_mode = "preset"
+                                        -- 初始化排序临时列表
+                                        sort_temp_list = {}
+                                        for _, pn in ipairs(preset_names_list) do
+                                            table.insert(sort_temp_list, pn)
+                                        end
+                                        sort_selected_index = selected_preset_index
                                     end
                                 end
 
@@ -2517,6 +2718,16 @@ re.on_draw_ui(function()
                                         end
                                     end
                                 end
+                                -- 覆盖当前预设按钮
+                                if #preset_names_list > 0 then
+                                    imgui.same_line()
+                                    if imgui.button(T("overwrite_preset") .. "##p_overwrite") then
+                                        local current_preset_name = preset_names_list[selected_preset_index]
+                                        if current_preset_name and current_preset_name ~= "" then
+                                            save_preset(current_preset_name, body_id)
+                                        end
+                                    end
+                                end
 
                                 imgui.table_next_column()
                                 -- 分组操作
@@ -2529,6 +2740,23 @@ re.on_draw_ui(function()
                                         imgui.same_line()
                                         if imgui.button(T("delete_group") .. "##right") then
                                             delete_group(current_group_name, body_id)
+                                        end
+                                    end
+                                    -- 分组排序按钮（有分组时才显示）
+                                    if current_config.groups and next(current_config.groups) then
+                                        imgui.same_line()
+                                        if imgui.button(T("sort") .. "##g_sort") then
+                                            sort_mode = "group"
+                                            sort_temp_list = {}
+                                            for _, gn in ipairs(group_names_list) do
+                                                table.insert(sort_temp_list, gn)
+                                            end
+                                            sort_selected_index = 1
+                                            if current_group_name ~= "" then
+                                                for gi, gn in ipairs(sort_temp_list) do
+                                                    if gn == current_group_name then sort_selected_index = gi; break end
+                                                end
+                                            end
                                         end
                                     end
                                 else
@@ -2596,8 +2824,100 @@ re.on_draw_ui(function()
                         end)
                         if not ui_status then
                             imgui.text_colored("UI Error: " .. tostring(ui_err), 0xFFFF0000)
-                            -- 注意：只有在确定表格处于开启状态时才需要闭合。但在复杂的 UI 异常中盲目闭合可能导致 ImGui 崩溃
                             pcall(imgui.end_table)
+                        end
+
+                        -- 排序面板（在 pcall 外渲染，独立区域）
+                        if sort_mode then
+                            imgui.separator()
+                            local sort_title = (sort_mode == "group") and (T("sort") .. " - " .. T("group")) or (T("sort") .. " - " .. T("preset"))
+                            imgui.text_colored(sort_title, 0xFF00FFFF)
+                            imgui.spacing()
+                            -- 提示文字
+                            if sort_selected_index and sort_selected_index >= 1 and sort_selected_index <= #sort_temp_list then
+                                imgui.text_colored(T("sort_hint_selected") .. ": " .. sort_temp_list[sort_selected_index], 0xFFFFFF80)
+                            else
+                                imgui.text_colored(T("sort_hint_click"), 0xFF808080)
+                            end
+                            imgui.spacing()
+                            for si, sname in ipairs(sort_temp_list) do
+                                -- 上移按钮
+                                if si <= 1 then imgui.begin_disabled() end
+                                if imgui.button(T("move_up") .. "##su_" .. si) then
+                                    if si > 1 then
+                                        sort_temp_list[si], sort_temp_list[si - 1] = sort_temp_list[si - 1], sort_temp_list[si]
+                                        if sort_selected_index == si then sort_selected_index = si - 1
+                                        elseif sort_selected_index == si - 1 then sort_selected_index = si end
+                                    end
+                                end
+                                if si <= 1 then imgui.end_disabled() end
+                                imgui.same_line()
+                                -- 下移按钮
+                                if si >= #sort_temp_list then imgui.begin_disabled() end
+                                if imgui.button(T("move_down") .. "##sd_" .. si) then
+                                    if si < #sort_temp_list then
+                                        sort_temp_list[si], sort_temp_list[si + 1] = sort_temp_list[si + 1], sort_temp_list[si]
+                                        if sort_selected_index == si then sort_selected_index = si + 1
+                                        elseif sort_selected_index == si + 1 then sort_selected_index = si end
+                                    end
+                                end
+                                if si >= #sort_temp_list then imgui.end_disabled() end
+                                imgui.same_line()
+                                -- 名称按钮（点击选中，选中项高亮）
+                                if si == sort_selected_index then
+                                    imgui.push_style_color(21, 0xFF00AAFF) -- ImGuiCol_Button 高亮
+                                end
+                                if imgui.button(tostring(si) .. ". " .. sname .. "##sn_" .. si) then
+                                    sort_selected_index = si
+                                end
+                                if si == sort_selected_index then
+                                    imgui.pop_style_color(1)
+                                end
+                                -- 插入按钮：将选中项移动到第si行的位置
+                                if sort_selected_index and sort_selected_index ~= si and sort_selected_index >= 1 and sort_selected_index <= #sort_temp_list then
+                                    imgui.same_line()
+                                    if imgui.button(T("sort_insert_here") .. "##si_" .. si) then
+                                        local item = table.remove(sort_temp_list, sort_selected_index)
+                                        table.insert(sort_temp_list, si, item)
+                                        sort_selected_index = si
+                                    end
+                                end
+                            end
+                            -- 底部按钮
+                            imgui.spacing()
+                            if imgui.button(T("sort_confirm") .. "##sort_ok") then
+                                if sort_mode == "group" then
+                                    current_config.group_order = {}
+                                    for _, gn in ipairs(sort_temp_list) do
+                                        table.insert(current_config.group_order, gn)
+                                    end
+                                    update_group_names_list()
+                                elseif sort_mode == "preset" then
+                                    if current_group_name == "" then
+                                        current_config.preset_order = {}
+                                        for _, pn in ipairs(sort_temp_list) do
+                                            table.insert(current_config.preset_order, pn)
+                                        end
+                                    else
+                                        local g = current_config.groups and current_config.groups[current_group_name]
+                                        if g then
+                                            g.preset_order = {}
+                                            for _, pn in ipairs(sort_temp_list) do
+                                                table.insert(g.preset_order, pn)
+                                            end
+                                        end
+                                    end
+                                    update_preset_names_list()
+                                end
+                                save_current_config_to_file(body_id)
+                                sort_mode = nil
+                                sort_temp_list = {}
+                            end
+                            imgui.same_line()
+                            if imgui.button(T("sort_cancel") .. "##sort_no") then
+                                sort_mode = nil
+                                sort_temp_list = {}
+                            end
                         end
                         imgui.tree_pop()
                     end
