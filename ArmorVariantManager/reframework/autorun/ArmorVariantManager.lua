@@ -86,6 +86,15 @@ local active_overrides = {} -- 记录当前生效的配置状态 (BodyID -> { [p
 -- 用于全局分组切换时全量重算，确保其他分组的当前预设也一起被应用
 local active_group_presets = {}
 
+-- 记录配置是否被外部还原 (BodyID -> true)
+-- 检测原理：插件在玩家保存时会同时写主配置和备份(backup/)，两者此刻内容一致；
+-- mod 重装只会还原主配置文件而不会动备份文件，因此加载时若发现"备份存在且与主配置不一致"，
+-- 即可判定主配置被 mod 管理器还原成了作者版本，从而提示玩家一键恢复。
+local config_restored = {}
+-- 记录玩家已对"配置被还原"提示做出处理（恢复或忽略），用于点击后立即隐藏横幅。
+-- 会话级标记：重启游戏后清空，下次仍能正常检测提示。
+local config_restore_handled = {}
+
 -- 当前 Body 的配置数据结构 (用于 UI 编辑):
 -- {
 --   default_preset = "PresetName",
@@ -754,6 +763,28 @@ local function get_config_path(body_id)
     return "ArmorVariantManager/" .. body_id .. ".json"
 end
 
+-- 辅助函数：获取备份文件路径
+local function get_backup_path(body_id)
+    if not body_id then return nil end
+    return "ArmorVariantManager/backup/" .. body_id .. ".json"
+end
+
+-- 辅助函数：深度比较两个 table 是否内容一致
+-- 用于判断主配置是否被外部还原（与备份不一致即视为被改写）
+local function deep_equal(a, b)
+    if a == b then return true end
+    local ta, tb = type(a), type(b)
+    if ta ~= tb then return false end
+    if ta ~= "table" then return false end
+    for k, v in pairs(a) do
+        if not deep_equal(v, b[k]) then return false end
+    end
+    for k, v in pairs(b) do
+        if a[k] == nil then return false end
+    end
+    return true
+end
+
 -- =============================================================================
 -- 预设和分组 UI 辅助
 -- =============================================================================
@@ -1420,6 +1451,26 @@ local function load_config_data(body_id)
                 { level = 3, targets = {} }
             }
         end
+        -- 检测主配置是否被外部还原：若备份存在且与主配置的核心内容不一致，
+        -- 说明主配置文件被 mod 管理器还原成了作者版本，打上标记供 UI 提示一键恢复。
+        -- 注意：必须用原始文件内容比较（而非补全后的 loaded_data），
+        -- 因为加载流程会为缺失字段补全默认值，导致"补全后数据 vs 原始备份"产生误差。
+        local backup_path = get_backup_path(body_id)
+        if backup_path then
+            local backup_data = json.load_file(backup_path)
+            if backup_data then
+                local config_path = get_config_path(body_id)
+                local raw_config = json.load_file(config_path)
+                if raw_config then
+                    local same = deep_equal(raw_config, backup_data)
+                    if not same then
+                        config_restored[body_id] = true
+                    else
+                        config_restored[body_id] = nil
+                    end
+                end
+            end
+        end
         -- 写入缓存
         loaded_configs[body_id] = loaded_data
         return loaded_data
@@ -1771,7 +1822,16 @@ local function save_current_config_to_file(body_id)
     loaded_configs[body_id] = current_config
     local path = get_config_path(body_id)
     json.dump_file(path, current_config)
-    
+
+    -- 同步写入备份文件：保存时主配置与备份内容一致，
+    -- 后续若主配置被 mod 管理器还原，备份仍保留玩家改动，作为恢复来源。
+    local backup_path = get_backup_path(body_id)
+    if backup_path then
+        json.dump_file(backup_path, current_config)
+    end
+    -- 玩家主动保存视为已是最新状态，清除"被还原"标记
+    config_restored[body_id] = nil
+    config_restore_handled[body_id] = nil
     -- 清除 active_overrides 缓存，强制下一帧重新合并所有默认预设
     if active_overrides[body_id] then
         active_overrides[body_id] = nil
@@ -1781,6 +1841,38 @@ local function save_current_config_to_file(body_id)
     if TransformManager.clear_last_state_cache then
         TransformManager.clear_last_state_cache()
     end
+end
+
+-- 辅助函数：从备份恢复配置
+-- 将 backup/<id>.json 的内容写回主配置文件并刷新内存状态，
+-- 用于 mod 重装后一键还原玩家手动调整过的预设。
+local function restore_config_from_backup(body_id)
+    if not body_id then return false end
+    local backup_path = get_backup_path(body_id)
+    if not backup_path then return false end
+    local backup_data = json.load_file(backup_path)
+    if not backup_data then return false end
+    -- 用备份覆盖主配置文件
+    local path = get_config_path(body_id)
+    json.dump_file(path, backup_data)
+    -- 清除该 body 的所有内存缓存，强制下一帧重新加载备份内容
+    -- 注意：这里不清除 config_restore_handled，由 UI 调用方设置的"已处理"标记需保留，
+    -- 否则随后的 load_config_data 重新检测会让横幅再次显示。
+    loaded_configs[body_id] = nil
+    active_overrides[body_id] = nil
+    config_restored[body_id] = nil
+    -- 重新加载并刷新 UI
+    local data = load_config_data(body_id)
+    if data then
+        current_config = data
+        update_group_names_list()
+        update_preset_names_list()
+        apply_all_defaults(body_id)
+    end
+    if TransformManager.clear_last_state_cache then
+        TransformManager.clear_last_state_cache()
+    end
+    return true
 end
 
 -- 辅助函数：捕获当前状态为新预设
@@ -2582,6 +2674,21 @@ re.on_draw_ui(function()
                     if imgui.tree_node(T("presets_manager") .. " (" .. body_id .. ")") then
                         -- 使用 pcall 包裹整个预设管理区域，防止 UI 脚本报错导致 ImGui Mismatch 崩溃
                         local ui_status, ui_err = pcall(function()
+                            -- 配置被还原提示横幅：检测到主配置被 mod 重装覆盖时，提供一键恢复入口
+                            -- config_restore_handled 用于点击恢复/忽略后立即隐藏横幅，避免恢复流程重新检测导致复现
+                            if config_restored[body_id] and not config_restore_handled[body_id] then
+                                imgui.text_colored(T("config_restored_warning"), 0xFF00CCFF)
+                                if imgui.button(T("restore_from_backup") .. "##restore_backup") then
+                                    config_restore_handled[body_id] = true
+                                    restore_config_from_backup(body_id)
+                                end
+                                imgui.same_line()
+                                if imgui.button(T("dismiss") .. "##dismiss_restore") then
+                                    config_restore_handled[body_id] = true
+                                    config_restored[body_id] = nil
+                                end
+                                imgui.separator()
+                            end
                             -- 1. 准备数据
                             local global_label = T("global_group_label") or "[Global]"
                             local full_group_list = {T("main_list")}
