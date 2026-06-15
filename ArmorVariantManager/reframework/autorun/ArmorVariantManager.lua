@@ -1,7 +1,7 @@
 local mod_name = "ArmorVariantManager"
 -- 开发中遵守
 -- 版本号-开发状态-开发状态标识
-local version = "3.2.0-beta-001"
+local version = "3.3.0-beta-001"
 local author = "MK,Moon,AZUSA"
 
 -- =============================================================================
@@ -1597,6 +1597,66 @@ local function apply_all_defaults(body_id)
     end
 end
 
+-- 辅助函数：变身规则激活全局分组时的全量重算
+-- 合并顺序与 apply_all_defaults 一致（主列表 → 普通分组 → 全局分组），
+-- 但使用 active_group_presets 中记录的当前预设（而非默认预设），
+-- 并将变身规则激活的非全局分组 targets 也合并进来。
+-- 参数 activated_targets: 变身规则激活的 group→preset 映射
+local function rebuild_overrides_for_transform(body_id, config, activated_targets)
+    if not body_id or not config then return end
+    active_overrides[body_id] = {}
+    local saved = active_group_presets[body_id] or {}
+    -- 1. 主列表当前预设
+    local main_preset_name = saved[""]
+    if main_preset_name and main_preset_name ~= "" and config.presets and config.presets[main_preset_name] then
+        merge_preset_into_overrides(body_id, config.presets[main_preset_name])
+    elseif config.default_preset and config.default_preset ~= "" and config.presets then
+        local def = config.presets[config.default_preset]
+        if def then merge_preset_into_overrides(body_id, def) end
+    end
+    -- 2. 普通分组的当前预设
+    if config.groups then
+        for g_name, g_data in pairs(config.groups) do
+            if not g_data.is_global then
+                local gp_name = saved[g_name]
+                if gp_name and gp_name ~= "" and g_data.presets and g_data.presets[gp_name] then
+                    merge_preset_into_overrides(body_id, g_data.presets[gp_name])
+                elseif g_data.default_preset and g_data.default_preset ~= "" and g_data.presets then
+                    local g_def = g_data.presets[g_data.default_preset]
+                    if g_def then merge_preset_into_overrides(body_id, g_def) end
+                end
+            end
+        end
+    end
+    -- 3. 合并变身规则激活的非全局分组 targets（覆盖步骤2的对应分组预设）
+    if activated_targets and config.groups then
+        for g_name, p_name in pairs(activated_targets) do
+            if g_name ~= "" and config.groups[g_name] and not config.groups[g_name].is_global then
+                if p_name and p_name ~= "" and config.groups[g_name].presets and config.groups[g_name].presets[p_name] then
+                    merge_preset_into_overrides(body_id, config.groups[g_name].presets[p_name])
+                end
+            elseif g_name == "" then
+                -- 变身规则激活了主列表预设
+                if p_name and p_name ~= "" and config.presets and config.presets[p_name] then
+                    merge_preset_into_overrides(body_id, config.presets[p_name])
+                end
+            end
+        end
+    end
+    -- 4. 所有全局分组（只锁隐藏项），使用 activated_targets 中的预设（如果有）
+    if config.groups then
+        for g_name, g_data in pairs(config.groups) do
+            if g_data.is_global then
+                local gp_name = (activated_targets and activated_targets[g_name]) or saved[g_name]
+                if not gp_name or gp_name == "" then gp_name = g_data.default_preset end
+                if gp_name and gp_name ~= "" and g_data.presets and g_data.presets[gp_name] then
+                    merge_global_preset_into_overrides(body_id, g_data.presets[gp_name])
+                end
+            end
+        end
+    end
+end
+
 -- 辅助函数：获取当前分组的预设数据
 local function get_current_preset_data(preset_name)
     if current_group_name == "" then
@@ -1700,10 +1760,25 @@ local function apply_preset(preset_name)
                 local config = load_config_data(char_body_id)
                 local char_go_ok, char_go = pcall(function() return char:call("get_GameObject") end)
                 local char_addr = (char_go_ok and char_go) and tostring(char_go) or tostring(char)
-                local new_overrides, _ = TransformManager.apply_transform_rules(
+                local new_overrides, _, activated_targets = TransformManager.apply_transform_rules(
                     char_addr, config, char, active_overrides[current_body_id], merge_overrides
                 )
-                apply_preset_to_armor(char, new_overrides, true, true)
+                -- 检查变身规则是否激活了全局分组
+                local has_global_target = false
+                if activated_targets and config and config.groups then
+                    for g_name, _ in pairs(activated_targets) do
+                        if g_name ~= "" and config.groups[g_name] and config.groups[g_name].is_global then
+                            has_global_target = true
+                            break
+                        end
+                    end
+                end
+                if has_global_target then
+                    rebuild_overrides_for_transform(char_body_id, config, activated_targets)
+                    apply_preset_to_armor(char, active_overrides[char_body_id], true, true)
+                else
+                    apply_preset_to_armor(char, new_overrides, true, true)
+                end
             end
         end
     end
@@ -2499,20 +2574,29 @@ re.on_frame(function()
                     -- 同步变身规则激活的分组预设到 active_group_presets
                     -- 只对变身规则中实际涉及的全局分组做回退，未配置规则的全局分组保持用户手动选择
                     if not active_group_presets[char_body_id] then active_group_presets[char_body_id] = {} end
+                    local has_global_target = false
                     if config.groups then
                         for g_name, g_data in pairs(config.groups) do
                             if g_data.is_global then
                                 if activated_targets and activated_targets[g_name] then
                                     active_group_presets[char_body_id][g_name] = activated_targets[g_name]
+                                    has_global_target = true
                                 elseif all_targeted_groups and all_targeted_groups[g_name] then
                                     -- 该全局分组被变身规则覆盖，但当前无规则激活，回退为默认预设
                                     active_group_presets[char_body_id][g_name] = g_data.default_preset or ""
+                                    has_global_target = true
                                 end
                                 -- 未被任何变身规则 target 的全局分组：保持 active_group_presets 不变
                             end
                         end
                     end
-                    apply_preset_to_armor(char, new_overrides, true, true)
+                    if has_global_target then
+                        -- 全局分组被变身规则激活：全量重算，确保正确的合并顺序
+                        rebuild_overrides_for_transform(char_body_id, config, activated_targets)
+                        apply_preset_to_armor(char, active_overrides[char_body_id], true, true)
+                    else
+                        apply_preset_to_armor(char, new_overrides, true, true)
+                    end
                 end
                 if active_overrides[char_body_id] then
                     if char and sdk.is_managed_object(char) then
@@ -2525,14 +2609,18 @@ re.on_frame(function()
                         -- 同步变身规则激活的分组预设到 active_group_presets
                         -- 只对变身规则中实际涉及的全局分组做回退，未配置规则的全局分组保持用户手动选择
                         if not active_group_presets[char_body_id] then active_group_presets[char_body_id] = {} end
+                        -- 检测 activated_targets 中是否有全局分组
+                        local has_global_target = false
                         if config.groups then
                             for g_name, g_data in pairs(config.groups) do
                                 if g_data.is_global then
                                     if activated_targets and activated_targets[g_name] then
                                         active_group_presets[char_body_id][g_name] = activated_targets[g_name]
+                                        has_global_target = true
                                     elseif all_targeted_groups and all_targeted_groups[g_name] then
                                         -- 该全局分组被变身规则覆盖，但当前无规则激活，回退为默认预设
                                         active_group_presets[char_body_id][g_name] = g_data.default_preset or ""
+                                        has_global_target = true
                                     end
                                     -- 未被任何变身规则 target 的全局分组：保持 active_group_presets 不变
                                 end
@@ -2540,9 +2628,20 @@ re.on_frame(function()
                         end
                         
                         if changed then
-                            apply_preset_to_armor(char, new_overrides, true, true)
+                            if has_global_target then
+                                -- 全局分组被变身规则激活：全量重算 active_overrides，
+                                -- 确保全局分组只锁隐藏、不覆盖非全局分组的隐藏状态
+                                rebuild_overrides_for_transform(char_body_id, config, activated_targets)
+                                apply_preset_to_armor(char, active_overrides[char_body_id], true, true)
+                            else
+                                apply_preset_to_armor(char, new_overrides, true, true)
+                            end
                         else
-                            apply_preset_to_armor(char, new_overrides, true, false)
+                            if has_global_target then
+                                apply_preset_to_armor(char, active_overrides[char_body_id], true, false)
+                            else
+                                apply_preset_to_armor(char, new_overrides, true, false)
+                            end
                         end
                     end
                 end
