@@ -7,3 +7,4 @@ dump_hp.lua
 .agent
 .trae
 minify_release.py
+Debug/

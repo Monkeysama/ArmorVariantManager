@@ -1,5 +1,5 @@
 local mod_name = "ArmorVariantManager"
-local version = "3.2.0"
+local version = "3.3.0"
 local author = "MK,Moon,AZUSA"
 local global_config_path = "ArmorVariantManager/GlobalSettings.json"
 local global_config = {
@@ -49,6 +49,8 @@ local loaded_configs = {}
 local temp_applied_presets = {}
 local active_overrides = {}
 local active_group_presets = {}
+local config_restored = {}
+local config_restore_handled = {}
 local current_config = {
     default_preset = "",
     presets = {},
@@ -598,6 +600,23 @@ end
 local function get_config_path(body_id)
     if not body_id then return nil end
     return "ArmorVariantManager/" .. body_id .. ".json"
+end
+local function get_backup_path(body_id)
+    if not body_id then return nil end
+    return "ArmorVariantManager/backup/" .. body_id .. ".json"
+end
+local function deep_equal(a, b)
+    if a == b then return true end
+    local ta, tb = type(a), type(b)
+    if ta ~= tb then return false end
+    if ta ~= "table" then return false end
+    for k, v in pairs(a) do
+        if not deep_equal(v, b[k]) then return false end
+    end
+    for k, v in pairs(b) do
+        if a[k] == nil then return false end
+    end
+    return true
 end
 local function update_preset_names_list()
     preset_names_list = {}
@@ -1161,6 +1180,22 @@ local function load_config_data(body_id)
                 { level = 3, targets = {} }
             }
         end
+        local backup_path = get_backup_path(body_id)
+        if backup_path then
+            local backup_data = json.load_file(backup_path)
+            if backup_data then
+                local config_path = get_config_path(body_id)
+                local raw_config = json.load_file(config_path)
+                if raw_config then
+                    local same = deep_equal(raw_config, backup_data)
+                    if not same then
+                        config_restored[body_id] = true
+                    else
+                        config_restored[body_id] = nil
+                    end
+                end
+            end
+        end
         loaded_configs[body_id] = loaded_data
         return loaded_data
     end
@@ -1262,6 +1297,55 @@ local function apply_all_defaults(body_id)
         end
     end
 end
+local function rebuild_overrides_for_transform(body_id, config, activated_targets)
+    if not body_id or not config then return end
+    active_overrides[body_id] = {}
+    local saved = active_group_presets[body_id] or {}
+    local main_preset_name = saved[""]
+    if main_preset_name and main_preset_name ~= "" and config.presets and config.presets[main_preset_name] then
+        merge_preset_into_overrides(body_id, config.presets[main_preset_name])
+    elseif config.default_preset and config.default_preset ~= "" and config.presets then
+        local def = config.presets[config.default_preset]
+        if def then merge_preset_into_overrides(body_id, def) end
+    end
+    if config.groups then
+        for g_name, g_data in pairs(config.groups) do
+            if not g_data.is_global then
+                local gp_name = saved[g_name]
+                if gp_name and gp_name ~= "" and g_data.presets and g_data.presets[gp_name] then
+                    merge_preset_into_overrides(body_id, g_data.presets[gp_name])
+                elseif g_data.default_preset and g_data.default_preset ~= "" and g_data.presets then
+                    local g_def = g_data.presets[g_data.default_preset]
+                    if g_def then merge_preset_into_overrides(body_id, g_def) end
+                end
+            end
+        end
+    end
+    if activated_targets and config.groups then
+        for g_name, p_name in pairs(activated_targets) do
+            if g_name ~= "" and config.groups[g_name] and not config.groups[g_name].is_global then
+                if p_name and p_name ~= "" and config.groups[g_name].presets and config.groups[g_name].presets[p_name] then
+                    merge_preset_into_overrides(body_id, config.groups[g_name].presets[p_name])
+                end
+            elseif g_name == "" then
+                if p_name and p_name ~= "" and config.presets and config.presets[p_name] then
+                    merge_preset_into_overrides(body_id, config.presets[p_name])
+                end
+            end
+        end
+    end
+    if config.groups then
+        for g_name, g_data in pairs(config.groups) do
+            if g_data.is_global then
+                local gp_name = (activated_targets and activated_targets[g_name]) or saved[g_name]
+                if not gp_name or gp_name == "" then gp_name = g_data.default_preset end
+                if gp_name and gp_name ~= "" and g_data.presets and g_data.presets[gp_name] then
+                    merge_global_preset_into_overrides(body_id, g_data.presets[gp_name])
+                end
+            end
+        end
+    end
+end
 local function get_current_preset_data(preset_name)
     if current_group_name == "" then
         return current_config.presets and current_config.presets[preset_name]
@@ -1352,10 +1436,24 @@ local function apply_preset(preset_name)
                 local config = load_config_data(char_body_id)
                 local char_go_ok, char_go = pcall(function() return char:call("get_GameObject") end)
                 local char_addr = (char_go_ok and char_go) and tostring(char_go) or tostring(char)
-                local new_overrides, _ = TransformManager.apply_transform_rules(
+                local new_overrides, _, activated_targets = TransformManager.apply_transform_rules(
                     char_addr, config, char, active_overrides[current_body_id], merge_overrides
                 )
-                apply_preset_to_armor(char, new_overrides, true, true)
+                local has_global_target = false
+                if activated_targets and config and config.groups then
+                    for g_name, _ in pairs(activated_targets) do
+                        if g_name ~= "" and config.groups[g_name] and config.groups[g_name].is_global then
+                            has_global_target = true
+                            break
+                        end
+                    end
+                end
+                if has_global_target then
+                    rebuild_overrides_for_transform(char_body_id, config, activated_targets)
+                    apply_preset_to_armor(char, active_overrides[char_body_id], true, true)
+                else
+                    apply_preset_to_armor(char, new_overrides, true, true)
+                end
             end
         end
     end
@@ -1464,12 +1562,42 @@ local function save_current_config_to_file(body_id)
     loaded_configs[body_id] = current_config
     local path = get_config_path(body_id)
     json.dump_file(path, current_config)
+    local backup_path = get_backup_path(body_id)
+    if backup_path then
+        json.dump_file(backup_path, current_config)
+    end
+    config_restored[body_id] = nil
+    config_restore_handled[body_id] = nil
     if active_overrides[body_id] then
         active_overrides[body_id] = nil
+    end
+    active_group_presets[body_id] = nil
+    if TransformManager.clear_last_state_cache then
+        TransformManager.clear_last_state_cache()
+    end
+end
+local function restore_config_from_backup(body_id)
+    if not body_id then return false end
+    local backup_path = get_backup_path(body_id)
+    if not backup_path then return false end
+    local backup_data = json.load_file(backup_path)
+    if not backup_data then return false end
+    local path = get_config_path(body_id)
+    json.dump_file(path, backup_data)
+    loaded_configs[body_id] = nil
+    active_overrides[body_id] = nil
+    config_restored[body_id] = nil
+    local data = load_config_data(body_id)
+    if data then
+        current_config = data
+        update_group_names_list()
+        update_preset_names_list()
+        apply_all_defaults(body_id)
     end
     if TransformManager.clear_last_state_cache then
         TransformManager.clear_last_state_cache()
     end
+    return true
 end
 local function save_preset(preset_name, body_id)
     if not body_id then body_id = get_body_id() end
@@ -1998,18 +2126,26 @@ re.on_frame(function()
                         char_addr, config, char, active_overrides[char_body_id], merge_overrides
                     )
                     if not active_group_presets[char_body_id] then active_group_presets[char_body_id] = {} end
+                    local has_global_target = false
                     if config.groups then
                         for g_name, g_data in pairs(config.groups) do
                             if g_data.is_global then
                                 if activated_targets and activated_targets[g_name] then
                                     active_group_presets[char_body_id][g_name] = activated_targets[g_name]
+                                    has_global_target = true
                                 elseif all_targeted_groups and all_targeted_groups[g_name] then
                                     active_group_presets[char_body_id][g_name] = g_data.default_preset or ""
+                                    has_global_target = true
                                 end
                             end
                         end
                     end
-                    apply_preset_to_armor(char, new_overrides, true, true)
+                    if has_global_target then
+                        rebuild_overrides_for_transform(char_body_id, config, activated_targets)
+                        apply_preset_to_armor(char, active_overrides[char_body_id], true, true)
+                    else
+                        apply_preset_to_armor(char, new_overrides, true, true)
+                    end
                 end
                 if active_overrides[char_body_id] then
                     if char and sdk.is_managed_object(char) then
@@ -2020,21 +2156,33 @@ re.on_frame(function()
                             char_addr, config, char, final_overrides, merge_overrides
                         )
                         if not active_group_presets[char_body_id] then active_group_presets[char_body_id] = {} end
+                        local has_global_target = false
                         if config.groups then
                             for g_name, g_data in pairs(config.groups) do
                                 if g_data.is_global then
                                     if activated_targets and activated_targets[g_name] then
                                         active_group_presets[char_body_id][g_name] = activated_targets[g_name]
+                                        has_global_target = true
                                     elseif all_targeted_groups and all_targeted_groups[g_name] then
                                         active_group_presets[char_body_id][g_name] = g_data.default_preset or ""
+                                        has_global_target = true
                                     end
                                 end
                             end
                         end
                         if changed then
-                            apply_preset_to_armor(char, new_overrides, true, true)
+                            if has_global_target then
+                                rebuild_overrides_for_transform(char_body_id, config, activated_targets)
+                                apply_preset_to_armor(char, active_overrides[char_body_id], true, true)
+                            else
+                                apply_preset_to_armor(char, new_overrides, true, true)
+                            end
                         else
-                            apply_preset_to_armor(char, new_overrides, true, false)
+                            if has_global_target then
+                                apply_preset_to_armor(char, active_overrides[char_body_id], true, false)
+                            else
+                                apply_preset_to_armor(char, new_overrides, true, false)
+                            end
                         end
                     end
                 end
@@ -2140,6 +2288,19 @@ re.on_draw_ui(function()
                 if body_id then
                     if imgui.tree_node(T("presets_manager") .. " (" .. body_id .. ")") then
                         local ui_status, ui_err = pcall(function()
+                            if config_restored[body_id] and not config_restore_handled[body_id] then
+                                imgui.text_colored(T("config_restored_warning"), 0xFF00CCFF)
+                                if imgui.button(T("restore_from_backup") .. "##restore_backup") then
+                                    config_restore_handled[body_id] = true
+                                    restore_config_from_backup(body_id)
+                                end
+                                imgui.same_line()
+                                if imgui.button(T("dismiss") .. "##dismiss_restore") then
+                                    config_restore_handled[body_id] = true
+                                    config_restored[body_id] = nil
+                                end
+                                imgui.separator()
+                            end
                             local global_label = T("global_group_label") or "[Global]"
                             local full_group_list = {T("main_list")}
                             for _, gname in ipairs(group_names_list) do
