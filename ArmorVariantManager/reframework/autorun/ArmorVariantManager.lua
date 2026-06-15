@@ -1911,6 +1911,9 @@ local function save_current_config_to_file(body_id)
     if active_overrides[body_id] then
         active_overrides[body_id] = nil
     end
+    -- 清除 active_group_presets 缓存，确保下一帧 apply_all_defaults 使用配置中的默认预设，
+    -- 避免变身规则之前设置的全局分组预设残留导致状态不一致
+    active_group_presets[body_id] = nil
     
     -- 清除状态机缓存，强制下一帧重新应用最新的预设内容
     if TransformManager.clear_last_state_cache then
