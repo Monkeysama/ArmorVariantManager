@@ -1,4 +1,3 @@
--- Utils.lua
 local Utils = {}
 
 function Utils.deep_copy_table(orig)

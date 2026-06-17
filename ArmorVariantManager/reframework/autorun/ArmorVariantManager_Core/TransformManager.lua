@@ -1,4 +1,3 @@
--- TransformManager.lua
 local TransformManager = {}
 
 -- 引入条件注册表（所有条件模块）
@@ -34,12 +33,22 @@ local function T(key)
 end
 
 -- 状态缓存（避免每帧重复评估相同状态）
+-- 键格式：char_addr .. "|" .. context_id
 local last_state_cache = {}
 
--- 清除指定角色的状态缓存
-function TransformManager.clear_cache(char_addr)
-    if char_addr then
-        last_state_cache[char_addr] = nil
+-- 清除指定角色和上下文的缓存
+function TransformManager.clear_cache(char_addr, context_id)
+    if char_addr and context_id then
+        local key = char_addr .. "|" .. tostring(context_id)
+        last_state_cache[key] = nil
+    elseif char_addr then
+        -- 清除该角色所有缓存
+        local prefix = char_addr .. "|"
+        for k, _ in pairs(last_state_cache) do
+            if string.sub(k, 1, #prefix) == prefix then
+                last_state_cache[k] = nil
+            end
+        end
     else
         last_state_cache = {}
     end
@@ -54,10 +63,11 @@ local function get_active_rule_for_type(t_type, config, character, char_addr)
     return nil, nil
 end
 
--- 核心函数：应用变身规则，返回最终的 overrides 和是否变化
-function TransformManager.apply_transform_rules(char_addr, config, character, active_overrides, merge_overrides)
+-- 核心函数：应用变身规则，返回最终的 overrides、是否变化、激活的分组预设、所有被引用的分组
+-- 新增 context_id 参数，用于区分防具/武器等不同配置上下文
+function TransformManager.apply_transform_rules(char_addr, context_id, config, character, active_overrides, merge_overrides)
     if not active_overrides then
-        return active_overrides, false
+        return active_overrides, false, {}, {}
     end
 
     local active_rules = {}        -- { rule, priority }
@@ -100,10 +110,22 @@ function TransformManager.apply_transform_rules(char_addr, config, character, ac
     for _, t in ipairs(sorted_types) do
         state_signature = state_signature .. t .. ":" .. tostring(current_states[t]) .. "|"
     end
-    local changed = (last_state_cache[char_addr] ~= state_signature)
-    last_state_cache[char_addr] = state_signature
 
-    -- 复制当前 overrides 作为基础
+    -- 使用复合键存储缓存
+    local cache_key = char_addr .. "|" .. tostring(context_id)
+    local changed = (last_state_cache[cache_key] ~= state_signature)
+    last_state_cache[cache_key] = state_signature
+
+    -- 收集激活的分组预设和目标分组（用于全局分组更新）
+    local activated_targets = {}   -- group_name -> preset_name (当前激活的规则中实际应用的预设)
+    local all_targeted_groups = {} -- group_name -> true (所有被规则引用的分组)
+
+    -- **关键：如果状态没有变化，直接返回传入的 active_overrides（保留用户手动修改）**
+    if not changed then
+        return active_overrides, false, activated_targets, all_targeted_groups
+    end
+
+    -- 状态变化，需要重新计算规则并生成新的 overrides
     local new_overrides = {}
     for p, data in pairs(active_overrides) do
         new_overrides[p] = { mesh_enabled = data.mesh_enabled, materials = {} }
@@ -124,6 +146,8 @@ function TransformManager.apply_transform_rules(char_addr, config, character, ac
                     local g_name = target.group
                     local p_name = target.preset
                     if p_name and p_name ~= "None" then
+                        -- 记录所有被引用的分组
+                        all_targeted_groups[g_name or ""] = true
                         local preset_data = nil
                         if g_name == "" or g_name == nil then
                             if config.presets and config.presets[p_name] then
@@ -136,6 +160,10 @@ function TransformManager.apply_transform_rules(char_addr, config, character, ac
                         end
                         if preset_data then
                             new_overrides = merge_overrides(new_overrides, preset_data)
+                            -- 记录当前规则实际激活了哪个预设（用于全局分组）
+                            if g_name ~= nil and g_name ~= "" then
+                                activated_targets[g_name] = p_name
+                            end
                         end
                     end
                 end
@@ -143,14 +171,13 @@ function TransformManager.apply_transform_rules(char_addr, config, character, ac
         end
     end
 
-    return new_overrides, changed
+    return new_overrides, true, activated_targets, all_targeted_groups
 end
 
 -- 获取当前状态的显示字符串（用于 UI）
 function TransformManager.get_current_state_display(config, character)
     if not config then return "" end
     if config.is_parallel then
-        -- 并行模式下不显示单一状态，返回空字符串
         return ""
     end
 
