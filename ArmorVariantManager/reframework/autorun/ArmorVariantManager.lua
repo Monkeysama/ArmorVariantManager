@@ -1,6 +1,6 @@
 local mod_name = "ArmorVariantManager"
-local version = "2.3.0"
-local author = "Moon"
+local version = "2.3.6"
+local author = "Moon、MK"
 -- Ported from MHWS version
 -- Original author: MK
 
@@ -181,6 +181,9 @@ local g_is_special_cg = false
 -- 特殊CG期间的应用帧计数器
 local special_cg_frame_counter = 0
 local SPECIAL_CG_APPLY_INTERVAL = 15  -- 每15帧应用一次（可调整）
+
+-- 记录每个 body_id 对应的玩家 GameObject 地址，用于检测换装重建
+local last_player_addresses = {}
 
 -- 辅助函数
 local function deep_copy_table(orig) return Utils.deep_copy_table(orig) end
@@ -407,8 +410,25 @@ local function refresh_player_list()
     player_list = new_list
 end
 
--- 获取主玩家（优先选择名称以 "player" 开头且包含 body 的）
+-- 获取本地玩家（MasterPlayer）的 GameObject
+local function get_master_player_object()
+    local master = Utils.get_master_player()
+    if not master then return nil end
+    local ok, go = pcall(function() return master:call("get_GameObject") end)
+    if ok and go and sdk.is_managed_object(go) then
+        return go
+    end
+    return nil
+end
+
+-- 获取主玩家（优先本地玩家，回退到列表中的第一个 "player" 对象）
 local function get_primary_player()
+    -- 1. 优先使用本地玩家（MasterPlayer）
+    local master_go = get_master_player_object()
+    if master_go then
+        return master_go
+    end
+    -- 2. 回退到 player_list（联机场景或特殊情况下）
     if #player_list == 0 then return nil end
     for _, player in ipairs(player_list) do
         local name = player:call("get_Name")
@@ -737,7 +757,7 @@ local function apply_preset_to_character(character, preset_data, ignore_context)
         if not type_mesh then return end
     end
 
-    -- 特殊CG期间降低应用频率（每5帧执行一次）
+    -- 特殊CG期间降低应用频率
     if g_is_special_cg then
         special_cg_frame_counter = special_cg_frame_counter + 1
         if special_cg_frame_counter < SPECIAL_CG_APPLY_INTERVAL then
@@ -812,7 +832,7 @@ local function apply_preset_to_weapon(weapon_parts, preset_data, ignore_context,
     -- 使用传入的 body_id，不再调用 get_primary_body_id
     if not body_id then return end
 
-    -- 特殊CG期间降低应用频率（每5帧执行一次）
+    -- 特殊CG期间降低应用频率
     if g_is_special_cg then
         special_cg_frame_counter = special_cg_frame_counter + 1
         if special_cg_frame_counter < SPECIAL_CG_APPLY_INTERVAL then
@@ -1070,7 +1090,7 @@ local function load_config_data(body_id)
             end
         end
 
-        -- 补全分组的 is_global 和预设顺序
+        -- 补充分组的 is_global 和预设顺序
         for _, g_data in pairs(loaded_data.groups) do
             if g_data.is_global == nil then g_data.is_global = false end
             if not g_data.preset_order then
@@ -1193,7 +1213,10 @@ local function merge_preset_into_overrides(body_id, preset_data)
     end
 end
 
+-- ============================================================================
 -- 初始化默认预设（按正确顺序：主列表 -> 普通分组 -> 全局分组）
+-- 为全局分组增加 Fallback：若 default_preset 缺失，则自动选取该分组的第一个预设
+-- ============================================================================
 local function apply_all_defaults(body_id)
     local config = load_config_data(body_id)
     if not config then return end
@@ -1201,6 +1224,7 @@ local function apply_all_defaults(body_id)
     if not active_group_presets[body_id] then active_group_presets[body_id] = {} end
     -- 清除渲染缓存，强制下一帧重新应用
     last_applied_overrides[body_id] = nil
+
     -- 1. 主列表默认预设
     if config.default_preset and config.default_preset ~= "" and config.presets then
         local def = config.presets[config.default_preset]
@@ -1211,6 +1235,7 @@ local function apply_all_defaults(body_id)
             end
         end
     end
+
     -- 2. 非全局分组默认预设
     if config.groups then
         for g_name, g_data in pairs(config.groups) do
@@ -1227,17 +1252,39 @@ local function apply_all_defaults(body_id)
             end
         end
     end
-    -- 3. 全局分组默认预设（仅隐藏覆盖）
+
+    -- 3. 全局分组默认预设（仅隐藏覆盖），增加 Fallback 机制
     if config.groups then
         for g_name, g_data in pairs(config.groups) do
             if g_data.is_global then
-                if g_data.default_preset and g_data.default_preset ~= "" and g_data.presets then
-                    local g_def = g_data.presets[g_data.default_preset]
-                    if g_def then
-                        merge_global_preset_into_overrides(body_id, g_def)
-                        if not active_group_presets[body_id][g_name] or active_group_presets[body_id][g_name] == "" then
-                            active_group_presets[body_id][g_name] = g_data.default_preset
+                local default_preset = g_data.default_preset
+                -- 如果 default_preset 无效，自动选取该分组的第一个预设
+                if not default_preset or default_preset == "" then
+                    if g_data.presets and next(g_data.presets) then
+                        -- 优先按 preset_order 排序，取第一个
+                        if g_data.preset_order and #g_data.preset_order > 0 then
+                            for _, pname in ipairs(g_data.preset_order) do
+                                if g_data.presets[pname] then
+                                    default_preset = pname
+                                    break
+                                end
+                            end
                         end
+                        -- 如果 preset_order 无效，按遍历顺序取第一个
+                        if not default_preset then
+                            for pname, _ in pairs(g_data.presets) do
+                                default_preset = pname
+                                break
+                            end
+                        end
+                    end
+                end
+                -- 应用选定的默认预设
+                if default_preset and default_preset ~= "" and g_data.presets and g_data.presets[default_preset] then
+                    local g_def = g_data.presets[default_preset]
+                    merge_global_preset_into_overrides(body_id, g_def)
+                    if not active_group_presets[body_id][g_name] or active_group_presets[body_id][g_name] == "" then
+                        active_group_presets[body_id][g_name] = default_preset
                     end
                 end
             end
@@ -1403,6 +1450,9 @@ local function rebuild_overrides_for_transform(body_id, config, activated_target
     last_applied_overrides[body_id] = nil
 end
 
+-- ============================================================================
+-- 保存预设（全局分组仅存储隐藏材质 false，普通分组存储全部状态）
+-- ============================================================================
 local function save_preset(preset_name, body_id)
     if not body_id then body_id = get_primary_body_id() end
     if not body_id then return false end
@@ -1413,6 +1463,11 @@ local function save_preset(preset_name, body_id)
         if not type_mesh then return false end
     end
     local new_preset_data = {}
+    
+    -- 判断当前上下文是否为全局分组
+    local is_global_context = (current_group_name ~= "" and current_config.groups
+        and current_config.groups[current_group_name]
+        and current_config.groups[current_group_name].is_global)
 
     if is_weapon_mode then
         local weapon_parts = Utils.get_current_weapon_parts(primary)
@@ -1431,11 +1486,19 @@ local function save_preset(preset_name, body_id)
                                 local mat_name = mesh_component:call("getMaterialName", j)
                                 if is_material_in_current_context(i - 1, mat_name) then
                                     local is_mat_enabled = mesh_component:call("getMaterialsEnable", j)
-                                    part_data.materials[mat_name] = is_mat_enabled
+                                    -- 全局分组：仅存储 false（隐藏），跳过 true
+                                    if is_global_context then
+                                        if is_mat_enabled == false then
+                                            part_data.materials[mat_name] = false
+                                        end
+                                    else
+                                        part_data.materials[mat_name] = is_mat_enabled
+                                    end
                                 end
                             end
                         end
-                        if next(part_data.materials) or current_group_name == "" then
+                        -- 只有存储了材质数据（或主列表/普通分组才保存）
+                        if next(part_data.materials) or current_group_name == "" or not is_global_context then
                             new_preset_data[tostring(i - 1)] = part_data
                         end
                     end
@@ -1458,16 +1521,30 @@ local function save_preset(preset_name, body_id)
                             local mat_name = mesh_component:call("getMaterialName", j)
                             if is_material_in_current_context(i, mat_name) then
                                 local is_mat_enabled = mesh_component:call("getMaterialsEnable", j)
-                                part_data.materials[mat_name] = is_mat_enabled
+                                -- 全局分组：仅存储 false（隐藏），跳过 true
+                                if is_global_context then
+                                    if is_mat_enabled == false then
+                                        part_data.materials[mat_name] = false
+                                    end
+                                else
+                                    part_data.materials[mat_name] = is_mat_enabled
+                                end
                             end
                         end
                     end
-                    if next(part_data.materials) or current_group_name == "" then
+                    -- 只有存储了材质数据（或主列表/普通分组才保存）
+                    if next(part_data.materials) or current_group_name == "" or not is_global_context then
                         new_preset_data[tostring(i)] = part_data
                     end
                 end
             end
         end
+    end
+
+    -- 如果全局分组且没有任何材质需要隐藏，仍需保存一个空表以标记预设存在
+    if is_global_context and not next(new_preset_data) then
+        -- 至少保存一个空结构，表示这是一个有效的预设（无隐藏项，即全部显示）
+        new_preset_data = { _empty = true }  -- 用特殊标记表示空预设
     end
 
     if current_group_name == "" then
@@ -2204,15 +2281,24 @@ end
 apply_fps_cap()
 apply_image_quality()
 
--- ========== 场景切换时清除所有状态缓存（任何 flow_state 变化均触发） ==========
+-- ========== 场景切换时清除所有状态缓存 ==========
+local current_flow_state = 0  -- 0=未知, 1=据点, 2=任务中, 其他=其他状态
+
 local questManagerTypeDef = sdk.find_type_definition("snow.QuestManager")
 if questManagerTypeDef then
     local onChangedGameStatus = questManagerTypeDef:get_method("onChangedGameStatus")
     if onChangedGameStatus then
         sdk.hook(onChangedGameStatus,
             function(args)
-                -- 任何游戏状态变化都触发重置，覆盖 0,1,2,3,4,5 等所有场景切换
+                -- 记录当前游戏状态（1=据点，2=任务中）
+                local flow_state = sdk.to_int64(args[3])
+                current_flow_state = flow_state
+
+                -- 场景切换时重置所有缓存（但不重置首次刷新标志）
                 last_applied_overrides = {}
+                last_player_addresses = {}
+                part_cache = {}      -- 清空防具部件缓存
+                weapon_part_cache = {} -- 清空武器部件缓存
                 if TransformManager.clear_cache then TransformManager.clear_cache() end
                 current_group_name = ""
                 active_overrides = {}
@@ -2226,7 +2312,12 @@ if questManagerTypeDef then
 end
 
 -- ========== 特殊内嵌式 CG 检测函数 ==========
+-- 仅在据点（flow_state == 1）时才会真正检测 CG 状态
 local function is_special_cg_active()
+    if current_flow_state ~= 1 then
+        return false
+    end
+
     local eventManager = sdk.get_managed_singleton("snow.eventcut.EventManager")
     if not eventManager then return false end
 
@@ -2253,20 +2344,93 @@ local function is_special_cg_active()
     return false
 end
 
+-- ========== 特殊CG刷新间隔与每帧处理玩家数量（可手动调节） ==========
+local SPECIAL_CG_UPDATE_INTERVAL = 15      -- 特殊CG每N帧处理一次，默认15帧
+local SPECIAL_CG_PLAYERS_PER_FRAME = 2     -- 每次处理的玩家数量，默认2个
+
+-- ========== 正常游玩刷新间隔（可手动调节） ==========
+local NORMAL_UPDATE_INTERVAL = 10           -- 正常游玩每N帧处理一次，默认10帧
+
 -- ========== 每帧更新 ==========
 local last_frame_time = 0
 local frame_interval = 1/30
+local global_frame_counter = 0  -- 全局帧计数器，用于降频
 
--- 战斗场景状态缓存（用于检测训练场等特殊场景切换）
-local last_is_battle_field = nil
 -- 特殊内嵌式 CG 状态缓存
 local last_is_special_cg = nil
+-- 特殊CG玩家轮询索引
+local special_cg_next_index = 1
+
+-- 首次刷新标志（启动后只执行一次）
+local first_apply_done = false
 
 -- 确保强制展开节点标志存在（如果尚未定义，则初始化）
 if force_open_presets_node == nil then
     force_open_presets_node = false
 end
 
+-- ========== 玩家部件缓存（防具） ==========
+local part_cache = {}  -- key: player_addr, value: { [part_index] = part_obj }
+
+-- 缓存版 get_character_part
+local function get_cached_character_part(character, part_index)
+    if not character then return nil end
+    local player_addr = tostring(character)
+    local cache_entry = part_cache[player_addr]
+    if cache_entry and cache_entry[part_index] then
+        return cache_entry[part_index]
+    end
+    -- 缓存缺失，调用原始函数获取
+    local part_obj = get_character_part(character, part_index)
+    if part_obj then
+        if not cache_entry then
+            cache_entry = {}
+            part_cache[player_addr] = cache_entry
+        end
+        cache_entry[part_index] = part_obj
+    end
+    return part_obj
+end
+
+-- ========== 玩家部件缓存（武器） ==========
+local weapon_part_cache = {}  -- key: player_addr, value: weapon_parts table
+
+-- 缓存版获取武器部件列表
+local function get_cached_weapon_parts(player_obj)
+    if not player_obj then return nil end
+    local player_addr = tostring(player_obj)
+    local cached = weapon_part_cache[player_addr]
+    if cached then
+        -- 验证缓存的部件是否仍然有效（简单检查第一个部件是否 still managed）
+        if #cached > 0 and sdk.is_managed_object(cached[1]) then
+            return cached
+        else
+            -- 如果部件无效，清除缓存
+            weapon_part_cache[player_addr] = nil
+        end
+    end
+    -- 缓存缺失或无效，调用原始函数获取
+    local weapon_parts = Utils.get_current_weapon_parts(player_obj)
+    if weapon_parts and #weapon_parts > 0 then
+        weapon_part_cache[player_addr] = weapon_parts
+    end
+    return weapon_parts
+end
+
+-- ========== 清除缓存函数 ==========
+-- 清除特定玩家的所有缓存（防具 + 武器）
+local function clear_player_cache(player_addr)
+    if player_addr then
+        if part_cache[player_addr] then
+            part_cache[player_addr] = nil
+        end
+        if weapon_part_cache[player_addr] then
+            weapon_part_cache[player_addr] = nil
+        end
+    end
+end
+
+-- ========== 运行时循环 ==========
 re.on_frame(function()
     local now = os.clock()
     if now - last_frame_time > frame_interval then
@@ -2274,59 +2438,304 @@ re.on_frame(function()
         last_frame_time = now
     end
 
-    -- 检测战斗场景状态变化（覆盖训练场等特殊场景）
-    local playerManager = sdk.get_managed_singleton("snow.player.PlayerManager")
-    if playerManager then
-        local masterPlayer = playerManager:call("findMasterPlayer()")
-        if masterPlayer then
-            local isOutZone = masterPlayer:call("get_IsFieldMainOutZone")
-            local isMainZone = masterPlayer:call("get_IsFieldMainZone")
-            local current_battle = (isOutZone or isMainZone)
-            if current_battle ~= last_is_battle_field then
-                -- 战斗状态变化，重置所有缓存
-                last_applied_overrides = {}
-                if TransformManager.clear_cache then TransformManager.clear_cache() end
-                current_group_name = ""
-                active_overrides = {}
-                active_group_presets = {}
-                update_preset_names_list()
-                update_group_names_list()
-                last_is_battle_field = current_battle
-            end
-        end
+    -- 帧计数器递增
+    global_frame_counter = global_frame_counter + 1
+    if global_frame_counter > 1000000 then
+        global_frame_counter = 1
     end
 
     -- 检测特殊内嵌式 CG 状态变化
     local current_special_cg = is_special_cg_active()
     if current_special_cg ~= last_is_special_cg then
-        -- 特殊CG状态变化，重置所有缓存
         last_applied_overrides = {}
+        last_player_addresses = {}
+        part_cache = {}
+        weapon_part_cache = {}
         if TransformManager.clear_cache then TransformManager.clear_cache() end
         current_group_name = ""
         active_overrides = {}
         active_group_presets = {}
         update_preset_names_list()
         update_group_names_list()
-        -- 如果离开特殊CG，重置帧计数器
         if not current_special_cg then
             special_cg_frame_counter = 0
+            special_cg_next_index = 1  -- 重置轮询索引
         end
         last_is_special_cg = current_special_cg
     end
-    -- 更新全局标志，供中间部分的应用函数使用（以绕过缓存和频率控制）
     g_is_special_cg = current_special_cg
 
-    for _, player_obj in ipairs(player_list) do
-        if player_obj and sdk.is_managed_object(player_obj) then
-            -- 防具处理
+    -- ====================================================================
+    -- 确定要处理的玩家列表
+    -- 特殊CG时处理所有玩家（事件角色），否则仅处理本地玩家（若不存在则回退到所有玩家）
+    -- ====================================================================
+    local local_player = get_primary_player()
+    local players_to_process
+    if current_special_cg then
+        players_to_process = player_list
+    else
+        if local_player then
+            players_to_process = { local_player }
+        else
+            players_to_process = player_list
+        end
+    end
+
+    -- ====================================================================
+    -- 首次刷新（仅针对本地玩家，且只执行一次）
+    -- 模拟面板展开操作：调用 load_body_config 强制重新加载配置
+    -- 该操作不受降频影响，以确保启动时立即生效
+    -- ====================================================================
+    if local_player and not first_apply_done then
+        local armor_id = get_character_body_id(local_player)
+        if armor_id then
+            -- 强制重新加载配置（从磁盘读取，模拟面板展开）
+            load_body_config(armor_id)
+            -- 应用当前 UI 选中的预设
+            local current_preset_name = preset_names_list[selected_preset_index]
+            if current_preset_name then
+                apply_preset(current_preset_name)
+            end
+            -- 强制触发一次规则评估，确保当前状态正确
+            local armor_config = get_runtime_config(armor_id)
+            if armor_config and armor_config.enable_transform then
+                local char_addr = tostring(local_player)
+                local new_overrides, changed, activated_targets, all_targeted_groups = TransformManager.apply_transform_rules(
+                    char_addr, "armor_" .. armor_id, armor_config, local_player, active_overrides[armor_id] or {}, merge_overrides
+                )
+                if not active_group_presets[armor_id] then active_group_presets[armor_id] = {} end
+                if activated_targets then
+                    for g_name, p_name in pairs(activated_targets) do
+                        active_group_presets[armor_id][g_name] = p_name
+                    end
+                end
+                if changed then
+                    active_overrides[armor_id] = new_overrides
+                    apply_preset_to_character(local_player, new_overrides, true)
+                else
+                    apply_preset_to_character(local_player, new_overrides, true)
+                end
+            end
+        end
+        first_apply_done = true
+    end
+
+    -- ====================================================================
+    -- 特殊CG降频与轮询处理
+    -- ====================================================================
+    if current_special_cg then
+        -- 仅当达到刷新间隔时才处理
+        if global_frame_counter % SPECIAL_CG_UPDATE_INTERVAL == 0 then
+            local player_count = #players_to_process
+            if player_count > 0 then
+                -- 确保索引有效
+                if special_cg_next_index > player_count then
+                    special_cg_next_index = 1
+                end
+                local start_idx = special_cg_next_index
+                local end_idx = math.min(start_idx + SPECIAL_CG_PLAYERS_PER_FRAME - 1, player_count)
+                for i = start_idx, end_idx do
+                    local player_obj = players_to_process[i]
+                    if player_obj and sdk.is_managed_object(player_obj) then
+                        -- 处理该玩家（防具和武器）
+                        -- 防具处理
+                        local armor_id = get_character_body_id(player_obj)
+                        if armor_id then
+                            local player_addr = tostring(player_obj)
+                            if last_player_addresses[armor_id] and last_player_addresses[armor_id] ~= player_addr then
+                                local old_addr = last_player_addresses[armor_id]
+                                clear_player_cache(old_addr)
+                                last_applied_overrides[armor_id] = nil
+                                active_overrides[armor_id] = nil
+                                loaded_configs[armor_id] = nil
+                                active_group_presets[armor_id] = nil
+                            end
+                            last_player_addresses[armor_id] = player_addr
+
+                            local armor_config = get_runtime_config(armor_id)
+
+                            -- 特殊CG轻量级应用：非本地玩家跳过规则评估
+                            if player_obj ~= local_player then
+                                if not active_overrides[armor_id] then
+                                    apply_all_defaults(armor_id)
+                                end
+                                apply_preset_to_character(player_obj, active_overrides[armor_id], true)
+                            else
+                                -- 本地玩家完整处理
+                                if not active_overrides[armor_id] then
+                                    apply_all_defaults(armor_id)
+                                end
+                                if armor_config and armor_config.enable_transform then
+                                    local char_addr = tostring(player_obj)
+                                    local new_overrides, changed, activated_targets, all_targeted_groups = TransformManager.apply_transform_rules(
+                                        char_addr, "armor_" .. armor_id, armor_config, player_obj, active_overrides[armor_id] or {}, merge_overrides
+                                    )
+                                    if not active_group_presets[armor_id] then active_group_presets[armor_id] = {} end
+                                    if activated_targets then
+                                        for g_name, p_name in pairs(activated_targets) do
+                                            active_group_presets[armor_id][g_name] = p_name
+                                        end
+                                    end
+                                    local has_global_target = false
+                                    if armor_config.groups then
+                                        for g_name, g_data in pairs(armor_config.groups) do
+                                            if g_data.is_global then
+                                                if activated_targets and activated_targets[g_name] then
+                                                    active_group_presets[armor_id][g_name] = activated_targets[g_name]
+                                                    has_global_target = true
+                                                elseif all_targeted_groups and all_targeted_groups[g_name] then
+                                                    active_group_presets[armor_id][g_name] = g_data.default_preset or ""
+                                                    has_global_target = true
+                                                end
+                                            end
+                                        end
+                                    end
+                                    if changed then
+                                        if has_global_target then
+                                            rebuild_overrides_for_transform(armor_id, armor_config, activated_targets)
+                                            apply_preset_to_character(player_obj, active_overrides[armor_id], true)
+                                        else
+                                            active_overrides[armor_id] = new_overrides
+                                            apply_preset_to_character(player_obj, new_overrides, true)
+                                        end
+                                    else
+                                        if has_global_target then
+                                            apply_preset_to_character(player_obj, active_overrides[armor_id], true)
+                                        else
+                                            apply_preset_to_character(player_obj, new_overrides, true)
+                                        end
+                                    end
+                                else
+                                    if active_overrides[armor_id] then
+                                        apply_preset_to_character(player_obj, active_overrides[armor_id], true)
+                                    end
+                                end
+                            end
+                        end
+
+                        -- 武器处理（使用缓存）
+                        local weapon_part_name = get_weapon_attack_part_name(player_obj)
+                        if weapon_part_name then
+                            local weapon_id = weapon_part_name
+                            local player_addr = tostring(player_obj)
+                            if last_player_addresses[weapon_id] and last_player_addresses[weapon_id] ~= player_addr then
+                                -- 清除武器缓存（已由 clear_player_cache 处理，但保险起见）
+                                clear_player_cache(player_addr)
+                                last_applied_overrides[weapon_id] = nil
+                                active_overrides[weapon_id] = nil
+                                loaded_configs[weapon_id] = nil
+                                active_group_presets[weapon_id] = nil
+                            end
+                            last_player_addresses[weapon_id] = player_addr
+
+                            local weapon_config = get_runtime_config(weapon_id)
+
+                            if player_obj ~= local_player then
+                                if not active_overrides[weapon_id] then
+                                    apply_all_defaults(weapon_id)
+                                end
+                                local weapon_parts = get_cached_weapon_parts(player_obj)
+                                if weapon_parts then
+                                    apply_preset_to_weapon(weapon_parts, active_overrides[weapon_id], true, weapon_id)
+                                end
+                            else
+                                if not active_overrides[weapon_id] then
+                                    apply_all_defaults(weapon_id)
+                                end
+                                local weapon_parts = get_cached_weapon_parts(player_obj)
+                                if weapon_parts then
+                                    if weapon_config and weapon_config.enable_transform then
+                                        local char_addr = tostring(player_obj)
+                                        local new_overrides, changed, activated_targets, all_targeted_groups = TransformManager.apply_transform_rules(
+                                            char_addr, "weapon_" .. weapon_id, weapon_config, player_obj, active_overrides[weapon_id] or {}, merge_overrides
+                                        )
+                                        if not active_group_presets[weapon_id] then active_group_presets[weapon_id] = {} end
+                                        if activated_targets then
+                                            for g_name, p_name in pairs(activated_targets) do
+                                                active_group_presets[weapon_id][g_name] = p_name
+                                            end
+                                        end
+                                        local has_global_target = false
+                                        if weapon_config.groups then
+                                            for g_name, g_data in pairs(weapon_config.groups) do
+                                                if g_data.is_global then
+                                                    if activated_targets and activated_targets[g_name] then
+                                                        active_group_presets[weapon_id][g_name] = activated_targets[g_name]
+                                                        has_global_target = true
+                                                    elseif all_targeted_groups and all_targeted_groups[g_name] then
+                                                        active_group_presets[weapon_id][g_name] = g_data.default_preset or ""
+                                                        has_global_target = true
+                                                    end
+                                                end
+                                            end
+                                        end
+                                        if changed then
+                                            if has_global_target then
+                                                rebuild_overrides_for_transform(weapon_id, weapon_config, activated_targets)
+                                                apply_preset_to_weapon(weapon_parts, active_overrides[weapon_id], true, weapon_id)
+                                            else
+                                                active_overrides[weapon_id] = new_overrides
+                                                apply_preset_to_weapon(weapon_parts, new_overrides, true, weapon_id)
+                                            end
+                                        else
+                                            if has_global_target then
+                                                apply_preset_to_weapon(weapon_parts, active_overrides[weapon_id], true, weapon_id)
+                                            else
+                                                apply_preset_to_weapon(weapon_parts, new_overrides, true, weapon_id)
+                                            end
+                                        end
+                                    else
+                                        if active_overrides[weapon_id] then
+                                            apply_preset_to_weapon(weapon_parts, active_overrides[weapon_id], true, weapon_id)
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+                -- 更新轮询索引
+                special_cg_next_index = end_idx + 1
+                if special_cg_next_index > player_count then
+                    special_cg_next_index = 1
+                end
+            end
+        end
+        -- 特殊CG处理完成，跳过非CG逻辑（避免重复处理）
+        goto skip_non_cg_processing
+    end
+
+    -- ====================================================================
+    -- 正常游玩（非特殊CG）：每 N 帧处理一次
+    -- ====================================================================
+    if global_frame_counter % NORMAL_UPDATE_INTERVAL == 0 then
+        for _, player_obj in ipairs(players_to_process) do
+            if not (player_obj and sdk.is_managed_object(player_obj)) then
+                goto continue_player_non_cg
+            end
+
+            -- ============================================================
+            -- 防具处理（非CG）
+            -- ============================================================
             local armor_id = get_character_body_id(player_obj)
             if armor_id then
+                local player_addr = tostring(player_obj)
+                if last_player_addresses[armor_id] and last_player_addresses[armor_id] ~= player_addr then
+                    local old_addr = last_player_addresses[armor_id]
+                    clear_player_cache(old_addr)
+                    last_applied_overrides[armor_id] = nil
+                    active_overrides[armor_id] = nil
+                    loaded_configs[armor_id] = nil
+                    active_group_presets[armor_id] = nil
+                end
+                last_player_addresses[armor_id] = player_addr
+
                 local armor_config = get_runtime_config(armor_id)
                 if not active_overrides[armor_id] then
                     apply_all_defaults(armor_id)
                 end
 
-                if armor_config.enable_transform then
+                if armor_config and armor_config.enable_transform then
                     local char_addr = tostring(player_obj)
                     local new_overrides, changed, activated_targets, all_targeted_groups = TransformManager.apply_transform_rules(
                         char_addr, "armor_" .. armor_id, armor_config, player_obj, active_overrides[armor_id] or {}, merge_overrides
@@ -2338,7 +2747,6 @@ re.on_frame(function()
                         end
                     end
 
-                    -- 检测是否有全局分组被激活或被引用
                     local has_global_target = false
                     if armor_config.groups then
                         for g_name, g_data in pairs(armor_config.groups) do
@@ -2347,7 +2755,6 @@ re.on_frame(function()
                                     active_group_presets[armor_id][g_name] = activated_targets[g_name]
                                     has_global_target = true
                                 elseif all_targeted_groups and all_targeted_groups[g_name] then
-                                    -- 该全局分组被规则引用但未激活，回退为默认预设
                                     active_group_presets[armor_id][g_name] = g_data.default_preset or ""
                                     has_global_target = true
                                 end
@@ -2377,18 +2784,30 @@ re.on_frame(function()
                 end
             end
 
-            -- 武器处理
+            -- ============================================================
+            -- 武器处理（非CG，使用缓存）
+            -- ============================================================
             local weapon_part_name = get_weapon_attack_part_name(player_obj)
             if weapon_part_name then
                 local weapon_id = weapon_part_name
+                local player_addr = tostring(player_obj)
+                if last_player_addresses[weapon_id] and last_player_addresses[weapon_id] ~= player_addr then
+                    clear_player_cache(player_addr)
+                    last_applied_overrides[weapon_id] = nil
+                    active_overrides[weapon_id] = nil
+                    loaded_configs[weapon_id] = nil
+                    active_group_presets[weapon_id] = nil
+                end
+                last_player_addresses[weapon_id] = player_addr
+
                 local weapon_config = get_runtime_config(weapon_id)
                 if not active_overrides[weapon_id] then
                     apply_all_defaults(weapon_id)
                 end
 
-                local weapon_parts = Utils.get_current_weapon_parts(player_obj)
+                local weapon_parts = get_cached_weapon_parts(player_obj)
                 if weapon_parts then
-                    if weapon_config.enable_transform then
+                    if weapon_config and weapon_config.enable_transform then
                         local char_addr = tostring(player_obj)
                         local new_overrides, changed, activated_targets, all_targeted_groups = TransformManager.apply_transform_rules(
                             char_addr, "weapon_" .. weapon_id, weapon_config, player_obj, active_overrides[weapon_id] or {}, merge_overrides
@@ -2400,7 +2819,6 @@ re.on_frame(function()
                             end
                         end
 
-                        -- 检测全局分组
                         local has_global_target = false
                         if weapon_config.groups then
                             for g_name, g_data in pairs(weapon_config.groups) do
@@ -2438,8 +2856,12 @@ re.on_frame(function()
                     end
                 end
             end
+
+            ::continue_player_non_cg::
         end
     end
+
+    ::skip_non_cg_processing::
 end)
 
 -- ========== UI 绘制（使用主玩家） ==========
@@ -2511,14 +2933,12 @@ re.on_draw_ui(function()
                     end
                     imgui.separator()
 
-                    -- 预设管理区域（使用 set_next_item_open 支持排序时自动展开）
+                    -- 预设管理区域
                     if force_open_presets_node then
                         imgui.set_next_item_open(true)
                         force_open_presets_node = false
                     end
                     if imgui.tree_node(T("presets_manager") .. " (" .. body_id .. ")") then
-                        
-                        -- 备份恢复提示横幅
                         if config_restored[body_id] and not config_restore_handled[body_id] then
                             imgui.text_colored(T("config_restored_warning") or "Your local preset has been changed. Restore from backup?", 0xFF00CCFF)
                             if imgui.button(T("restore_from_backup") or "Restore My Changes") then
@@ -2743,7 +3163,7 @@ re.on_draw_ui(function()
                         imgui.tree_pop()
                     end
 
-                    -- 排序界面（独立于预设管理节点）
+                    -- 排序界面
                     if sort_mode then
                         imgui.separator()
                         local sort_title = (sort_mode == "group") and (T("sort") .. " - " .. T("group")) or (T("sort") .. " - " .. T("preset"))
@@ -2860,7 +3280,7 @@ re.on_draw_ui(function()
                                     end
                                 end
                                 if is_weapon_mode then
-                                    local weapon_parts = Utils.get_current_weapon_parts(primary)
+                                    local weapon_parts = get_cached_weapon_parts(primary)
                                     if weapon_parts then
                                         apply_preset_to_weapon(weapon_parts, new_overrides, true, body_id)
                                     end
@@ -2871,7 +3291,7 @@ re.on_draw_ui(function()
                                 apply_all_defaults(body_id)
                                 if active_overrides[body_id] then
                                     if is_weapon_mode then
-                                        local weapon_parts = Utils.get_current_weapon_parts(primary)
+                                        local weapon_parts = get_cached_weapon_parts(primary)
                                         if weapon_parts then
                                             apply_preset_to_weapon(weapon_parts, active_overrides[body_id], true, body_id)
                                         end
@@ -2897,7 +3317,6 @@ re.on_draw_ui(function()
                                 save_current_config_to_file(body_id)
                             end
                             if not current_config.is_parallel then
-                                -- 条件类型顺序：武器、红蓝书、怪物血量、太刀、双刀、斩斧、盾斧、大剑、大锤、弓箭
                                 local c_type_idx = 1
                                 if current_config.transform_type == "weapon" then c_type_idx = 1
                                 elseif current_config.transform_type == "scroll" then c_type_idx = 2
@@ -2968,7 +3387,7 @@ re.on_draw_ui(function()
                                                     end
                                                 end
                                                 if is_weapon_mode then
-                                                    local wp = Utils.get_current_weapon_parts(primary)
+                                                    local wp = get_cached_weapon_parts(primary)
                                                     if wp then apply_preset_to_weapon(wp, new_overrides, true) end
                                                 else
                                                     apply_preset_to_character(primary, new_overrides, true)
@@ -3017,7 +3436,7 @@ re.on_draw_ui(function()
                                                     end
                                                 end
                                                 if is_weapon_mode then
-                                                    local wp = Utils.get_current_weapon_parts(primary)
+                                                    local wp = get_cached_weapon_parts(primary)
                                                     if wp then apply_preset_to_weapon(wp, new_overrides, true) end
                                                 else
                                                     apply_preset_to_character(primary, new_overrides, true)
@@ -3092,7 +3511,7 @@ re.on_draw_ui(function()
                                                     end
                                                 end
                                                 if is_weapon_mode then
-                                                    local wp = Utils.get_current_weapon_parts(primary)
+                                                    local wp = get_cached_weapon_parts(primary)
                                                     if wp then apply_preset_to_weapon(wp, new_overrides, true) end
                                                 else
                                                     apply_preset_to_character(primary, new_overrides, true)
@@ -3147,7 +3566,7 @@ re.on_draw_ui(function()
                                                     end
                                                 end
                                                 if is_weapon_mode then
-                                                    local wp = Utils.get_current_weapon_parts(primary)
+                                                    local wp = get_cached_weapon_parts(primary)
                                                     if wp then apply_preset_to_weapon(wp, new_overrides, true) end
                                                 else
                                                     apply_preset_to_character(primary, new_overrides, true)
@@ -3201,7 +3620,7 @@ re.on_draw_ui(function()
                                                     end
                                                 end
                                                 if is_weapon_mode then
-                                                    local wp = Utils.get_current_weapon_parts(primary)
+                                                    local wp = get_cached_weapon_parts(primary)
                                                     if wp then apply_preset_to_weapon(wp, new_overrides, true) end
                                                 else
                                                     apply_preset_to_character(primary, new_overrides, true)
@@ -3255,7 +3674,7 @@ re.on_draw_ui(function()
                                                     end
                                                 end
                                                 if is_weapon_mode then
-                                                    local wp = Utils.get_current_weapon_parts(primary)
+                                                    local wp = get_cached_weapon_parts(primary)
                                                     if wp then apply_preset_to_weapon(wp, new_overrides, true) end
                                                 else
                                                     apply_preset_to_character(primary, new_overrides, true)
@@ -3312,7 +3731,7 @@ re.on_draw_ui(function()
                                                     end
                                                 end
                                                 if is_weapon_mode then
-                                                    local wp = Utils.get_current_weapon_parts(primary)
+                                                    local wp = get_cached_weapon_parts(primary)
                                                     if wp then apply_preset_to_weapon(wp, new_overrides, true) end
                                                 else
                                                     apply_preset_to_character(primary, new_overrides, true)
@@ -3367,7 +3786,7 @@ re.on_draw_ui(function()
                                                     end
                                                 end
                                                 if is_weapon_mode then
-                                                    local wp = Utils.get_current_weapon_parts(primary)
+                                                    local wp = get_cached_weapon_parts(primary)
                                                     if wp then apply_preset_to_weapon(wp, new_overrides, true) end
                                                 else
                                                     apply_preset_to_character(primary, new_overrides, true)
@@ -3421,7 +3840,7 @@ re.on_draw_ui(function()
                                                     end
                                                 end
                                                 if is_weapon_mode then
-                                                    local wp = Utils.get_current_weapon_parts(primary)
+                                                    local wp = get_cached_weapon_parts(primary)
                                                     if wp then apply_preset_to_weapon(wp, new_overrides, true) end
                                                 else
                                                     apply_preset_to_character(primary, new_overrides, true)
@@ -3476,7 +3895,7 @@ re.on_draw_ui(function()
                                                     end
                                                 end
                                                 if is_weapon_mode then
-                                                    local wp = Utils.get_current_weapon_parts(primary)
+                                                    local wp = get_cached_weapon_parts(primary)
                                                     if wp then apply_preset_to_weapon(wp, new_overrides, true) end
                                                 else
                                                     apply_preset_to_character(primary, new_overrides, true)
@@ -3523,10 +3942,10 @@ re.on_draw_ui(function()
                         imgui.tree_pop()
                     end
 
-                    -- 部件列表
+                    -- 部件列表（防具部件顺序调整）
                     if is_weapon_mode then
                         if imgui.tree_node(T("weapon_parts") or "Weapon Parts") then
-                            local weapon_parts = Utils.get_current_weapon_parts(primary)
+                            local weapon_parts = get_cached_weapon_parts(primary)
                             local weapon_type = Utils.get_current_weapon_type(primary)
                             if weapon_parts and #weapon_parts > 0 then
                                 for idx, part_obj in ipairs(weapon_parts) do
@@ -3553,15 +3972,17 @@ re.on_draw_ui(function()
                     else
                         local armor_parts = { [0]=T("helm"), [1]=T("body"), [2]=T("arm"), [3]=T("waist"), [4]=T("leg") }
                         if imgui.tree_node(T("armor_parts")) then
-                            for i = 0, 4 do
-                                local part_obj = get_character_part(primary, i)
-                                local part_name = armor_parts[i]
+                            -- 自定义顺序：手臂(2), 身体(1), 头部(0), 腿部(4), 腰部(3)
+                            local armor_order = {2, 1, 0, 4, 3}
+                            for _, idx in ipairs(armor_order) do
+                                local part_obj = get_cached_character_part(primary, idx)  -- 使用缓存版本
+                                local part_name = armor_parts[idx]
                                 if part_obj then
                                     local mesh_comp = get_mesh_component_recursive(part_obj)
                                     if mesh_comp then
                                         local mesh_game_obj = mesh_comp:call("get_GameObject")
                                         local obj_name = mesh_game_obj:call("get_Name")
-                                        draw_mesh_toggle(mesh_game_obj, string.format("%s [%s]", part_name, obj_name), body_id, i)
+                                        draw_mesh_toggle(mesh_game_obj, string.format("%s [%s]", part_name, obj_name), body_id, idx)
                                     else
                                         local obj_name = part_obj:call("get_Name")
                                         imgui.text_colored(string.format("%s [%s] (No Mesh)", part_name, obj_name), 0xFF808080)

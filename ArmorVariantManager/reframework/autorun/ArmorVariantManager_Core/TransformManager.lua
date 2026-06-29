@@ -1,3 +1,4 @@
+-- TransformManager.lua
 local TransformManager = {}
 
 -- 引入条件注册表（所有条件模块）
