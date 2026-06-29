@@ -1,8 +1,6 @@
 local mod_name = "ArmorVariantManager"
-local version = "2.3.6"
+local version = "2.4.0"
 local author = "Moon、MK"
--- Ported from MHWS version
--- Original author: MK
 
 local global_config_path = "ArmorVariantManager/GlobalSettings.json"
 local global_config = {
@@ -184,6 +182,17 @@ local SPECIAL_CG_APPLY_INTERVAL = 15  -- 每15帧应用一次（可调整）
 
 -- 记录每个 body_id 对应的玩家 GameObject 地址，用于检测换装重建
 local last_player_addresses = {}
+
+-- ========== 版本号缓存 ==========
+local overrides_version = {}        -- body_id -> 版本号（整数）
+local last_overrides_version = {}   -- body_id -> 上次应用时的版本号
+
+-- 递增版本号
+local function bump_overrides_version(body_id)
+    if body_id then
+        overrides_version[body_id] = (overrides_version[body_id] or 0) + 1
+    end
+end
 
 -- 辅助函数
 local function deep_copy_table(orig) return Utils.deep_copy_table(orig) end
@@ -509,6 +518,7 @@ local function merge_global_preset_into_overrides(body_id, preset_data)
             end
         end
     end
+    bump_overrides_version(body_id)
 end
 
 -- ========== 辅助函数 ==========
@@ -749,6 +759,9 @@ local function is_overrides_equal(a, b)
     return true
 end
 
+-- ============================================================================
+-- 应用预设到角色
+-- ============================================================================
 local function apply_preset_to_character(character, preset_data, ignore_context)
     if not character or not preset_data then return end
     if not sdk.is_managed_object(character) then return end
@@ -775,12 +788,23 @@ local function apply_preset_to_character(character, preset_data, ignore_context)
     local current_intent = active_overrides[body_id]
     if not current_intent then return end
 
-    -- 快速检查：仅在非特殊CG且与上次应用的状态相同时跳过
-    local last_applied = last_applied_overrides[body_id]
-    if not g_is_special_cg and last_applied and is_overrides_equal(current_intent, last_applied) then
-        return  -- 无变化，直接返回
+    -- ===== 版本号缓存检查 =====
+    local current_version = overrides_version[body_id]
+    local last_version = last_overrides_version[body_id]
+    if not g_is_special_cg and current_version and last_version and current_version == last_version then
+        -- 内容未变，跳过
+        return
     end
 
+    -- 快速检查：仅在非特殊CG且与上次应用的状态相同时跳过（深度比较作为回退）
+    local last_applied = last_applied_overrides[body_id]
+    if not g_is_special_cg and last_applied and is_overrides_equal(current_intent, last_applied) then
+        -- 更新版本号缓存，避免下次深度比较
+        last_overrides_version[body_id] = current_version
+        return
+    end
+
+    -- 应用材质
     for i = 0, 4 do
         local part_obj = get_character_part(character, i)
         if part_obj then
@@ -820,8 +844,12 @@ local function apply_preset_to_character(character, preset_data, ignore_context)
 
     -- 更新缓存
     last_applied_overrides[body_id] = deep_copy_table(current_intent)
+    last_overrides_version[body_id] = current_version
 end
 
+-- ============================================================================
+-- 应用预设到武器
+-- ============================================================================
 local function apply_preset_to_weapon(weapon_parts, preset_data, ignore_context, body_id)
     if not weapon_parts or not preset_data then return end
     if not type_mesh then
@@ -845,8 +873,16 @@ local function apply_preset_to_weapon(weapon_parts, preset_data, ignore_context,
     local current_intent = active_overrides[body_id]
     if not current_intent then return end
 
+    -- ===== 版本号缓存检查 =====
+    local current_version = overrides_version[body_id]
+    local last_version = last_overrides_version[body_id]
+    if not g_is_special_cg and current_version and last_version and current_version == last_version then
+        return
+    end
+
     local last_applied = last_applied_overrides[body_id]
     if not g_is_special_cg and last_applied and is_overrides_equal(current_intent, last_applied) then
+        last_overrides_version[body_id] = current_version
         return
     end
 
@@ -879,6 +915,7 @@ local function apply_preset_to_weapon(weapon_parts, preset_data, ignore_context,
     end
 
     last_applied_overrides[body_id] = deep_copy_table(current_intent)
+    last_overrides_version[body_id] = current_version
 end
 
 -- 创建分组（支持 is_global）
@@ -984,6 +1021,8 @@ local function restore_config_from_backup(body_id)
     config_restored[body_id] = nil
     config_restore_handled[body_id] = nil
     last_applied_overrides[body_id] = nil   -- 清除渲染缓存
+    overrides_version[body_id] = nil
+    last_overrides_version[body_id] = nil
     
     local data = load_config_data(body_id)
     if data then
@@ -1030,10 +1069,12 @@ local function save_current_config_to_file(body_id)
     config_restored[body_id] = nil
     config_restore_handled[body_id] = nil
     last_applied_overrides[body_id] = nil   -- 保存后清除缓存，强制下一帧重绘
+    last_overrides_version[body_id] = nil
     
     -- 清除 active_overrides 缓存，强制下一帧重新合并所有默认预设
     if active_overrides[body_id] then
         active_overrides[body_id] = nil
+        overrides_version[body_id] = nil
     end
     -- 清除 active_group_presets 缓存，确保下一帧 apply_all_defaults 使用配置中的默认预设，
     -- 避免变身规则之前设置的全局分组预设残留导致状态不一致
@@ -1195,6 +1236,9 @@ local function load_config_data(body_id)
     return nil
 end
 
+-- ============================================================================
+-- 合并预设到 overrides
+-- ============================================================================
 local function merge_preset_into_overrides(body_id, preset_data)
     if not body_id or not preset_data then return end
     if not active_overrides[body_id] then active_overrides[body_id] = {} end
@@ -1211,6 +1255,7 @@ local function merge_preset_into_overrides(body_id, preset_data)
             end
         end
     end
+    bump_overrides_version(body_id)
 end
 
 -- ============================================================================
@@ -1221,9 +1266,11 @@ local function apply_all_defaults(body_id)
     local config = load_config_data(body_id)
     if not config then return end
     active_overrides[body_id] = {}
+    bump_overrides_version(body_id)
     if not active_group_presets[body_id] then active_group_presets[body_id] = {} end
     -- 清除渲染缓存，强制下一帧重新应用
     last_applied_overrides[body_id] = nil
+    last_overrides_version[body_id] = nil
 
     -- 1. 主列表默认预设
     if config.default_preset and config.default_preset ~= "" and config.presets then
@@ -1282,7 +1329,7 @@ local function apply_all_defaults(body_id)
                 -- 应用选定的默认预设
                 if default_preset and default_preset ~= "" and g_data.presets and g_data.presets[default_preset] then
                     local g_def = g_data.presets[default_preset]
-                    merge_global_preset_into_overrides(body_id, g_def)
+                    merge_global_preset_into_overrides(body_id, g_def)  -- 内部会递增版本号
                     if not active_group_presets[body_id][g_name] or active_group_presets[body_id][g_name] == "" then
                         active_group_presets[body_id][g_name] = default_preset
                     end
@@ -1319,6 +1366,7 @@ local function apply_preset(preset_name)
         if is_current_global then
             -- 全局分组：重建整个 overrides
             active_overrides[current_id] = {}
+            bump_overrides_version(current_id)
             local saved = active_group_presets[current_id] or {}
             -- 主列表
             local main_preset_name = saved[""]
@@ -1372,6 +1420,7 @@ local function apply_preset(preset_name)
         end
         -- 清除渲染缓存，强制下一帧重新应用
         last_applied_overrides[current_id] = nil
+        last_overrides_version[current_id] = nil
     end
     local primary = get_primary_player()
     if not primary then return end
@@ -1391,6 +1440,7 @@ end
 local function rebuild_overrides_for_transform(body_id, config, activated_targets)
     if not body_id or not config then return end
     active_overrides[body_id] = {}
+    bump_overrides_version(body_id)
     local saved = active_group_presets[body_id] or {}
 
     -- 1. 主列表当前预设
@@ -1448,6 +1498,7 @@ local function rebuild_overrides_for_transform(body_id, config, activated_target
 
     -- 清除渲染缓存，强制下一帧应用
     last_applied_overrides[body_id] = nil
+    last_overrides_version[body_id] = nil
 end
 
 -- ============================================================================
@@ -1808,6 +1859,7 @@ local function draw_mesh_toggle(game_object, label, body_id, part_index)
                     if not active_overrides[body_id] then active_overrides[body_id] = {} end
                     if not active_overrides[body_id][s_idx] then active_overrides[body_id][s_idx] = { materials = {} } end
                     active_overrides[body_id][s_idx].mesh_enabled = new_value
+                    bump_overrides_version(body_id)
                 end
             end
             local mat_count = mesh_component:call("get_MaterialNum")
@@ -1861,6 +1913,7 @@ local function draw_mesh_toggle(game_object, label, body_id, part_index)
                                     if not active_overrides[body_id][s_idx] then active_overrides[body_id][s_idx] = { materials = {} } end
                                     if not active_overrides[body_id][s_idx].materials then active_overrides[body_id][s_idx].materials = {} end
                                     active_overrides[body_id][s_idx].materials[mn] = target_val
+                                    bump_overrides_version(body_id)
                                 end
                             end
                         end
@@ -1885,6 +1938,7 @@ local function draw_mesh_toggle(game_object, label, body_id, part_index)
                                     if not active_overrides[body_id][s_idx] then active_overrides[body_id][s_idx] = { materials = {} } end
                                     if not active_overrides[body_id][s_idx].materials then active_overrides[body_id][s_idx].materials = {} end
                                     active_overrides[body_id][s_idx].materials[mn] = nv
+                                    bump_overrides_version(body_id)
                                 end
                             end
                         end
@@ -1955,6 +2009,7 @@ local function draw_mesh_toggle(game_object, label, body_id, part_index)
                                             if not active_overrides[body_id][s_idx] then active_overrides[body_id][s_idx] = { materials = {} } end
                                             if not active_overrides[body_id][s_idx].materials then active_overrides[body_id][s_idx].materials = {} end
                                             active_overrides[body_id][s_idx].materials[mat_name] = mat_new_val
+                                            bump_overrides_version(body_id)
                                         end
                                         local render_val
                                         if mat_new_val == true and is_globally_hidden(part_index, mat_name) then
@@ -2297,8 +2352,10 @@ if questManagerTypeDef then
                 -- 场景切换时重置所有缓存（但不重置首次刷新标志）
                 last_applied_overrides = {}
                 last_player_addresses = {}
-                part_cache = {}      -- 清空防具部件缓存
-                weapon_part_cache = {} -- 清空武器部件缓存
+                part_cache = {}          -- 清空防具部件缓存
+                weapon_part_cache = {}   -- 清空武器部件缓存
+                overrides_version = {}   -- 清空版本号
+                last_overrides_version = {} -- 清空上次版本号
                 if TransformManager.clear_cache then TransformManager.clear_cache() end
                 current_group_name = ""
                 active_overrides = {}
@@ -2418,7 +2475,7 @@ local function get_cached_weapon_parts(player_obj)
 end
 
 -- ========== 清除缓存函数 ==========
--- 清除特定玩家的所有缓存（防具 + 武器）
+-- 清除特定玩家的所有缓存（防具 + 武器 + 版本号）
 local function clear_player_cache(player_addr)
     if player_addr then
         if part_cache[player_addr] then
@@ -2451,6 +2508,8 @@ re.on_frame(function()
         last_player_addresses = {}
         part_cache = {}
         weapon_part_cache = {}
+        overrides_version = {}
+        last_overrides_version = {}
         if TransformManager.clear_cache then TransformManager.clear_cache() end
         current_group_name = ""
         active_overrides = {}
@@ -2511,6 +2570,7 @@ re.on_frame(function()
                 end
                 if changed then
                     active_overrides[armor_id] = new_overrides
+                    bump_overrides_version(armor_id)
                     apply_preset_to_character(local_player, new_overrides, true)
                 else
                     apply_preset_to_character(local_player, new_overrides, true)
@@ -2549,6 +2609,8 @@ re.on_frame(function()
                                 active_overrides[armor_id] = nil
                                 loaded_configs[armor_id] = nil
                                 active_group_presets[armor_id] = nil
+                                overrides_version[armor_id] = nil
+                                last_overrides_version[armor_id] = nil
                             end
                             last_player_addresses[armor_id] = player_addr
 
@@ -2596,6 +2658,7 @@ re.on_frame(function()
                                             apply_preset_to_character(player_obj, active_overrides[armor_id], true)
                                         else
                                             active_overrides[armor_id] = new_overrides
+                                            bump_overrides_version(armor_id)
                                             apply_preset_to_character(player_obj, new_overrides, true)
                                         end
                                     else
@@ -2619,12 +2682,13 @@ re.on_frame(function()
                             local weapon_id = weapon_part_name
                             local player_addr = tostring(player_obj)
                             if last_player_addresses[weapon_id] and last_player_addresses[weapon_id] ~= player_addr then
-                                -- 清除武器缓存（已由 clear_player_cache 处理，但保险起见）
                                 clear_player_cache(player_addr)
                                 last_applied_overrides[weapon_id] = nil
                                 active_overrides[weapon_id] = nil
                                 loaded_configs[weapon_id] = nil
                                 active_group_presets[weapon_id] = nil
+                                overrides_version[weapon_id] = nil
+                                last_overrides_version[weapon_id] = nil
                             end
                             last_player_addresses[weapon_id] = player_addr
 
@@ -2675,6 +2739,7 @@ re.on_frame(function()
                                                 apply_preset_to_weapon(weapon_parts, active_overrides[weapon_id], true, weapon_id)
                                             else
                                                 active_overrides[weapon_id] = new_overrides
+                                                bump_overrides_version(weapon_id)
                                                 apply_preset_to_weapon(weapon_parts, new_overrides, true, weapon_id)
                                             end
                                         else
@@ -2727,6 +2792,8 @@ re.on_frame(function()
                     active_overrides[armor_id] = nil
                     loaded_configs[armor_id] = nil
                     active_group_presets[armor_id] = nil
+                    overrides_version[armor_id] = nil
+                    last_overrides_version[armor_id] = nil
                 end
                 last_player_addresses[armor_id] = player_addr
 
@@ -2768,6 +2835,7 @@ re.on_frame(function()
                             apply_preset_to_character(player_obj, active_overrides[armor_id], true)
                         else
                             active_overrides[armor_id] = new_overrides
+                            bump_overrides_version(armor_id)
                             apply_preset_to_character(player_obj, new_overrides, true)
                         end
                     else
@@ -2797,6 +2865,8 @@ re.on_frame(function()
                     active_overrides[weapon_id] = nil
                     loaded_configs[weapon_id] = nil
                     active_group_presets[weapon_id] = nil
+                    overrides_version[weapon_id] = nil
+                    last_overrides_version[weapon_id] = nil
                 end
                 last_player_addresses[weapon_id] = player_addr
 
@@ -2840,6 +2910,7 @@ re.on_frame(function()
                                 apply_preset_to_weapon(weapon_parts, active_overrides[weapon_id], true, weapon_id)
                             else
                                 active_overrides[weapon_id] = new_overrides
+                                bump_overrides_version(weapon_id)
                                 apply_preset_to_weapon(weapon_parts, new_overrides, true, weapon_id)
                             end
                         else
@@ -3267,6 +3338,7 @@ re.on_draw_ui(function()
                                     char_addr, (is_weapon_mode and "weapon_" or "armor_") .. body_id, current_config, primary, active_overrides[body_id] or {}, merge_overrides
                                 )
                                 active_overrides[body_id] = new_overrides
+                                bump_overrides_version(body_id)
                                 if not active_group_presets[body_id] then active_group_presets[body_id] = {} end
                                 if current_config.groups then
                                     for g_name, g_data in pairs(current_config.groups) do
@@ -3374,6 +3446,7 @@ re.on_draw_ui(function()
                                                     char_addr, (is_weapon_mode and "weapon_" or "armor_") .. body_id, current_config, primary, active_overrides[body_id] or {}, merge_overrides
                                                 )
                                                 active_overrides[body_id] = new_overrides
+                                                bump_overrides_version(body_id)
                                                 if not active_group_presets[body_id] then active_group_presets[body_id] = {} end
                                                 if current_config.groups then
                                                     for g_name, g_data in pairs(current_config.groups) do
@@ -3423,6 +3496,7 @@ re.on_draw_ui(function()
                                                     char_addr, (is_weapon_mode and "weapon_" or "armor_") .. body_id, current_config, primary, active_overrides[body_id] or {}, merge_overrides
                                                 )
                                                 active_overrides[body_id] = new_overrides
+                                                bump_overrides_version(body_id)
                                                 if not active_group_presets[body_id] then active_group_presets[body_id] = {} end
                                                 if current_config.groups then
                                                     for g_name, g_data in pairs(current_config.groups) do
@@ -3498,6 +3572,7 @@ re.on_draw_ui(function()
                                                     char_addr, (is_weapon_mode and "weapon_" or "armor_") .. body_id, current_config, primary, active_overrides[body_id] or {}, merge_overrides
                                                 )
                                                 active_overrides[body_id] = new_overrides
+                                                bump_overrides_version(body_id)
                                                 if not active_group_presets[body_id] then active_group_presets[body_id] = {} end
                                                 if current_config.groups then
                                                     for g_name, g_data in pairs(current_config.groups) do
@@ -3553,6 +3628,7 @@ re.on_draw_ui(function()
                                                     char_addr, (is_weapon_mode and "weapon_" or "armor_") .. body_id, current_config, primary, active_overrides[body_id] or {}, merge_overrides
                                                 )
                                                 active_overrides[body_id] = new_overrides
+                                                bump_overrides_version(body_id)
                                                 if not active_group_presets[body_id] then active_group_presets[body_id] = {} end
                                                 if current_config.groups then
                                                     for g_name, g_data in pairs(current_config.groups) do
@@ -3607,6 +3683,7 @@ re.on_draw_ui(function()
                                                     char_addr, (is_weapon_mode and "weapon_" or "armor_") .. body_id, current_config, primary, active_overrides[body_id] or {}, merge_overrides
                                                 )
                                                 active_overrides[body_id] = new_overrides
+                                                bump_overrides_version(body_id)
                                                 if not active_group_presets[body_id] then active_group_presets[body_id] = {} end
                                                 if current_config.groups then
                                                     for g_name, g_data in pairs(current_config.groups) do
@@ -3661,6 +3738,7 @@ re.on_draw_ui(function()
                                                     char_addr, (is_weapon_mode and "weapon_" or "armor_") .. body_id, current_config, primary, active_overrides[body_id] or {}, merge_overrides
                                                 )
                                                 active_overrides[body_id] = new_overrides
+                                                bump_overrides_version(body_id)
                                                 if not active_group_presets[body_id] then active_group_presets[body_id] = {} end
                                                 if current_config.groups then
                                                     for g_name, g_data in pairs(current_config.groups) do
@@ -3718,6 +3796,7 @@ re.on_draw_ui(function()
                                                     char_addr, (is_weapon_mode and "weapon_" or "armor_") .. body_id, current_config, primary, active_overrides[body_id] or {}, merge_overrides
                                                 )
                                                 active_overrides[body_id] = new_overrides
+                                                bump_overrides_version(body_id)
                                                 if not active_group_presets[body_id] then active_group_presets[body_id] = {} end
                                                 if current_config.groups then
                                                     for g_name, g_data in pairs(current_config.groups) do
@@ -3773,6 +3852,7 @@ re.on_draw_ui(function()
                                                     char_addr, (is_weapon_mode and "weapon_" or "armor_") .. body_id, current_config, primary, active_overrides[body_id] or {}, merge_overrides
                                                 )
                                                 active_overrides[body_id] = new_overrides
+                                                bump_overrides_version(body_id)
                                                 if not active_group_presets[body_id] then active_group_presets[body_id] = {} end
                                                 if current_config.groups then
                                                     for g_name, g_data in pairs(current_config.groups) do
@@ -3827,6 +3907,7 @@ re.on_draw_ui(function()
                                                     char_addr, (is_weapon_mode and "weapon_" or "armor_") .. body_id, current_config, primary, active_overrides[body_id] or {}, merge_overrides
                                                 )
                                                 active_overrides[body_id] = new_overrides
+                                                bump_overrides_version(body_id)
                                                 if not active_group_presets[body_id] then active_group_presets[body_id] = {} end
                                                 if current_config.groups then
                                                     for g_name, g_data in pairs(current_config.groups) do
@@ -3882,6 +3963,7 @@ re.on_draw_ui(function()
                                                     char_addr, (is_weapon_mode and "weapon_" or "armor_") .. body_id, current_config, primary, active_overrides[body_id] or {}, merge_overrides
                                                 )
                                                 active_overrides[body_id] = new_overrides
+                                                bump_overrides_version(body_id)
                                                 if not active_group_presets[body_id] then active_group_presets[body_id] = {} end
                                                 if current_config.groups then
                                                     for g_name, g_data in pairs(current_config.groups) do
