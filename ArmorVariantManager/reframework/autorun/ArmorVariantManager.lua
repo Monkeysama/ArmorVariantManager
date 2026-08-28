@@ -1,7 +1,7 @@
 local mod_name = "ArmorVariantManager"
 -- 开发中遵守
 -- 版本号-开发状态-开发状态标识
-local version = "3.3.0-beta-001"
+local version = "3.4.0-beta-001"
 local author = "MK,Moon,AZUSA"
 
 -- =============================================================================
@@ -633,7 +633,9 @@ local function get_all_characters()
                                 local key = tostring(game_obj)
                                 if not seen_objs[key] then
                                     local bid = get_character_body_id(char)
-                                    if bid and string.find(bid, "^ch03") then
+                                    -- PlayerManager 返回的就是已实例化玩家；Body ID 允许 PFB 自定义名称，
+                                    -- 不能再限制为原版 ch03 前缀，否则预设不会应用到改名装备。
+                                    if bid then
                                         table.insert(chars, char)
                                         seen_objs[key] = true
                                     end
@@ -656,7 +658,8 @@ local function get_all_characters()
                         local key = tostring(game_obj)
                         if not seen_objs[key] then
                             local bid = get_character_body_id(char)
-                            if bid and string.find(bid, "^ch03") then
+                            -- 同上：主玩家的自定义 Body ID 也必须参与预设应用循环。
+                            if bid then
                                 table.insert(chars, char)
                                 seen_objs[key] = true
                             end
@@ -890,35 +893,147 @@ end
 -- =============================================================================
 -- Mesh 和部位相关函数
 -- =============================================================================
--- 辅助函数：尝试从 GameObject 及其子节点中获取 Mesh 组件
-local function get_mesh_component_recursive(game_obj)
-    if not game_obj then return nil end
-    if not sdk.is_managed_object(game_obj) then return nil end
+-- 辅助函数：递归收集 GameObject 及其所有子节点上的 Mesh 组件
+-- 改名后的 PFB 可能不再符合原版节点命名规则，因此 Mesh 必须按对象树实际内容查找。
+local function collect_mesh_components_recursive(game_obj, result, visited)
+    if not game_obj or not sdk.is_managed_object(game_obj) then return end
     if not type_mesh then
         type_mesh = get_type("via.render.Mesh")
-        if not type_mesh then return nil end
+        if not type_mesh then return end
     end
-    -- 1. 检查自身
-    local ok_mesh, mesh = pcall(function() return game_obj:call("getComponent(System.Type)", type_mesh:get_runtime_type()) end)
-    if ok_mesh and mesh then return mesh end
-    -- 2. 检查子节点 (浅层遍历)
-    local ok_transform, transform = pcall(function() return game_obj:call("get_Transform") end)
-    if ok_transform and transform then
-        local ok_child, child = pcall(function() return transform:call("get_Child") end)
-        while ok_child and child do
-            local ok_child_obj, child_obj = pcall(function() return child:call("get_GameObject") end)
-            if ok_child_obj and child_obj then
-                local ok_c_mesh, c_mesh = pcall(function() return child_obj:call("getComponent(System.Type)", type_mesh:get_runtime_type()) end)
-                if ok_c_mesh and c_mesh then return c_mesh end
-            end
-            ok_child, child = pcall(function() return child:call("get_Next") end)
+    result = result or {}
+    visited = visited or {}
+
+    local obj_key = tostring(game_obj)
+    if visited[obj_key] then return end
+    visited[obj_key] = true
+
+    local ok_mesh, mesh = pcall(function()
+        return game_obj:call("getComponent(System.Type)", type_mesh:get_runtime_type())
+    end)
+    if ok_mesh and mesh and sdk.is_managed_object(mesh) then
+        local mesh_key = tostring(mesh)
+        if not visited[mesh_key] then
+            visited[mesh_key] = true
+            table.insert(result, mesh)
         end
     end
-    return nil
+
+    local ok_transform, transform = pcall(function() return game_obj:call("get_Transform") end)
+    if not ok_transform or not transform then return end
+    local ok_child, child = pcall(function() return transform:call("get_Child") end)
+    while ok_child and child do
+        local ok_child_obj, child_obj = pcall(function() return child:call("get_GameObject") end)
+        if ok_child_obj and child_obj then
+            collect_mesh_components_recursive(child_obj, result, visited)
+        end
+        ok_child, child = pcall(function() return child:call("get_Next") end)
+    end
+end
+
+-- 辅助函数：尝试从 GameObject 及其子节点中获取第一个 Mesh 组件
+-- 保留这个旧接口，武器和其他旧逻辑仍可使用；防具会调用下面的批量收集接口。
+local function get_mesh_component_recursive(game_obj)
+    local meshes = {}
+    collect_mesh_components_recursive(game_obj, meshes, {})
+    return meshes[1]
+end
+
+-- 前置声明：批量部位查找函数需要在无材料匹配时调用旧部位解析逻辑。
+local get_character_part
+
+-- 辅助函数：判断对象是否为独立角色脸部对象。
+local function is_player_face_object(game_obj)
+    if not game_obj then return false end
+    local ok_name, name = pcall(function() return game_obj:call("get_Name") end)
+    return ok_name and name == "Player_Face"
+end
+
+-- 辅助函数：获取角色对象树中的全部 Mesh，并在短时间内缓存结果
+-- 装备切换期间对象会重建，短 TTL 可以兼顾新对象发现和每帧性能。
+local character_mesh_cache = {}
+local CHARACTER_MESH_CACHE_TTL = 0.25
+local function get_all_character_meshes(character)
+    if not character or not sdk.is_managed_object(character) then return {} end
+    local ok_root, root = pcall(function() return character:call("get_GameObject") end)
+    if not ok_root or not root or not sdk.is_managed_object(root) then return {} end
+
+    local cache_key = tostring(root)
+    local now = os.clock()
+    local cached = character_mesh_cache[cache_key]
+    if cached and now - cached.time <= CHARACTER_MESH_CACHE_TTL then
+        return cached.meshes
+    end
+
+    local meshes = {}
+    collect_mesh_components_recursive(root, meshes, {})
+    character_mesh_cache[cache_key] = { time = now, meshes = meshes }
+    return meshes
+end
+
+-- 辅助函数：按预设中的材料名定位一个防具部位的全部候选 Mesh
+-- 旧 JSON 没有记录 GameObject 名称，只记录材料名，因此无需改变 JSON 结构即可兼容改名 PFB。
+-- 优先沿用游戏的 getParts 部位结果，材质匹配只作为改名 PFB 的兜底。
+-- 只返回防具 Mesh；Player_Face 是角色脸部对象，不属于任何防具部件。
+local function get_character_part_meshes(character, part_index, part_data)
+    -- 1. 优先使用原有部位对象路径，避免全角色材质匹配把其他部位误判为当前部位。
+    local part_obj = get_character_part(character, part_index)
+    if part_obj and not is_player_face_object(part_obj) then
+        local part_meshes = {}
+        collect_mesh_components_recursive(part_obj, part_meshes, {})
+        local armor_meshes = {}
+        for _, mesh in ipairs(part_meshes) do
+            local ok_go, mesh_game_obj = pcall(function() return mesh:call("get_GameObject") end)
+            if not (ok_go and mesh_game_obj and is_player_face_object(mesh_game_obj)) then
+                table.insert(armor_meshes, mesh)
+            end
+        end
+        if #armor_meshes > 0 then
+            return armor_meshes
+        end
+    end
+
+    -- 2. getParts 不可用时，按预设材料名在角色树中定位改名后的 Mesh。
+    local all_meshes = get_all_character_meshes(character)
+    if #all_meshes == 0 then return {} end
+
+    local material_defs = part_data and part_data.materials
+    if material_defs and next(material_defs) then
+        local best_count = 0
+        local best_meshes = {}
+        for _, mesh in ipairs(all_meshes) do
+            local count = 0
+            local is_player_face = false
+            local ok_go, mesh_game_obj = pcall(function() return mesh:call("get_GameObject") end)
+            if ok_go and mesh_game_obj then is_player_face = is_player_face_object(mesh_game_obj) end
+            if not is_player_face then
+                local mat_count = 0
+                local ok_count, value = pcall(function() return mesh:call("get_MaterialNum") end)
+                if ok_count and value then mat_count = value end
+                for i = 0, mat_count - 1 do
+                    local ok_name, mat_name = pcall(function() return mesh:call("getMaterialName", i) end)
+                    if ok_name and mat_name and material_defs[mat_name] ~= nil then
+                        count = count + 1
+                    end
+                end
+                if count > best_count then
+                    best_count = count
+                    best_meshes = { mesh }
+                elseif count > 0 and count == best_count then
+                    table.insert(best_meshes, mesh)
+                end
+            end
+        end
+        if best_count > 0 then
+            return best_meshes
+        end
+    end
+
+    return {}
 end
 
 -- 辅助函数：获取角色的指定部位对象 (兼容 Transform 模式)
-local function get_character_part(character, part_index)
+get_character_part = function(character, part_index)
     if not character then return nil end
     local status, part_obj = pcall(function() return character:call("getParts", part_index) end)
     if status and part_obj then return part_obj end
@@ -1088,12 +1203,11 @@ local function apply_preset_to_armor(character, preset_data, ignore_context, for
     end
     if not applied_parts_cache[char_addr] then applied_parts_cache[char_addr] = {} end
     for i = 0, 5 do
-        local part_obj = get_character_part(character, i)
-        if part_obj then
-            local part_data = preset_data[tostring(i)]
-            if part_data then
-                local mesh_component = get_mesh_component_recursive(part_obj)
-                if mesh_component then
+        local part_data = preset_data[tostring(i)]
+        if part_data then
+            -- 通过预设材料名定位 Mesh，兼容 PFB 改名后 getParts 无法识别部位的情况。
+            local mesh_components = get_character_part_meshes(character, i, part_data)
+            for _, mesh_component in ipairs(mesh_components) do
                     local mat_count = mesh_component:call("get_MaterialNum") or 0
                     local first_mat = mat_count > 0 and mesh_component:call("getMaterialName", 0) or ""
                     local state_hash = tostring(mesh_component) .. "_" .. tostring(mat_count) .. "_" .. first_mat
@@ -1129,7 +1243,6 @@ local function apply_preset_to_armor(character, preset_data, ignore_context, for
                             end
                         end
                     end
-                end
             end
         end
     end
@@ -1742,6 +1855,21 @@ local function apply_preset(preset_name)
         temp_applied_presets[current_body_id] = preset_name
     end
     local all_chars = get_all_characters()
+    -- 本地玩家是预设切换的直接目标；在装备箱/菜单等场景中，异步扫描缓存可能暂时漏掉它，
+    -- 因此强制把本地角色补入本帧列表，保证自定义 Body ID 也能立即应用预设。
+    local local_char_for_preset = get_local_player_character()
+    if local_char_for_preset and sdk.is_managed_object(local_char_for_preset) then
+        local local_seen = false
+        for _, listed_char in ipairs(all_chars) do
+            if listed_char == local_char_for_preset then
+                local_seen = true
+                break
+            end
+        end
+        if not local_seen then
+            table.insert(all_chars, local_char_for_preset)
+        end
+    end
     for _, char in ipairs(all_chars) do
         if is_weapon_id(current_body_id) then
             local char_weapon_id, w_objs = get_character_weapon_id(char)
@@ -2006,17 +2134,20 @@ local function save_preset(preset_name, body_id)
     else
         for i = 0, 5 do
             local part_obj = get_character_part(character, i)
-            if part_obj then
-                local mesh_component = get_mesh_component_recursive(part_obj)
-                if mesh_component then
-                    local part_data = {
-                        materials = {}
-                    }
-                    -- 全局分组不保存 mesh_enabled，避免整体隐藏部件
-                    local is_global_ctx = (current_group_name ~= "" and current_config.groups
-                        and current_config.groups[current_group_name]
-                        and current_config.groups[current_group_name].is_global)
-                    if not is_global_ctx then
+            local reference_part_data = active_overrides[body_id]
+                and active_overrides[body_id][tostring(i)]
+            local mesh_components = get_character_part_meshes(character, i, reference_part_data)
+            if #mesh_components > 0 then
+                -- 一个部位可能对应多个 Mesh；合并材料状态，避免后一个 Mesh 覆盖前一个 Mesh。
+                local part_data = {
+                    materials = {}
+                }
+                -- 全局分组不保存 mesh_enabled，避免整体隐藏部件
+                local is_global_ctx = (current_group_name ~= "" and current_config.groups
+                    and current_config.groups[current_group_name]
+                    and current_config.groups[current_group_name].is_global)
+                for _, mesh_component in ipairs(mesh_components) do
+                    if not is_global_ctx and part_data.mesh_enabled == nil then
                         part_data.mesh_enabled = mesh_component:call("get_Enabled")
                     end
                     local mat_count = mesh_component:call("get_MaterialNum")
@@ -2035,9 +2166,9 @@ local function save_preset(preset_name, body_id)
                             end
                         end
                     end
-                    if next(part_data.materials) or current_group_name == "" then
-                        new_preset_data[tostring(i)] = part_data
-                    end
+                end
+                if next(part_data.materials) or current_group_name == "" then
+                    new_preset_data[tostring(i)] = part_data
                 end
             end
         end
@@ -2540,6 +2671,8 @@ re.on_frame(function()
     if local_body_id then
         if local_body_id ~= last_body_id then
             last_body_id = local_body_id
+            -- 切换装备后分组属于新的 Body，必须回到默认分组，避免沿用上一件装备的分组名称。
+            current_group_name = ""
             -- 如果该 body_id 已有 active_overrides（说明之前已加载过），只更新 UI 不重置状态
             if active_overrides[local_body_id] then
                 -- 仅更新 UI 配置和列表
@@ -2561,6 +2694,21 @@ re.on_frame(function()
     -- 遍历所有角色并应用规则引擎
     -- 2. 遍历所有玩家并应用配置
     local all_chars = get_all_characters()
+    -- 本地玩家是每帧预设应用的直接目标；角色扫描在模型重建或菜单场景中可能暂时漏掉它，
+    -- 因此补入 MasterPlayer 角色，保证自定义 Body ID 也能持续应用预设状态。
+    local local_char_for_frame = get_local_player_character()
+    if local_char_for_frame and sdk.is_managed_object(local_char_for_frame) then
+        local local_seen = false
+        for _, listed_char in ipairs(all_chars) do
+            if listed_char == local_char_for_frame then
+                local_seen = true
+                break
+            end
+        end
+        if not local_seen then
+            table.insert(all_chars, local_char_for_frame)
+        end
+    end
     for _, char in ipairs(all_chars) do
         -- 处理防具
         local char_body_id = get_character_body_id(char)
@@ -3798,19 +3946,17 @@ re.on_draw_ui(function()
                             for i = 0, 5 do
                                 local part_obj = get_character_part(character, i)
                                 local part_name = armor_parts[i]
-                                if part_obj then
-                                    -- 尝试获取 Mesh 组件 (支持递归查找)
-                                    local mesh_comp = get_mesh_component_recursive(part_obj)
-                                    if mesh_comp then
-                                        -- 使用拥有 Mesh 的 GameObject 进行绘制
-                                        local mesh_game_obj = mesh_comp:call("get_GameObject")
-                                        local obj_name = mesh_game_obj:call("get_Name")
-                                        draw_mesh_toggle(mesh_game_obj, string.format("%s [%s]", part_name, obj_name), body_id, i)
-                                    else
-                                        -- 虽然找到了部位对象，但没有 Mesh
-                                        local obj_name = part_obj:call("get_Name")
-                                        imgui.text_colored(string.format("%s [%s] (No Mesh)", part_name, obj_name), 0xFF808080)
-                                    end
+                                local reference_part_data = active_overrides[body_id]
+                                    and active_overrides[body_id][tostring(i)]
+                                local mesh_components = get_character_part_meshes(character, i, reference_part_data)
+                                if #mesh_components > 0 then
+                                    -- UI 每个部位只显示主 Mesh；附属 Mesh 由预设应用逻辑同步控制。
+                                    local mesh_game_obj = mesh_components[1]:call("get_GameObject")
+                                    local obj_name = mesh_game_obj and mesh_game_obj:call("get_Name") or "Mesh"
+                                    draw_mesh_toggle(mesh_game_obj, string.format("%s [%s]", part_name, obj_name), body_id, i)
+                                elseif part_obj and not is_player_face_object(part_obj) then
+                                    local obj_name = part_obj:call("get_Name")
+                                    imgui.text_colored(string.format("%s [%s] (No Mesh)", part_name, obj_name), 0xFF808080)
                                 else
                                     imgui.text_colored(part_name .. " " .. T("not_equipped"), 0xFF808080)
                                 end
