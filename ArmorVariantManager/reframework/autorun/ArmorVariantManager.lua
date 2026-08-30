@@ -1,7 +1,7 @@
 local mod_name = "ArmorVariantManager"
 -- 开发中遵守
 -- 版本号-开发状态-开发状态标识
-local version = "3.4.0-beta-001"
+local version = "3.5.0-beta-001"
 local author = "MK,Moon,AZUSA"
 
 -- =============================================================================
@@ -16,12 +16,37 @@ local global_config = {
     language = "zh", -- 默认语言: zh (中文), en (英文)
     scan_interval = 0.5, -- 全量扫描间隔 (秒)
     body_id_ttl = 1.0, -- Body ID 缓存有效期 (秒)，默认缩短以加速换装检测
-    scanner_batch_size = 200 -- 每帧扫描的对象数量
+    scanner_batch_size = 200, -- 每帧扫描的对象数量
+    new_ui_enabled = false, -- 是否启用基于 D2D 的新 UI
+    new_ui_key = 0x24 -- 新 UI 快捷键，默认 Home
 }
 
 -- 本地化字典 (从外部模块加载)
 local Localization = require("ArmorVariantManager_Core.Localization")
 local TransformManager = require("ArmorVariantManager_Core.TransformManager")
+-- REFramework 重载脚本时可能保留 Lua 模块缓存，D2D UI 必须重新加载最新实现。
+local refd2d_module_names = {
+    "ArmorVariantManager_Core.Refd2d.Refd2dUI",
+    "ArmorVariantManager_Core.Refd2d.Component.Runtime",
+    "ArmorVariantManager_Core.Refd2d.Component.Button",
+    "ArmorVariantManager_Core.Refd2d.Component.Checkbox",
+    "ArmorVariantManager_Core.Refd2d.Component.Panel",
+    "ArmorVariantManager_Core.Refd2d.Component.List",
+    "ArmorVariantManager_Core.Refd2d.Component.Window",
+    "ArmorVariantManager_Core.Refd2d.Component.Slider",
+    "ArmorVariantManager_Core.Refd2d.Component.Tag",
+    "ArmorVariantManager_Core.Refd2d.Component.Input",
+    "ArmorVariantManager_Core.Refd2d.Component.Select",
+    "ArmorVariantManager_Core.Refd2d.Component.InputNumber",
+    "ArmorVariantManager_Core.Refd2d.InputBlocker",
+    "ArmorVariantManager_Core.Refd2d.NativeTextInput"
+}
+if package and package.loaded then
+    for _, module_name in ipairs(refd2d_module_names) do
+        package.loaded[module_name] = nil
+    end
+end
+local Refd2dUI = require("ArmorVariantManager_Core.Refd2d.Refd2dUI")
 
 -- 获取本地化字符串
 local function T(key)
@@ -39,6 +64,9 @@ local function load_global_settings()
         if loaded.scan_interval then global_config.scan_interval = loaded.scan_interval end
         if loaded.body_id_ttl then global_config.body_id_ttl = loaded.body_id_ttl end
         if loaded.scanner_batch_size then global_config.scanner_batch_size = loaded.scanner_batch_size end
+        -- 新字段使用可选读取，旧版 GlobalSettings.json 无需迁移。
+        if loaded.new_ui_enabled ~= nil then global_config.new_ui_enabled = loaded.new_ui_enabled end
+        if loaded.new_ui_key then global_config.new_ui_key = loaded.new_ui_key end
     end
 end
 
@@ -746,6 +774,9 @@ local function get_local_player_character()
 end
 
 local is_weapon_mode = false
+-- 仅用于防具/武器模式往返时恢复用户当前分组；普通换装仍按默认分组初始化。
+local mode_group_selection = {}
+local pending_mode_group_restore = false
 
 local function is_weapon_id(id)
     return id and (string.match(id, "^wp%d%d") ~= nil or string.match(id, "^it%d%d%d%d") ~= nil)
@@ -1131,7 +1162,23 @@ local function get_material_global_groups(part_index, mat_name)
             table.insert(result, g_name)
         end
     end
+    table.sort(result)
     return result
+end
+
+-- 切换防具/武器模式前保存当前配置的分组，下一帧加载目标配置后再恢复对应分组。
+local function switch_variant_mode(weapon_mode)
+    if is_weapon_mode == weapon_mode then return end
+    if last_body_id then mode_group_selection[last_body_id] = current_group_name end
+    is_weapon_mode = weapon_mode
+    last_body_id = nil
+    current_group_name = ""
+    pending_mode_group_restore = true
+    if weapon_mode then
+        weapon_id_cache = {}
+    else
+        body_id_cache = {}
+    end
 end
 
 -- 辅助函数：判断材质是否属于当前 UI 上下文 (主列表或当前分组)
@@ -2210,19 +2257,42 @@ end
 -- 辅助函数：自动查找匹配的预设
 local function find_auto_preset(target_body_id)
     if not target_body_id then return false, "No Body ID" end
-    -- 1. 获取当前 Body (Part 1) 的材质特征
     local character = get_local_player_character()
     if not character or not sdk.is_managed_object(character) then return false, "No Character" end
-    local body_part = get_character_part(character, 1) -- 1 is Body
-    if not body_part then return false, "Body part not found" end
-    local mesh = get_mesh_component_recursive(body_part)
-    if not mesh then return false, "Mesh not found" end
+    local is_weapon_target = is_weapon_id(target_body_id)
     local current_mats = {}
-    local mat_count = mesh:call("get_MaterialNum")
-    if not mat_count or mat_count == 0 then return false, "No materials on Body" end
-    for i = 0, mat_count - 1 do
-        local name = mesh:call("getMaterialName", i)
-        if name then current_mats[name] = true end
+    local current_weapon_mats = {}
+
+    -- 防具读取身体部位材质；武器分别读取各部件材质，避免跨类型匹配。
+    if is_weapon_target then
+        local current_weapon_id, weapon_objs = get_character_weapon_id(character)
+        if current_weapon_id ~= target_body_id or not weapon_objs or #weapon_objs == 0 then
+            return false, "Weapon not found"
+        end
+        for index, weapon_obj in ipairs(weapon_objs) do
+            local mesh = get_mesh_component_recursive(weapon_obj)
+            if mesh then
+                local mats = {}
+                local mat_count = mesh:call("get_MaterialNum") or 0
+                for material_index = 0, mat_count - 1 do
+                    local name = mesh:call("getMaterialName", material_index)
+                    if name then mats[name] = true end
+                end
+                if next(mats) then current_weapon_mats[tostring(index - 1)] = mats end
+            end
+        end
+        if not next(current_weapon_mats) then return false, "No materials on Weapon" end
+    else
+        local body_part = get_character_part(character, 1) -- 1 is Body
+        if not body_part then return false, "Body part not found" end
+        local mesh = get_mesh_component_recursive(body_part)
+        if not mesh then return false, "Mesh not found" end
+        local mat_count = mesh:call("get_MaterialNum")
+        if not mat_count or mat_count == 0 then return false, "No materials on Body" end
+        for i = 0, mat_count - 1 do
+            local name = mesh:call("getMaterialName", i)
+            if name then current_mats[name] = true end
+        end
     end
     -- 2. 遍历所有 JSON 文件
     if not fs or not fs.glob then return false, "fs.glob missing" end
@@ -2264,8 +2334,34 @@ local function find_auto_preset(target_body_id)
                 -- 获取第一个预设
                 local first_preset = nil
                 for _, preset in pairs(data.presets) do first_preset = preset; break end
-                -- 检查 Body (1) 的材质匹配度
-                if first_preset and first_preset["1"] and first_preset["1"].materials then
+                if is_weapon_target then
+                    -- 只匹配武器 ID 文件，并逐部件检查预设材质是否存在于当前武器。
+                    local normalized_file = file:gsub("\\", "/")
+                    local candidate_id = normalized_file:match("([^/]+)%.json$")
+                    local match = candidate_id and is_weapon_id(candidate_id) and first_preset ~= nil
+                    local match_count = 0
+                    if match then
+                        for part_index, part_data in pairs(first_preset) do
+                            local preset_mats = part_data and part_data.materials
+                            if preset_mats and next(preset_mats) then
+                                local weapon_mats = current_weapon_mats[tostring(part_index)]
+                                if not weapon_mats then match = false; break end
+                                for mat_name, _ in pairs(preset_mats) do
+                                    if not weapon_mats[mat_name] then match = false; break end
+                                    match_count = match_count + 1
+                                end
+                                if not match then break end
+                            end
+                        end
+                    end
+                    if match and match_count > 0 then
+                        current_config = data
+                        save_current_config_to_file(target_body_id)
+                        update_preset_names_list()
+                        return true, "Success! Loaded from " .. file
+                    end
+                -- 检查防具 Body (1) 的材质匹配度
+                elseif first_preset and first_preset["1"] and first_preset["1"].materials then
                     local preset_mats = first_preset["1"].materials
                     local match = true
                     local match_count = 0
@@ -2536,6 +2632,367 @@ local function draw_mesh_toggle(game_object, label, body_id, part_index)
     end
 end
 
+-- =============================================================================
+-- D2D 新 UI
+-- D2D 的绘制、输入和组件实现位于 ArmorVariantManager_Core/Refd2d。
+local refd2d_ui = Refd2dUI.new({
+    config = global_config,
+    translate = T,
+    version = version,
+    author = author,
+    save_settings = save_global_settings,
+
+    -- 提供新 UI 所需的当前装备上下文。
+    get_context = function()
+        local body_id = get_body_id()
+        return {
+            body_id = body_id,
+            character = get_local_player_character(),
+            weapon_mode = is_weapon_mode,
+            group_name = current_group_name,
+            group_names = group_names_list,
+            preset_names = preset_names_list,
+            selected_preset_index = selected_preset_index,
+            config_restored = body_id and config_restored[body_id] == true
+                and config_restore_handled[body_id] ~= true,
+            config = current_config
+        }
+    end,
+
+    -- 判断配置中是否已有任意预设，兼容默认分组、普通分组和旧 JSON 缺少排序字段的情况。
+    has_any_presets = function(config)
+        if config and config.presets and next(config.presets) then return true end
+        for _, group in pairs((config and config.groups) or {}) do
+            if group.presets and next(group.presets) then return true end
+        end
+        return false
+    end,
+
+    -- 新 UI 直接复用旧 UI 的材质匹配逻辑，避免产生第二套 JSON 查找和保存规则。
+    auto_find_preset = function(body_id)
+        local ok, found, message = pcall(find_auto_preset, body_id)
+        if not ok then return false, tostring(found) end
+        return found == true, message
+    end,
+
+    -- 备份恢复与忽略继续使用旧 UI 的会话标记，恢复后会自动刷新当前分组和预设列表。
+    restore_backup = function(body_id)
+        if not body_id then return false end
+        config_restore_handled[body_id] = true
+        return restore_config_from_backup(body_id) == true
+    end,
+
+    dismiss_backup = function(body_id)
+        if not body_id then return end
+        config_restore_handled[body_id] = true
+        config_restored[body_id] = nil
+    end,
+
+    -- 新 UI 切换模式时与旧 UI 共用分组记忆和缓存刷新规则。
+    set_mode = function(weapon_mode)
+        switch_variant_mode(weapon_mode)
+    end,
+
+    -- 新 UI 选择分组后，恢复该分组当前已应用的预设，不强制回退为默认预设。
+    select_group = function(group_name)
+        group_name = group_name or ""
+        -- 换装重建期间列表可能暂时来自上一帧，忽略已经失效的分组名称。
+        if group_name ~= "" and (not current_config.groups or not current_config.groups[group_name]) then
+            group_name = ""
+        end
+        current_group_name = group_name
+        selected_group_index = 1
+        for i, name in ipairs(group_names_list) do
+            if name == current_group_name then
+                selected_group_index = i + 1
+                break
+            end
+        end
+        refd2d_ui.material_offset = 0
+        update_preset_names_list()
+        local body_id = get_body_id()
+        local active_preset = body_id and active_group_presets[body_id]
+            and active_group_presets[body_id][current_group_name]
+        if active_preset and active_preset ~= "" then
+            for index, preset_name in ipairs(preset_names_list) do
+                if preset_name == active_preset then
+                    selected_preset_index = index
+                    break
+                end
+            end
+        end
+    end,
+
+    select_preset = function(index)
+        selected_preset_index = index
+    end,
+
+    -- 新 UI 拖动普通分组后写回旧 UI 共用的 group_order。
+    reorder_groups = function(items)
+        local body_id = get_body_id()
+        if not body_id or not current_config then return end
+        current_config.group_order = {}
+        for _, item in ipairs(items or {}) do
+            if item.name and item.name ~= "" then
+                table.insert(current_config.group_order, item.name)
+            end
+        end
+        update_group_names_list()
+        save_current_config_to_file(body_id)
+    end,
+
+    -- 新 UI 创建分组时复用旧 UI 的材质剥离、全局重叠和 group_order 逻辑。
+    create_group = function(group_name, is_global, selections)
+        local body_id = get_body_id()
+        if not body_id then return false end
+        pending_material_selections = selections or {}
+        local created = create_new_group(group_name, body_id, is_global == true)
+        if created then
+            current_group_name = group_name
+            selected_group_index = 1
+            for i, name in ipairs(group_names_list) do
+                if name == current_group_name then selected_group_index = i + 1; break end
+            end
+            selected_preset_index = 1
+            update_group_names_list()
+            update_preset_names_list()
+        else
+            pending_material_selections = {}
+        end
+        return created == true
+    end,
+
+    -- 新 UI 删除分组时复用旧 UI 的配置清理和当前分组回退逻辑。
+    delete_group = function(group_name)
+        local body_id = get_body_id()
+        if not body_id then return false end
+        local deleted = delete_group(group_name, body_id)
+        if deleted then
+            selected_preset_index = 1
+            refd2d_ui.material_offset = 0
+            update_group_names_list()
+            update_preset_names_list()
+        end
+        return deleted == true
+    end,
+
+    -- 新 UI 拖动预设后写回默认分组或当前分组的 preset_order。
+    reorder_presets = function(items)
+        local body_id = get_body_id()
+        if not body_id or not current_config then return end
+        local target = current_config
+        if current_group_name ~= "" and current_config.groups
+            and current_config.groups[current_group_name] then
+            target = current_config.groups[current_group_name]
+        end
+        target.preset_order = {}
+        for _, preset_name in ipairs(items or {}) do
+            table.insert(target.preset_order, preset_name)
+        end
+        update_preset_names_list()
+        save_current_config_to_file(body_id)
+    end,
+
+    -- 新 UI 新增预设，复用旧 UI 的 save_preset、排序与配置保存逻辑。
+    create_preset = function(preset_name)
+        local body_id = get_body_id()
+        if not body_id or not preset_name or preset_name == "" then return false end
+        local saved = save_preset(preset_name, body_id)
+        if saved then update_preset_names_list() end
+        return saved == true
+    end,
+
+    -- 新 UI 覆盖当前预设，保留旧 UI 对分组和全局分组的保存行为。
+    overwrite_preset = function(preset_name)
+        local body_id = get_body_id()
+        if not body_id or not preset_name or preset_name == "" then return false end
+        local saved = save_preset(preset_name, body_id)
+        if saved then update_preset_names_list() end
+        return saved == true
+    end,
+
+    -- 新 UI 删除预设，并同步移除默认预设和排序数组中的名称。
+    delete_preset = function(preset_name)
+        local body_id = get_body_id()
+        if not body_id or not preset_name or preset_name == "" or not current_config then return false end
+        local target = current_config
+        if current_group_name ~= "" and current_config.groups
+            and current_config.groups[current_group_name] then
+            target = current_config.groups[current_group_name]
+        end
+        if not target.presets or not target.presets[preset_name] then return false end
+        target.presets[preset_name] = nil
+        if target.default_preset == preset_name then target.default_preset = "" end
+        if target.preset_order then
+            for index = #target.preset_order, 1, -1 do
+                if target.preset_order[index] == preset_name then
+                    table.remove(target.preset_order, index)
+                    break
+                end
+            end
+        end
+        update_preset_names_list()
+        save_current_config_to_file(body_id)
+        return true
+    end,
+
+    -- 新 UI 设置当前选中预设为默认预设，沿用旧 UI 的分组配置写入规则。
+    set_default_preset = function(preset_name)
+        local body_id = get_body_id()
+        if not body_id or not preset_name or preset_name == "" or not current_config then return false end
+        local target = current_config
+        if current_group_name ~= "" and current_config.groups
+            and current_config.groups[current_group_name] then
+            target = current_config.groups[current_group_name]
+        end
+        if not target.presets or not target.presets[preset_name] then return false end
+        target.default_preset = preset_name
+        save_current_config_to_file(body_id)
+        update_preset_names_list()
+        return true
+    end,
+
+    apply_preset = apply_preset,
+
+    -- 新 UI 变身管理复用当前配置的原始保存入口，保持旧 JSON 字段不变。
+    save_transform = function(context)
+        local body_id = context and context.body_id or get_body_id()
+        if body_id then save_current_config_to_file(body_id) end
+    end,
+
+    -- 为新 UI 提供当前条件状态，实际条件读取仍由 TransformManager 负责。
+    get_transform_state = function(type_key, character)
+        if not character then return nil end
+        local getters = {
+            hp = TransformManager.get_character_hp_percent,
+            weapon = TransformManager.get_character_weapon_drawn,
+            spirit = TransformManager.get_character_spirit_level,
+            dual_blades = TransformManager.get_character_dual_blades_state,
+            switch_axe = TransformManager.get_character_switch_axe_state,
+            insect_glaive = TransformManager.get_character_insect_glaive_state,
+            charge_blade = TransformManager.get_character_charge_blade_state,
+            greatsword_type = TransformManager.get_character_greatsword_charge_type,
+            greatsword_level = TransformManager.get_character_greatsword_charge_level,
+            bow_level = TransformManager.get_character_bow_charge_level,
+            hammer_level = TransformManager.get_character_hammer_charge_level
+        }
+        local getter = getters[type_key]
+        if not getter then return nil end
+        local ok, value = pcall(function() return getter(character) end)
+        return ok and value or nil
+    end,
+
+    -- 获取当前部位候选 Mesh，兼容自定义 Body ID 和旧 JSON 结构。
+    get_meshes = function(character, body_id, part_index)
+        if not character or not body_id then return {} end
+        if is_weapon_mode then
+            local _, weapon_objs = get_character_weapon_id(character)
+            local weapon_obj = weapon_objs and weapon_objs[part_index + 1]
+            local mesh = weapon_obj and get_mesh_component_recursive(weapon_obj)
+            return mesh and { mesh } or {}
+        end
+        local reference = active_overrides[body_id] and active_overrides[body_id][tostring(part_index)]
+        return get_character_part_meshes(character, part_index, reference)
+    end,
+
+    -- 读取当前部位的 Mesh 和材质状态，UI 不直接耦合装备扫描细节。
+    get_mesh_view = function(meshes, body_id, part_index)
+        local mesh = meshes and meshes[1]
+        if not mesh or not sdk.is_managed_object(mesh) then return nil end
+        local view = {
+            mesh_enabled = mesh:call("get_Enabled") ~= false,
+            materials = {}
+        }
+        local count = mesh:call("get_MaterialNum") or 0
+        for i = 0, count - 1 do
+            table.insert(view.materials, {
+                name = mesh:call("getMaterialName", i),
+                enabled = mesh:call("getMaterialsEnable", i) ~= false,
+                index = i
+            })
+        end
+        return view
+    end,
+
+    get_override = function(body_id, part_index)
+        return active_overrides[body_id] and active_overrides[body_id][tostring(part_index)]
+    end,
+
+    -- 切换 Mesh 显示状态，并写回旧 UI 共用的 active_overrides。
+    set_mesh_enabled = function(body_id, part_index, meshes, enabled)
+        if not body_id then return end
+        if not active_overrides[body_id] then active_overrides[body_id] = {} end
+        local key = tostring(part_index)
+        if not active_overrides[body_id][key] then
+            active_overrides[body_id][key] = { materials = {} }
+        elseif not active_overrides[body_id][key].materials then
+            active_overrides[body_id][key].materials = {}
+        end
+        active_overrides[body_id][key].mesh_enabled = enabled
+        for _, mesh in ipairs(meshes or {}) do
+            if sdk.is_managed_object(mesh) then mesh:call("set_Enabled", enabled) end
+        end
+    end,
+
+    -- 切换材质显示状态，并遵守全局隐藏分组的优先级。
+    set_material_enabled = function(body_id, part_index, meshes, material_name, enabled)
+        if not body_id then return end
+        if not active_overrides[body_id] then active_overrides[body_id] = {} end
+        local key = tostring(part_index)
+        if not active_overrides[body_id][key] then
+            active_overrides[body_id][key] = { materials = {} }
+        elseif not active_overrides[body_id][key].materials then
+            active_overrides[body_id][key].materials = {}
+        end
+        active_overrides[body_id][key].materials[material_name] = enabled
+        local render_enabled = enabled
+        if enabled and is_globally_hidden(part_index, material_name) then render_enabled = false end
+        for _, mesh in ipairs(meshes or {}) do
+            if sdk.is_managed_object(mesh) then
+                local count = mesh:call("get_MaterialNum") or 0
+                for i = 0, count - 1 do
+                    if mesh:call("getMaterialName", i) == material_name then
+                        mesh:call("setMaterialsEnable", i, render_enabled)
+                    end
+                end
+            end
+        end
+    end,
+
+    is_material_in_context = is_material_in_current_context,
+
+    -- 为新 UI 返回与旧 UI 完全一致的普通分组占用、全局分组占用和可操作状态。
+    get_material_occupancy = function(part_index, material_name)
+        return {
+            owner = get_material_group_owner(part_index, material_name),
+            global_groups = get_material_global_groups(part_index, material_name),
+            in_context = is_material_in_current_context(part_index, material_name)
+        }
+    end,
+
+    get_part_count = function(character, weapon_mode)
+        if not weapon_mode then return 6 end
+        local _, weapon_objs = get_character_weapon_id(character)
+        return weapon_objs and #weapon_objs or 1
+    end,
+
+    -- 武器部件优先显示旧 UI 括号内的真实 Mesh 名称，不再使用“武器 0”之类的序号名称。
+    get_part_label = function(character, weapon_mode, part_index)
+        if not weapon_mode then return nil end
+        local _, weapon_objs = get_character_weapon_id(character)
+        local weapon_obj = weapon_objs and weapon_objs[part_index + 1]
+        if not weapon_obj or not sdk.is_managed_object(weapon_obj) then return nil end
+        local mesh = get_mesh_component_recursive(weapon_obj)
+        local target = mesh and mesh:call("get_GameObject") or weapon_obj
+        local ok, name = pcall(function() return target:call("get_Name") end)
+        return ok and name or nil
+    end
+})
+-- REFramework 重载脚本时可能复用 require 缓存，兼容旧缓存实例缺少原型方法的情况。
+if refd2d_ui and not refd2d_ui.update then
+    setmetatable(refd2d_ui, { __index = Refd2dUI })
+end
+
 -- Debug 状态
 local show_debug_window = false
 
@@ -2666,6 +3123,9 @@ re.on_frame(function()
     -- 0. 执行分帧扫描器
     tick_scanner()
 
+    -- D2D 新 UI 自己维护快捷键按下沿和弹窗状态。
+    refd2d_ui:update()
+
     -- 1. 维护本地玩家 UI 状态
     local local_body_id = get_body_id()
     if local_body_id then
@@ -2673,19 +3133,45 @@ re.on_frame(function()
             last_body_id = local_body_id
             -- 切换装备后分组属于新的 Body，必须回到默认分组，避免沿用上一件装备的分组名称。
             current_group_name = ""
+            local restoring_mode_group = pending_mode_group_restore == true
+            if not restoring_mode_group then
+                -- 真实换装回到旧装备时只读取 JSON 默认预设，不恢复上次临时选择或手动覆盖。
+                active_group_presets[local_body_id] = nil
+                active_overrides[local_body_id] = nil
+                temp_applied_presets[local_body_id] = nil
+            end
             -- 如果该 body_id 已有 active_overrides（说明之前已加载过），只更新 UI 不重置状态
             if active_overrides[local_body_id] then
                 -- 仅更新 UI 配置和列表
                 local data = load_config_data(local_body_id)
                 if data then
                     current_config = data
+                    update_group_names_list()
+                    update_preset_names_list()
+                else
+                    -- 手动开关会留下 active_overrides，但没有 JSON 时必须清空上一件装备的预设 UI。
+                    load_body_config(local_body_id)
                 end
-                update_group_names_list()
-                update_preset_names_list()
             else
                 -- 全新加载：重置状态并应用默认预设
                 temp_applied_presets[local_body_id] = nil
                 load_body_config(local_body_id)
+            end
+            -- 仅模式切换后恢复同一配置 ID 的分组；新装备没有记录时仍使用默认分组。
+            if restoring_mode_group then
+                pending_mode_group_restore = false
+                local saved_group = mode_group_selection[local_body_id]
+                if saved_group and saved_group ~= "" and current_config.groups
+                    and current_config.groups[saved_group] then
+                    current_group_name = saved_group
+                    for index, group_name in ipairs(group_names_list) do
+                        if group_name == saved_group then
+                            selected_group_index = index + 1
+                            break
+                        end
+                    end
+                    update_preset_names_list()
+                end
             end
         end
     end
@@ -2844,6 +3330,12 @@ re.on_draw_ui(function()
         imgui.text_colored(string.format(T("version") .. ": %s | " .. T("author") .. ": %s", version, author), 0xFF808080)
         imgui.separator()
 
+        -- 新 UI 设置和旧 UI 隐藏逻辑由独立模块处理。
+        if refd2d_ui:draw_settings() then
+            imgui.tree_pop()
+            return
+        end
+
         -- 仅在调试模式下打印错误，避免刷屏
         -- 调试模式开关 (默认隐藏，需要时取消注释)
         -- local changed, val = imgui.checkbox(T("debug_mode") or "Debug Mode", show_debug_window)
@@ -2893,25 +3385,13 @@ re.on_draw_ui(function()
             -- 使用 Checkbox 模拟切换，因为部分版本也没有 radio_button
             local changed_armor, new_armor = imgui.checkbox(armor_mode_text, not is_weapon_mode)
             if changed_armor and new_armor then
-                if is_weapon_mode ~= false then
-                    is_weapon_mode = false
-                    last_body_id = nil
-                    current_group_name = ""
-                    -- 切换到防具模式时清除防具ID缓存，确保立即重新扫描
-                    body_id_cache = {}
-                end
+                switch_variant_mode(false)
             end
             
             imgui.same_line()
             local changed_weapon, new_weapon = imgui.checkbox(weapon_mode_text, is_weapon_mode)
             if changed_weapon and new_weapon then
-                if is_weapon_mode ~= true then
-                    is_weapon_mode = true
-                    last_body_id = nil
-                    current_group_name = ""
-                    -- 切换到武器模式时清除武器ID缓存，确保立即重新扫描
-                    weapon_id_cache = {}
-                end
+                switch_variant_mode(true)
             end
             imgui.separator()
 
@@ -2981,7 +3461,8 @@ re.on_draw_ui(function()
                                         if current_preset_name then apply_preset(current_preset_name) end
                                     end
                                 else
-                                    imgui.text_colored("[" .. T("no_presets") .. "]", 0xFF808080)
+                                    local no_preset_key = is_weapon_mode and "no_weapon_presets" or "no_presets"
+                                    imgui.text_colored("[" .. T(no_preset_key) .. "]", 0xFF808080)
                                 end
 
                                 imgui.table_next_column()
@@ -3174,7 +3655,13 @@ re.on_draw_ui(function()
                                 imgui.separator()
                                 if imgui.button(T("auto_find_preset")) then
                                     local st, res, m = pcall(find_auto_preset, body_id)
-                                    auto_find_log = st and (res and m or "Failed: " .. m) or "Lua Error: " .. tostring(res)
+                                    if st and res then
+                                        auto_find_log = T("auto_find_success") .. tostring(m or "")
+                                    elseif st and m == "No matching preset found" then
+                                        auto_find_log = T("auto_find_fail")
+                                    else
+                                        auto_find_log = st and ("Failed: " .. tostring(m)) or "Lua Error: " .. tostring(res)
+                                    end
                                 end
                                 if auto_find_log ~= "" then imgui.text_colored(auto_find_log, 0xFF00FFFF) end
                             end
