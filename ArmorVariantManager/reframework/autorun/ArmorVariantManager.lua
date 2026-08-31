@@ -1,15 +1,43 @@
 local mod_name = "ArmorVariantManager"
-local version = "3.3.0"
+local version = "4.0.0"
 local author = "MK,Moon,AZUSA"
 local global_config_path = "ArmorVariantManager/GlobalSettings.json"
 local global_config = {
-    language = "zh",
-    scan_interval = 0.5,
-    body_id_ttl = 1.0,
-    scanner_batch_size = 200
+    language = "zh", 
+    scan_interval = 0.5, 
+    body_id_ttl = 1.0, 
+    scanner_batch_size = 200, 
+    new_ui_enabled = true, 
+    new_ui_key = 0x24, 
+    auto_set_selected_preset_as_default = true 
 }
 local Localization = require("ArmorVariantManager_Core.Localization")
 local TransformManager = require("ArmorVariantManager_Core.TransformManager")
+local refd2d_module_names = {
+    "ArmorVariantManager_Core.UI.VariantManagerUI",
+    "ArmorVariantManager_Core.Documentation",
+    "ArmorVariantManager_UI",
+    "ArmorVariantManager_UI.Component.Runtime",
+    "ArmorVariantManager_UI.Component.Button",
+    "ArmorVariantManager_UI.Component.Checkbox",
+    "ArmorVariantManager_UI.Component.Input",
+    "ArmorVariantManager_UI.Component.InputNumber",
+    "ArmorVariantManager_UI.Component.List",
+    "ArmorVariantManager_UI.Component.Panel",
+    "ArmorVariantManager_UI.Component.Select",
+    "ArmorVariantManager_UI.Component.Slider",
+    "ArmorVariantManager_UI.Component.Tag",
+    "ArmorVariantManager_UI.Component.Window",
+    "ArmorVariantManager_UI.Service.BridgeRuntime",
+    "ArmorVariantManager_UI.Service.InputBlocker",
+    "ArmorVariantManager_UI.Service.NativeTextInput"
+}
+if package and package.loaded then
+    for _, module_name in ipairs(refd2d_module_names) do
+        package.loaded[module_name] = nil
+    end
+end
+local VariantManagerUI = require("ArmorVariantManager_Core.UI.VariantManagerUI")
 local function T(key)
     if not key then return "nil" end
     local lang = global_config.language or "en"
@@ -23,6 +51,11 @@ local function load_global_settings()
         if loaded.scan_interval then global_config.scan_interval = loaded.scan_interval end
         if loaded.body_id_ttl then global_config.body_id_ttl = loaded.body_id_ttl end
         if loaded.scanner_batch_size then global_config.scanner_batch_size = loaded.scanner_batch_size end
+        if loaded.new_ui_enabled ~= nil then global_config.new_ui_enabled = loaded.new_ui_enabled end
+        if loaded.new_ui_key then global_config.new_ui_key = loaded.new_ui_key end
+        if loaded.auto_set_selected_preset_as_default ~= nil then
+            global_config.auto_set_selected_preset_as_default = loaded.auto_set_selected_preset_as_default == true
+        end
     end
 end
 local function save_global_settings()
@@ -44,32 +77,64 @@ local type_cache = {
 }
 local show_window = true
 local last_body_id = nil
-local body_id_cache = {}
-local loaded_configs = {}
-local temp_applied_presets = {}
-local active_overrides = {}
+local body_id_cache = {} 
+local loaded_configs = {} 
+local temp_applied_presets = {} 
+local active_overrides = {} 
 local active_group_presets = {}
 local config_restored = {}
 local config_restore_handled = {}
+local parallel_condition_order = {
+    "hp", "weapon", "damage", "spirit", "dual_blades", "switch_axe",
+    "insect_glaive", "charge_blade", "greatsword_type", "greatsword_level",
+    "bow_level", "hammer_level"
+}
+local function create_default_parallel_settings()
+    local settings = {}
+    for index, key in ipairs(parallel_condition_order) do
+        settings[key] = { enabled = key == "hp", priority = index }
+    end
+    return settings
+end
+local function normalize_parallel_settings(settings)
+    if type(settings) ~= "table" then return create_default_parallel_settings() end
+    local legacy_order = {
+        "hp", "weapon", "spirit", "dual_blades", "switch_axe", "insect_glaive",
+        "charge_blade", "greatsword_type", "greatsword_level", "bow_level", "hammer_level"
+    }
+    local legacy_default = type(settings.damage) ~= "table"
+    if legacy_default then
+        for index, key in ipairs(legacy_order) do
+            local item = settings[key]
+            if type(item) ~= "table" or item.enabled ~= (key == "hp")
+                or tonumber(item.priority) ~= index then
+                legacy_default = false
+                break
+            end
+        end
+    end
+    for index, key in ipairs(parallel_condition_order) do
+        if type(settings[key]) ~= "table" then
+            settings[key] = { enabled = key == "hp", priority = index }
+        else
+            if settings[key].enabled == nil then settings[key].enabled = false end
+            if tonumber(settings[key].priority) == nil then settings[key].priority = index end
+        end
+    end
+    if legacy_default then
+        for index, key in ipairs(parallel_condition_order) do
+            settings[key].priority = index
+        end
+    end
+    return settings
+end
 local current_config = {
     default_preset = "",
     presets = {},
     groups = {},
     transform_type = "hp",
     is_parallel = false,
-    parallel_settings = {
-        hp = { enabled = true, priority = 1 },
-        weapon = { enabled = false, priority = 2 },
-        spirit = { enabled = false, priority = 3 },
-        dual_blades = { enabled = false, priority = 4 },
-        switch_axe = { enabled = false, priority = 5 },
-        insect_glaive = { enabled = false, priority = 6 },
-        charge_blade = { enabled = false, priority = 7 },
-        greatsword_type = { enabled = false, priority = 8 },
-        greatsword_level = { enabled = false, priority = 9 },
-        bow_level = { enabled = false, priority = 10 },
-        hammer_level = { enabled = false, priority = 11 }
-    },
+    parallel_settings = create_default_parallel_settings(),
     transform_rules = {},
     weapon_transform_rules = {
         { state = "sheathed", targets = {} },
@@ -146,19 +211,19 @@ local PART_INDEX_TO_NAME = {
 local new_preset_name = ""
 local selected_preset_index = 1
 local preset_names_list = {}
-local auto_find_log = ""
-local test_hp_input = "100"
-local current_group_name = ""
-local selected_group_index = 1
-local group_names_list = {}
-local new_group_name = ""
-local new_group_is_global = false
-local is_selection_mode = false
-local pending_material_selections = {}
+local auto_find_log = "" 
+local test_hp_input = "100" 
+local current_group_name = "" 
+local selected_group_index = 1 
+local group_names_list = {} 
+local new_group_name = "" 
+local new_group_is_global = false 
+local is_selection_mode = false 
+local pending_material_selections = {} 
 local mat_filter_text = {}
-local sort_mode = nil
-local sort_temp_list = {}
-local sort_selected_index = 1
+local sort_mode = nil 
+local sort_temp_list = {} 
+local sort_selected_index = 1 
 local function get_type(name)
     return sdk.find_type_definition(name)
 end
@@ -171,7 +236,7 @@ local function deep_copy_table(orig)
             copy[deep_copy_table(orig_key)] = deep_copy_table(orig_value)
         end
         setmetatable(copy, deep_copy_table(getmetatable(orig)))
-    else
+    else 
         copy = orig
     end
     return copy
@@ -353,14 +418,14 @@ local function get_character_body_id(character)
     body_id_cache[cache_key] = { id = result_id, last_check = current_time }
     return result_id
 end
-local character_cache = {}
-local CACHE_TTL_BUFFER = 10.0
-local last_valid_local_player = nil
-local last_valid_local_player_time = 0
-local PLAYER_PERSISTENCE_TIME = 1.0
+local character_cache = {} 
+local CACHE_TTL_BUFFER = 10.0 
+local last_valid_local_player = nil 
+local last_valid_local_player_time = 0 
+local PLAYER_PERSISTENCE_TIME = 1.0 
 local scanner = {
-    state = "IDLE",
-    transforms = nil,
+    state = "IDLE", 
+    transforms = nil, 
     count = 0,
     index = 1,
     last_scan_time = 0
@@ -476,7 +541,7 @@ local function tick_scanner()
 end
 local function get_all_characters()
     local chars = {}
-    local seen_objs = {}
+    local seen_objs = {} 
     if not type_player_manager then type_player_manager = get_type("app.PlayerManager") end
     local pm = get_player_manager()
     if pm then
@@ -494,7 +559,7 @@ local function get_all_characters()
                                 local key = tostring(game_obj)
                                 if not seen_objs[key] then
                                     local bid = get_character_body_id(char)
-                                    if bid and string.find(bid, "^ch03") then
+                                    if bid then
                                         table.insert(chars, char)
                                         seen_objs[key] = true
                                     end
@@ -516,7 +581,7 @@ local function get_all_characters()
                         local key = tostring(game_obj)
                         if not seen_objs[key] then
                             local bid = get_character_body_id(char)
-                            if bid and string.find(bid, "^ch03") then
+                            if bid then
                                 table.insert(chars, char)
                                 seen_objs[key] = true
                             end
@@ -544,7 +609,7 @@ local function get_all_characters()
                 seen_objs[key] = true
             end
         else
-            character_cache[key] = nil
+            character_cache[key] = nil 
         end
     end
     return chars
@@ -587,6 +652,8 @@ local function get_local_player_character()
     return char
 end
 local is_weapon_mode = false
+local mode_group_selection = {}
+local pending_mode_group_restore = false
 local function is_weapon_id(id)
     return id and (string.match(id, "^wp%d%d") ~= nil or string.match(id, "^it%d%d%d%d") ~= nil)
 end
@@ -642,11 +709,14 @@ local function update_preset_names_list()
                     added[name] = true
                 end
             end
+            local missing = {}
             for name, _ in pairs(target_presets) do
                 if not added[name] then
-                    table.insert(preset_names_list, name)
+                    table.insert(missing, name)
                 end
             end
+            table.sort(missing)
+            for _, name in ipairs(missing) do table.insert(preset_names_list, name) end
         else
             for name, _ in pairs(target_presets) do
                 table.insert(preset_names_list, name)
@@ -706,30 +776,118 @@ local function update_group_names_list()
     if #group_names_list == 0 then selected_group_index = 1
     elseif selected_group_index > #group_names_list then selected_group_index = 1 end
 end
-local function get_mesh_component_recursive(game_obj)
-    if not game_obj then return nil end
-    if not sdk.is_managed_object(game_obj) then return nil end
+local function collect_mesh_components_recursive(game_obj, result, visited)
+    if not game_obj or not sdk.is_managed_object(game_obj) then return end
     if not type_mesh then
         type_mesh = get_type("via.render.Mesh")
-        if not type_mesh then return nil end
+        if not type_mesh then return end
     end
-    local ok_mesh, mesh = pcall(function() return game_obj:call("getComponent(System.Type)", type_mesh:get_runtime_type()) end)
-    if ok_mesh and mesh then return mesh end
-    local ok_transform, transform = pcall(function() return game_obj:call("get_Transform") end)
-    if ok_transform and transform then
-        local ok_child, child = pcall(function() return transform:call("get_Child") end)
-        while ok_child and child do
-            local ok_child_obj, child_obj = pcall(function() return child:call("get_GameObject") end)
-            if ok_child_obj and child_obj then
-                local ok_c_mesh, c_mesh = pcall(function() return child_obj:call("getComponent(System.Type)", type_mesh:get_runtime_type()) end)
-                if ok_c_mesh and c_mesh then return c_mesh end
-            end
-            ok_child, child = pcall(function() return child:call("get_Next") end)
+    result = result or {}
+    visited = visited or {}
+    local obj_key = tostring(game_obj)
+    if visited[obj_key] then return end
+    visited[obj_key] = true
+    local ok_mesh, mesh = pcall(function()
+        return game_obj:call("getComponent(System.Type)", type_mesh:get_runtime_type())
+    end)
+    if ok_mesh and mesh and sdk.is_managed_object(mesh) then
+        local mesh_key = tostring(mesh)
+        if not visited[mesh_key] then
+            visited[mesh_key] = true
+            table.insert(result, mesh)
         end
     end
-    return nil
+    local ok_transform, transform = pcall(function() return game_obj:call("get_Transform") end)
+    if not ok_transform or not transform then return end
+    local ok_child, child = pcall(function() return transform:call("get_Child") end)
+    while ok_child and child do
+        local ok_child_obj, child_obj = pcall(function() return child:call("get_GameObject") end)
+        if ok_child_obj and child_obj then
+            collect_mesh_components_recursive(child_obj, result, visited)
+        end
+        ok_child, child = pcall(function() return child:call("get_Next") end)
+    end
 end
-local function get_character_part(character, part_index)
+local function get_mesh_component_recursive(game_obj)
+    local meshes = {}
+    collect_mesh_components_recursive(game_obj, meshes, {})
+    return meshes[1]
+end
+local get_character_part
+local function is_player_face_object(game_obj)
+    if not game_obj then return false end
+    local ok_name, name = pcall(function() return game_obj:call("get_Name") end)
+    return ok_name and name == "Player_Face"
+end
+local character_mesh_cache = {}
+local CHARACTER_MESH_CACHE_TTL = 0.25
+local function get_all_character_meshes(character)
+    if not character or not sdk.is_managed_object(character) then return {} end
+    local ok_root, root = pcall(function() return character:call("get_GameObject") end)
+    if not ok_root or not root or not sdk.is_managed_object(root) then return {} end
+    local cache_key = tostring(root)
+    local now = os.clock()
+    local cached = character_mesh_cache[cache_key]
+    if cached and now - cached.time <= CHARACTER_MESH_CACHE_TTL then
+        return cached.meshes
+    end
+    local meshes = {}
+    collect_mesh_components_recursive(root, meshes, {})
+    character_mesh_cache[cache_key] = { time = now, meshes = meshes }
+    return meshes
+end
+local function get_character_part_meshes(character, part_index, part_data)
+    local part_obj = get_character_part(character, part_index)
+    if part_obj and not is_player_face_object(part_obj) then
+        local part_meshes = {}
+        collect_mesh_components_recursive(part_obj, part_meshes, {})
+        local armor_meshes = {}
+        for _, mesh in ipairs(part_meshes) do
+            local ok_go, mesh_game_obj = pcall(function() return mesh:call("get_GameObject") end)
+            if not (ok_go and mesh_game_obj and is_player_face_object(mesh_game_obj)) then
+                table.insert(armor_meshes, mesh)
+            end
+        end
+        if #armor_meshes > 0 then
+            return armor_meshes
+        end
+    end
+    local all_meshes = get_all_character_meshes(character)
+    if #all_meshes == 0 then return {} end
+    local material_defs = part_data and part_data.materials
+    if material_defs and next(material_defs) then
+        local best_count = 0
+        local best_meshes = {}
+        for _, mesh in ipairs(all_meshes) do
+            local count = 0
+            local is_player_face = false
+            local ok_go, mesh_game_obj = pcall(function() return mesh:call("get_GameObject") end)
+            if ok_go and mesh_game_obj then is_player_face = is_player_face_object(mesh_game_obj) end
+            if not is_player_face then
+                local mat_count = 0
+                local ok_count, value = pcall(function() return mesh:call("get_MaterialNum") end)
+                if ok_count and value then mat_count = value end
+                for i = 0, mat_count - 1 do
+                    local ok_name, mat_name = pcall(function() return mesh:call("getMaterialName", i) end)
+                    if ok_name and mat_name and material_defs[mat_name] ~= nil then
+                        count = count + 1
+                    end
+                end
+                if count > best_count then
+                    best_count = count
+                    best_meshes = { mesh }
+                elseif count > 0 and count == best_count then
+                    table.insert(best_meshes, mesh)
+                end
+            end
+        end
+        if best_count > 0 then
+            return best_meshes
+        end
+    end
+    return {}
+end
+get_character_part = function(character, part_index)
     if not character then return nil end
     local status, part_obj = pcall(function() return character:call("getParts", part_index) end)
     if status and part_obj then return part_obj end
@@ -737,7 +895,7 @@ local function get_character_part(character, part_index)
     if game_obj_status and game_obj then
         local transform = game_obj:call("get_Transform")
         if transform then
-            local parts_map = {}
+            local parts_map = {} 
             local child = transform:call("get_Child")
             while child do
                 local child_obj = child:call("get_GameObject")
@@ -808,7 +966,21 @@ local function get_material_global_groups(part_index, mat_name)
             table.insert(result, g_name)
         end
     end
+    table.sort(result)
     return result
+end
+local function switch_variant_mode(weapon_mode)
+    if is_weapon_mode == weapon_mode then return end
+    if last_body_id then mode_group_selection[last_body_id] = current_group_name end
+    is_weapon_mode = weapon_mode
+    last_body_id = nil
+    current_group_name = ""
+    pending_mode_group_restore = true
+    if weapon_mode then
+        weapon_id_cache = {}
+    else
+        body_id_cache = {}
+    end
 end
 local function is_material_in_current_context(part_index, mat_name)
     if current_group_name == "" then
@@ -849,8 +1021,8 @@ local function is_globally_hidden(part_index, mat_name)
     end
     return false
 end
-local applied_parts_cache = {}
-local applied_weapon_cache = {}
+local applied_parts_cache = {} 
+local applied_weapon_cache = {} 
 local function apply_preset_to_armor(character, preset_data, ignore_context, force_apply)
     if not character or not preset_data then return end
     if not sdk.is_managed_object(character) then return end
@@ -863,12 +1035,10 @@ local function apply_preset_to_armor(character, preset_data, ignore_context, for
     end
     if not applied_parts_cache[char_addr] then applied_parts_cache[char_addr] = {} end
     for i = 0, 5 do
-        local part_obj = get_character_part(character, i)
-        if part_obj then
-            local part_data = preset_data[tostring(i)]
-            if part_data then
-                local mesh_component = get_mesh_component_recursive(part_obj)
-                if mesh_component then
+        local part_data = preset_data[tostring(i)]
+        if part_data then
+            local mesh_components = get_character_part_meshes(character, i, part_data)
+            for _, mesh_component in ipairs(mesh_components) do
                     local mat_count = mesh_component:call("get_MaterialNum") or 0
                     local first_mat = mat_count > 0 and mesh_component:call("getMaterialName", 0) or ""
                     local state_hash = tostring(mesh_component) .. "_" .. tostring(mat_count) .. "_" .. first_mat
@@ -900,7 +1070,6 @@ local function apply_preset_to_armor(character, preset_data, ignore_context, for
                             end
                         end
                     end
-                end
             end
         end
     end
@@ -967,7 +1136,7 @@ local function create_new_group(group_name, body_id, is_global)
     end
     if not has_selection then return false end
     if not current_config.groups then current_config.groups = {} end
-    if current_config.groups[group_name] then return false end
+    if current_config.groups[group_name] then return false end 
     local new_group = {
         mask = deep_copy_table(pending_material_selections),
         presets = {},
@@ -1036,52 +1205,7 @@ local function load_config_data(body_id)
         end
         if not loaded_data.transform_type then loaded_data.transform_type = "hp" end
         if loaded_data.is_parallel == nil then loaded_data.is_parallel = false end
-        if not loaded_data.parallel_settings then
-            loaded_data.parallel_settings = {
-                hp = { enabled = true, priority = 1 },
-                weapon = { enabled = false, priority = 2 },
-                damage = { enabled = false, priority = 3 },
-                spirit = { enabled = false, priority = 4 },
-                dual_blades = { enabled = false, priority = 5 },
-                switch_axe = { enabled = false, priority = 6 },
-                insect_glaive = { enabled = false, priority = 7 },
-                charge_blade = { enabled = false, priority = 8 },
-                greatsword_type = { enabled = false, priority = 9 },
-                greatsword_level = { enabled = false, priority = 10 },
-                bow_level = { enabled = false, priority = 11 },
-                hammer_level = { enabled = false, priority = 12 }
-            }
-        else
-            if not loaded_data.parallel_settings.damage then loaded_data.parallel_settings.damage = { enabled = false, priority = 3 } end
-            if not loaded_data.parallel_settings.weapon then loaded_data.parallel_settings.weapon = { enabled = false, priority = 2 } end
-            if not loaded_data.parallel_settings.spirit then
-                loaded_data.parallel_settings.spirit = { enabled = false, priority = 3 }
-            end
-            if not loaded_data.parallel_settings.dual_blades then
-                loaded_data.parallel_settings.dual_blades = { enabled = false, priority = 4 }
-            end
-            if not loaded_data.parallel_settings.switch_axe then
-                loaded_data.parallel_settings.switch_axe = { enabled = false, priority = 5 }
-            end
-            if not loaded_data.parallel_settings.insect_glaive then
-                loaded_data.parallel_settings.insect_glaive = { enabled = false, priority = 6 }
-            end
-            if not loaded_data.parallel_settings.charge_blade then
-                loaded_data.parallel_settings.charge_blade = { enabled = false, priority = 7 }
-            end
-            if not loaded_data.parallel_settings.greatsword_type then
-                loaded_data.parallel_settings.greatsword_type = { enabled = false, priority = 8 }
-            end
-            if not loaded_data.parallel_settings.greatsword_level then
-                loaded_data.parallel_settings.greatsword_level = { enabled = false, priority = 9 }
-            end
-            if not loaded_data.parallel_settings.bow_level then
-                loaded_data.parallel_settings.bow_level = { enabled = false, priority = 10 }
-            end
-            if not loaded_data.parallel_settings.hammer_level then
-                loaded_data.parallel_settings.hammer_level = { enabled = false, priority = 12 }
-            end
-        end
+        loaded_data.parallel_settings = normalize_parallel_settings(loaded_data.parallel_settings)
         local migrated_damage = false
         if loaded_data.transform_rules then
             for i = #loaded_data.transform_rules, 1, -1 do
@@ -1418,6 +1542,19 @@ local function apply_preset(preset_name)
         temp_applied_presets[current_body_id] = preset_name
     end
     local all_chars = get_all_characters()
+    local local_char_for_preset = get_local_player_character()
+    if local_char_for_preset and sdk.is_managed_object(local_char_for_preset) then
+        local local_seen = false
+        for _, listed_char in ipairs(all_chars) do
+            if listed_char == local_char_for_preset then
+                local_seen = true
+                break
+            end
+        end
+        if not local_seen then
+            table.insert(all_chars, local_char_for_preset)
+        end
+    end
     for _, char in ipairs(all_chars) do
         if is_weapon_id(current_body_id) then
             local char_weapon_id, w_objs = get_character_weapon_id(char)
@@ -1466,19 +1603,7 @@ local function load_body_config(body_id)
         groups = {},
         transform_type = "hp",
         is_parallel = false,
-        parallel_settings = {
-            hp = { enabled = true, priority = 1 },
-            weapon = { enabled = false, priority = 2 },
-            spirit = { enabled = false, priority = 3 },
-            dual_blades = { enabled = false, priority = 4 },
-            switch_axe = { enabled = false, priority = 5 },
-            insect_glaive = { enabled = false, priority = 6 },
-            charge_blade = { enabled = false, priority = 7 },
-            greatsword_type = { enabled = false, priority = 8 },
-            greatsword_level = { enabled = false, priority = 9 },
-            bow_level = { enabled = false, priority = 10 },
-            hammer_level = { enabled = false, priority = 11 }
-        },
+        parallel_settings = create_default_parallel_settings(),
         transform_rules = {},
         weapon_transform_rules = {
             { state = "sheathed", targets = {} },
@@ -1576,6 +1701,23 @@ local function save_current_config_to_file(body_id)
         TransformManager.clear_last_state_cache()
     end
 end
+local function set_preset_as_default(preset_name, body_id)
+    if not body_id or not preset_name or preset_name == "" or not current_config then return false end
+    local target = current_config
+    if current_group_name ~= "" and current_config.groups
+        and current_config.groups[current_group_name] then
+        target = current_config.groups[current_group_name]
+    end
+    if not target.presets or not target.presets[preset_name] then return false end
+    target.default_preset = preset_name
+    save_current_config_to_file(body_id)
+    update_preset_names_list()
+    return true
+end
+local function auto_set_selected_preset_as_default(body_id)
+    if not global_config.auto_set_selected_preset_as_default then return false end
+    return set_preset_as_default(preset_names_list[selected_preset_index], body_id)
+end
 local function restore_config_from_backup(body_id)
     if not body_id then return false end
     local backup_path = get_backup_path(body_id)
@@ -1586,6 +1728,7 @@ local function restore_config_from_backup(body_id)
     json.dump_file(path, backup_data)
     loaded_configs[body_id] = nil
     active_overrides[body_id] = nil
+    active_group_presets[body_id] = nil
     config_restored[body_id] = nil
     local data = load_config_data(body_id)
     if data then
@@ -1648,16 +1791,18 @@ local function save_preset(preset_name, body_id)
     else
         for i = 0, 5 do
             local part_obj = get_character_part(character, i)
-            if part_obj then
-                local mesh_component = get_mesh_component_recursive(part_obj)
-                if mesh_component then
-                    local part_data = {
-                        materials = {}
-                    }
-                    local is_global_ctx = (current_group_name ~= "" and current_config.groups
-                        and current_config.groups[current_group_name]
-                        and current_config.groups[current_group_name].is_global)
-                    if not is_global_ctx then
+            local reference_part_data = active_overrides[body_id]
+                and active_overrides[body_id][tostring(i)]
+            local mesh_components = get_character_part_meshes(character, i, reference_part_data)
+            if #mesh_components > 0 then
+                local part_data = {
+                    materials = {}
+                }
+                local is_global_ctx = (current_group_name ~= "" and current_config.groups
+                    and current_config.groups[current_group_name]
+                    and current_config.groups[current_group_name].is_global)
+                for _, mesh_component in ipairs(mesh_components) do
+                    if not is_global_ctx and part_data.mesh_enabled == nil then
                         part_data.mesh_enabled = mesh_component:call("get_Enabled")
                     end
                     local mat_count = mesh_component:call("get_MaterialNum")
@@ -1675,9 +1820,9 @@ local function save_preset(preset_name, body_id)
                             end
                         end
                     end
-                    if next(part_data.materials) or current_group_name == "" then
-                        new_preset_data[tostring(i)] = part_data
-                    end
+                end
+                if next(part_data.materials) or current_group_name == "" then
+                    new_preset_data[tostring(i)] = part_data
                 end
             end
         end
@@ -1713,16 +1858,38 @@ local function find_auto_preset(target_body_id)
     if not target_body_id then return false, "No Body ID" end
     local character = get_local_player_character()
     if not character or not sdk.is_managed_object(character) then return false, "No Character" end
-    local body_part = get_character_part(character, 1)
-    if not body_part then return false, "Body part not found" end
-    local mesh = get_mesh_component_recursive(body_part)
-    if not mesh then return false, "Mesh not found" end
+    local is_weapon_target = is_weapon_id(target_body_id)
     local current_mats = {}
-    local mat_count = mesh:call("get_MaterialNum")
-    if not mat_count or mat_count == 0 then return false, "No materials on Body" end
-    for i = 0, mat_count - 1 do
-        local name = mesh:call("getMaterialName", i)
-        if name then current_mats[name] = true end
+    local current_weapon_mats = {}
+    if is_weapon_target then
+        local current_weapon_id, weapon_objs = get_character_weapon_id(character)
+        if current_weapon_id ~= target_body_id or not weapon_objs or #weapon_objs == 0 then
+            return false, "Weapon not found"
+        end
+        for index, weapon_obj in ipairs(weapon_objs) do
+            local mesh = get_mesh_component_recursive(weapon_obj)
+            if mesh then
+                local mats = {}
+                local mat_count = mesh:call("get_MaterialNum") or 0
+                for material_index = 0, mat_count - 1 do
+                    local name = mesh:call("getMaterialName", material_index)
+                    if name then mats[name] = true end
+                end
+                if next(mats) then current_weapon_mats[tostring(index - 1)] = mats end
+            end
+        end
+        if not next(current_weapon_mats) then return false, "No materials on Weapon" end
+    else
+        local body_part = get_character_part(character, 1) 
+        if not body_part then return false, "Body part not found" end
+        local mesh = get_mesh_component_recursive(body_part)
+        if not mesh then return false, "Mesh not found" end
+        local mat_count = mesh:call("get_MaterialNum")
+        if not mat_count or mat_count == 0 then return false, "No materials on Body" end
+        for i = 0, mat_count - 1 do
+            local name = mesh:call("getMaterialName", i)
+            if name then current_mats[name] = true end
+        end
     end
     if not fs or not fs.glob then return false, "fs.glob missing" end
     local search_patterns = {
@@ -1755,7 +1922,32 @@ local function find_auto_preset(target_body_id)
             if data and data.presets then
                 local first_preset = nil
                 for _, preset in pairs(data.presets) do first_preset = preset; break end
-                if first_preset and first_preset["1"] and first_preset["1"].materials then
+                if is_weapon_target then
+                    local normalized_file = file:gsub("\\", "/")
+                    local candidate_id = normalized_file:match("([^/]+)%.json$")
+                    local match = candidate_id and is_weapon_id(candidate_id) and first_preset ~= nil
+                    local match_count = 0
+                    if match then
+                        for part_index, part_data in pairs(first_preset) do
+                            local preset_mats = part_data and part_data.materials
+                            if preset_mats and next(preset_mats) then
+                                local weapon_mats = current_weapon_mats[tostring(part_index)]
+                                if not weapon_mats then match = false; break end
+                                for mat_name, _ in pairs(preset_mats) do
+                                    if not weapon_mats[mat_name] then match = false; break end
+                                    match_count = match_count + 1
+                                end
+                                if not match then break end
+                            end
+                        end
+                    end
+                    if match and match_count > 0 then
+                        current_config = data
+                        save_current_config_to_file(target_body_id)
+                        update_preset_names_list()
+                        return true, "Success! Loaded from " .. file
+                    end
+                elseif first_preset and first_preset["1"] and first_preset["1"].materials then
                     local preset_mats = first_preset["1"].materials
                     local match = true
                     local match_count = 0
@@ -1854,7 +2046,7 @@ local function draw_mesh_toggle(game_object, label, body_id, part_index)
                                     if not active_overrides[body_id] then active_overrides[body_id] = {} end
                                     if not active_overrides[body_id][s_idx] then active_overrides[body_id][s_idx] = { materials = {} } end
                                     if not active_overrides[body_id][s_idx].materials then active_overrides[body_id][s_idx].materials = {} end
-                                    active_overrides[body_id][s_idx].materials[mn] = target_val
+                                    active_overrides[body_id][s_idx].materials[mn] = target_val  
                                 end
                             end
                         end
@@ -1883,7 +2075,7 @@ local function draw_mesh_toggle(game_object, label, body_id, part_index)
                                     if not active_overrides[body_id] then active_overrides[body_id] = {} end
                                     if not active_overrides[body_id][s_idx] then active_overrides[body_id][s_idx] = { materials = {} } end
                                     if not active_overrides[body_id][s_idx].materials then active_overrides[body_id][s_idx].materials = {} end
-                                    active_overrides[body_id][s_idx].materials[mn] = nv
+                                    active_overrides[body_id][s_idx].materials[mn] = nv  
                                 end
                             end
                         end
@@ -1992,6 +2184,348 @@ local function draw_mesh_toggle(game_object, label, body_id, part_index)
         imgui.text_colored(label .. " " .. T("no_mesh"), 0xFF808080)
     end
 end
+local variant_manager_ui = VariantManagerUI.new({
+    config = global_config,
+    translate = T,
+    version = version,
+    author = author,
+    save_settings = save_global_settings,
+    get_context = function()
+        local body_id = get_body_id()
+        local active_preset_name = body_id and active_group_presets[body_id]
+            and active_group_presets[body_id][current_group_name] or ""
+        if not active_preset_name or active_preset_name == "" then
+            if current_group_name == "" then
+                active_preset_name = current_config.default_preset or ""
+            else
+                local group = current_config.groups and current_config.groups[current_group_name]
+                active_preset_name = group and group.default_preset or ""
+            end
+        end
+        if active_preset_name ~= "" then
+            for index, preset_name in ipairs(preset_names_list) do
+                if preset_name == active_preset_name then
+                    selected_preset_index = index
+                    break
+                end
+            end
+        end
+        return {
+            body_id = body_id,
+            character = get_local_player_character(),
+            weapon_mode = is_weapon_mode,
+            group_name = current_group_name,
+            group_names = group_names_list,
+            preset_names = preset_names_list,
+            selected_preset_index = selected_preset_index,
+            selected_preset_name = active_preset_name ~= "" and active_preset_name
+                or preset_names_list[selected_preset_index],
+            config_restored = body_id and config_restored[body_id] == true
+                and config_restore_handled[body_id] ~= true,
+            config = current_config
+        }
+    end,
+    has_any_presets = function(config)
+        if config and config.presets and next(config.presets) then return true end
+        for _, group in pairs((config and config.groups) or {}) do
+            if group.presets and next(group.presets) then return true end
+        end
+        return false
+    end,
+    auto_find_preset = function(body_id)
+        local ok, found, message = pcall(find_auto_preset, body_id)
+        if not ok then return false, tostring(found) end
+        return found == true, message
+    end,
+    restore_backup = function(body_id)
+        if not body_id then return false end
+        config_restore_handled[body_id] = true
+        return restore_config_from_backup(body_id) == true
+    end,
+    dismiss_backup = function(body_id)
+        if not body_id then return end
+        config_restore_handled[body_id] = true
+        config_restored[body_id] = nil
+    end,
+    set_mode = function(weapon_mode)
+        switch_variant_mode(weapon_mode)
+    end,
+    select_group = function(group_name)
+        group_name = group_name or ""
+        if group_name ~= "" and (not current_config.groups or not current_config.groups[group_name]) then
+            group_name = ""
+        end
+        current_group_name = group_name
+        selected_group_index = 1
+        for i, name in ipairs(group_names_list) do
+            if name == current_group_name then
+                selected_group_index = i + 1
+                break
+            end
+        end
+        variant_manager_ui.material_offset = 0
+        update_preset_names_list()
+        local body_id = get_body_id()
+        local active_preset = body_id and active_group_presets[body_id]
+            and active_group_presets[body_id][current_group_name]
+        if active_preset and active_preset ~= "" then
+            for index, preset_name in ipairs(preset_names_list) do
+                if preset_name == active_preset then
+                    selected_preset_index = index
+                    break
+                end
+            end
+        end
+    end,
+    select_preset = function(index)
+        selected_preset_index = index
+    end,
+    reorder_groups = function(items)
+        local body_id = get_body_id()
+        if not body_id or not current_config then return end
+        current_config.group_order = {}
+        for _, item in ipairs(items or {}) do
+            if item.name and item.name ~= "" then
+                table.insert(current_config.group_order, item.name)
+            end
+        end
+        update_group_names_list()
+        save_current_config_to_file(body_id)
+    end,
+    create_group = function(group_name, is_global, selections)
+        local body_id = get_body_id()
+        if not body_id then return false end
+        pending_material_selections = selections or {}
+        local created = create_new_group(group_name, body_id, is_global == true)
+        if created then
+            current_group_name = group_name
+            selected_group_index = 1
+            for i, name in ipairs(group_names_list) do
+                if name == current_group_name then selected_group_index = i + 1; break end
+            end
+            selected_preset_index = 1
+            update_group_names_list()
+            update_preset_names_list()
+        else
+            pending_material_selections = {}
+        end
+        return created == true
+    end,
+    delete_group = function(group_name)
+        local body_id = get_body_id()
+        if not body_id then return false end
+        local deleted = delete_group(group_name, body_id)
+        if deleted then
+            selected_preset_index = 1
+            variant_manager_ui.material_offset = 0
+            update_group_names_list()
+            update_preset_names_list()
+        end
+        return deleted == true
+    end,
+    reorder_presets = function(items)
+        local body_id = get_body_id()
+        if not body_id or not current_config then return end
+        local target = current_config
+        if current_group_name ~= "" and current_config.groups
+            and current_config.groups[current_group_name] then
+            target = current_config.groups[current_group_name]
+        end
+        target.preset_order = {}
+        for _, preset_name in ipairs(items or {}) do
+            table.insert(target.preset_order, preset_name)
+        end
+        update_preset_names_list()
+        save_current_config_to_file(body_id)
+    end,
+    create_preset = function(preset_name)
+        local body_id = get_body_id()
+        if not body_id or not preset_name or preset_name == "" then return false end
+        local saved = save_preset(preset_name, body_id)
+        if saved then update_preset_names_list() end
+        return saved == true
+    end,
+    overwrite_preset = function(preset_name)
+        local body_id = get_body_id()
+        if not body_id or not preset_name or preset_name == "" then return false end
+        local saved = save_preset(preset_name, body_id)
+        if saved then update_preset_names_list() end
+        return saved == true
+    end,
+    delete_preset = function(preset_name)
+        local body_id = get_body_id()
+        if not body_id or not preset_name or preset_name == "" or not current_config then return false end
+        local target = current_config
+        if current_group_name ~= "" and current_config.groups
+            and current_config.groups[current_group_name] then
+            target = current_config.groups[current_group_name]
+        end
+        if not target.presets or not target.presets[preset_name] then return false end
+        target.presets[preset_name] = nil
+        if target.default_preset == preset_name then target.default_preset = "" end
+        if target.preset_order then
+            for index = #target.preset_order, 1, -1 do
+                if target.preset_order[index] == preset_name then
+                    table.remove(target.preset_order, index)
+                    break
+                end
+            end
+        end
+        update_preset_names_list()
+        save_current_config_to_file(body_id)
+        return true
+    end,
+    set_default_preset = function(preset_name)
+        return set_preset_as_default(preset_name, get_body_id())
+    end,
+    set_auto_default_enabled = function(enabled, preset_name, body_id)
+        global_config.auto_set_selected_preset_as_default = enabled == true
+        save_global_settings()
+        if global_config.auto_set_selected_preset_as_default then
+            return set_preset_as_default(preset_name, body_id or get_body_id())
+        end
+        return true
+    end,
+    auto_set_default_preset = function(preset_name, body_id)
+        if not global_config.auto_set_selected_preset_as_default then return false end
+        return set_preset_as_default(preset_name, body_id or get_body_id())
+    end,
+    apply_preset = apply_preset,
+    save_transform = function(context)
+        local body_id = context and context.body_id or get_body_id()
+        if body_id then save_current_config_to_file(body_id) end
+    end,
+    get_transform_state = function(type_key, character)
+        if not character then return nil end
+        if type_key == "damage" then
+            local ok, remaining = pcall(function()
+                local game_object = character:call("get_GameObject")
+                local character_address = tostring(game_object or character)
+                return TransformManager.get_damage_remaining_time(character_address)
+            end)
+            return ok and remaining or nil
+        end
+        local getters = {
+            hp = TransformManager.get_character_hp_percent,
+            weapon = TransformManager.get_character_weapon_drawn,
+            spirit = TransformManager.get_character_spirit_level,
+            dual_blades = TransformManager.get_character_dual_blades_state,
+            switch_axe = TransformManager.get_character_switch_axe_state,
+            insect_glaive = TransformManager.get_character_insect_glaive_state,
+            charge_blade = TransformManager.get_character_charge_blade_state,
+            greatsword_type = TransformManager.get_character_greatsword_charge_type,
+            greatsword_level = TransformManager.get_character_greatsword_charge_level,
+            bow_level = TransformManager.get_character_bow_charge_level,
+            hammer_level = TransformManager.get_character_hammer_charge_level
+        }
+        local getter = getters[type_key]
+        if not getter then return nil end
+        local ok, value = pcall(function() return getter(character) end)
+        if ok then return value end
+        return nil
+    end,
+    set_test_hp = function(character, percent)
+        if not character then return false end
+        local ok, result = pcall(function()
+            return TransformManager.set_character_hp_percent(character, percent)
+        end)
+        return ok and result ~= false
+    end,
+    get_meshes = function(character, body_id, part_index)
+        if not character or not body_id then return {} end
+        if is_weapon_mode then
+            local _, weapon_objs = get_character_weapon_id(character)
+            local weapon_obj = weapon_objs and weapon_objs[part_index + 1]
+            local mesh = weapon_obj and get_mesh_component_recursive(weapon_obj)
+            return mesh and { mesh } or {}
+        end
+        local reference = active_overrides[body_id] and active_overrides[body_id][tostring(part_index)]
+        return get_character_part_meshes(character, part_index, reference)
+    end,
+    get_mesh_view = function(meshes, body_id, part_index)
+        local mesh = meshes and meshes[1]
+        if not mesh or not sdk.is_managed_object(mesh) then return nil end
+        local view = {
+            mesh_enabled = mesh:call("get_Enabled") ~= false,
+            materials = {}
+        }
+        local count = mesh:call("get_MaterialNum") or 0
+        for i = 0, count - 1 do
+            table.insert(view.materials, {
+                name = mesh:call("getMaterialName", i),
+                enabled = mesh:call("getMaterialsEnable", i) ~= false,
+                index = i
+            })
+        end
+        return view
+    end,
+    get_override = function(body_id, part_index)
+        return active_overrides[body_id] and active_overrides[body_id][tostring(part_index)]
+    end,
+    set_mesh_enabled = function(body_id, part_index, meshes, enabled)
+        if not body_id then return end
+        if not active_overrides[body_id] then active_overrides[body_id] = {} end
+        local key = tostring(part_index)
+        if not active_overrides[body_id][key] then
+            active_overrides[body_id][key] = { materials = {} }
+        elseif not active_overrides[body_id][key].materials then
+            active_overrides[body_id][key].materials = {}
+        end
+        active_overrides[body_id][key].mesh_enabled = enabled
+        for _, mesh in ipairs(meshes or {}) do
+            if sdk.is_managed_object(mesh) then mesh:call("set_Enabled", enabled) end
+        end
+    end,
+    set_material_enabled = function(body_id, part_index, meshes, material_name, enabled)
+        if not body_id then return end
+        if not active_overrides[body_id] then active_overrides[body_id] = {} end
+        local key = tostring(part_index)
+        if not active_overrides[body_id][key] then
+            active_overrides[body_id][key] = { materials = {} }
+        elseif not active_overrides[body_id][key].materials then
+            active_overrides[body_id][key].materials = {}
+        end
+        active_overrides[body_id][key].materials[material_name] = enabled
+        local render_enabled = enabled
+        if enabled and is_globally_hidden(part_index, material_name) then render_enabled = false end
+        for _, mesh in ipairs(meshes or {}) do
+            if sdk.is_managed_object(mesh) then
+                local count = mesh:call("get_MaterialNum") or 0
+                for i = 0, count - 1 do
+                    if mesh:call("getMaterialName", i) == material_name then
+                        mesh:call("setMaterialsEnable", i, render_enabled)
+                    end
+                end
+            end
+        end
+    end,
+    is_material_in_context = is_material_in_current_context,
+    get_material_occupancy = function(part_index, material_name)
+        return {
+            owner = get_material_group_owner(part_index, material_name),
+            global_groups = get_material_global_groups(part_index, material_name),
+            in_context = is_material_in_current_context(part_index, material_name)
+        }
+    end,
+    get_part_count = function(character, weapon_mode)
+        if not weapon_mode then return 6 end
+        local _, weapon_objs = get_character_weapon_id(character)
+        return weapon_objs and #weapon_objs or 1
+    end,
+    get_part_label = function(character, weapon_mode, part_index)
+        if not weapon_mode then return nil end
+        local _, weapon_objs = get_character_weapon_id(character)
+        local weapon_obj = weapon_objs and weapon_objs[part_index + 1]
+        if not weapon_obj or not sdk.is_managed_object(weapon_obj) then return nil end
+        local mesh = get_mesh_component_recursive(weapon_obj)
+        local target = mesh and mesh:call("get_GameObject") or weapon_obj
+        local ok, name = pcall(function() return target:call("get_Name") end)
+        return ok and name or nil
+    end
+})
+if variant_manager_ui and not variant_manager_ui.update then
+    setmetatable(variant_manager_ui, { __index = VariantManagerUI })
+end
 local show_debug_window = false
 local function draw_targets_ui(targets, rule_type, rule_idx)
     local body_id = last_body_id
@@ -2032,7 +2566,7 @@ local function draw_targets_ui(targets, rule_type, rule_idx)
         local c_g, v_g = imgui.combo("##group", g_idx, all_groups_display)
         if c_g then
             target.group = all_groups[v_g]
-            target.preset = ""
+            target.preset = "" 
             save_current_config_to_file(body_id)
         end
         imgui.same_line()
@@ -2095,24 +2629,62 @@ local function draw_targets_ui(targets, rule_type, rule_idx)
 end
 re.on_frame(function()
     tick_scanner()
+    variant_manager_ui:update()
     local local_body_id = get_body_id()
     if local_body_id then
         if local_body_id ~= last_body_id then
             last_body_id = local_body_id
+            current_group_name = ""
+            local restoring_mode_group = pending_mode_group_restore == true
+            if not restoring_mode_group then
+                active_group_presets[local_body_id] = nil
+                active_overrides[local_body_id] = nil
+                temp_applied_presets[local_body_id] = nil
+            end
             if active_overrides[local_body_id] then
                 local data = load_config_data(local_body_id)
                 if data then
                     current_config = data
+                    update_group_names_list()
+                    update_preset_names_list()
+                else
+                    load_body_config(local_body_id)
                 end
-                update_group_names_list()
-                update_preset_names_list()
             else
                 temp_applied_presets[local_body_id] = nil
                 load_body_config(local_body_id)
             end
+            if restoring_mode_group then
+                pending_mode_group_restore = false
+                local saved_group = mode_group_selection[local_body_id]
+                if saved_group and saved_group ~= "" and current_config.groups
+                    and current_config.groups[saved_group] then
+                    current_group_name = saved_group
+                    for index, group_name in ipairs(group_names_list) do
+                        if group_name == saved_group then
+                            selected_group_index = index + 1
+                            break
+                        end
+                    end
+                    update_preset_names_list()
+                end
+            end
         end
     end
     local all_chars = get_all_characters()
+    local local_char_for_frame = get_local_player_character()
+    if local_char_for_frame and sdk.is_managed_object(local_char_for_frame) then
+        local local_seen = false
+        for _, listed_char in ipairs(all_chars) do
+            if listed_char == local_char_for_frame then
+                local_seen = true
+                break
+            end
+        end
+        if not local_seen then
+            table.insert(all_chars, local_char_for_frame)
+        end
+    end
     for _, char in ipairs(all_chars) do
         local char_body_id = get_character_body_id(char)
         if char_body_id then
@@ -2224,6 +2796,10 @@ re.on_draw_ui(function()
     if imgui.tree_node(T("mod_name")) then
         imgui.text_colored(string.format(T("version") .. ": %s | " .. T("author") .. ": %s", version, author), 0xFF808080)
         imgui.separator()
+        if variant_manager_ui:draw_settings() then
+            imgui.tree_pop()
+            return
+        end
         if show_debug_window then
             if imgui.tree_node("Debug Info") then
                 local all_chars = get_all_characters()
@@ -2264,22 +2840,12 @@ re.on_draw_ui(function()
             local weapon_mode_text = T("weapon_mode") or "Weapon Variant"
             local changed_armor, new_armor = imgui.checkbox(armor_mode_text, not is_weapon_mode)
             if changed_armor and new_armor then
-                if is_weapon_mode ~= false then
-                    is_weapon_mode = false
-                    last_body_id = nil
-                    current_group_name = ""
-                    body_id_cache = {}
-                end
+                switch_variant_mode(false)
             end
             imgui.same_line()
             local changed_weapon, new_weapon = imgui.checkbox(weapon_mode_text, is_weapon_mode)
             if changed_weapon and new_weapon then
-                if is_weapon_mode ~= true then
-                    is_weapon_mode = true
-                    last_body_id = nil
-                    current_group_name = ""
-                    weapon_id_cache = {}
-                end
+                switch_variant_mode(true)
             end
             imgui.separator()
             local character = get_local_player_character()
@@ -2334,9 +2900,11 @@ re.on_draw_ui(function()
                                         selected_preset_index = idx
                                         local current_preset_name = preset_names_list[selected_preset_index]
                                         if current_preset_name then apply_preset(current_preset_name) end
+                                        auto_set_selected_preset_as_default(body_id)
                                     end
                                 else
-                                    imgui.text_colored("[" .. T("no_presets") .. "]", 0xFF808080)
+                                    local no_preset_key = is_weapon_mode and "no_weapon_presets" or "no_presets"
+                                    imgui.text_colored("[" .. T(no_preset_key) .. "]", 0xFF808080)
                                 end
                                 imgui.table_next_column()
                                 imgui.set_next_item_width(-1)
@@ -2382,13 +2950,9 @@ re.on_draw_ui(function()
                                         save_current_config_to_file(body_id)
                                     end
                                     imgui.same_line()
-                                    if imgui.button(T("set_as_default")) then
-                                        if current_group_name == "" then
-                                            current_config.default_preset = current_preset_name
-                                        else
-                                            if current_config.groups[current_group_name] then current_config.groups[current_group_name].default_preset = current_preset_name end
-                                        end
-                                        save_current_config_to_file(body_id)
+                                    if not global_config.auto_set_selected_preset_as_default
+                                        and imgui.button(T("set_as_default")) then
+                                        set_preset_as_default(current_preset_name, body_id)
                                     end
                                     imgui.same_line()
                                     if ctx_default == current_preset_name then
@@ -2404,6 +2968,17 @@ re.on_draw_ui(function()
                                             table.insert(sort_temp_list, pn)
                                         end
                                         sort_selected_index = selected_preset_index
+                                    end
+                                end
+                                imgui.spacing()
+                                local changed_auto, auto_enabled = imgui.checkbox(
+                                    T("auto_set_selected_preset_as_default"),
+                                    global_config.auto_set_selected_preset_as_default == true)
+                                if changed_auto then
+                                    global_config.auto_set_selected_preset_as_default = auto_enabled == true
+                                    save_global_settings()
+                                    if global_config.auto_set_selected_preset_as_default then
+                                        auto_set_selected_preset_as_default(body_id)
                                     end
                                 end
                                 imgui.spacing()
@@ -2507,7 +3082,13 @@ re.on_draw_ui(function()
                                 imgui.separator()
                                 if imgui.button(T("auto_find_preset")) then
                                     local st, res, m = pcall(find_auto_preset, body_id)
-                                    auto_find_log = st and (res and m or "Failed: " .. m) or "Lua Error: " .. tostring(res)
+                                    if st and res then
+                                        auto_find_log = T("auto_find_success") .. tostring(m or "")
+                                    elseif st and m == "No matching preset found" then
+                                        auto_find_log = T("auto_find_fail")
+                                    else
+                                        auto_find_log = st and ("Failed: " .. tostring(m)) or "Lua Error: " .. tostring(res)
+                                    end
                                 end
                                 if auto_find_log ~= "" then imgui.text_colored(auto_find_log, 0xFF00FFFF) end
                             end
@@ -2549,7 +3130,7 @@ re.on_draw_ui(function()
                                 if si >= #sort_temp_list then imgui.end_disabled() end
                                 imgui.same_line()
                                 if si == sort_selected_index then
-                                    imgui.push_style_color(21, 0xFF00AAFF)
+                                    imgui.push_style_color(21, 0xFF00AAFF) 
                                 end
                                 if imgui.button(tostring(si) .. ". " .. sname .. "##sn_" .. si) then
                                     sort_selected_index = si
@@ -3210,16 +3791,16 @@ re.on_draw_ui(function()
                             for i = 0, 5 do
                                 local part_obj = get_character_part(character, i)
                                 local part_name = armor_parts[i]
-                                if part_obj then
-                                    local mesh_comp = get_mesh_component_recursive(part_obj)
-                                    if mesh_comp then
-                                        local mesh_game_obj = mesh_comp:call("get_GameObject")
-                                        local obj_name = mesh_game_obj:call("get_Name")
-                                        draw_mesh_toggle(mesh_game_obj, string.format("%s [%s]", part_name, obj_name), body_id, i)
-                                    else
-                                        local obj_name = part_obj:call("get_Name")
-                                        imgui.text_colored(string.format("%s [%s] (No Mesh)", part_name, obj_name), 0xFF808080)
-                                    end
+                                local reference_part_data = active_overrides[body_id]
+                                    and active_overrides[body_id][tostring(i)]
+                                local mesh_components = get_character_part_meshes(character, i, reference_part_data)
+                                if #mesh_components > 0 then
+                                    local mesh_game_obj = mesh_components[1]:call("get_GameObject")
+                                    local obj_name = mesh_game_obj and mesh_game_obj:call("get_Name") or "Mesh"
+                                    draw_mesh_toggle(mesh_game_obj, string.format("%s [%s]", part_name, obj_name), body_id, i)
+                                elseif part_obj and not is_player_face_object(part_obj) then
+                                    local obj_name = part_obj:call("get_Name")
+                                    imgui.text_colored(string.format("%s [%s] (No Mesh)", part_name, obj_name), 0xFF808080)
                                 else
                                     imgui.text_colored(part_name .. " " .. T("not_equipped"), 0xFF808080)
                                 end

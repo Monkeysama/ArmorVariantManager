@@ -6,5 +6,7 @@ release
 dump_hp.lua
 .agent
 .trae
-minify_release.py
+.learnings
+build_release.py
 Debug/
+ArmorVariantManager/reframework/data/ArmorVariantManager/Runtime/

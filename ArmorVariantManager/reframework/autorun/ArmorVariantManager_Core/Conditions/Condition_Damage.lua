@@ -104,8 +104,8 @@ function M.evaluate(config, character, char_addr)
             targets_out = r.targets
         elseif mode == 3 then
             local nodes = r.chain_nodes or {}
-            for k, v in pairs(nodes) do
-                if tostring(k) == tostring(state.chain_idx) then targets_out = v.targets; break end
+            for k, v in pairs(nodes) do 
+                if tostring(k) == tostring(state.chain_idx) then targets_out = v.targets; break end 
             end
         end
         if targets_out then

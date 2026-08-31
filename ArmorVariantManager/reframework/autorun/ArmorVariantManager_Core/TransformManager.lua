@@ -71,19 +71,19 @@ end
 function TransformManager.apply_transform_rules(char_addr, config, character, active_overrides, merge_overrides)
     if not active_overrides then return active_overrides, false end
     local weapon_type_required = {
-        spirit = 3,
-        dual_blades = 2,
-        switch_axe = 8,
-        insect_glaive = 10,
-        charge_blade = 9,
-        greatsword_type = 0,
-        greatsword_level = 0,
-        bow_level = 11,
-        hammer_level = 4,
+        spirit = 3,           
+        dual_blades = 2,      
+        switch_axe = 8,       
+        insect_glaive = 10,   
+        charge_blade = 9,     
+        greatsword_type = 0,  
+        greatsword_level = 0, 
+        bow_level = 11,       
+        hammer_level = 4,     
     }
     local current_weapon_type = TransformManager.get_character_weapon_type(character)
-    local active_rules = {}
-    local current_states = {}
+    local active_rules = {} 
+    local current_states = {} 
     if not config then return active_overrides, false end
     if config.is_parallel then
         for t_type, p_setting in pairs(config.parallel_settings) do

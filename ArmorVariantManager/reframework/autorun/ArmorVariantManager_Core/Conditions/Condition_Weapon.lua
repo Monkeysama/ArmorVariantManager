@@ -82,8 +82,8 @@ function M.evaluate(config, character, char_addr)
     local rules = config.weapon_transform_rules
     if rules then
         for _, r in ipairs(rules) do
-            if r.state == target then
-                return r, target
+            if r.state == target then 
+                return r, target 
             end
         end
     end
