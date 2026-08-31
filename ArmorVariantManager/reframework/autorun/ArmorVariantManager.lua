@@ -1,7 +1,7 @@
 local mod_name = "ArmorVariantManager"
 -- 开发中遵守
 -- 版本号-开发状态-开发状态标识
-local version = "3.5.0-beta-001"
+local version = "4.0.0"
 local author = "MK,Moon,AZUSA"
 
 -- =============================================================================
@@ -17,36 +17,40 @@ local global_config = {
     scan_interval = 0.5, -- 全量扫描间隔 (秒)
     body_id_ttl = 1.0, -- Body ID 缓存有效期 (秒)，默认缩短以加速换装检测
     scanner_batch_size = 200, -- 每帧扫描的对象数量
-    new_ui_enabled = false, -- 是否启用基于 D2D 的新 UI
-    new_ui_key = 0x24 -- 新 UI 快捷键，默认 Home
+    new_ui_enabled = true, -- 是否启用新UI
+    new_ui_key = 0x24, -- 新UI快捷键，默认 Home
+    auto_set_selected_preset_as_default = true -- 选中预设时自动保存为默认预设
 }
 
 -- 本地化字典 (从外部模块加载)
 local Localization = require("ArmorVariantManager_Core.Localization")
 local TransformManager = require("ArmorVariantManager_Core.TransformManager")
--- REFramework 重载脚本时可能保留 Lua 模块缓存，D2D UI 必须重新加载最新实现。
+-- REFramework 重载脚本时可能保留 Lua 模块缓存，新UI必须重新加载最新实现。
 local refd2d_module_names = {
-    "ArmorVariantManager_Core.Refd2d.Refd2dUI",
-    "ArmorVariantManager_Core.Refd2d.Component.Runtime",
-    "ArmorVariantManager_Core.Refd2d.Component.Button",
-    "ArmorVariantManager_Core.Refd2d.Component.Checkbox",
-    "ArmorVariantManager_Core.Refd2d.Component.Panel",
-    "ArmorVariantManager_Core.Refd2d.Component.List",
-    "ArmorVariantManager_Core.Refd2d.Component.Window",
-    "ArmorVariantManager_Core.Refd2d.Component.Slider",
-    "ArmorVariantManager_Core.Refd2d.Component.Tag",
-    "ArmorVariantManager_Core.Refd2d.Component.Input",
-    "ArmorVariantManager_Core.Refd2d.Component.Select",
-    "ArmorVariantManager_Core.Refd2d.Component.InputNumber",
-    "ArmorVariantManager_Core.Refd2d.InputBlocker",
-    "ArmorVariantManager_Core.Refd2d.NativeTextInput"
+    "ArmorVariantManager_Core.UI.VariantManagerUI",
+    "ArmorVariantManager_Core.Documentation",
+    "ArmorVariantManager_UI",
+    "ArmorVariantManager_UI.Component.Runtime",
+    "ArmorVariantManager_UI.Component.Button",
+    "ArmorVariantManager_UI.Component.Checkbox",
+    "ArmorVariantManager_UI.Component.Input",
+    "ArmorVariantManager_UI.Component.InputNumber",
+    "ArmorVariantManager_UI.Component.List",
+    "ArmorVariantManager_UI.Component.Panel",
+    "ArmorVariantManager_UI.Component.Select",
+    "ArmorVariantManager_UI.Component.Slider",
+    "ArmorVariantManager_UI.Component.Tag",
+    "ArmorVariantManager_UI.Component.Window",
+    "ArmorVariantManager_UI.Service.BridgeRuntime",
+    "ArmorVariantManager_UI.Service.InputBlocker",
+    "ArmorVariantManager_UI.Service.NativeTextInput"
 }
 if package and package.loaded then
     for _, module_name in ipairs(refd2d_module_names) do
         package.loaded[module_name] = nil
     end
 end
-local Refd2dUI = require("ArmorVariantManager_Core.Refd2d.Refd2dUI")
+local VariantManagerUI = require("ArmorVariantManager_Core.UI.VariantManagerUI")
 
 -- 获取本地化字符串
 local function T(key)
@@ -67,6 +71,9 @@ local function load_global_settings()
         -- 新字段使用可选读取，旧版 GlobalSettings.json 无需迁移。
         if loaded.new_ui_enabled ~= nil then global_config.new_ui_enabled = loaded.new_ui_enabled end
         if loaded.new_ui_key then global_config.new_ui_key = loaded.new_ui_key end
+        if loaded.auto_set_selected_preset_as_default ~= nil then
+            global_config.auto_set_selected_preset_as_default = loaded.auto_set_selected_preset_as_default == true
+        end
     end
 end
 
@@ -131,25 +138,63 @@ local config_restore_handled = {}
 --     ...
 --   }
 -- }
+-- 并行条件的显示和默认优先级顺序，与旧 UI 一致；数值越小优先级越高。
+local parallel_condition_order = {
+    "hp", "weapon", "damage", "spirit", "dual_blades", "switch_axe",
+    "insect_glaive", "charge_blade", "greatsword_type", "greatsword_level",
+    "bow_level", "hammer_level"
+}
+
+-- 创建完整的并行条件默认配置，统一所有新建和缺失配置的优先级来源。
+local function create_default_parallel_settings()
+    local settings = {}
+    for index, key in ipairs(parallel_condition_order) do
+        settings[key] = { enabled = key == "hp", priority = index }
+    end
+    return settings
+end
+
+-- 补齐旧 JSON 的并行条件。仅当检测到完整的旧版默认序列时重排，保留用户自定义优先级。
+local function normalize_parallel_settings(settings)
+    if type(settings) ~= "table" then return create_default_parallel_settings() end
+    local legacy_order = {
+        "hp", "weapon", "spirit", "dual_blades", "switch_axe", "insect_glaive",
+        "charge_blade", "greatsword_type", "greatsword_level", "bow_level", "hammer_level"
+    }
+    local legacy_default = type(settings.damage) ~= "table"
+    if legacy_default then
+        for index, key in ipairs(legacy_order) do
+            local item = settings[key]
+            if type(item) ~= "table" or item.enabled ~= (key == "hp")
+                or tonumber(item.priority) ~= index then
+                legacy_default = false
+                break
+            end
+        end
+    end
+    for index, key in ipairs(parallel_condition_order) do
+        if type(settings[key]) ~= "table" then
+            settings[key] = { enabled = key == "hp", priority = index }
+        else
+            if settings[key].enabled == nil then settings[key].enabled = false end
+            if tonumber(settings[key].priority) == nil then settings[key].priority = index end
+        end
+    end
+    if legacy_default then
+        for index, key in ipairs(parallel_condition_order) do
+            settings[key].priority = index
+        end
+    end
+    return settings
+end
+
 local current_config = {
     default_preset = "",
     presets = {},
     groups = {},
     transform_type = "hp",
     is_parallel = false,
-    parallel_settings = {
-        hp = { enabled = true, priority = 1 },
-        weapon = { enabled = false, priority = 2 },
-        spirit = { enabled = false, priority = 3 },
-        dual_blades = { enabled = false, priority = 4 },
-        switch_axe = { enabled = false, priority = 5 },
-        insect_glaive = { enabled = false, priority = 6 },
-        charge_blade = { enabled = false, priority = 7 },
-        greatsword_type = { enabled = false, priority = 8 },
-        greatsword_level = { enabled = false, priority = 9 },
-        bow_level = { enabled = false, priority = 10 },
-        hammer_level = { enabled = false, priority = 11 }
-    },
+    parallel_settings = create_default_parallel_settings(),
     transform_rules = {},
     weapon_transform_rules = {
         { state = "sheathed", targets = {} },
@@ -249,7 +294,6 @@ local sort_mode = nil -- nil: 不显示, "group": 分组排序, "preset": 预设
 local sort_temp_list = {} -- 排序临时列表（可自由上下移动）
 local sort_selected_index = 1 -- 排序面板中当前选中的项目索引
 
--- 辅助函数
 -- 辅助函数：获取类型定义 (Lazy Load)
 local function get_type(name)
     return sdk.find_type_definition(name)
@@ -850,12 +894,15 @@ local function update_preset_names_list()
                     added[name] = true
                 end
             end
-            -- 再添加 order 中没有的（新建但还没排序的）
+            -- 再稳定添加 order 中没有的预设，确保旧 UI 与新 UI 使用同一排序。
+            local missing = {}
             for name, _ in pairs(target_presets) do
                 if not added[name] then
-                    table.insert(preset_names_list, name)
+                    table.insert(missing, name)
                 end
             end
+            table.sort(missing)
+            for _, name in ipairs(missing) do table.insert(preset_names_list, name) end
         else
             for name, _ in pairs(target_presets) do
                 table.insert(preset_names_list, name)
@@ -1464,52 +1511,7 @@ local function load_config_data(body_id)
         end
         if not loaded_data.transform_type then loaded_data.transform_type = "hp" end
         if loaded_data.is_parallel == nil then loaded_data.is_parallel = false end
-        if not loaded_data.parallel_settings then
-            loaded_data.parallel_settings = {
-                hp = { enabled = true, priority = 1 },
-                weapon = { enabled = false, priority = 2 },
-                damage = { enabled = false, priority = 3 },
-                spirit = { enabled = false, priority = 4 },
-                dual_blades = { enabled = false, priority = 5 },
-                switch_axe = { enabled = false, priority = 6 },
-                insect_glaive = { enabled = false, priority = 7 },
-                charge_blade = { enabled = false, priority = 8 },
-                greatsword_type = { enabled = false, priority = 9 },
-                greatsword_level = { enabled = false, priority = 10 },
-                bow_level = { enabled = false, priority = 11 },
-                hammer_level = { enabled = false, priority = 12 }
-            }
-        else
-            if not loaded_data.parallel_settings.damage then loaded_data.parallel_settings.damage = { enabled = false, priority = 3 } end
-            if not loaded_data.parallel_settings.weapon then loaded_data.parallel_settings.weapon = { enabled = false, priority = 2 } end
-            if not loaded_data.parallel_settings.spirit then
-                loaded_data.parallel_settings.spirit = { enabled = false, priority = 3 }
-            end
-            if not loaded_data.parallel_settings.dual_blades then
-                loaded_data.parallel_settings.dual_blades = { enabled = false, priority = 4 }
-            end
-            if not loaded_data.parallel_settings.switch_axe then
-                loaded_data.parallel_settings.switch_axe = { enabled = false, priority = 5 }
-            end
-            if not loaded_data.parallel_settings.insect_glaive then
-                loaded_data.parallel_settings.insect_glaive = { enabled = false, priority = 6 }
-            end
-            if not loaded_data.parallel_settings.charge_blade then
-                loaded_data.parallel_settings.charge_blade = { enabled = false, priority = 7 }
-            end
-            if not loaded_data.parallel_settings.greatsword_type then
-                loaded_data.parallel_settings.greatsword_type = { enabled = false, priority = 8 }
-            end
-            if not loaded_data.parallel_settings.greatsword_level then
-                loaded_data.parallel_settings.greatsword_level = { enabled = false, priority = 9 }
-            end
-            if not loaded_data.parallel_settings.bow_level then
-                loaded_data.parallel_settings.bow_level = { enabled = false, priority = 10 }
-            end
-            if not loaded_data.parallel_settings.hammer_level then
-                loaded_data.parallel_settings.hammer_level = { enabled = false, priority = 12 }
-            end
-        end
+        loaded_data.parallel_settings = normalize_parallel_settings(loaded_data.parallel_settings)
         
         -- 数据迁移：将原来 HP 中的 trigger_on_damage 迁移到新的 damage 节点
         local migrated_damage = false
@@ -1969,19 +1971,7 @@ local function load_body_config(body_id)
         groups = {},
         transform_type = "hp",
         is_parallel = false,
-        parallel_settings = {
-            hp = { enabled = true, priority = 1 },
-            weapon = { enabled = false, priority = 2 },
-            spirit = { enabled = false, priority = 3 },
-            dual_blades = { enabled = false, priority = 4 },
-            switch_axe = { enabled = false, priority = 5 },
-            insect_glaive = { enabled = false, priority = 6 },
-            charge_blade = { enabled = false, priority = 7 },
-            greatsword_type = { enabled = false, priority = 8 },
-            greatsword_level = { enabled = false, priority = 9 },
-            bow_level = { enabled = false, priority = 10 },
-            hammer_level = { enabled = false, priority = 11 }
-        },
+        parallel_settings = create_default_parallel_settings(),
         transform_rules = {},
         weapon_transform_rules = {
             { state = "sheathed", targets = {} },
@@ -2096,6 +2086,27 @@ local function save_current_config_to_file(body_id)
     end
 end
 
+-- 将指定预设写为当前分组的默认预设，供旧 UI、新 UI 和自动保存开关共用。
+local function set_preset_as_default(preset_name, body_id)
+    if not body_id or not preset_name or preset_name == "" or not current_config then return false end
+    local target = current_config
+    if current_group_name ~= "" and current_config.groups
+        and current_config.groups[current_group_name] then
+        target = current_config.groups[current_group_name]
+    end
+    if not target.presets or not target.presets[preset_name] then return false end
+    target.default_preset = preset_name
+    save_current_config_to_file(body_id)
+    update_preset_names_list()
+    return true
+end
+
+-- 开启自动保存时立即持久化当前选中预设，避免开关状态和当前默认预设不一致。
+local function auto_set_selected_preset_as_default(body_id)
+    if not global_config.auto_set_selected_preset_as_default then return false end
+    return set_preset_as_default(preset_names_list[selected_preset_index], body_id)
+end
+
 -- 辅助函数：从备份恢复配置
 -- 将 backup/<id>.json 的内容写回主配置文件并刷新内存状态，
 -- 用于 mod 重装后一键还原玩家手动调整过的预设。
@@ -2113,6 +2124,8 @@ local function restore_config_from_backup(body_id)
     -- 否则随后的 load_config_data 重新检测会让横幅再次显示。
     loaded_configs[body_id] = nil
     active_overrides[body_id] = nil
+    -- 清除恢复前的临时选中预设，确保后续 apply_all_defaults 重新采用备份中的默认预设。
+    active_group_presets[body_id] = nil
     config_restored[body_id] = nil
     -- 重新加载并刷新 UI
     local data = load_config_data(body_id)
@@ -2633,9 +2646,9 @@ local function draw_mesh_toggle(game_object, label, body_id, part_index)
 end
 
 -- =============================================================================
--- D2D 新 UI
--- D2D 的绘制、输入和组件实现位于 ArmorVariantManager_Core/Refd2d。
-local refd2d_ui = Refd2dUI.new({
+-- 新UI
+-- 基于原生 UI Runtime 的差分管理器界面。
+local variant_manager_ui = VariantManagerUI.new({
     config = global_config,
     translate = T,
     version = version,
@@ -2645,6 +2658,25 @@ local refd2d_ui = Refd2dUI.new({
     -- 提供新 UI 所需的当前装备上下文。
     get_context = function()
         local body_id = get_body_id()
+        -- 初次打开新 UI 时主动对齐当前实际应用预设；活跃状态尚未建立时回退当前分组默认预设。
+        local active_preset_name = body_id and active_group_presets[body_id]
+            and active_group_presets[body_id][current_group_name] or ""
+        if not active_preset_name or active_preset_name == "" then
+            if current_group_name == "" then
+                active_preset_name = current_config.default_preset or ""
+            else
+                local group = current_config.groups and current_config.groups[current_group_name]
+                active_preset_name = group and group.default_preset or ""
+            end
+        end
+        if active_preset_name ~= "" then
+            for index, preset_name in ipairs(preset_names_list) do
+                if preset_name == active_preset_name then
+                    selected_preset_index = index
+                    break
+                end
+            end
+        end
         return {
             body_id = body_id,
             character = get_local_player_character(),
@@ -2653,6 +2685,9 @@ local refd2d_ui = Refd2dUI.new({
             group_names = group_names_list,
             preset_names = preset_names_list,
             selected_preset_index = selected_preset_index,
+            -- 新 UI 按名称选中，不能在分组切换过渡帧通过旧索引反查上一分组的预设。
+            selected_preset_name = active_preset_name ~= "" and active_preset_name
+                or preset_names_list[selected_preset_index],
             config_restored = body_id and config_restored[body_id] == true
                 and config_restore_handled[body_id] ~= true,
             config = current_config
@@ -2708,7 +2743,7 @@ local refd2d_ui = Refd2dUI.new({
                 break
             end
         end
-        refd2d_ui.material_offset = 0
+        variant_manager_ui.material_offset = 0
         update_preset_names_list()
         local body_id = get_body_id()
         local active_preset = body_id and active_group_presets[body_id]
@@ -2769,7 +2804,7 @@ local refd2d_ui = Refd2dUI.new({
         local deleted = delete_group(group_name, body_id)
         if deleted then
             selected_preset_index = 1
-            refd2d_ui.material_offset = 0
+            variant_manager_ui.material_offset = 0
             update_group_names_list()
             update_preset_names_list()
         end
@@ -2838,18 +2873,23 @@ local refd2d_ui = Refd2dUI.new({
 
     -- 新 UI 设置当前选中预设为默认预设，沿用旧 UI 的分组配置写入规则。
     set_default_preset = function(preset_name)
-        local body_id = get_body_id()
-        if not body_id or not preset_name or preset_name == "" or not current_config then return false end
-        local target = current_config
-        if current_group_name ~= "" and current_config.groups
-            and current_config.groups[current_group_name] then
-            target = current_config.groups[current_group_name]
+        return set_preset_as_default(preset_name, get_body_id())
+    end,
+
+    -- 新 UI 勾选自动保存后立即写入当前预设，配置本身保存到 GlobalSettings.json。
+    set_auto_default_enabled = function(enabled, preset_name, body_id)
+        global_config.auto_set_selected_preset_as_default = enabled == true
+        save_global_settings()
+        if global_config.auto_set_selected_preset_as_default then
+            return set_preset_as_default(preset_name, body_id or get_body_id())
         end
-        if not target.presets or not target.presets[preset_name] then return false end
-        target.default_preset = preset_name
-        save_current_config_to_file(body_id)
-        update_preset_names_list()
         return true
+    end,
+
+    -- 新 UI 选择预设后调用，顺序保持与旧 UI 一致：先应用预设，再保存默认预设。
+    auto_set_default_preset = function(preset_name, body_id)
+        if not global_config.auto_set_selected_preset_as_default then return false end
+        return set_preset_as_default(preset_name, body_id or get_body_id())
     end,
 
     apply_preset = apply_preset,
@@ -2863,6 +2903,15 @@ local refd2d_ui = Refd2dUI.new({
     -- 为新 UI 提供当前条件状态，实际条件读取仍由 TransformManager 负责。
     get_transform_state = function(type_key, character)
         if not character then return nil end
+        if type_key == "damage" then
+            -- 受击条件以角色地址维护倒计时，地址生成方式与旧 UI 保持一致。
+            local ok, remaining = pcall(function()
+                local game_object = character:call("get_GameObject")
+                local character_address = tostring(game_object or character)
+                return TransformManager.get_damage_remaining_time(character_address)
+            end)
+            return ok and remaining or nil
+        end
         local getters = {
             hp = TransformManager.get_character_hp_percent,
             weapon = TransformManager.get_character_weapon_drawn,
@@ -2879,7 +2928,18 @@ local refd2d_ui = Refd2dUI.new({
         local getter = getters[type_key]
         if not getter then return nil end
         local ok, value = pcall(function() return getter(character) end)
-        return ok and value or nil
+        -- false 是武器“收刀”等有效状态，不能用 Lua 的 and/or 简写转成 nil。
+        if ok then return value end
+        return nil
+    end,
+
+    -- 生命值测试沿用旧 UI 的 TransformManager 写入接口，仅用于当前本地角色。
+    set_test_hp = function(character, percent)
+        if not character then return false end
+        local ok, result = pcall(function()
+            return TransformManager.set_character_hp_percent(character, percent)
+        end)
+        return ok and result ~= false
     end,
 
     -- 获取当前部位候选 Mesh，兼容自定义 Body ID 和旧 JSON 结构。
@@ -2989,8 +3049,8 @@ local refd2d_ui = Refd2dUI.new({
     end
 })
 -- REFramework 重载脚本时可能复用 require 缓存，兼容旧缓存实例缺少原型方法的情况。
-if refd2d_ui and not refd2d_ui.update then
-    setmetatable(refd2d_ui, { __index = Refd2dUI })
+if variant_manager_ui and not variant_manager_ui.update then
+    setmetatable(variant_manager_ui, { __index = VariantManagerUI })
 end
 
 -- Debug 状态
@@ -3124,7 +3184,7 @@ re.on_frame(function()
     tick_scanner()
 
     -- D2D 新 UI 自己维护快捷键按下沿和弹窗状态。
-    refd2d_ui:update()
+    variant_manager_ui:update()
 
     -- 1. 维护本地玩家 UI 状态
     local local_body_id = get_body_id()
@@ -3320,7 +3380,6 @@ re.on_frame(function()
         end
     end
 end)
-
 -- =============================================================================
 -- UI 绘制
 -- =============================================================================
@@ -3331,15 +3390,11 @@ re.on_draw_ui(function()
         imgui.separator()
 
         -- 新 UI 设置和旧 UI 隐藏逻辑由独立模块处理。
-        if refd2d_ui:draw_settings() then
+        if variant_manager_ui:draw_settings() then
             imgui.tree_pop()
             return
         end
 
-        -- 仅在调试模式下打印错误，避免刷屏
-        -- 调试模式开关 (默认隐藏，需要时取消注释)
-        -- local changed, val = imgui.checkbox(T("debug_mode") or "Debug Mode", show_debug_window)
-        -- if changed then show_debug_window = val end
         if show_debug_window then
             if imgui.tree_node("Debug Info") then
                 local all_chars = get_all_characters()
@@ -3437,19 +3492,18 @@ re.on_draw_ui(function()
                                 end
                             end
 
-                            -- 2. 预设与分组选择 (左右分区布局 - 已对调位置)
-                            -- 使用分行对齐策略，确保文字标签在同一水平线上
+                            -- 2. 预设与分组选择 (左右分区布局)
                             if imgui.begin_table("PresetsLayout", 2, 512) then
                                 imgui.table_setup_column("PresetArea", 2048, 1.0)
                                 imgui.table_setup_column("GroupArea", 2048, 1.0)
-                                -- 第一行：标题对齐
+                                -- 第一行
                                 imgui.table_next_row()
                                 imgui.table_next_column()
                                 imgui.text(T("preset") .. ":")
                                 imgui.table_next_column()
                                 imgui.text(T("group") .. ":")
 
-                                -- 第二行：下拉框对齐
+                                -- 第二行
                                 imgui.table_next_row()
                                 imgui.table_next_column()
                                 imgui.set_next_item_width(-1)
@@ -3459,6 +3513,7 @@ re.on_draw_ui(function()
                                         selected_preset_index = idx
                                         local current_preset_name = preset_names_list[selected_preset_index]
                                         if current_preset_name then apply_preset(current_preset_name) end
+                                        auto_set_selected_preset_as_default(body_id)
                                     end
                                 else
                                     local no_preset_key = is_weapon_mode and "no_weapon_presets" or "no_presets"
@@ -3474,7 +3529,7 @@ re.on_draw_ui(function()
                                     update_preset_names_list()
                                 end
 
-                                -- 第三行：操作按钮与新增 UI 对齐
+                                -- 第三行
                                 imgui.table_next_row()
                                 imgui.table_next_column()
                                 -- 预设操作
@@ -3514,13 +3569,9 @@ re.on_draw_ui(function()
                                         save_current_config_to_file(body_id)
                                     end
                                     imgui.same_line()
-                                    if imgui.button(T("set_as_default")) then
-                                        if current_group_name == "" then
-                                            current_config.default_preset = current_preset_name
-                                        else
-                                            if current_config.groups[current_group_name] then current_config.groups[current_group_name].default_preset = current_preset_name end
-                                        end
-                                        save_current_config_to_file(body_id)
+                                    if not global_config.auto_set_selected_preset_as_default
+                                        and imgui.button(T("set_as_default")) then
+                                        set_preset_as_default(current_preset_name, body_id)
                                     end
                                     -- 预设状态提示
                                     imgui.same_line()
@@ -3539,6 +3590,19 @@ re.on_draw_ui(function()
                                             table.insert(sort_temp_list, pn)
                                         end
                                         sort_selected_index = selected_preset_index
+                                    end
+                                end
+
+                                -- 自动保存为全局设置；开启时立即将当前选中预设写为当前分组默认值。
+                                imgui.spacing()
+                                local changed_auto, auto_enabled = imgui.checkbox(
+                                    T("auto_set_selected_preset_as_default"),
+                                    global_config.auto_set_selected_preset_as_default == true)
+                                if changed_auto then
+                                    global_config.auto_set_selected_preset_as_default = auto_enabled == true
+                                    save_global_settings()
+                                    if global_config.auto_set_selected_preset_as_default then
+                                        auto_set_selected_preset_as_default(body_id)
                                     end
                                 end
 
@@ -3630,7 +3694,7 @@ re.on_draw_ui(function()
                             end
 
                             -- 分组材质预览
-                            -- 4. 分组预览 (保持在下方)
+                            -- 4. 分组预览
                             if current_group_name ~= "" then
                                 local group_data = current_config.groups[current_group_name]
                                 if group_data and group_data.mask and imgui.tree_node(T("materials") .. " in " .. current_group_name) then
