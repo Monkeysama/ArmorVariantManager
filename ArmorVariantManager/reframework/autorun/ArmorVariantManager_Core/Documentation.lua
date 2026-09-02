@@ -56,6 +56,65 @@ return {
                     "武器直接记录当前武器 ID，例如 it0300_0020。"
                 }
             }
+        },
+        en = {
+            title = "How to Configure",
+            entries = {
+                {
+                    title = "1. Current Armor/Weapon Parts",
+                    paragraphs = {
+                        "View the material list of the currently equipped item. Use the checkboxes on the left to show or hide the mesh corresponding to each material."
+                    }
+                },
+                {
+                    title = "2. Presets",
+                    paragraphs = {
+                        "Select the materials you want to show in the material list, enter a name in Create New Preset, and click Save to create a preset."
+                    }
+                },
+                {
+                    title = "3. Default Group",
+                    paragraphs = {
+                        "All materials are initially placed in the default group, which cannot be deleted.",
+                        "Use it when only a small number of materials need to change, or when all materials should switch together. For example, hiding or showing a cloak on an entire armor set."
+                    }
+                },
+                {
+                    title = "4. Groups",
+                    paragraphs = {
+                        "Click Add Group to enter material selection mode. Select the materials to manage separately, enter a name, and click Confirm to create a group.",
+                        "A group removes the selected materials from the default group and gives control of them to the new group.",
+                        "The default group shows which group currently owns each material.",
+                        "Use groups when several independent parts of the same equipment need separate presets, such as long/short/no skirt and long/short boots."
+                    }
+                },
+                {
+                    title = "5. Global Groups",
+                    paragraphs = {
+                        "When creating a group, enable Global Group below the name field to create a global group. The remaining steps are the same as for a normal group.",
+                        "A global group does not remove its materials from the default group. Other groups can still select and control those materials.",
+                        "Global groups have the highest hide priority. A material hidden by a global group remains hidden in every state.",
+                        "A material hidden by a global group can still be checked in other groups; those checks are recorded but do not make the material visible.",
+                        "Use global groups for shared controls across multiple groups, such as a common color option that would otherwise require many combinations of presets."
+                    }
+                },
+                {
+                    title = "6. Transform Manager",
+                    paragraphs = {
+                        "This feature builds on preset management and can switch presets dynamically according to in-game conditions.",
+                        "The Transform Manager supports fallback behavior. For example, if health below 80 switches from A to B, health above 80 automatically falls back to A.",
+                        "In parallel mode, a smaller priority number means a higher priority."
+                    }
+                },
+                {
+                    title = "7. Preset Files",
+                    paragraphs = {
+                        "Presets are saved in the reframework\\data\\ArmorVariantManager folder.",
+                        "Armor files use the current Body part ID as the file name, for example ch03_060_0002.json.",
+                        "Weapon files use the current Weapon ID, for example it0300_0020."
+                    }
+                }
+            }
         }
     },
     {
@@ -87,11 +146,48 @@ return {
                     "经测试对帧数的影响不到 2 FPS，如需要调整，可在性能设置里将选项往右拉。"
                 }
             }
+        },
+        en = {
+            title = "How to Use",
+            entries = {
+                {
+                    title = "Using Presets",
+                    paragraphs = {
+                        "Select a group, then select the preset you want to use. Click Set as Default to save the selected preset permanently.",
+                        "Auto-save is enabled by default in the current version, so manual saving is not required. You can disable it if needed."
+                    }
+                },
+                {
+                    title = "Preset Missing",
+                    paragraphs = {
+                        "Changing an outfit with tools such as an equipment box can invalidate the current preset. When the current equipment has no preset, click Auto Find Preset to match a preset again."
+                    }
+                },
+                {
+                    title = "Preset Overwritten",
+                    paragraphs = {
+                        "MOD management tools may reinstall all MODs when enabling or disabling a MOD. If you created custom presets, manually back up the reframework\\data\\ArmorVariantManager folder.",
+                        "Armor Variant Manager creates backup files. If a backup conflict is detected, click Restore Backup to restore your presets."
+                    }
+                },
+                {
+                    title = "Frame Drops/Stuttering",
+                    paragraphs = {
+                        "Testing shows that the performance impact is less than 2 FPS. If adjustment is needed, move the options to the right in Performance settings."
+                    }
+                }
+            }
         }
     },
     {
         title = "更新日志",
         entries = {
+            {
+                title = "V4.1.0",
+                paragraphs = {
+                    "修复新UI的一些问题。为说明文档新增了英文翻译。"
+                }
+            },
             {
                 title = "V4.0.0",
                 paragraphs = {
@@ -163,6 +259,90 @@ return {
                 title = "V1.0.0",
                 paragraphs = {
                     "发布。"
+                }
+            }
+        },
+        en = {
+            title = "Changelog",
+            entries = {
+                {
+                    title = "V4.1.0",
+                    paragraphs = {
+                        "Fixed several new UI issues and added English documentation."
+                    }
+                },
+                {
+                    title = "V4.0.0",
+                    paragraphs = {
+                        "1. Added an independent UI panel, opened with the Home key by default.",
+                        "2. Added support for equipment with custom names.",
+                        "3. Added automatic preset saving, enabled by default.",
+                        "4. Fixed many bugs."
+                    }
+                },
+                {
+                    title = "V3.3.0",
+                    paragraphs = {
+                        "Added backup and restore support, and fixed a bug affecting global groups in the Transform Manager."
+                    }
+                },
+                {
+                    title = "V3.2.0",
+                    paragraphs = {
+                        "1. Added global groups, which can be enabled while creating a group.",
+                        "2. Improved the UI: material lists support select all, invert selection, filtering, preset overwrite, and group/preset sorting.",
+                        "3. Fixed several bugs."
+                    }
+                },
+                {
+                    title = "V3.1.0",
+                    paragraphs = {
+                        "Added weapon variant support and fixed several bugs."
+                    }
+                },
+                {
+                    title = "V3.0.0",
+                    paragraphs = {
+                        "Introduced the Transform Manager, which supports dynamic appearance changes based on conditions such as health, damage, weapon draw state, longsword spirit level, and greatsword charge state."
+                    }
+                },
+                {
+                    title = "V2.1.1",
+                    paragraphs = {
+                        "Fixed several bugs in multiplayer mode."
+                    }
+                },
+                {
+                    title = "V2.0.0",
+                    paragraphs = {
+                        "1. Added groups, allowing selected materials to be managed separately with their own presets.",
+                        "2. Removed the Load button; selecting a preset now loads it immediately.",
+                        "3. Added performance settings. Adjust them according to the instructions and your CPU; they directly affect how quickly presets load after equipment changes."
+                    }
+                },
+                {
+                    title = "V1.2.1",
+                    paragraphs = {
+                        "Fixed potential bugs and improved performance."
+                    }
+                },
+                {
+                    title = "V1.2.0",
+                    paragraphs = {
+                        "Added Auto Find Preset, which searches JSON files for a matching preset after tools such as equipment boxes modify an outfit."
+                    }
+                },
+                {
+                    title = "V1.1.0",
+                    paragraphs = {
+                        "Fixed an issue where the mod did not work in the main menu or save screen."
+                    }
+                },
+                {
+                    title = "V1.0.0",
+                    paragraphs = {
+                        "Initial release."
+                    }
                 }
             }
         }

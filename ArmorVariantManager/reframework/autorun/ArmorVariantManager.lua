@@ -1,5 +1,5 @@
 local mod_name = "ArmorVariantManager"
-local version = "4.0.0"
+local version = "4.1.0"
 local author = "MK,Moon,AZUSA"
 local global_config_path = "ArmorVariantManager/GlobalSettings.json"
 local global_config = {

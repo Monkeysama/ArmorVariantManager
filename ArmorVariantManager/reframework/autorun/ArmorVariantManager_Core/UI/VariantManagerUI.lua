@@ -343,6 +343,13 @@ end
 function VariantManagerUI:deactivate_native_text_input(input_id)
     self.native_text_input:deactivate(input_id)
 end
+function VariantManagerUI:focus_native_text_input(input_id, text, rect, force_focus)
+    if force_focus or not self.native_text_input:is_active(input_id) then
+        self:activate_native_text_input(input_id, text, rect, true)
+    else
+        self:sync_native_text_input(input_id, rect)
+    end
+end
 function VariantManagerUI:clear_released_input_keys()
     for key, down in pairs(self.input_key_down) do
         if down then
@@ -445,18 +452,17 @@ function VariantManagerUI:draw_group_actions(x, y, w, h, context)
         inner_x, title_y, COLORS.accent)
     local input_action = self.input:draw(self.group_name_input,
         self:T("d2d_group_name_hint"), inner_x, input_y, inner_w, 28, self.group_name_editing,
-        true, self.native_text_input:get_composition("group_name"))
-    if input_action.focused then
+        true, self.native_text_input:get_composition("group_name"),
+        self.native_text_input:get_caret("group_name"))
+    if input_action.focused or input_action.hovered and Runtime.is_mouse_down() then
         self.group_name_editing = true
         self.group_is_global = self.group_is_global == true
         self.material_filter_editing = false
         self.preset_name_editing = false
         self.number_editing = nil
         self:reset_text_input_state()
-        self:activate_native_text_input("group_name", self.group_name_input, input_action.rect, true)
-    elseif input_action.hovered and Runtime.is_mouse_down() then
-        self.group_name_editing = true
-        self:sync_native_text_input("group_name", input_action.rect)
+        self:focus_native_text_input("group_name", self.group_name_input, input_action.rect,
+            input_action.focused)
     elseif Runtime.is_mouse_clicked() and not input_action.hovered and self.group_name_editing then
         self.group_name_editing = false
         self:reset_text_input_state()
@@ -713,18 +719,17 @@ function VariantManagerUI:draw_preset_actions(x, y, w, h, context, presets)
         x + LAYOUT.panel_inset, action_top, COLORS.muted)
     local input_action = self.input:draw(self.preset_name_input, self:T("d2d_preset_name_hint"),
         x + LAYOUT.panel_inset, input_y, input_width, 28, self.preset_name_editing,
-        true, self.native_text_input:get_composition("preset_name"))
-    if input_action.focused then
+        true, self.native_text_input:get_composition("preset_name"),
+        self.native_text_input:get_caret("preset_name"))
+    if input_action.focused or input_action.hovered and Runtime.is_mouse_down() then
         self.preset_name_editing = true
         self.preset_name_key = nil
         self:reset_text_input_state()
         self.material_filter_editing = false
         self.group_name_editing = false
         self.number_editing = nil
-        self:activate_native_text_input("preset_name", self.preset_name_input, input_action.rect, true)
-    elseif input_action.hovered and Runtime.is_mouse_down() then
-        self.preset_name_editing = true
-        self:sync_native_text_input("preset_name", input_action.rect)
+        self:focus_native_text_input("preset_name", self.preset_name_input, input_action.rect,
+            input_action.focused)
     elseif Runtime.is_mouse_clicked() and not input_action.hovered and self.preset_name_editing then
         self.preset_name_editing = false
         self.preset_name_key = nil
@@ -947,7 +952,7 @@ function VariantManagerUI:draw_part_content(x, y, w, h, context, part_index)
                 material.global_groups = metadata.global_groups or {}
                 material.operable = self.group_creation_mode
                     and (self.group_is_global or not metadata.owner)
-                    or metadata.in_context == true
+                    or (not self.group_creation_mode and metadata.in_context == true)
                 table.insert(materials, material)
             end
         end
@@ -1010,18 +1015,17 @@ function VariantManagerUI:draw_part_content(x, y, w, h, context, part_index)
     local search_focused = self.material_filter_editing == filter_key
     local input_action = self.input:draw(filter_value, self:T("d2d_material_search_hint"),
         search_x, controls_y, search_w, 28, search_focused, true,
-        self.native_text_input:get_composition("material:" .. filter_key))
-    if input_action.focused then
+        self.native_text_input:get_composition("material:" .. filter_key),
+        self.native_text_input:get_caret("material:" .. filter_key))
+    if input_action.focused or input_action.hovered and Runtime.is_mouse_down() then
         self.material_filter_editing = filter_key
         self.material_filter_key = nil
         self:reset_text_input_state()
         self.preset_name_editing = false
         self.group_name_editing = false
         self.number_editing = nil
-        self:activate_native_text_input("material:" .. filter_key, filter_value, input_action.rect, true)
-    elseif input_action.hovered and Runtime.is_mouse_down() then
-        self.material_filter_editing = filter_key
-        self:sync_native_text_input("material:" .. filter_key, input_action.rect)
+        self:focus_native_text_input("material:" .. filter_key, filter_value, input_action.rect,
+            input_action.focused)
     end
     if self.material_filter_editing == filter_key then
         self:sync_native_text_input("material:" .. filter_key, input_action.rect)
@@ -1081,7 +1085,7 @@ function VariantManagerUI:draw_part_content(x, y, w, h, context, part_index)
         local text_width = self.fonts.body:measure(material.name)
         local tag_x = text_x + text_width + 8
         local tag_limit = x + w - LAYOUT.panel_inset - 12
-        if material.owner and context.group_name == "" then
+        if material.owner then
             tag_x = self.tag:draw(material.owner, tag_x, row_y, tag_limit, "group")
         end
         for _, group_name in ipairs(material.global_groups or {}) do
@@ -1596,14 +1600,22 @@ function VariantManagerUI:draw_transform_panel(x, y, w, h, context)
     end
     self.select:draw_popup()
 end
+function VariantManagerUI:get_documentation_section(section_index)
+    local section = Documentation[section_index] or Documentation[1] or {}
+    local language = self.deps.config and self.deps.config.language or "zh"
+    if language == "en" and section.en then return section.en end
+    return section
+end
 function VariantManagerUI:get_documentation_layout(text_width, section_index)
     local cache = self.documentation_layout
     local cache_width = math.floor(text_width + 0.5)
+    local language = self.deps.config and self.deps.config.language or "zh"
     if cache and cache.width == cache_width and cache.section_index == section_index
-        and cache.text_font == self.fonts.small and cache.title_font == self.fonts.body then
+        and cache.language == language and cache.text_font == self.fonts.small
+        and cache.title_font == self.fonts.body then
         return cache
     end
-    local section = Documentation[section_index] or Documentation[1]
+    local section = self:get_documentation_section(section_index)
     local text_font = self.fonts.small
     local title_font = self.fonts.body
     local _, text_height = text_font:measure("Ag")
@@ -1630,6 +1642,7 @@ function VariantManagerUI:get_documentation_layout(text_width, section_index)
     self.documentation_layout = {
         width = cache_width,
         section_index = section_index,
+        language = language,
         text_font = text_font,
         title_font = title_font,
         lines = lines,
@@ -1643,9 +1656,9 @@ function VariantManagerUI:draw_documentation_panel(x, y, w, h)
     self.documentation_section = section_index
     local switch_y = y + LAYOUT.panel_inset
     local switch_gap = 8
-    local configure_label = Documentation[1].title
-    local usage_label = Documentation[2].title
-    local changelog_label = Documentation[3].title
+    local configure_label = self:get_documentation_section(1).title
+    local usage_label = self:get_documentation_section(2).title
+    local changelog_label = self:get_documentation_section(3).title
     local configure_width = math.max(100, self.fonts.small:measure(configure_label) + 28)
     local usage_width = math.max(100, self.fonts.small:measure(usage_label) + 28)
     local changelog_width = math.max(100, self.fonts.small:measure(changelog_label) + 28)
@@ -1897,6 +1910,7 @@ function VariantManagerUI:draw()
     Runtime.set_ui_scale(scale)
     local raw_sw, raw_sh = self.d2d.surface_size()
     if not raw_sw or not raw_sh or raw_sw < 320 or raw_sh < 240 then return end
+    Runtime.begin_input_frame()
     local sw, sh = raw_sw / scale, raw_sh / scale
     local mx, my = Runtime.mouse_position()
     local raw_mx, raw_my = Runtime.raw_mouse_position()
@@ -2124,5 +2138,6 @@ function VariantManagerUI:draw()
             end
         end
     end
+    Runtime.end_input_frame()
 end
 return VariantManagerUI

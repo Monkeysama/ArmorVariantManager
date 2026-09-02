@@ -1,5 +1,6 @@
 local Runtime = {}
 Runtime.ui_scale = 1
+Runtime.frame_input = nil
 function Runtime.set_ui_scale(scale)
     Runtime.ui_scale = math.max(0.01, tonumber(scale) or 1)
 end
@@ -7,6 +8,9 @@ function Runtime.to_logical_point(x, y)
     return x / Runtime.ui_scale, y / Runtime.ui_scale
 end
 function Runtime.raw_mouse_position()
+    if Runtime.frame_input then
+        return Runtime.frame_input.raw_x, Runtime.frame_input.raw_y
+    end
     local ok, mouse = pcall(function() return imgui.get_mouse() end)
     if ok and mouse and type(mouse.x) == "number" and type(mouse.y) == "number" then
         return mouse.x, mouse.y
@@ -14,6 +18,9 @@ function Runtime.raw_mouse_position()
     return -1, -1
 end
 function Runtime.mouse_position()
+    if Runtime.frame_input then
+        return Runtime.frame_input.mouse_x, Runtime.frame_input.mouse_y
+    end
     local custom_cursor = _G.__AVM_REFD2D_CURSOR_POSITION
     if _G.__AVM_REFD2D_INPUT_BLOCKED == true then
         local real_ok, real_mouse = pcall(function() return imgui.get_mouse() end)
@@ -63,14 +70,34 @@ function Runtime.mouse_position()
     end
     return -1, -1
 end
+function Runtime.begin_input_frame()
+    Runtime.frame_input = nil
+    local raw_x, raw_y = Runtime.raw_mouse_position()
+    local mouse_x, mouse_y = Runtime.mouse_position()
+    local down_ok, down = pcall(function() return imgui.is_mouse_down(0) end)
+    local clicked_ok, clicked = pcall(function() return imgui.is_mouse_clicked(0) end)
+    Runtime.frame_input = {
+        raw_x = raw_x,
+        raw_y = raw_y,
+        mouse_x = mouse_x,
+        mouse_y = mouse_y,
+        mouse_down = down_ok and down == true or false,
+        mouse_clicked = clicked_ok and clicked == true or false
+    }
+end
+function Runtime.end_input_frame()
+    Runtime.frame_input = nil
+end
 function Runtime.point_in_rect(mx, my, x, y, w, h)
     return mx >= x and mx <= x + w and my >= y and my <= y + h
 end
 function Runtime.is_mouse_down()
+    if Runtime.frame_input then return Runtime.frame_input.mouse_down end
     local ok, value = pcall(function() return imgui.is_mouse_down(0) end)
     return ok and value or false
 end
 function Runtime.is_mouse_clicked()
+    if Runtime.frame_input then return Runtime.frame_input.mouse_clicked end
     local ok, value = pcall(function() return imgui.is_mouse_clicked(0) end)
     return ok and value or false
 end
@@ -83,9 +110,10 @@ function Runtime.real_mouse_inside_surface()
         or width <= 0 or height <= 0 then
         return true
     end
-    local mouse_ok, mouse = pcall(function() return imgui.get_mouse() end)
-    if mouse_ok and mouse and type(mouse.x) == "number" and type(mouse.y) == "number" then
-        return mouse.x >= 0 and mouse.y >= 0 and mouse.x <= width and mouse.y <= height
+    local mouse_x, mouse_y = Runtime.raw_mouse_position()
+    if type(mouse_x) == "number" and type(mouse_y) == "number"
+        and mouse_x >= 0 and mouse_y >= 0 then
+        return mouse_x >= 0 and mouse_y >= 0 and mouse_x <= width and mouse_y <= height
     end
     return true
 end

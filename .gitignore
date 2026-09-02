@@ -10,3 +10,5 @@ dump_hp.lua
 build_release.py
 Debug/
 ArmorVariantManager/reframework/data/ArmorVariantManager/Runtime/
+__pycache__/
+sync_main_release.py

@@ -16,6 +16,8 @@ function NativeTextInput.new(options)
         request_path = options.request_path or paths.request_path,
         result_path = options.result_path or paths.result_path,
         composition = "",
+        caret_start = nil,
+        caret_end = nil,
         last_sequence = 0,
         last_request_signature = nil
     }
@@ -46,6 +48,8 @@ function NativeTextInput:activate(input_id, text, rect, reset)
         self.active_token = self.token_prefix .. ":" .. tostring(self.session)
         self.active_text = text or ""
         self.composition = ""
+        self.caret_start = nil
+        self.caret_end = nil
         self.last_sequence = 0
         self.last_request_signature = nil
     end
@@ -70,6 +74,8 @@ function NativeTextInput:deactivate(input_id)
     self.active_text = ""
     self.active_rect = nil
     self.composition = ""
+    self.caret_start = nil
+    self.caret_end = nil
     self.last_request_signature = nil
     self:write_request(false)
 end
@@ -79,6 +85,10 @@ end
 function NativeTextInput:get_composition(input_id)
     if self.active_id == input_id then return self.composition or "" end
     return ""
+end
+function NativeTextInput:get_caret(input_id)
+    if self.active_id ~= input_id then return nil, nil end
+    return self.caret_start, self.caret_end
 end
 function NativeTextInput:update()
     if self.active_id == nil then return nil end
@@ -91,6 +101,9 @@ function NativeTextInput:update()
     self.last_sequence = sequence
     self.active_text = type(result.text) == "string" and result.text or ""
     self.composition = type(result.composition) == "string" and result.composition or ""
-    return self.active_id, self.active_text, self.composition, result.focused ~= false
+    self.caret_start = tonumber(result.caret_start)
+    self.caret_end = tonumber(result.caret_end)
+    return self.active_id, self.active_text, self.composition, result.focused ~= false,
+        self.caret_start, self.caret_end
 end
 return NativeTextInput
