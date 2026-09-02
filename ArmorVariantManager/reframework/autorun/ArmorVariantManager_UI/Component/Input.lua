@@ -13,7 +13,8 @@ end
 function Input.new(d2d_api, colors, fonts)
     local component = {}
 
-    function component:draw(value, placeholder, x, y, w, h, focused, show_clear, composition)
+    function component:draw(value, placeholder, x, y, w, h, focused, show_clear, composition,
+        caret_start, caret_end)
         local mouse_x, mouse_y = Runtime.mouse_position()
         local hovered = Runtime.point_in_rect(mouse_x, mouse_y, x, y, w, h)
         local has_value = value ~= nil and value ~= ""
@@ -45,7 +46,15 @@ function Input.new(d2d_api, colors, fonts)
             display_value = committed_value .. composition
         end
         if focused then
-            local text_width = measure_text_width(fonts.tiny, display_value)
+            local caret_value = display_value
+            if not composition or composition == "" then
+                local caret_offset = tonumber(caret_end or caret_start)
+                if caret_offset ~= nil then
+                    caret_value = string.sub(committed_value, 1,
+                        math.max(0, math.floor(caret_offset)))
+                end
+            end
+            local text_width = measure_text_width(fonts.tiny, caret_value)
             local caret_x = math.min(content_right - 6, text_x + text_width + 1)
             -- 使用透明度正弦变化模拟输入光标呼吸，不改变布局或光标位置。
             local pulse = (math.sin(os.clock() * math.pi * 2) + 1) / 2

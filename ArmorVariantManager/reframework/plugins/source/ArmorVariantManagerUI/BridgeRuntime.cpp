@@ -14,6 +14,7 @@
 #include <mutex>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #pragma comment(lib, "imm32.lib")
@@ -311,7 +312,20 @@ std::wstring get_edit_text() {
 // 将原生编辑控件的提交文本与当前组合文本原子写回 Lua，避免读取到半个 JSON 文件。
 void publish_text_result(bool focused = true) {
     if (g_active_text_request.result_path.empty() || g_text_input_id.empty()) return;
-    const auto text = json_escape(wide_to_utf8(get_edit_text()));
+    const auto edit_text = get_edit_text();
+    const auto text = json_escape(wide_to_utf8(edit_text));
+    DWORD selection_start = 0;
+    DWORD selection_end = 0;
+    if (g_text_edit != nullptr) {
+        SendMessageW(g_text_edit, EM_GETSEL,
+            reinterpret_cast<WPARAM>(&selection_start), reinterpret_cast<LPARAM>(&selection_end));
+    }
+    const auto utf8_offset = [&edit_text](DWORD offset) {
+        const auto wide_offset = std::min<size_t>(offset, edit_text.size());
+        return wide_to_utf8(edit_text.substr(0, wide_offset)).size();
+    };
+    const auto caret_start = utf8_offset(selection_start);
+    const auto caret_end = utf8_offset(selection_end);
     const auto composition = json_escape(wide_to_utf8(g_composition_text));
     const std::string content = "{\n  \"sequence\": "
         + std::to_string(++g_text_result_sequence)
@@ -320,7 +334,9 @@ void publish_text_result(bool focused = true) {
         + "\",\n  \"token\": \"" + json_escape(g_text_token)
         + "\",\n  \"text\": \"" + text
         + "\",\n  \"composition\": \"" + composition
-        + "\",\n  \"focused\": " + (focused ? "true" : "false") + "\n}\n";
+        + "\",\n  \"caret_start\": " + std::to_string(caret_start)
+        + ",\n  \"caret_end\": " + std::to_string(caret_end)
+        + ",\n  \"focused\": " + (focused ? "true" : "false") + "\n}\n";
     const auto temporary_path = g_active_text_request.result_path.wstring() + L".tmp";
     std::ofstream file(temporary_path, std::ios::binary | std::ios::trunc);
     if (!file) return;
@@ -376,7 +392,9 @@ LRESULT CALLBACK text_edit_window_proc(HWND window, UINT message, WPARAM w_param
     if (message == WM_KILLFOCUS) {
         const LRESULT result = CallWindowProcW(original, window, message, w_param, l_param);
         g_composition_text.clear();
-        publish_text_result(false);
+        // 原生代理的瞬态失焦不等于 D2D 输入框失焦；逻辑焦点由 Lua 的点击区域管理。
+        // 这里只同步组合文本清空，避免游戏/代理窗口切换时输入会话被提前销毁。
+        publish_text_result(true);
         return result;
     }
     const LRESULT result = CallWindowProcW(original, window, message, w_param, l_param);
@@ -389,7 +407,9 @@ LRESULT CALLBACK text_edit_window_proc(HWND window, UINT message, WPARAM w_param
         publish_text_result();
         break;
     case WM_KEYDOWN:
-        if (w_param == VK_BACK || w_param == VK_DELETE) publish_text_result();
+        if (w_param == VK_BACK || w_param == VK_DELETE || w_param == VK_LEFT
+            || w_param == VK_RIGHT || w_param == VK_HOME || w_param == VK_END
+            || w_param == 'A') publish_text_result();
         break;
     default:
         break;
@@ -491,11 +511,17 @@ void apply_text_request(const TextRequest& request) {
             static_cast<LPARAM>(text.size()));
     }
     g_active_text_request = request;
-    // 只在用户聚焦新字段时设置一次焦点。失焦后不能由轮询线程抢回，
-    // 否则点击弹窗其他区域会表现为需要多次点击才能退出编辑。
-    if (new_session) SetFocus(g_text_edit);
-    // 焦点建立后再设置位置，确保 IME 上下文已附着到代理编辑控件。
+    // 先显示并定位代理控件，再设置焦点；对隐藏控件 SetFocus 会静默失败，
+    // 这会造成输入法短暂切换后立即失焦，表现为输入框需要重复点击。
     update_ime_position(g_active_text_request);
+    if (new_session) {
+        SetFocus(g_text_edit);
+        // AttachThreadInput 后通常可直接聚焦；若游戏线程刚切换活动窗口，再补一次活动窗口聚焦。
+        if (GetFocus() != g_text_edit) {
+            SetActiveWindow(g_text_edit);
+            SetFocus(g_text_edit);
+        }
+    }
     if (new_session) publish_text_result();
 }
 
