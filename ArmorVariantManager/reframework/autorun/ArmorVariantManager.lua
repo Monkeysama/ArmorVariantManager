@@ -1,5 +1,5 @@
 local mod_name = "ArmorVariantManager"
-local version = "4.1.0"
+local version = "4.1.1"
 local author = "MK,Moon,AZUSA"
 local global_config_path = "ArmorVariantManager/GlobalSettings.json"
 local global_config = {
@@ -962,7 +962,8 @@ local function get_material_global_groups(part_index, mat_name)
     local s_idx = tostring(part_index)
     local result = {}
     for g_name, g_data in pairs(current_config.groups) do
-        if g_data.is_global and g_data.mask and g_data.mask[s_idx] and g_data.mask[s_idx][mat_name] then
+        if g_data.is_global and g_data.mask and g_data.mask[s_idx]
+            and g_data.mask[s_idx][mat_name] == true then
             table.insert(result, g_name)
         end
     end
@@ -1008,7 +1009,8 @@ local function is_globally_hidden(part_index, mat_name)
     local body_id = get_body_id()
     local active_saved = (body_id and active_group_presets[body_id]) or {}
     for g_name, g_data in pairs(current_config.groups) do
-        if g_data.is_global and g_data.mask and g_data.mask[s_idx] and g_data.mask[s_idx][mat_name] then
+        if g_data.is_global and g_data.mask and g_data.mask[s_idx]
+            and g_data.mask[s_idx][mat_name] == true then
             local pname = active_saved[g_name]
             if not pname or pname == "" then pname = g_data.default_preset end
             if pname and pname ~= "" and g_data.presets and g_data.presets[pname] then
@@ -1137,8 +1139,22 @@ local function create_new_group(group_name, body_id, is_global)
     if not has_selection then return false end
     if not current_config.groups then current_config.groups = {} end
     if current_config.groups[group_name] then return false end 
+    local normalized_mask = {}
+    for part_index, materials in pairs(pending_material_selections) do
+        for material_name, selected in pairs(materials or {}) do
+            if selected == true then
+                if not normalized_mask[part_index] then normalized_mask[part_index] = {} end
+                normalized_mask[part_index][material_name] = true
+            end
+        end
+    end
+    local normalized_has_selection = false
+    for _, materials in pairs(normalized_mask) do
+        if next(materials) then normalized_has_selection = true; break end
+    end
+    if not normalized_has_selection then return false end
     local new_group = {
-        mask = deep_copy_table(pending_material_selections),
+        mask = normalized_mask,
         presets = {},
         is_global = is_global == true
     }
@@ -1371,6 +1387,9 @@ local function merge_global_preset_into_overrides(body_id, preset_data)
             for mat_name, is_enabled in pairs(p_data.materials) do
                 if is_enabled == false then
                     overrides[p_idx].materials[mat_name] = false
+                elseif is_enabled == true
+                    and overrides[p_idx].materials[mat_name] == nil then
+                    overrides[p_idx].materials[mat_name] = true
                 end
             end
         end
