@@ -184,6 +184,12 @@ return {
         title = "更新日志",
         entries = {
             {
+                title = "V4.1.1",
+                paragraphs = {
+                    "修复新的全局分组无法生效的问题。"
+                }
+            },
+            {
                 title = "V4.1.0",
                 paragraphs = {
                     "修复新UI的一些问题。为说明文档新增了英文翻译。"
@@ -266,6 +272,12 @@ return {
         en = {
             title = "Changelog",
             entries = {
+                {
+                    title = "V4.1.1",
+                    paragraphs = {
+                        "Fixed a bug where new global groups wouldn't work."
+                    }
+                },
                 {
                     title = "V4.1.0",
                     paragraphs = {
