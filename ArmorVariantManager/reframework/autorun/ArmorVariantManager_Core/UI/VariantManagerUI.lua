@@ -799,6 +799,9 @@ function VariantManagerUI:draw_library(x, y, w, h, context, preset_w)
         })
     end
     self.list:draw(groups, x + LAYOUT.panel_inset, y, w - LAYOUT.panel_inset * 2, h, {
+        key = "groups:" .. tostring(context.weapon_mode and "weapon" or "armor") .. ":"
+            .. tostring(context.body_id or ""),
+        wheel = self.frame_mouse_wheel,
         top_padding = LAYOUT.panel_inset + LAYOUT.title_height,
         bottom_padding = LAYOUT.group_actions_height,
         row_gap = LAYOUT.list_gap,
@@ -861,6 +864,9 @@ function VariantManagerUI:draw_library(x, y, w, h, context, preset_w)
         end
     end
     self.list:draw(presets, preset_x + LAYOUT.panel_inset, y, preset_w - LAYOUT.panel_inset * 2, h, {
+        key = "presets:" .. tostring(context.weapon_mode and "weapon" or "armor") .. ":"
+            .. tostring(context.body_id or "") .. ":" .. tostring(context.group_name or ""),
+        wheel = self.frame_mouse_wheel,
         top_padding = LAYOUT.panel_inset + LAYOUT.title_height + warning_height,
         bottom_padding = LAYOUT.preset_actions_height,
         row_gap = LAYOUT.list_gap,

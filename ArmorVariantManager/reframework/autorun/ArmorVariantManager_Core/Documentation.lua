@@ -183,6 +183,12 @@ return {
         title = "更新日志",
         entries = {
             {
+                title = "V4.1.2",
+                paragraphs = {
+                    "修复在新UI下分组与预设列表超过高度时不能滚动的问题。"
+                }
+            },
+            {
                 title = "V4.1.1",
                 paragraphs = {
                     "修复新的全局分组无法生效的问题。"
@@ -271,6 +277,12 @@ return {
         en = {
             title = "Changelog",
             entries = {
+                {
+                    title = "V4.1.2",
+                    paragraphs = {
+                        "Fixed a bug where the group and preset lists would not scroll when the UI height was insufficient."
+                    }
+                },
                 {
                     title = "V4.1.1",
                     paragraphs = {
