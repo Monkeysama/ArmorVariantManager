@@ -106,7 +106,9 @@ function VariantManagerUI.new(deps)
         bridge_client_id, deps.bridge_runtime_directory or "ArmorVariantManager/Runtime")
     local self = {
         deps = deps,
-        available = d2d ~= nil,
+        -- D2D 插件可能在主脚本之后才加载，首次 update 时再绑定后端。
+        available = false,
+        d2d_registered = false,
         ready = false,
         visible = false,
         key_down = false,
@@ -171,58 +173,75 @@ function VariantManagerUI.new(deps)
         author = deps.author or ""
     }
 
-    self.button = Button.new(self.d2d, COLORS, self.fonts)
-    self.checkbox = Checkbox.new(self.d2d, COLORS, self.fonts)
-    self.panel = Panel.new(self.d2d, COLORS)
-    self.list = List.new(self.button, self.d2d, COLORS)
     self.window = Window.new()
-    self.tag = Tag.new(self.d2d, COLORS, self.fonts)
-    self.input = Input.new(self.d2d, COLORS, self.fonts)
-    self.input_number = InputNumber.new(self.d2d, COLORS, self.fonts)
-    self.select = Select.new(self.d2d, COLORS, self.fonts)
-    self.sliders = {
-        scan_interval = Slider.new(self.d2d, COLORS, self.fonts),
-        body_id_ttl = Slider.new(self.d2d, COLORS, self.fonts),
-        scanner_batch_size = Slider.new(self.d2d, COLORS, self.fonts)
-    }
     -- 输入 Hook 延迟到弹窗首次打开时安装，避免仅加载脚本就给游戏增加高频 Hook。
     self.input_blocker = nil
     -- 使用原型表暴露 update、draw 等实例方法，避免冒号调用时方法丢失。
     setmetatable(self, { __index = VariantManagerUI })
 
-    -- 初始化字体并注册 d2d 绘制回调。
-    if self.available then
-        d2d.register(
-            function()
-                local ok, err = pcall(function()
-                    self.fonts.title = d2d.Font.new("Tahoma", 24, true)
-                    self.fonts.body = d2d.Font.new("Tahoma", 18)
-                    self.fonts.small = d2d.Font.new("Tahoma", 16)
-                    self.fonts.tiny = d2d.Font.new("Tahoma", 13)
-                end)
-                self.ready = ok and err == nil
-            end,
-            function()
-                -- d2d 回调会持续存在，但未启用新 UI 时只保留一次布尔判断。
-                if not self.deps.config.new_ui_enabled then return end
-                local ok, err = xpcall(function() self:draw() end, function(draw_error)
-                    if debug and debug.traceback then
-                        return debug.traceback(tostring(draw_error), 2)
-                    end
-                    return tostring(draw_error)
-                end)
-                if not ok then
-                    -- 绘制帧异常时只关闭窗口，保留 ready 状态以便快捷键恢复。
-                    self.visible = false
-                    self.last_error = err
-                else
-                    self.last_error = nil
-                end
-            end
-        )
-    end
-
     return self
+end
+
+-- 延迟绑定 D2D 后端，兼容外部 reframework-d2d 晚于主脚本加载的情况。
+function VariantManagerUI:ensure_d2d_backend()
+    if self.d2d_registered then return true end
+    local api = rawget(_G, "d2d")
+    if type(api) ~= "table" or type(api.register) ~= "function" then return false end
+
+    -- 外部旧版 D2D 可能没有整体缩放扩展；使用代理表补齐可选 API，避免改写外部全局。
+    local adapted_api = api
+    if type(api.push_transform) ~= "function" or type(api.pop_transform) ~= "function" then
+        adapted_api = setmetatable({
+            push_transform = function() end,
+            pop_transform = function() end
+        }, { __index = api })
+    end
+    self.d2d = adapted_api
+    self.available = true
+    self.button = Button.new(adapted_api, COLORS, self.fonts)
+    self.checkbox = Checkbox.new(adapted_api, COLORS, self.fonts)
+    self.panel = Panel.new(adapted_api, COLORS)
+    self.list = List.new(self.button, adapted_api, COLORS)
+    self.tag = Tag.new(adapted_api, COLORS, self.fonts)
+    self.input = Input.new(adapted_api, COLORS, self.fonts)
+    self.input_number = InputNumber.new(adapted_api, COLORS, self.fonts)
+    self.select = Select.new(adapted_api, COLORS, self.fonts)
+    self.sliders = {
+        scan_interval = Slider.new(adapted_api, COLORS, self.fonts),
+        body_id_ttl = Slider.new(adapted_api, COLORS, self.fonts),
+        scanner_batch_size = Slider.new(adapted_api, COLORS, self.fonts)
+    }
+
+    api.register(
+        function()
+            local ok, err = pcall(function()
+                self.fonts.title = adapted_api.Font.new("Tahoma", 24, true)
+                self.fonts.body = adapted_api.Font.new("Tahoma", 18)
+                self.fonts.small = adapted_api.Font.new("Tahoma", 16)
+                self.fonts.tiny = adapted_api.Font.new("Tahoma", 13)
+            end)
+            self.ready = ok and err == nil
+        end,
+        function()
+            if not self.deps.config.new_ui_enabled or not self.ready then return end
+            local ok, err = xpcall(function() self:draw() end, function(draw_error)
+                if debug and debug.traceback then
+                    return debug.traceback(tostring(draw_error), 2)
+                end
+                return tostring(draw_error)
+            end)
+            if not ok then
+                self.last_error = err
+                if log and log.error then
+                    log.error("[ArmorVariantManager] D2D draw error: " .. tostring(err))
+                end
+            else
+                self.last_error = nil
+            end
+        end
+    )
+    self.d2d_registered = true
+    return true
 end
 
 -- 使用主脚本的统一语言字典，确保新旧 UI 由同一个 language 配置驱动。
@@ -605,6 +624,8 @@ end
 -- 每帧处理新 UI 快捷键，只在按下沿切换窗口可见状态。
 function VariantManagerUI:update()
     local config = self.deps.config
+    -- 外部 reframework-d2d 可能在本脚本之后才创建全局 d2d，首次帧更新时补注册。
+    self:ensure_d2d_backend()
     -- 配置关闭时保持最短路径；不进入异常保护、快捷键查询或输入对象访问。
     if not config.new_ui_enabled then
         self:deactivate_native_text_input()

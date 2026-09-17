@@ -30,9 +30,27 @@ struct Plugin {
     std::chrono::duration<double> d2d_update_interval{DEFAULT_UPDATE_INTERVAL};
     bool update_d2d{};
     std::string last_script_error{};
+    // 外部 reframework-d2d 存在时只保留输入桥接，不创建第二套渲染器。
+    bool external_d2d{};
 };
 
 Plugin* g_plugin{};
+
+// 通过模块名检测外部 D2D，避免依赖 REFramework 插件加载顺序。
+bool is_external_d2d_loaded() {
+    return GetModuleHandleW(L"reframework-d2d.dll") != nullptr;
+}
+
+// 外部 D2D 后加载时，立即停用本 DLL 的渲染资源，避免两个 renderer 同时操作 SwapChain。
+bool disable_embedded_backend_if_external() {
+    if (g_plugin->external_d2d || !is_external_d2d_loaded()) return g_plugin->external_d2d;
+    g_plugin->external_d2d = true;
+    g_plugin->drawlist.acquire().commands.clear();
+    g_plugin->d2d = nullptr;
+    g_plugin->d3d12.reset();
+    g_plugin->update_d2d = false;
+    return true;
+}
 
 BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
     if (reason == DLL_PROCESS_ATTACH) {
@@ -65,9 +83,31 @@ void on_ref_lua_state_created(lua_State* l) try {
     g_plugin->lua = l;
     sol::state_view lua{l};
 
+    // 外部 D2D 可能先于本插件或晚于本插件完成 Lua 注册；同时检查模块和 Lua 全局，
+    // 避免仅依赖插件加载顺序造成两套渲染器并存。
+    const sol::object existing_d2d = lua["d2d"];
+    const bool external_d2d = is_external_d2d_loaded()
+        || (existing_d2d.valid() && existing_d2d.get_type() == sol::type::table);
+    g_plugin->external_d2d = external_d2d;
+
+    auto bridge = lua.create_table();
+    bridge["register_runtime"] = [](const std::string& client_id, const std::string& runtime_directory) {
+        return avm_bridge_register_runtime(client_id, runtime_directory);
+    };
+    bridge["unregister_runtime"] = [](const std::string& client_id) {
+        return avm_bridge_unregister_runtime(client_id);
+    };
+    // 独立命名空间供外部 D2D 模式使用，避免修改外部 d2d 表的所有权。
+    lua["avm_bridge"] = bridge;
+
+    if (external_d2d) {
+        // 外部插件拥有 d2d 全局、渲染器和绘制回调；本插件绝不能覆盖或重复创建它们。
+        g_plugin->needs_init = false;
+        return;
+    }
+
     auto d2d = lua.create_table();
     auto detail = lua.create_table();
-    auto bridge = lua.create_table();
 
     std::string modpath{};
     modpath.resize(1024, 0);
@@ -154,12 +194,6 @@ void on_ref_lua_state_created(lua_State* l) try {
     };
     d2d["detail"] = detail;
     // 原生桥接支持多个 Lua 项目注册各自的 data 子目录，避免复用 DLL 时共享通信文件。
-    bridge["register_runtime"] = [](const std::string& client_id, const std::string& runtime_directory) {
-        return avm_bridge_register_runtime(client_id, runtime_directory);
-    };
-    bridge["unregister_runtime"] = [](const std::string& client_id) {
-        return avm_bridge_unregister_runtime(client_id);
-    };
     d2d["bridge"] = bridge;
     d2d["register"] = [](sol::protected_function init_fn, sol::protected_function draw_fn) {
         g_plugin->init_fns.emplace_back(init_fn);
@@ -303,6 +337,8 @@ void on_ref_lua_state_destroyed(lua_State* l) try {
 }
 
 void on_ref_device_reset() try {
+    disable_embedded_backend_if_external();
+    if (g_plugin->external_d2d) return;
     g_plugin->drawlist.acquire().commands.clear();
     g_plugin->d2d = nullptr;
     g_plugin->d3d12.reset();
@@ -312,6 +348,8 @@ void on_ref_device_reset() try {
 }
 
 void on_ref_frame() try {
+    disable_embedded_backend_if_external();
+    if (g_plugin->external_d2d) return;
     if (g_plugin->draw_fns.empty()) {
         return;
     }
@@ -429,6 +467,8 @@ void on_ref_frame() try {
 }
 
 void on_begin_rendering() try {
+    disable_embedded_backend_if_external();
+    if (g_plugin->external_d2d) return;
     if (g_plugin->d3d12 == nullptr) {
         return;
     }

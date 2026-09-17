@@ -22,8 +22,11 @@ function BridgeRuntime.register(client_id, runtime_directory)
     client_id = client_id or BridgeRuntime.default_client_id
     local paths = BridgeRuntime.paths(runtime_directory)
     local ok, registered = pcall(function()
-        return d2d and d2d.bridge and d2d.bridge.register_runtime
-            and d2d.bridge.register_runtime(client_id, paths.runtime_directory)
+        -- 外部 reframework-d2d 模式下由 ArmorVariantManager_UI.dll 提供独立桥接命名空间。
+        -- 优先使用本项目 DLL 的命名空间，避免误调用其他项目提供的 d2d.bridge。
+        local bridge = avm_bridge or (d2d and d2d.bridge)
+        return bridge and bridge.register_runtime
+            and bridge.register_runtime(client_id, paths.runtime_directory)
     end)
     return ok and registered == true, paths
 end
@@ -31,8 +34,9 @@ end
 -- 显式注销已停止的项目，避免其残留状态文件继续参与原生输入仲裁。
 function BridgeRuntime.unregister(client_id)
     local ok, unregistered = pcall(function()
-        return d2d and d2d.bridge and d2d.bridge.unregister_runtime
-            and d2d.bridge.unregister_runtime(client_id)
+        local bridge = avm_bridge or (d2d and d2d.bridge)
+        return bridge and bridge.unregister_runtime
+            and bridge.unregister_runtime(client_id)
     end)
     return ok and unregistered == true
 end
