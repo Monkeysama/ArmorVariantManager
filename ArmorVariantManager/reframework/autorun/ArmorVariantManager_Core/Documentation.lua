@@ -184,6 +184,14 @@ return {
         title = "更新日志",
         entries = {
             {
+                title = "V4.2.0",
+                paragraphs = {
+                    "1. 兼容与 reframework-d2d 同时安装：修复按 Home 键无法打开面板的问题，面板整体缩放恢复正常。",
+                    "2. 修复切换场景时大量刷屏的 get_GameObject 报错：场景切换后自动失效过期缓存，并增加已销毁对象的存活保护。",
+                    "3. 修复切换套装时，当前套装还没有预设文件所导致的 JSON 加载报错。"
+                }
+            },
+            {
                 title = "V4.1.2",
                 paragraphs = {
                     "修复在新UI下分组与预设列表超过高度时不能滚动的问题。"
@@ -278,6 +286,14 @@ return {
         en = {
             title = "Changelog",
             entries = {
+                {
+                    title = "V4.2.0",
+                    paragraphs = {
+                        "1. Compatibility with reframework-d2d: fixed the Home key not opening the panel, and window scaling by dragging the panel edges/corners works again.",
+                        "2. Fixed the flood of get_GameObject errors when switching scenes by invalidating stale caches and guarding destroyed objects.",
+                        "3. Fixed JSON loading errors when the current armor set has no preset file yet."
+                    }
+                },
                 {
                     title = "V4.1.2",
                     paragraphs = {
