@@ -60,9 +60,63 @@ local function T(key)
     return Localization[lang][key] or tostring(key)
 end
 
+-- =============================================================================
+-- JSON 容错读写（必须定义在 load_global_settings 之前：主 chunk 会立刻调用它）
+-- =============================================================================
+-- json.load_file 内部会自行 spdlog::error 打印解析失败原因（例如文件被写坏时的
+-- "[JSON] Failed to load file ... unexpected end of input"），**然后**才抛异常，
+-- 所以 pcall 只能防止脚本中断，挡不住那条错误日志。
+-- 而"切换装备时该套装还没有预设文件（0 字节）"是正常场景，不该刷 error。
+-- 因此改为：自己读文本 -> 先判断内容非空 -> 再交给 json.load_string。
+-- json.load_string 解析失败只返回 nil，不写日志，从而彻底消除这类报错。
+local function ensure_parent_directory(filepath)
+    local dir = string.match(filepath, "^(.*)[/\\][^/\\]+$")
+    if not dir then return true end
+    if fs and fs.create_directory then
+        local ok, created = pcall(fs.create_directory, dir)
+        return ok and created ~= false
+    end
+    return true
+end
+
+-- 读取 JSON 文件：文件不存在、为空、或内容损坏一律返回 nil，且不产生错误日志。
+local function safe_json_load(filepath)
+    if not filepath then return nil end
+    local handle = io.open(filepath, "r")
+    if not handle then return nil end
+    local content = handle:read("a")
+    handle:close()
+    if not content then return nil end
+    content = content:gsub("^\239\187\191", "") -- 去掉可能存在的 UTF-8 BOM
+    -- 空文件/纯空白视为"暂无配置"，直接返回 nil，不进入解析器。
+    if content:match("^%s*$") then return nil end
+    local ok, data = pcall(json.load_string, content)
+    if not ok then return nil end
+    return data
+end
+
+-- 写入 JSON 文件：先序列化成功再落盘，避免留下半截/空文件。
+local function safe_json_save(filepath, value)
+    if not filepath or not value then return false end
+    local ok_text, text = pcall(json.dump_string, value, 4)
+    if not ok_text or type(text) ~= "string" or text == "" then
+        log.error(string.format("[AVM] json 序列化失败，已跳过写入: %s", tostring(filepath)))
+        return false
+    end
+    ensure_parent_directory(filepath)
+    local handle = io.open(filepath, "w")
+    if not handle then
+        log.error(string.format("[AVM] 无法写入配置文件: %s", tostring(filepath)))
+        return false
+    end
+    handle:write(text)
+    handle:close()
+    return true
+end
+
 -- 加载全局配置
 local function load_global_settings()
-    local loaded = json.load_file(global_config_path)
+    local loaded = safe_json_load(global_config_path)
     if loaded then
         if loaded.language then global_config.language = loaded.language end
         if loaded.scan_interval then global_config.scan_interval = loaded.scan_interval end
@@ -79,7 +133,7 @@ end
 
 -- 保存全局配置
 local function save_global_settings()
-    json.dump_file(global_config_path, global_config)
+    safe_json_save(global_config_path, global_config)
 end
 
 -- 初始化加载
@@ -101,6 +155,110 @@ local method_cache = {
     -- via.Scene
     Scene_findComponents = sdk.find_type_definition("via.Scene"):get_method("findComponents(System.Type)")
 }
+
+-- 诊断：统计"已销毁对象"的访问来源，用于定位剩余报错出自哪个调用点。
+-- 注意：REFramework 里 print 只进调试控制台，不进 re2_framework_log.txt，
+-- 因此日志通道统一用 log.info。
+local dead_access_stats = { total = 0, last_report = 0 }
+
+-- 已确认销毁的托管包装对象 -> 下次允许再探测的时间。
+-- 目的：REFramework 的 invoke 层在抛异常前一定会写日志，日志无法被 pcall 抑制，
+-- 因此唯一有效的降噪手段是"不重复探测"。确认死掉的对象在 DEAD_OBJECT_RETRY_INTERVAL
+-- 内直接走 nil 分支，把每帧一次的报错降为每个对象每 1 秒最多一次。
+local DEAD_OBJECT_RETRY_INTERVAL = 1.0
+local dead_object_until = {}
+
+-- 每帧允许"探测到死对象"的次数上限。换场景瞬间可能同时有几十个对象失效，
+-- 即使每个只探测一次，集中在一帧里依然会形成可见的报错爆发。
+-- 用帧预算把爆发摊到后续若干帧，日志上最多每帧一条。
+local DEAD_PROBE_BUDGET_PER_FRAME = 1
+local dead_probe_budget = DEAD_PROBE_BUDGET_PER_FRAME
+local dead_probe_budget_exhausted = 0
+
+local function begin_dead_probe_frame()
+    dead_probe_budget = DEAD_PROBE_BUDGET_PER_FRAME
+end
+
+local function mark_dead_object(component)
+    if not component then return end
+    local ok, key = pcall(tostring, component)
+    if ok and key then dead_object_until[key] = os.clock() + DEAD_OBJECT_RETRY_INTERVAL end
+end
+
+local function is_marked_dead(component)
+    if not component then return false end
+    local ok, key = pcall(tostring, component)
+    if not ok or not key then return false end
+    local until_time = dead_object_until[key]
+    if not until_time then return false end
+    if os.clock() >= until_time then
+        dead_object_until[key] = nil
+        return false
+    end
+    return true
+end
+
+local function clear_dead_object_marks()
+    dead_object_until = {}
+end
+
+local function report_dead_access(origin)
+    dead_access_stats.total = dead_access_stats.total + 1
+    if origin then
+        dead_access_stats[origin] = (dead_access_stats[origin] or 0) + 1
+    end
+    -- 每秒最多输出一次，避免诊断本身变成新的刷屏源。
+    local now = os.clock()
+    if now - (dead_access_stats.last_report or 0) < 1.0 then return end
+    dead_access_stats.last_report = now
+    local parts = {}
+    for key, value in pairs(dead_access_stats) do
+        if key ~= "last_report" and key ~= "total" then
+            table.insert(parts, string.format("%s=%d", tostring(key), value))
+        end
+    end
+    table.sort(parts)
+    log.info(string.format(
+        "[AVM-DIAG] dead-object probes total=%d skipped_by_budget=%d | %s",
+        dead_access_stats.total, dead_probe_budget_exhausted, table.concat(parts, " ")))
+end
+
+-- 性能与日志优化：安全获取组件的 GameObject
+-- 场景切换时游戏会销毁旧场景的原生对象，但 Lua 侧仍持有托管包装对象，
+-- is_managed_object 对这类"已死包装"依然返回 true，直接调用 get_GameObject 会抛出
+-- System.InvalidOperationException；REFramework 会在 invoke 包装层内部先写日志，
+-- 因此 pcall 只能防崩溃、挡不住刷屏。统一改用本函数：
+--   1. 已标记销毁的对象直接返回 nil，不再触发 invoke 与日志；
+--   2. 每帧的死对象探测次数受 DEAD_PROBE_BUDGET_PER_FRAME 限制，把爆发摊到多帧；
+--   3. 判定失败时登记来源，便于定位遗漏的调用点。
+local function safe_get_game_object(component, origin)
+    if not component then return nil end
+    if is_marked_dead(component) then return nil end
+    if dead_probe_budget <= 0 then
+        -- 本帧配额已用完：直接当作不可用，下一帧再探测。
+        dead_probe_budget_exhausted = dead_probe_budget_exhausted + 1
+        return nil
+    end
+    local ok, obj
+    if method_cache.Component_get_GameObject then
+        ok, obj = pcall(method_cache.Component_get_GameObject.call, method_cache.Component_get_GameObject, component)
+    else
+        ok, obj = pcall(function() return component:call("get_GameObject") end)
+    end
+    if not ok or not obj then
+        dead_probe_budget = dead_probe_budget - 1
+        mark_dead_object(component)
+        report_dead_access(origin)
+        return nil
+    end
+    if not sdk.is_managed_object(obj) then
+        dead_probe_budget = dead_probe_budget - 1
+        mark_dead_object(component)
+        report_dead_access(origin)
+        return nil
+    end
+    return obj
+end
 
 -- 性能优化：缓存常用类型 (Type Cache)
 local type_cache = {
@@ -327,8 +485,8 @@ local function find_weapons_in_hierarchy(transform, depth, results)
     if depth > 5 then return end
     local child = transform:call("get_Child")
     while child do
-        local child_obj = child:call("get_GameObject")
-        if child_obj then
+        local child_obj_ok, child_obj = (function() local go = safe_get_game_object(child, "weapon_hierarchy_search") if not go then return false end return true, go end)()
+        if child_obj_ok and child_obj then
             local name = child_obj:call("get_Name")
             -- 如果节点名叫 Wp_Parent 或 WpSub_Parent，则视为当前激活的主武器部件
             -- 排除包含 Reserve 的节点，过滤掉副武器
@@ -337,8 +495,8 @@ local function find_weapons_in_hierarchy(transform, depth, results)
                 if wp_transform then
                     local wp_child = wp_transform:call("get_Child")
                     while wp_child do
-                        local wp_child_obj = wp_child:call("get_GameObject")
-                        if wp_child_obj then
+                        local wp_child_obj_ok, wp_child_obj = (function() local go = safe_get_game_object(wp_child, "weapon_hierarchy_child") if not go then return false end return true, go end)()
+                        if wp_child_obj_ok and wp_child_obj then
                             local wp_name = wp_child_obj:call("get_Name")
                             if wp_name and string.match(wp_name, "^it%d%d%d%d") then
                                 table.insert(results, { name = wp_name, obj = wp_child_obj })
@@ -374,7 +532,7 @@ local function get_character_weapon_id(character)
     if not sdk.is_managed_object(character) then return nil, nil end
 
     local cache_key = nil
-    local game_obj_status_cache, game_obj_cache = pcall(function() return character:call("get_GameObject") end)
+    local game_obj_status_cache, game_obj_cache = (function() local go = safe_get_game_object(character, "weapon_id_hierarchy") if not go then return false end return true, go end)()
     if game_obj_status_cache and game_obj_cache then
         cache_key = tostring(game_obj_cache)
     else
@@ -422,11 +580,13 @@ local function get_character_body_id(character)
 
     -- 0. 检查缓存
     local cache_key = nil
-    local game_obj_status_cache, game_obj_cache = pcall(function() return character:call("get_GameObject") end)
-    if game_obj_status_cache and game_obj_cache then
+    local game_obj_cache = safe_get_game_object(character, "body_id_cache_key")
+    if game_obj_cache then
         cache_key = tostring(game_obj_cache)
     else
-        cache_key = tostring(character)
+        -- GameObject 已销毁说明这个角色包装对象已随场景失效：
+        -- 直接返回 nil 让调用方跳过该角色，避免每帧继续对它做无效访问。
+        return nil
     end
 
     local cached = body_id_cache[cache_key]
@@ -447,8 +607,8 @@ local function get_character_body_id(character)
 
     -- 2. 回退机制，用于主菜单等没有 app.Character 组件的情况，作为 via.Transform 遍历子节点查找 Body 对象
     if not result_id then
-        local game_obj_status, game_obj = pcall(function() return character:call("get_GameObject") end)
-        if game_obj_status and game_obj then
+        local game_obj = safe_get_game_object(character, "body_id_fallback")
+        if game_obj then
             local transform = game_obj:call("get_Transform")
             if transform then
                 local child = transform:call("get_Child")
@@ -456,8 +616,8 @@ local function get_character_body_id(character)
                 local candidates = {}
                 local has_non_ch00 = false
                 while child do
-                    local child_obj = child:call("get_GameObject")
-                    if child_obj then
+                    local child_obj_ok, child_obj = (function() local go = safe_get_game_object(child, "body_id_first") if not go then return false end return true, go end)()
+                    if child_obj_ok and child_obj then
                         local name = child_obj:call("get_Name")
                         -- 匹配标准 Body ID 格式: chXX_XXX_XXX (例如 ch00_000_0000)
                         if name and string.match(name, "^ch%d%d_%d%d%d_%d%d%d%d?$") then
@@ -540,9 +700,17 @@ end
 -- 引入缓存机制以防止列表闪烁 (仅用于主菜单)
 local character_cache = {} -- Key: GameObject Address, Value: { char: userdata, last_seen: number }
 local CACHE_TTL_BUFFER = 10.0 -- 缓存过期时间的缓冲值 (秒)，设置较大值以防止列表闪烁
+-- 场景纪元：用 via.Scene 原生指针的变化判定"换场景"。
+-- 旧场景销毁后原生对象立即失效，但上面的缓存 TTL 仍会让这些引用多存活十多秒，
+-- 期间每次访问都会抛出 InvalidOperationException 并写入大量错误日志。
+-- 因此场景一变就整体作废缓存，而不是等 TTL 自然过期。
+local current_scene_addr = nil
 local last_valid_local_player = nil -- 记录上一个有效的本地玩家角色
 local last_valid_local_player_time = 0 -- 记录上一个有效角色的时间戳
 local PLAYER_PERSISTENCE_TIME = 1.0 -- UI 层面的角色保持宽限期 (秒)
+
+local SAFE_LIVENESS_BATCH_SIZE = 32 -- 实测确认对象仍存活前，单个 on_frame 内允许处理的最大数量，避免重建帧整批报错
+local scene_reset_pending = false -- 场景纪元失效后需要整体清空缓存的标记
 
 -- 扫描器状态 (用于分帧处理)
 local scanner = {
@@ -550,20 +718,58 @@ local scanner = {
     transforms = nil, -- 待处理的 Transforms 列表
     count = 0,
     index = 1,
+    safe_batch_remaining = math.huge, -- 本帧剩余可安全处理的 Transform 数量
     -- batch_size 已移至全局配置 global_config.scanner_batch_size
     last_scan_time = 0
 }
 
+-- 场景切换检测：via.Scene 原生指针变化即视为换场景。
+-- 返回 true 表示本帧刚完成一次缓存作废，调用方应跳过本帧的旧缓存使用。
+local function check_scene_change(scene)
+    local addr = scene and tostring(scene) or "none"
+    if addr == current_scene_addr then return false end
+    current_scene_addr = addr
+    -- 旧场景引用立即作废：不保留任何跨场景的原生对象引用。
+    scanner.state = "IDLE"
+    scanner.transforms = nil
+    scanner.count = 0
+    scanner.index = 1
+    scanner.safe_batch_remaining = math.huge
+    character_cache = {}
+    body_id_cache = {}
+    character_mesh_cache = {}
+    applied_parts_cache = {}
+    applied_weapon_cache = {}
+    loaded_configs = {}
+    last_valid_local_player = nil
+    -- 标记延迟到帧末执行：那时文件内所有局部表都已初始化，可整体清空而不依赖声明顺序。
+    scene_reset_pending = true
+    return true
+end
+
+-- 换场景后作废"派生自游戏对象"的状态。不触碰纯 JSON 配置缓存：
+-- loaded_configs 是文件配置，active_overrides / active_group_presets / current_config
+-- 等是用户编辑状态，都没有原生对象引用，清空反而会造成预设显示丢失。
+local function flush_scene_reset()
+    character_cache = {}
+    body_id_cache = {}
+    character_mesh_cache = {}
+    applied_parts_cache = {}
+    applied_weapon_cache = {}
+    last_valid_local_player = nil
+    -- 换场景后旧的"已销毁"标记不再适用，清空以免误伤新场景复用的地址。
+    clear_dead_object_marks()
+    if TransformManager and TransformManager.clear_last_state_cache then
+        TransformManager.clear_last_state_cache()
+    end
+end
+
+-- 更新单个角色的缓存。返回值 game_obj 为 nil 表示该包装对象已随场景销毁：
+-- 调用方据此跳过后续访问，避免对死对象反复 invoke 而后台刷错误日志。
 local function update_cache_entry(char)
     if not char then return end
-    -- 尝试获取 GameObject 的地址作为唯一标识
-    local game_obj = nil
-    if method_cache.Component_get_GameObject then
-        local ok, obj = pcall(method_cache.Component_get_GameObject.call, method_cache.Component_get_GameObject, char)
-        if ok then game_obj = obj end
-    else
-        game_obj = char:call("get_GameObject")
-    end
+    -- 安全获取 GameObject 的地址作为唯一标识
+    local game_obj = safe_get_game_object(char, "update_cache_entry")
     if not game_obj then return end
     local key = tostring(game_obj)
     -- 过滤掉不绘制的对象 (隐藏对象)
@@ -593,6 +799,8 @@ local function tick_scanner()
                 scene = sdk.call_native_func(scene_manager, sdk.find_type_definition("via.SceneManager"), "get_CurrentScene")
             end
             if scene then
+                -- 0. 场景切换检测：刚换场景时旧缓存全部作废，本帧不再使用它们。
+                check_scene_change(scene)
                 -- 1. 扫描 app.Character (通常数量较少，一次性处理)
                 if type_cache.app_character then
                     local components = scene:call("findComponents(System.Type)", type_cache.app_character:get_runtime_type())
@@ -620,10 +828,20 @@ local function tick_scanner()
             end
         end
     elseif scanner.state == "PROCESSING" then
-        -- 处理当前批次
+        -- 处理当前批次。
+        -- 换装/换场景瞬间整批 Transform 可能同时失效，若一次处理 batch_size 个对象，
+        -- 会连续抛出上百次 InvalidOperationException 并把日志刷满。
+        -- 因此：先用小步长试探，只有确认对象仍然存活才允许在本帧内放大到完整批大小；
+        -- 一旦出现死对象，本帧立即停止推进（index 不提交），留到下一帧重试。
         local batch_size = global_config.scanner_batch_size or 100
+        if scanner.safe_batch_remaining <= 0 then
+            -- 本帧已达到安全处理上限，下一帧继续。
+            return
+        end
         local limit = scanner.index + batch_size - 1
         if limit > scanner.count then limit = scanner.count end
+        local batch_dead = false
+        local processed = 0
         for i = scanner.index, limit do
             -- 防御性编程：使用 pcall 包裹对象的获取和有效性检查
             -- 防止因对象跨帧销毁导致的 sol: runtime error
@@ -633,46 +851,60 @@ local function tick_scanner()
             end
             local status, transform = pcall(safe_get_transform)
             if status and transform then
-                -- 极速获取 GameObject
-                local ok, game_obj = pcall(method_cache.Component_get_GameObject.call, method_cache.Component_get_GameObject, transform)
-                if ok and game_obj and sdk.is_managed_object(game_obj) then
-                    -- 极速获取 Name (再次使用 pcall 确保安全)
-                    local name_ok, name = pcall(method_cache.GameObject_get_Name.call, method_cache.GameObject_get_Name, game_obj)
-                    -- 快速筛选
-                    local is_target = false
-                    if name_ok and name then
-                        -- 检查 "Pl" 前缀 (使用 string.sub 比 find 快)
-                        if string.sub(name, 1, 2) == "Pl" then
-                            is_target = true
-                        else
-                            -- 检查特殊名称
-                            local special_names = {
-                                "SaveSelect_HunterXX", "SaveSelect_HunterXY",
-                                "GuildCard_HunterXX", "GuildCard_HunterXY",
-                                "Lobby_HunterXX", "Lobby_HunterXY"
-                            }
-                            for _, s_name in ipairs(special_names) do
-                                if name == s_name then is_target = true; break end
-                            end
+                -- 安全获取 GameObject；返回 nil 说明该对象已随场景销毁
+                local game_obj = safe_get_game_object(transform, "scanner_transform")
+                if not game_obj then
+                    batch_dead = true
+                    break
+                end
+                -- 极速获取 Name (再次使用 pcall 确保安全)
+                local name_ok, name = pcall(method_cache.GameObject_get_Name.call, method_cache.GameObject_get_Name, game_obj)
+                -- 快速筛选
+                local is_target = false
+                if name_ok and name then
+                    -- 检查 "Pl" 前缀 (使用 string.sub 比 find 快)
+                    if string.sub(name, 1, 2) == "Pl" then
+                        is_target = true
+                    else
+                        -- 检查特殊名称
+                        local special_names = {
+                            "SaveSelect_HunterXX", "SaveSelect_HunterXY",
+                            "GuildCard_HunterXX", "GuildCard_HunterXY",
+                            "Lobby_HunterXX", "Lobby_HunterXY"
+                        }
+                        for _, s_name in ipairs(special_names) do
+                            if name == s_name then is_target = true; break end
                         end
-                    end
-                    if is_target then
-                        -- 找到目标，进一步获取 Character 组件
-                        local char = nil
-                        if type_cache.app_character then
-                            -- 使用 pcall 包裹 getComponent
-                            local char_ok, c = pcall(method_cache.GameObject_getComponent.call, method_cache.GameObject_getComponent, game_obj, type_cache.app_character)
-                            if char_ok then char = c end
-                        end
-                        if not char and type_cache.app_hunter_character then
-                            local char_ok, c = pcall(method_cache.GameObject_getComponent.call, method_cache.GameObject_getComponent, game_obj, type_cache.app_hunter_character)
-                            if char_ok then char = c end
-                        end
-                        if char then update_cache_entry(char) else update_cache_entry(transform) end
                     end
                 end
+                if is_target then
+                    -- 找到目标，进一步获取 Character 组件
+                    local char = nil
+                    if type_cache.app_character then
+                        -- 使用 pcall 包裹 getComponent
+                        local char_ok, c = pcall(method_cache.GameObject_getComponent.call, method_cache.GameObject_getComponent, game_obj, type_cache.app_character)
+                        if char_ok then char = c end
+                    end
+                    if not char and type_cache.app_hunter_character then
+                        local char_ok, c = pcall(method_cache.GameObject_getComponent.call, method_cache.GameObject_getComponent, game_obj, type_cache.app_hunter_character)
+                        if char_ok then char = c end
+                    end
+                    if char then update_cache_entry(char) else update_cache_entry(transform) end
+                end
+                processed = processed + 1
             end
         end
+        -- 本帧实际检查过的对象数量计入安全预算：未确认存活前不允许整批推进。
+        if processed > 0 and scanner.safe_batch_remaining ~= math.huge then
+            scanner.safe_batch_remaining = scanner.safe_batch_remaining - processed
+        end
+        if batch_dead then
+            -- 出现已销毁对象：本帧不推进 index，下一帧从同一位置重试；
+            -- 若换装确实发生，下一次扫描会因为场景/对象重建而重建列表。
+            scanner.safe_batch_remaining = 0
+            return
+        end
+        scanner.safe_batch_remaining = math.huge
         scanner.index = limit + 1
         -- 检查是否完成
         if scanner.index > scanner.count then
@@ -697,7 +929,7 @@ local function get_all_characters()
                 if player then
                     local char = player:call("get_Character")
                     if char and sdk.is_managed_object(char) then
-                        local game_obj_ok, game_obj = pcall(function() return char:call("get_GameObject") end)
+                        local game_obj_ok, game_obj = (function() local go = safe_get_game_object(char, "get_all_characters_instanced") if not go then return false end return true, go end)()
                         if game_obj_ok and game_obj and sdk.is_managed_object(game_obj) then
                             -- 检查角色是否被游戏原生隐藏 (例如在使用装备箱时)
                             local draw_status, is_draw = pcall(function() return game_obj:call("get_Draw") end)
@@ -723,7 +955,7 @@ local function get_all_characters()
         if master then
             local char = master:call("get_Character")
             if char and sdk.is_managed_object(char) then
-                local game_obj_ok, game_obj = pcall(function() return char:call("get_GameObject") end)
+                local game_obj_ok, game_obj = (function() local go = safe_get_game_object(char, "get_all_characters_master") if not go then return false end return true, go end)()
                 if game_obj_ok and game_obj and sdk.is_managed_object(game_obj) then
                     local draw_status, is_draw = pcall(function() return game_obj:call("get_Draw") end)
                     if not (draw_status and is_draw == false) then
@@ -748,13 +980,13 @@ local function get_all_characters()
     for key, data in pairs(character_cache) do
         -- 增加有效性检查
         local is_valid = false
-        if data.char and sdk.is_managed_object(data.char) then
+        -- 角色包装对象可能已随场景销毁；safe_get_game_object 失败时立即丢弃该条目，
+        -- 避免之后每帧都对死对象重复 invoke。
+        local game_obj = data.char and safe_get_game_object(data.char, "character_cache_validate") or nil
+        if game_obj then
             -- 检查角色是否被游戏原生隐藏
-            local game_obj_ok, game_obj = pcall(function() return data.char:call("get_GameObject") end)
-            if game_obj_ok and game_obj and sdk.is_managed_object(game_obj) then
-                local draw_status, is_draw = pcall(function() return game_obj:call("get_Draw") end)
-                is_valid = not (draw_status and is_draw == false)
-            end
+            local draw_status, is_draw = pcall(function() return game_obj:call("get_Draw") end)
+            is_valid = not (draw_status and is_draw == false)
         end
         if is_valid and (current_time - data.last_seen <= cache_ttl) then
             -- 如果 PlayerManager 还没包含这个对象，则添加
@@ -1001,7 +1233,7 @@ local function collect_mesh_components_recursive(game_obj, result, visited)
     if not ok_transform or not transform then return end
     local ok_child, child = pcall(function() return transform:call("get_Child") end)
     while ok_child and child do
-        local ok_child_obj, child_obj = pcall(function() return child:call("get_GameObject") end)
+        local ok_child_obj, child_obj = (function() local go = safe_get_game_object(child, "mesh_recursive_child") if not go then return false end return true, go end)()
         if ok_child_obj and child_obj then
             collect_mesh_components_recursive(child_obj, result, visited)
         end
@@ -1033,7 +1265,7 @@ local character_mesh_cache = {}
 local CHARACTER_MESH_CACHE_TTL = 0.25
 local function get_all_character_meshes(character)
     if not character or not sdk.is_managed_object(character) then return {} end
-    local ok_root, root = pcall(function() return character:call("get_GameObject") end)
+    local ok_root, root = (function() local go = safe_get_game_object(character, "all_character_meshes_root") if not go then return false end return true, go end)()
     if not ok_root or not root or not sdk.is_managed_object(root) then return {} end
 
     local cache_key = tostring(root)
@@ -1061,8 +1293,8 @@ local function get_character_part_meshes(character, part_index, part_data)
         collect_mesh_components_recursive(part_obj, part_meshes, {})
         local armor_meshes = {}
         for _, mesh in ipairs(part_meshes) do
-            local ok_go, mesh_game_obj = pcall(function() return mesh:call("get_GameObject") end)
-            if not (ok_go and mesh_game_obj and is_player_face_object(mesh_game_obj)) then
+            local mesh_game_obj = safe_get_game_object(mesh, "mesh_collect_armor")
+            if not (mesh_game_obj and is_player_face_object(mesh_game_obj)) then
                 table.insert(armor_meshes, mesh)
             end
         end
@@ -1082,8 +1314,8 @@ local function get_character_part_meshes(character, part_index, part_data)
         for _, mesh in ipairs(all_meshes) do
             local count = 0
             local is_player_face = false
-            local ok_go, mesh_game_obj = pcall(function() return mesh:call("get_GameObject") end)
-            if ok_go and mesh_game_obj then is_player_face = is_player_face_object(mesh_game_obj) end
+            local mesh_game_obj = safe_get_game_object(mesh, "mesh_collect_face")
+            if mesh_game_obj then is_player_face = is_player_face_object(mesh_game_obj) end
             if not is_player_face then
                 local mat_count = 0
                 local ok_count, value = pcall(function() return mesh:call("get_MaterialNum") end)
@@ -1116,15 +1348,15 @@ get_character_part = function(character, part_index)
     local status, part_obj = pcall(function() return character:call("getParts", part_index) end)
     if status and part_obj then return part_obj end
     -- 2. 回退模式：遍历 Transform 子节点并根据名称后缀匹配
-    local game_obj_status, game_obj = pcall(function() return character:call("get_GameObject") end)
-    if game_obj_status and game_obj then
+    local game_obj = safe_get_game_object(character, "get_character_part")
+    if game_obj then
         local transform = game_obj:call("get_Transform")
         if transform then
             local parts_map = {} -- Key: part_index, Value: { obj, name }
             local child = transform:call("get_Child")
             while child do
-                local child_obj = child:call("get_GameObject")
-                if child_obj then
+                local child_obj_ok, child_obj = (function() local go = safe_get_game_object(child, "part_fallback_child") if not go then return false end return true, go end)()
+                if child_obj_ok and child_obj then
                     local name = child_obj:call("get_Name")
                     -- 只收集标准角色模型 (ch开头)
                     if name and string.find(name, "^ch") then
@@ -1290,8 +1522,8 @@ local function apply_preset_to_armor(character, preset_data, ignore_context, for
     if not character or not preset_data then return end
     -- 增加有效性检查，防止在对象销毁后访问
     if not sdk.is_managed_object(character) then return end
-    local char_go = character:call("get_GameObject")
-    if not char_go or not sdk.is_managed_object(char_go) then return end
+    local char_go = safe_get_game_object(character, "apply_preset_armor")
+    if not char_go then return end
     local char_addr = tostring(char_go)
     if not type_mesh then
         type_mesh = get_type("via.render.Mesh")
@@ -1348,8 +1580,8 @@ end
 local function apply_preset_to_weapon(character, weapon_objs, preset_data, ignore_context, force_apply)
     if not character or not weapon_objs or not preset_data then return end
     if not sdk.is_managed_object(character) then return end
-    local char_go = character:call("get_GameObject")
-    if not char_go or not sdk.is_managed_object(char_go) then return end
+    local char_go = safe_get_game_object(character, "apply_preset_weapon")
+    if not char_go then return end
     local char_addr = tostring(char_go)
     if not type_mesh then
         type_mesh = get_type("via.render.Mesh")
@@ -1513,7 +1745,9 @@ local function load_config_data(body_id)
         return loaded_configs[body_id]
     end
     local path = get_config_path(body_id)
-    local loaded_data = json.load_file(path)
+    -- 文件不存在、为空（该套装还没有预设文件）或内容损坏时，safe_json_load 一律返回 nil
+    -- 且不产生任何错误日志；单条预设不可用不应影响其余装备的加载。
+    local loaded_data = safe_json_load(path)
     if loaded_data then
         -- 确保结构完整
         if not loaded_data.presets then loaded_data.presets = {} end
@@ -1635,10 +1869,10 @@ local function load_config_data(body_id)
         -- 因为加载流程会为缺失字段补全默认值，导致"补全后数据 vs 原始备份"产生误差。
         local backup_path = get_backup_path(body_id)
         if backup_path then
-            local backup_data = json.load_file(backup_path)
+            local backup_data = safe_json_load(backup_path)
             if backup_data then
                 local config_path = get_config_path(body_id)
-                local raw_config = json.load_file(config_path)
+                local raw_config = safe_json_load(config_path)
                 if raw_config then
                     local same = deep_equal(raw_config, backup_data)
                     if not same then
@@ -1944,7 +2178,7 @@ local function apply_preset(preset_name)
             local char_weapon_id, w_objs = get_character_weapon_id(char)
             if char_weapon_id and char_weapon_id == current_body_id then
                 local config = load_config_data(char_weapon_id)
-                local char_go_ok, char_go = pcall(function() return char:call("get_GameObject") end)
+                local char_go_ok, char_go = (function() local go = safe_get_game_object(char, "apply_preset_weapon_addr") if not go then return false end return true, go end)()
                 local char_addr = (char_go_ok and char_go) and tostring(char_go) or tostring(char)
                 local new_overrides, _ = TransformManager.apply_transform_rules(
                     char_addr, config, char, active_overrides[current_body_id], merge_overrides
@@ -1955,7 +2189,7 @@ local function apply_preset(preset_name)
             local char_body_id = get_character_body_id(char)
             if char_body_id and char_body_id == current_body_id then
                 local config = load_config_data(char_body_id)
-                local char_go_ok, char_go = pcall(function() return char:call("get_GameObject") end)
+                local char_go_ok, char_go = (function() local go = safe_get_game_object(char, "apply_preset_armor_addr") if not go then return false end return true, go end)()
                 local char_addr = (char_go_ok and char_go) and tostring(char_go) or tostring(char)
                 local new_overrides, _, activated_targets = TransformManager.apply_transform_rules(
                     char_addr, config, char, active_overrides[current_body_id], merge_overrides
@@ -2081,13 +2315,13 @@ local function save_current_config_to_file(body_id)
     -- 更新缓存
     loaded_configs[body_id] = current_config
     local path = get_config_path(body_id)
-    json.dump_file(path, current_config)
+    safe_json_save(path, current_config)
 
     -- 同步写入备份文件：保存时主配置与备份内容一致，
     -- 后续若主配置被 mod 管理器还原，备份仍保留玩家改动，作为恢复来源。
     local backup_path = get_backup_path(body_id)
     if backup_path then
-        json.dump_file(backup_path, current_config)
+        safe_json_save(backup_path, current_config)
     end
     -- 玩家主动保存视为已是最新状态，清除"被还原"标记
     config_restored[body_id] = nil
@@ -2134,11 +2368,11 @@ local function restore_config_from_backup(body_id)
     if not body_id then return false end
     local backup_path = get_backup_path(body_id)
     if not backup_path then return false end
-    local backup_data = json.load_file(backup_path)
+    local backup_data = safe_json_load(backup_path)
     if not backup_data then return false end
     -- 用备份覆盖主配置文件
     local path = get_config_path(body_id)
-    json.dump_file(path, backup_data)
+    safe_json_save(path, backup_data)
     -- 清除该 body 的所有内存缓存，强制下一帧重新加载备份内容
     -- 注意：这里不清除 config_restore_handled，由 UI 调用方设置的"已处理"标记需保留，
     -- 否则随后的 load_config_data 重新检测会让横幅再次显示。
@@ -2361,8 +2595,8 @@ local function find_auto_preset(target_body_id)
                 s, e = string.find(file, data_prefix)
             end
             if e then load_path = string.sub(file, e + 1) end
-            local data = json.load_file(load_path)
-            if not data then data = json.load_file(file) end
+            local data = safe_json_load(load_path)
+            if not data then data = safe_json_load(file) end
             if data and data.presets then
                 -- 获取第一个预设
                 local first_preset = nil
@@ -2926,7 +3160,7 @@ local variant_manager_ui = VariantManagerUI.new({
         if type_key == "damage" then
             -- 受击条件以角色地址维护倒计时，地址生成方式与旧 UI 保持一致。
             local ok, remaining = pcall(function()
-                local game_object = character:call("get_GameObject")
+                local game_object = safe_get_game_object(character, "transform_state_damage")
                 local character_address = tostring(game_object or character)
                 return TransformManager.get_damage_remaining_time(character_address)
             end)
@@ -3063,7 +3297,7 @@ local variant_manager_ui = VariantManagerUI.new({
         local weapon_obj = weapon_objs and weapon_objs[part_index + 1]
         if not weapon_obj or not sdk.is_managed_object(weapon_obj) then return nil end
         local mesh = get_mesh_component_recursive(weapon_obj)
-        local target = mesh and mesh:call("get_GameObject") or weapon_obj
+        local target = safe_get_game_object(mesh, "part_label") or weapon_obj
         local ok, name = pcall(function() return target:call("get_Name") end)
         return ok and name or nil
     end
@@ -3200,7 +3434,17 @@ end
 -- =============================================================================
 -- temp_applied_presets 已在文件头部定义
 re.on_frame(function()
-    -- 0. 执行分帧扫描器
+    -- 每帧重置"死对象探测预算"：单帧最多产生 DEAD_PROBE_BUDGET_PER_FRAME 条报错。
+    begin_dead_probe_frame()
+
+    -- 0. 场景切换检测：在扫描器与缓存被使用前完成失效，避免对旧场景对象批量报错。
+    if scene_reset_pending then
+        flush_scene_reset()
+        scanner.last_scan_time = 0
+        scene_reset_pending = false
+    end
+
+    -- 0.1 执行分帧扫描器
     tick_scanner()
 
     -- D2D 新 UI 自己维护快捷键按下沿和弹窗状态。
@@ -3283,7 +3527,7 @@ re.on_frame(function()
             if config then
                 if not active_overrides[char_body_id] then
                     apply_all_defaults(char_body_id)
-                    local char_go_ok, char_go = pcall(function() return char:call("get_GameObject") end)
+                    local char_go_ok, char_go = (function() local go = safe_get_game_object(char, "ui_weapon_mesh") if not go then return false end return true, go end)()
                     local char_addr = (char_go_ok and char_go) and tostring(char_go) or tostring(char)
                     local new_overrides, _, activated_targets, all_targeted_groups = TransformManager.apply_transform_rules(
                         char_addr, config, char, active_overrides[char_body_id], merge_overrides
@@ -3317,7 +3561,7 @@ re.on_frame(function()
                 end
                 if active_overrides[char_body_id] then
                     if char and sdk.is_managed_object(char) then
-                        local char_go_ok, char_go = pcall(function() return char:call("get_GameObject") end)
+                        local char_go_ok, char_go = (function() local go = safe_get_game_object(char, "ui_part_mesh") if not go then return false end return true, go end)()
                         local char_addr = (char_go_ok and char_go) and tostring(char_go) or tostring(char)
                         local final_overrides = active_overrides[char_body_id]
                         local new_overrides, changed, activated_targets, all_targeted_groups = TransformManager.apply_transform_rules(
@@ -3373,7 +3617,7 @@ re.on_frame(function()
             if config then
                 if not active_overrides[char_weapon_id] then
                     apply_all_defaults(char_weapon_id)
-                    local char_go_ok, char_go = pcall(function() return char:call("get_GameObject") end)
+                    local char_go_ok, char_go = (function() local go = safe_get_game_object(char, "ui_damage_test") if not go then return false end return true, go end)()
                     local char_addr = (char_go_ok and char_go) and tostring(char_go) or tostring(char)
                     local new_overrides, _ = TransformManager.apply_transform_rules(
                         char_addr, config, char, active_overrides[char_weapon_id], merge_overrides
@@ -3382,7 +3626,7 @@ re.on_frame(function()
                 end
                 if active_overrides[char_weapon_id] then
                     if char and sdk.is_managed_object(char) then
-                        local char_go_ok, char_go = pcall(function() return char:call("get_GameObject") end)
+                        local char_go_ok, char_go = (function() local go = safe_get_game_object(char, "ui_body_switch") if not go then return false end return true, go end)()
                         local char_addr = (char_go_ok and char_go) and tostring(char_go) or tostring(char)
                         local final_overrides = active_overrides[char_weapon_id]
                         local new_overrides, changed = TransformManager.apply_transform_rules(
@@ -3431,7 +3675,7 @@ re.on_draw_ui(function()
                         imgui.table_set_column_index(1)
                         local addr = "N/A"
                         if char and sdk.is_managed_object(char) then
-                            local ok, game_obj = pcall(function() return char:call("get_GameObject") end)
+                            local ok, game_obj = (function() local go = safe_get_game_object(char, "ui_body_mesh") if not go then return false end return true, go end)()
                             if ok and game_obj then addr = tostring(game_obj) end
                         else
                             addr = "Invalid/Destroyed"
@@ -4099,7 +4343,7 @@ re.on_draw_ui(function()
                                 local dmg_rule = current_config.damage_transform_rules[1]
                                 
                                 -- 剩余时间和测试按钮
-                                local char_go_ok, char_go = pcall(function() return character:call("get_GameObject") end)
+                                local char_go_ok, char_go = (function() local go = safe_get_game_object(character, "ui_mode_switch") if not go then return false end return true, go end)()
                                 local char_addr = (char_go_ok and char_go) and tostring(char_go) or tostring(character)
                                 if imgui.button((T("damage_test_btn") or "Test Hit") .. "##test_dmg") then
                                     local cur_hp = TransformManager.get_character_hp(character)
@@ -4488,8 +4732,8 @@ re.on_draw_ui(function()
                                 for idx, w_obj in ipairs(w_objs) do
                                     if sdk.is_managed_object(w_obj) then
                                         local mesh_comp = get_mesh_component_recursive(w_obj)
-                                        if mesh_comp then
-                                            local mesh_game_obj = mesh_comp:call("get_GameObject")
+                                        local mesh_game_obj = mesh_comp and safe_get_game_object(mesh_comp, "draw_weapon_mesh") or nil
+                                        if mesh_game_obj then
                                             local obj_name = mesh_game_obj:call("get_Name")
                                             draw_mesh_toggle(mesh_game_obj, string.format("Weapon %d [%s]", idx - 1, obj_name), body_id, tostring(idx - 1))
                                         else
@@ -4520,10 +4764,10 @@ re.on_draw_ui(function()
                                 local reference_part_data = active_overrides[body_id]
                                     and active_overrides[body_id][tostring(i)]
                                 local mesh_components = get_character_part_meshes(character, i, reference_part_data)
-                                if #mesh_components > 0 then
+                                local mesh_game_obj = mesh_components[1] and safe_get_game_object(mesh_components[1], "draw_part_mesh") or nil
+                                if mesh_game_obj then
                                     -- UI 每个部位只显示主 Mesh；附属 Mesh 由预设应用逻辑同步控制。
-                                    local mesh_game_obj = mesh_components[1]:call("get_GameObject")
-                                    local obj_name = mesh_game_obj and mesh_game_obj:call("get_Name") or "Mesh"
+                                    local obj_name = mesh_game_obj:call("get_Name") or "Mesh"
                                     draw_mesh_toggle(mesh_game_obj, string.format("%s [%s]", part_name, obj_name), body_id, i)
                                 elseif part_obj and not is_player_face_object(part_obj) then
                                     local obj_name = part_obj:call("get_Name")
