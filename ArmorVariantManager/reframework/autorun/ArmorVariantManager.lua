@@ -156,28 +156,12 @@ local method_cache = {
     Scene_findComponents = sdk.find_type_definition("via.Scene"):get_method("findComponents(System.Type)")
 }
 
--- 诊断：统计"已销毁对象"的访问来源，用于定位剩余报错出自哪个调用点。
--- 注意：REFramework 里 print 只进调试控制台，不进 re2_framework_log.txt，
--- 因此日志通道统一用 log.info。
-local dead_access_stats = { total = 0, last_report = 0 }
-
 -- 已确认销毁的托管包装对象 -> 下次允许再探测的时间。
 -- 目的：REFramework 的 invoke 层在抛异常前一定会写日志，日志无法被 pcall 抑制，
 -- 因此唯一有效的降噪手段是"不重复探测"。确认死掉的对象在 DEAD_OBJECT_RETRY_INTERVAL
 -- 内直接走 nil 分支，把每帧一次的报错降为每个对象每 1 秒最多一次。
 local DEAD_OBJECT_RETRY_INTERVAL = 1.0
 local dead_object_until = {}
-
--- 每帧允许"探测到死对象"的次数上限。换场景瞬间可能同时有几十个对象失效，
--- 即使每个只探测一次，集中在一帧里依然会形成可见的报错爆发。
--- 用帧预算把爆发摊到后续若干帧，日志上最多每帧一条。
-local DEAD_PROBE_BUDGET_PER_FRAME = 1
-local dead_probe_budget = DEAD_PROBE_BUDGET_PER_FRAME
-local dead_probe_budget_exhausted = 0
-
-local function begin_dead_probe_frame()
-    dead_probe_budget = DEAD_PROBE_BUDGET_PER_FRAME
-end
 
 local function mark_dead_object(component)
     if not component then return end
@@ -202,43 +186,17 @@ local function clear_dead_object_marks()
     dead_object_until = {}
 end
 
-local function report_dead_access(origin)
-    dead_access_stats.total = dead_access_stats.total + 1
-    if origin then
-        dead_access_stats[origin] = (dead_access_stats[origin] or 0) + 1
-    end
-    -- 每秒最多输出一次，避免诊断本身变成新的刷屏源。
-    local now = os.clock()
-    if now - (dead_access_stats.last_report or 0) < 1.0 then return end
-    dead_access_stats.last_report = now
-    local parts = {}
-    for key, value in pairs(dead_access_stats) do
-        if key ~= "last_report" and key ~= "total" then
-            table.insert(parts, string.format("%s=%d", tostring(key), value))
-        end
-    end
-    table.sort(parts)
-    log.info(string.format(
-        "[AVM-DIAG] dead-object probes total=%d skipped_by_budget=%d | %s",
-        dead_access_stats.total, dead_probe_budget_exhausted, table.concat(parts, " ")))
-end
-
 -- 性能与日志优化：安全获取组件的 GameObject
 -- 场景切换时游戏会销毁旧场景的原生对象，但 Lua 侧仍持有托管包装对象，
 -- is_managed_object 对这类"已死包装"依然返回 true，直接调用 get_GameObject 会抛出
 -- System.InvalidOperationException；REFramework 会在 invoke 包装层内部先写日志，
 -- 因此 pcall 只能防崩溃、挡不住刷屏。统一改用本函数：
 --   1. 已标记销毁的对象直接返回 nil，不再触发 invoke 与日志；
---   2. 每帧的死对象探测次数受 DEAD_PROBE_BUDGET_PER_FRAME 限制，把爆发摊到多帧；
---   3. 判定失败时登记来源，便于定位遗漏的调用点。
+--   2. 首次判定失败即登记该对象，1 秒内不重复探测。
+-- origin 参数保留用于调用点自描述（当前不参与逻辑）。
 local function safe_get_game_object(component, origin)
     if not component then return nil end
     if is_marked_dead(component) then return nil end
-    if dead_probe_budget <= 0 then
-        -- 本帧配额已用完：直接当作不可用，下一帧再探测。
-        dead_probe_budget_exhausted = dead_probe_budget_exhausted + 1
-        return nil
-    end
     local ok, obj
     if method_cache.Component_get_GameObject then
         ok, obj = pcall(method_cache.Component_get_GameObject.call, method_cache.Component_get_GameObject, component)
@@ -246,15 +204,11 @@ local function safe_get_game_object(component, origin)
         ok, obj = pcall(function() return component:call("get_GameObject") end)
     end
     if not ok or not obj then
-        dead_probe_budget = dead_probe_budget - 1
         mark_dead_object(component)
-        report_dead_access(origin)
         return nil
     end
     if not sdk.is_managed_object(obj) then
-        dead_probe_budget = dead_probe_budget - 1
         mark_dead_object(component)
-        report_dead_access(origin)
         return nil
     end
     return obj
@@ -3434,9 +3388,6 @@ end
 -- =============================================================================
 -- temp_applied_presets 已在文件头部定义
 re.on_frame(function()
-    -- 每帧重置"死对象探测预算"：单帧最多产生 DEAD_PROBE_BUDGET_PER_FRAME 条报错。
-    begin_dead_probe_frame()
-
     -- 0. 场景切换检测：在扫描器与缓存被使用前完成失效，避免对旧场景对象批量报错。
     if scene_reset_pending then
         flush_scene_reset()
