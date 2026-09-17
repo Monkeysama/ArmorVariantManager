@@ -12,6 +12,7 @@ local Select = require("ArmorVariantManager_UI.Component.Select")
 local BridgeRuntime = require("ArmorVariantManager_UI.Service.BridgeRuntime")
 local InputBlocker = require("ArmorVariantManager_UI.Service.InputBlocker")
 local NativeTextInput = require("ArmorVariantManager_UI.Service.NativeTextInput")
+local DrawTransform = require("ArmorVariantManager_UI.Service.DrawTransform")
 local Documentation = require("ArmorVariantManager_Core.Documentation")
 local VariantManagerUI = {}
 local COLORS = {
@@ -97,7 +98,8 @@ function VariantManagerUI.new(deps)
         bridge_client_id, deps.bridge_runtime_directory or "ArmorVariantManager/Runtime")
     local self = {
         deps = deps,
-        available = d2d ~= nil,
+        available = false,
+        d2d_registered = false,
         ready = false,
         visible = false,
         key_down = false,
@@ -161,51 +163,67 @@ function VariantManagerUI.new(deps)
         version = deps.version or "",
         author = deps.author or ""
     }
-    self.button = Button.new(self.d2d, COLORS, self.fonts)
-    self.checkbox = Checkbox.new(self.d2d, COLORS, self.fonts)
-    self.panel = Panel.new(self.d2d, COLORS)
-    self.list = List.new(self.button, self.d2d, COLORS)
     self.window = Window.new()
-    self.tag = Tag.new(self.d2d, COLORS, self.fonts)
-    self.input = Input.new(self.d2d, COLORS, self.fonts)
-    self.input_number = InputNumber.new(self.d2d, COLORS, self.fonts)
-    self.select = Select.new(self.d2d, COLORS, self.fonts)
-    self.sliders = {
-        scan_interval = Slider.new(self.d2d, COLORS, self.fonts),
-        body_id_ttl = Slider.new(self.d2d, COLORS, self.fonts),
-        scanner_batch_size = Slider.new(self.d2d, COLORS, self.fonts)
-    }
     self.input_blocker = nil
     setmetatable(self, { __index = VariantManagerUI })
-    if self.available then
-        d2d.register(
-            function()
-                local ok, err = pcall(function()
-                    self.fonts.title = d2d.Font.new("Tahoma", 24, true)
-                    self.fonts.body = d2d.Font.new("Tahoma", 18)
-                    self.fonts.small = d2d.Font.new("Tahoma", 16)
-                    self.fonts.tiny = d2d.Font.new("Tahoma", 13)
-                end)
-                self.ready = ok and err == nil
-            end,
-            function()
-                if not self.deps.config.new_ui_enabled then return end
-                local ok, err = xpcall(function() self:draw() end, function(draw_error)
-                    if debug and debug.traceback then
-                        return debug.traceback(tostring(draw_error), 2)
-                    end
-                    return tostring(draw_error)
-                end)
-                if not ok then
-                    self.visible = false
-                    self.last_error = err
-                else
-                    self.last_error = nil
-                end
-            end
-        )
-    end
     return self
+end
+function VariantManagerUI:ensure_d2d_backend()
+    if self.d2d_registered then return true end
+    local api = rawget(_G, "d2d")
+    if type(api) ~= "table" or type(api.register) ~= "function" then return false end
+    local adapted_api = api
+    if DrawTransform.needs_wrap(api) then
+        adapted_api = DrawTransform.wrap(api)
+        if log and log.info then
+            log.info("[ArmorVariantManager] 外部 D2D 缺少 push_transform，已启用 Lua 缩放兼容层")
+        end
+    end
+    self.d2d = adapted_api
+    self.available = true
+    self.button = Button.new(adapted_api, COLORS, self.fonts)
+    self.checkbox = Checkbox.new(adapted_api, COLORS, self.fonts)
+    self.panel = Panel.new(adapted_api, COLORS)
+    self.list = List.new(self.button, adapted_api, COLORS)
+    self.tag = Tag.new(adapted_api, COLORS, self.fonts)
+    self.input = Input.new(adapted_api, COLORS, self.fonts)
+    self.input_number = InputNumber.new(adapted_api, COLORS, self.fonts)
+    self.select = Select.new(adapted_api, COLORS, self.fonts)
+    self.sliders = {
+        scan_interval = Slider.new(adapted_api, COLORS, self.fonts),
+        body_id_ttl = Slider.new(adapted_api, COLORS, self.fonts),
+        scanner_batch_size = Slider.new(adapted_api, COLORS, self.fonts)
+    }
+    api.register(
+        function()
+            local ok, err = pcall(function()
+                self.fonts.title = adapted_api.Font.new("Tahoma", 24, true)
+                self.fonts.body = adapted_api.Font.new("Tahoma", 18)
+                self.fonts.small = adapted_api.Font.new("Tahoma", 16)
+                self.fonts.tiny = adapted_api.Font.new("Tahoma", 13)
+            end)
+            self.ready = ok and err == nil
+        end,
+        function()
+            if not self.deps.config.new_ui_enabled or not self.ready then return end
+            local ok, err = xpcall(function() self:draw() end, function(draw_error)
+                if debug and debug.traceback then
+                    return debug.traceback(tostring(draw_error), 2)
+                end
+                return tostring(draw_error)
+            end)
+            if not ok then
+                self.last_error = err
+                if log and log.error then
+                    log.error("[ArmorVariantManager] D2D draw error: " .. tostring(err))
+                end
+            else
+                self.last_error = nil
+            end
+        end
+    )
+    self.d2d_registered = true
+    return true
 end
 function VariantManagerUI:T(key)
     if self.translate then return self.translate(key) end
@@ -537,6 +555,7 @@ function VariantManagerUI:is_bindable_key(key)
 end
 function VariantManagerUI:update()
     local config = self.deps.config
+    self:ensure_d2d_backend()
     if not config.new_ui_enabled then
         self:deactivate_native_text_input()
         if self.input_blocker and self.input_blocker.enabled then

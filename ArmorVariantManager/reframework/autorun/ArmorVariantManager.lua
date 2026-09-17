@@ -1,5 +1,5 @@
 local mod_name = "ArmorVariantManager"
-local version = "4.1.2"
+local version = "4.2.0"
 local author = "MK,Moon,AZUSA"
 local global_config_path = "ArmorVariantManager/GlobalSettings.json"
 local global_config = {
@@ -29,6 +29,7 @@ local refd2d_module_names = {
     "ArmorVariantManager_UI.Component.Tag",
     "ArmorVariantManager_UI.Component.Window",
     "ArmorVariantManager_UI.Service.BridgeRuntime",
+    "ArmorVariantManager_UI.Service.DrawTransform",
     "ArmorVariantManager_UI.Service.InputBlocker",
     "ArmorVariantManager_UI.Service.NativeTextInput"
 }
@@ -44,8 +45,47 @@ local function T(key)
     if not Localization[lang] then lang = "en" end
     return Localization[lang][key] or tostring(key)
 end
+local function ensure_parent_directory(filepath)
+    local dir = string.match(filepath, "^(.*)[/\\][^/\\]+$")
+    if not dir then return true end
+    if fs and fs.create_directory then
+        local ok, created = pcall(fs.create_directory, dir)
+        return ok and created ~= false
+    end
+    return true
+end
+local function safe_json_load(filepath)
+    if not filepath then return nil end
+    local handle = io.open(filepath, "r")
+    if not handle then return nil end
+    local content = handle:read("a")
+    handle:close()
+    if not content then return nil end
+    content = content:gsub("^\239\187\191", "") 
+    if content:match("^%s*$") then return nil end
+    local ok, data = pcall(json.load_string, content)
+    if not ok then return nil end
+    return data
+end
+local function safe_json_save(filepath, value)
+    if not filepath or not value then return false end
+    local ok_text, text = pcall(json.dump_string, value, 4)
+    if not ok_text or type(text) ~= "string" or text == "" then
+        log.error(string.format("[AVM] json 序列化失败，已跳过写入: %s", tostring(filepath)))
+        return false
+    end
+    ensure_parent_directory(filepath)
+    local handle = io.open(filepath, "w")
+    if not handle then
+        log.error(string.format("[AVM] 无法写入配置文件: %s", tostring(filepath)))
+        return false
+    end
+    handle:write(text)
+    handle:close()
+    return true
+end
 local function load_global_settings()
-    local loaded = json.load_file(global_config_path)
+    local loaded = safe_json_load(global_config_path)
     if loaded then
         if loaded.language then global_config.language = loaded.language end
         if loaded.scan_interval then global_config.scan_interval = loaded.scan_interval end
@@ -59,7 +99,7 @@ local function load_global_settings()
     end
 end
 local function save_global_settings()
-    json.dump_file(global_config_path, global_config)
+    safe_json_save(global_config_path, global_config)
 end
 load_global_settings()
 local type_player_manager = nil
@@ -70,6 +110,47 @@ local method_cache = {
     GameObject_getComponent = sdk.find_type_definition("via.GameObject"):get_method("getComponent(System.Type)"),
     Scene_findComponents = sdk.find_type_definition("via.Scene"):get_method("findComponents(System.Type)")
 }
+local DEAD_OBJECT_RETRY_INTERVAL = 1.0
+local dead_object_until = {}
+local function mark_dead_object(component)
+    if not component then return end
+    local ok, key = pcall(tostring, component)
+    if ok and key then dead_object_until[key] = os.clock() + DEAD_OBJECT_RETRY_INTERVAL end
+end
+local function is_marked_dead(component)
+    if not component then return false end
+    local ok, key = pcall(tostring, component)
+    if not ok or not key then return false end
+    local until_time = dead_object_until[key]
+    if not until_time then return false end
+    if os.clock() >= until_time then
+        dead_object_until[key] = nil
+        return false
+    end
+    return true
+end
+local function clear_dead_object_marks()
+    dead_object_until = {}
+end
+local function safe_get_game_object(component, origin)
+    if not component then return nil end
+    if is_marked_dead(component) then return nil end
+    local ok, obj
+    if method_cache.Component_get_GameObject then
+        ok, obj = pcall(method_cache.Component_get_GameObject.call, method_cache.Component_get_GameObject, component)
+    else
+        ok, obj = pcall(function() return component:call("get_GameObject") end)
+    end
+    if not ok or not obj then
+        mark_dead_object(component)
+        return nil
+    end
+    if not sdk.is_managed_object(obj) then
+        mark_dead_object(component)
+        return nil
+    end
+    return obj
+end
 local type_cache = {
     via_transform = sdk.typeof("via.Transform"),
     app_character = sdk.typeof("app.Character"),
@@ -249,16 +330,16 @@ local function find_weapons_in_hierarchy(transform, depth, results)
     if depth > 5 then return end
     local child = transform:call("get_Child")
     while child do
-        local child_obj = child:call("get_GameObject")
-        if child_obj then
+        local child_obj_ok, child_obj = (function() local go = safe_get_game_object(child, "weapon_hierarchy_search") if not go then return false end return true, go end)()
+        if child_obj_ok and child_obj then
             local name = child_obj:call("get_Name")
             if name and (name == "Wp_Parent" or name == "WpSub_Parent") then
                 local wp_transform = child_obj:call("get_Transform")
                 if wp_transform then
                     local wp_child = wp_transform:call("get_Child")
                     while wp_child do
-                        local wp_child_obj = wp_child:call("get_GameObject")
-                        if wp_child_obj then
+                        local wp_child_obj_ok, wp_child_obj = (function() local go = safe_get_game_object(wp_child, "weapon_hierarchy_child") if not go then return false end return true, go end)()
+                        if wp_child_obj_ok and wp_child_obj then
                             local wp_name = wp_child_obj:call("get_Name")
                             if wp_name and string.match(wp_name, "^it%d%d%d%d") then
                                 table.insert(results, { name = wp_name, obj = wp_child_obj })
@@ -288,7 +369,7 @@ local function get_character_weapon_id(character)
     if not character then return nil, nil end
     if not sdk.is_managed_object(character) then return nil, nil end
     local cache_key = nil
-    local game_obj_status_cache, game_obj_cache = pcall(function() return character:call("get_GameObject") end)
+    local game_obj_status_cache, game_obj_cache = (function() local go = safe_get_game_object(character, "weapon_id_hierarchy") if not go then return false end return true, go end)()
     if game_obj_status_cache and game_obj_cache then
         cache_key = tostring(game_obj_cache)
     else
@@ -323,11 +404,11 @@ local function get_character_body_id(character)
     if not character then return nil end
     if not sdk.is_managed_object(character) then return nil end
     local cache_key = nil
-    local game_obj_status_cache, game_obj_cache = pcall(function() return character:call("get_GameObject") end)
-    if game_obj_status_cache and game_obj_cache then
+    local game_obj_cache = safe_get_game_object(character, "body_id_cache_key")
+    if game_obj_cache then
         cache_key = tostring(game_obj_cache)
     else
-        cache_key = tostring(character)
+        return nil
     end
     local cached = body_id_cache[cache_key]
     local current_time = os.clock()
@@ -344,16 +425,16 @@ local function get_character_body_id(character)
         end
     end
     if not result_id then
-        local game_obj_status, game_obj = pcall(function() return character:call("get_GameObject") end)
-        if game_obj_status and game_obj then
+        local game_obj = safe_get_game_object(character, "body_id_fallback")
+        if game_obj then
             local transform = game_obj:call("get_Transform")
             if transform then
                 local child = transform:call("get_Child")
                 local candidates = {}
                 local has_non_ch00 = false
                 while child do
-                    local child_obj = child:call("get_GameObject")
-                    if child_obj then
+                    local child_obj_ok, child_obj = (function() local go = safe_get_game_object(child, "body_id_first") if not go then return false end return true, go end)()
+                    if child_obj_ok and child_obj then
                         local name = child_obj:call("get_Name")
                         if name and string.match(name, "^ch%d%d_%d%d%d_%d%d%d%d?$") then
                             if not string.find(name, "^ch00") then has_non_ch00 = true end
@@ -420,25 +501,54 @@ local function get_character_body_id(character)
 end
 local character_cache = {} 
 local CACHE_TTL_BUFFER = 10.0 
+local current_scene_addr = nil
 local last_valid_local_player = nil 
 local last_valid_local_player_time = 0 
 local PLAYER_PERSISTENCE_TIME = 1.0 
+local SAFE_LIVENESS_BATCH_SIZE = 32 
+local scene_reset_pending = false 
 local scanner = {
     state = "IDLE", 
     transforms = nil, 
     count = 0,
     index = 1,
+    safe_batch_remaining = math.huge, 
     last_scan_time = 0
 }
+local function check_scene_change(scene)
+    local addr = scene and tostring(scene) or "none"
+    if addr == current_scene_addr then return false end
+    current_scene_addr = addr
+    scanner.state = "IDLE"
+    scanner.transforms = nil
+    scanner.count = 0
+    scanner.index = 1
+    scanner.safe_batch_remaining = math.huge
+    character_cache = {}
+    body_id_cache = {}
+    character_mesh_cache = {}
+    applied_parts_cache = {}
+    applied_weapon_cache = {}
+    loaded_configs = {}
+    last_valid_local_player = nil
+    scene_reset_pending = true
+    return true
+end
+local function flush_scene_reset()
+    character_cache = {}
+    body_id_cache = {}
+    character_mesh_cache = {}
+    applied_parts_cache = {}
+    applied_weapon_cache = {}
+    last_valid_local_player = nil
+    clear_dead_object_marks()
+    if TransformManager and TransformManager.clear_last_state_cache then
+        TransformManager.clear_last_state_cache()
+    end
+end
 local function update_cache_entry(char)
     if not char then return end
-    local game_obj = nil
-    if method_cache.Component_get_GameObject then
-        local ok, obj = pcall(method_cache.Component_get_GameObject.call, method_cache.Component_get_GameObject, char)
-        if ok then game_obj = obj end
-    else
-        game_obj = char:call("get_GameObject")
-    end
+    local game_obj = safe_get_game_object(char, "update_cache_entry")
     if not game_obj then return end
     local key = tostring(game_obj)
     local draw_status, is_draw = pcall(function() return game_obj:call("get_Draw") end)
@@ -463,6 +573,7 @@ local function tick_scanner()
                 scene = sdk.call_native_func(scene_manager, sdk.find_type_definition("via.SceneManager"), "get_CurrentScene")
             end
             if scene then
+                check_scene_change(scene)
                 if type_cache.app_character then
                     local components = scene:call("findComponents(System.Type)", type_cache.app_character:get_runtime_type())
                     if components then
@@ -489,8 +600,13 @@ local function tick_scanner()
         end
     elseif scanner.state == "PROCESSING" then
         local batch_size = global_config.scanner_batch_size or 100
+        if scanner.safe_batch_remaining <= 0 then
+            return
+        end
         local limit = scanner.index + batch_size - 1
         if limit > scanner.count then limit = scanner.count end
+        local batch_dead = false
+        local processed = 0
         for i = scanner.index, limit do
             local safe_get_transform = function()
                 local t = scanner.transforms[i]
@@ -498,39 +614,50 @@ local function tick_scanner()
             end
             local status, transform = pcall(safe_get_transform)
             if status and transform then
-                local ok, game_obj = pcall(method_cache.Component_get_GameObject.call, method_cache.Component_get_GameObject, transform)
-                if ok and game_obj and sdk.is_managed_object(game_obj) then
-                    local name_ok, name = pcall(method_cache.GameObject_get_Name.call, method_cache.GameObject_get_Name, game_obj)
-                    local is_target = false
-                    if name_ok and name then
-                        if string.sub(name, 1, 2) == "Pl" then
-                            is_target = true
-                        else
-                            local special_names = {
-                                "SaveSelect_HunterXX", "SaveSelect_HunterXY",
-                                "GuildCard_HunterXX", "GuildCard_HunterXY",
-                                "Lobby_HunterXX", "Lobby_HunterXY"
-                            }
-                            for _, s_name in ipairs(special_names) do
-                                if name == s_name then is_target = true; break end
-                            end
+                local game_obj = safe_get_game_object(transform, "scanner_transform")
+                if not game_obj then
+                    batch_dead = true
+                    break
+                end
+                local name_ok, name = pcall(method_cache.GameObject_get_Name.call, method_cache.GameObject_get_Name, game_obj)
+                local is_target = false
+                if name_ok and name then
+                    if string.sub(name, 1, 2) == "Pl" then
+                        is_target = true
+                    else
+                        local special_names = {
+                            "SaveSelect_HunterXX", "SaveSelect_HunterXY",
+                            "GuildCard_HunterXX", "GuildCard_HunterXY",
+                            "Lobby_HunterXX", "Lobby_HunterXY"
+                        }
+                        for _, s_name in ipairs(special_names) do
+                            if name == s_name then is_target = true; break end
                         end
-                    end
-                    if is_target then
-                        local char = nil
-                        if type_cache.app_character then
-                            local char_ok, c = pcall(method_cache.GameObject_getComponent.call, method_cache.GameObject_getComponent, game_obj, type_cache.app_character)
-                            if char_ok then char = c end
-                        end
-                        if not char and type_cache.app_hunter_character then
-                            local char_ok, c = pcall(method_cache.GameObject_getComponent.call, method_cache.GameObject_getComponent, game_obj, type_cache.app_hunter_character)
-                            if char_ok then char = c end
-                        end
-                        if char then update_cache_entry(char) else update_cache_entry(transform) end
                     end
                 end
+                if is_target then
+                    local char = nil
+                    if type_cache.app_character then
+                        local char_ok, c = pcall(method_cache.GameObject_getComponent.call, method_cache.GameObject_getComponent, game_obj, type_cache.app_character)
+                        if char_ok then char = c end
+                    end
+                    if not char and type_cache.app_hunter_character then
+                        local char_ok, c = pcall(method_cache.GameObject_getComponent.call, method_cache.GameObject_getComponent, game_obj, type_cache.app_hunter_character)
+                        if char_ok then char = c end
+                    end
+                    if char then update_cache_entry(char) else update_cache_entry(transform) end
+                end
+                processed = processed + 1
             end
         end
+        if processed > 0 and scanner.safe_batch_remaining ~= math.huge then
+            scanner.safe_batch_remaining = scanner.safe_batch_remaining - processed
+        end
+        if batch_dead then
+            scanner.safe_batch_remaining = 0
+            return
+        end
+        scanner.safe_batch_remaining = math.huge
         scanner.index = limit + 1
         if scanner.index > scanner.count then
             scanner.state = "IDLE"
@@ -552,7 +679,7 @@ local function get_all_characters()
                 if player then
                     local char = player:call("get_Character")
                     if char and sdk.is_managed_object(char) then
-                        local game_obj_ok, game_obj = pcall(function() return char:call("get_GameObject") end)
+                        local game_obj_ok, game_obj = (function() local go = safe_get_game_object(char, "get_all_characters_instanced") if not go then return false end return true, go end)()
                         if game_obj_ok and game_obj and sdk.is_managed_object(game_obj) then
                             local draw_status, is_draw = pcall(function() return game_obj:call("get_Draw") end)
                             if not (draw_status and is_draw == false) then
@@ -574,7 +701,7 @@ local function get_all_characters()
         if master then
             local char = master:call("get_Character")
             if char and sdk.is_managed_object(char) then
-                local game_obj_ok, game_obj = pcall(function() return char:call("get_GameObject") end)
+                local game_obj_ok, game_obj = (function() local go = safe_get_game_object(char, "get_all_characters_master") if not go then return false end return true, go end)()
                 if game_obj_ok and game_obj and sdk.is_managed_object(game_obj) then
                     local draw_status, is_draw = pcall(function() return game_obj:call("get_Draw") end)
                     if not (draw_status and is_draw == false) then
@@ -596,12 +723,10 @@ local function get_all_characters()
     local cache_ttl = scan_interval + CACHE_TTL_BUFFER
     for key, data in pairs(character_cache) do
         local is_valid = false
-        if data.char and sdk.is_managed_object(data.char) then
-            local game_obj_ok, game_obj = pcall(function() return data.char:call("get_GameObject") end)
-            if game_obj_ok and game_obj and sdk.is_managed_object(game_obj) then
-                local draw_status, is_draw = pcall(function() return game_obj:call("get_Draw") end)
-                is_valid = not (draw_status and is_draw == false)
-            end
+        local game_obj = data.char and safe_get_game_object(data.char, "character_cache_validate") or nil
+        if game_obj then
+            local draw_status, is_draw = pcall(function() return game_obj:call("get_Draw") end)
+            is_valid = not (draw_status and is_draw == false)
         end
         if is_valid and (current_time - data.last_seen <= cache_ttl) then
             if not seen_objs[key] then
@@ -801,7 +926,7 @@ local function collect_mesh_components_recursive(game_obj, result, visited)
     if not ok_transform or not transform then return end
     local ok_child, child = pcall(function() return transform:call("get_Child") end)
     while ok_child and child do
-        local ok_child_obj, child_obj = pcall(function() return child:call("get_GameObject") end)
+        local ok_child_obj, child_obj = (function() local go = safe_get_game_object(child, "mesh_recursive_child") if not go then return false end return true, go end)()
         if ok_child_obj and child_obj then
             collect_mesh_components_recursive(child_obj, result, visited)
         end
@@ -823,7 +948,7 @@ local character_mesh_cache = {}
 local CHARACTER_MESH_CACHE_TTL = 0.25
 local function get_all_character_meshes(character)
     if not character or not sdk.is_managed_object(character) then return {} end
-    local ok_root, root = pcall(function() return character:call("get_GameObject") end)
+    local ok_root, root = (function() local go = safe_get_game_object(character, "all_character_meshes_root") if not go then return false end return true, go end)()
     if not ok_root or not root or not sdk.is_managed_object(root) then return {} end
     local cache_key = tostring(root)
     local now = os.clock()
@@ -843,8 +968,8 @@ local function get_character_part_meshes(character, part_index, part_data)
         collect_mesh_components_recursive(part_obj, part_meshes, {})
         local armor_meshes = {}
         for _, mesh in ipairs(part_meshes) do
-            local ok_go, mesh_game_obj = pcall(function() return mesh:call("get_GameObject") end)
-            if not (ok_go and mesh_game_obj and is_player_face_object(mesh_game_obj)) then
+            local mesh_game_obj = safe_get_game_object(mesh, "mesh_collect_armor")
+            if not (mesh_game_obj and is_player_face_object(mesh_game_obj)) then
                 table.insert(armor_meshes, mesh)
             end
         end
@@ -861,8 +986,8 @@ local function get_character_part_meshes(character, part_index, part_data)
         for _, mesh in ipairs(all_meshes) do
             local count = 0
             local is_player_face = false
-            local ok_go, mesh_game_obj = pcall(function() return mesh:call("get_GameObject") end)
-            if ok_go and mesh_game_obj then is_player_face = is_player_face_object(mesh_game_obj) end
+            local mesh_game_obj = safe_get_game_object(mesh, "mesh_collect_face")
+            if mesh_game_obj then is_player_face = is_player_face_object(mesh_game_obj) end
             if not is_player_face then
                 local mat_count = 0
                 local ok_count, value = pcall(function() return mesh:call("get_MaterialNum") end)
@@ -891,15 +1016,15 @@ get_character_part = function(character, part_index)
     if not character then return nil end
     local status, part_obj = pcall(function() return character:call("getParts", part_index) end)
     if status and part_obj then return part_obj end
-    local game_obj_status, game_obj = pcall(function() return character:call("get_GameObject") end)
-    if game_obj_status and game_obj then
+    local game_obj = safe_get_game_object(character, "get_character_part")
+    if game_obj then
         local transform = game_obj:call("get_Transform")
         if transform then
             local parts_map = {} 
             local child = transform:call("get_Child")
             while child do
-                local child_obj = child:call("get_GameObject")
-                if child_obj then
+                local child_obj_ok, child_obj = (function() local go = safe_get_game_object(child, "part_fallback_child") if not go then return false end return true, go end)()
+                if child_obj_ok and child_obj then
                     local name = child_obj:call("get_Name")
                     if name and string.find(name, "^ch") then
                         local suffix_str = string.match(name, "(%d+)$")
@@ -1028,8 +1153,8 @@ local applied_weapon_cache = {}
 local function apply_preset_to_armor(character, preset_data, ignore_context, force_apply)
     if not character or not preset_data then return end
     if not sdk.is_managed_object(character) then return end
-    local char_go = character:call("get_GameObject")
-    if not char_go or not sdk.is_managed_object(char_go) then return end
+    local char_go = safe_get_game_object(character, "apply_preset_armor")
+    if not char_go then return end
     local char_addr = tostring(char_go)
     if not type_mesh then
         type_mesh = get_type("via.render.Mesh")
@@ -1079,8 +1204,8 @@ end
 local function apply_preset_to_weapon(character, weapon_objs, preset_data, ignore_context, force_apply)
     if not character or not weapon_objs or not preset_data then return end
     if not sdk.is_managed_object(character) then return end
-    local char_go = character:call("get_GameObject")
-    if not char_go or not sdk.is_managed_object(char_go) then return end
+    local char_go = safe_get_game_object(character, "apply_preset_weapon")
+    if not char_go then return end
     local char_addr = tostring(char_go)
     if not type_mesh then
         type_mesh = get_type("via.render.Mesh")
@@ -1209,7 +1334,7 @@ local function load_config_data(body_id)
         return loaded_configs[body_id]
     end
     local path = get_config_path(body_id)
-    local loaded_data = json.load_file(path)
+    local loaded_data = safe_json_load(path)
     if loaded_data then
         if not loaded_data.presets then loaded_data.presets = {} end
         if not loaded_data.default_preset then loaded_data.default_preset = "" end
@@ -1322,10 +1447,10 @@ local function load_config_data(body_id)
         end
         local backup_path = get_backup_path(body_id)
         if backup_path then
-            local backup_data = json.load_file(backup_path)
+            local backup_data = safe_json_load(backup_path)
             if backup_data then
                 local config_path = get_config_path(body_id)
-                local raw_config = json.load_file(config_path)
+                local raw_config = safe_json_load(config_path)
                 if raw_config then
                     local same = deep_equal(raw_config, backup_data)
                     if not same then
@@ -1579,7 +1704,7 @@ local function apply_preset(preset_name)
             local char_weapon_id, w_objs = get_character_weapon_id(char)
             if char_weapon_id and char_weapon_id == current_body_id then
                 local config = load_config_data(char_weapon_id)
-                local char_go_ok, char_go = pcall(function() return char:call("get_GameObject") end)
+                local char_go_ok, char_go = (function() local go = safe_get_game_object(char, "apply_preset_weapon_addr") if not go then return false end return true, go end)()
                 local char_addr = (char_go_ok and char_go) and tostring(char_go) or tostring(char)
                 local new_overrides, _ = TransformManager.apply_transform_rules(
                     char_addr, config, char, active_overrides[current_body_id], merge_overrides
@@ -1590,7 +1715,7 @@ local function apply_preset(preset_name)
             local char_body_id = get_character_body_id(char)
             if char_body_id and char_body_id == current_body_id then
                 local config = load_config_data(char_body_id)
-                local char_go_ok, char_go = pcall(function() return char:call("get_GameObject") end)
+                local char_go_ok, char_go = (function() local go = safe_get_game_object(char, "apply_preset_armor_addr") if not go then return false end return true, go end)()
                 local char_addr = (char_go_ok and char_go) and tostring(char_go) or tostring(char)
                 local new_overrides, _, activated_targets = TransformManager.apply_transform_rules(
                     char_addr, config, char, active_overrides[current_body_id], merge_overrides
@@ -1705,10 +1830,10 @@ local function save_current_config_to_file(body_id)
     if not body_id then return end
     loaded_configs[body_id] = current_config
     local path = get_config_path(body_id)
-    json.dump_file(path, current_config)
+    safe_json_save(path, current_config)
     local backup_path = get_backup_path(body_id)
     if backup_path then
-        json.dump_file(backup_path, current_config)
+        safe_json_save(backup_path, current_config)
     end
     config_restored[body_id] = nil
     config_restore_handled[body_id] = nil
@@ -1741,10 +1866,10 @@ local function restore_config_from_backup(body_id)
     if not body_id then return false end
     local backup_path = get_backup_path(body_id)
     if not backup_path then return false end
-    local backup_data = json.load_file(backup_path)
+    local backup_data = safe_json_load(backup_path)
     if not backup_data then return false end
     local path = get_config_path(body_id)
-    json.dump_file(path, backup_data)
+    safe_json_save(path, backup_data)
     loaded_configs[body_id] = nil
     active_overrides[body_id] = nil
     active_group_presets[body_id] = nil
@@ -1936,8 +2061,8 @@ local function find_auto_preset(target_body_id)
                 s, e = string.find(file, data_prefix)
             end
             if e then load_path = string.sub(file, e + 1) end
-            local data = json.load_file(load_path)
-            if not data then data = json.load_file(file) end
+            local data = safe_json_load(load_path)
+            if not data then data = safe_json_load(file) end
             if data and data.presets then
                 local first_preset = nil
                 for _, preset in pairs(data.presets) do first_preset = preset; break end
@@ -2418,7 +2543,7 @@ local variant_manager_ui = VariantManagerUI.new({
         if not character then return nil end
         if type_key == "damage" then
             local ok, remaining = pcall(function()
-                local game_object = character:call("get_GameObject")
+                local game_object = safe_get_game_object(character, "transform_state_damage")
                 local character_address = tostring(game_object or character)
                 return TransformManager.get_damage_remaining_time(character_address)
             end)
@@ -2537,7 +2662,7 @@ local variant_manager_ui = VariantManagerUI.new({
         local weapon_obj = weapon_objs and weapon_objs[part_index + 1]
         if not weapon_obj or not sdk.is_managed_object(weapon_obj) then return nil end
         local mesh = get_mesh_component_recursive(weapon_obj)
-        local target = mesh and mesh:call("get_GameObject") or weapon_obj
+        local target = safe_get_game_object(mesh, "part_label") or weapon_obj
         local ok, name = pcall(function() return target:call("get_Name") end)
         return ok and name or nil
     end
@@ -2647,6 +2772,11 @@ local function draw_targets_ui(targets, rule_type, rule_idx)
     end
 end
 re.on_frame(function()
+    if scene_reset_pending then
+        flush_scene_reset()
+        scanner.last_scan_time = 0
+        scene_reset_pending = false
+    end
     tick_scanner()
     variant_manager_ui:update()
     local local_body_id = get_body_id()
@@ -2711,7 +2841,7 @@ re.on_frame(function()
             if config then
                 if not active_overrides[char_body_id] then
                     apply_all_defaults(char_body_id)
-                    local char_go_ok, char_go = pcall(function() return char:call("get_GameObject") end)
+                    local char_go_ok, char_go = (function() local go = safe_get_game_object(char, "ui_weapon_mesh") if not go then return false end return true, go end)()
                     local char_addr = (char_go_ok and char_go) and tostring(char_go) or tostring(char)
                     local new_overrides, _, activated_targets, all_targeted_groups = TransformManager.apply_transform_rules(
                         char_addr, config, char, active_overrides[char_body_id], merge_overrides
@@ -2740,7 +2870,7 @@ re.on_frame(function()
                 end
                 if active_overrides[char_body_id] then
                     if char and sdk.is_managed_object(char) then
-                        local char_go_ok, char_go = pcall(function() return char:call("get_GameObject") end)
+                        local char_go_ok, char_go = (function() local go = safe_get_game_object(char, "ui_part_mesh") if not go then return false end return true, go end)()
                         local char_addr = (char_go_ok and char_go) and tostring(char_go) or tostring(char)
                         local final_overrides = active_overrides[char_body_id]
                         local new_overrides, changed, activated_targets, all_targeted_groups = TransformManager.apply_transform_rules(
@@ -2785,7 +2915,7 @@ re.on_frame(function()
             if config then
                 if not active_overrides[char_weapon_id] then
                     apply_all_defaults(char_weapon_id)
-                    local char_go_ok, char_go = pcall(function() return char:call("get_GameObject") end)
+                    local char_go_ok, char_go = (function() local go = safe_get_game_object(char, "ui_damage_test") if not go then return false end return true, go end)()
                     local char_addr = (char_go_ok and char_go) and tostring(char_go) or tostring(char)
                     local new_overrides, _ = TransformManager.apply_transform_rules(
                         char_addr, config, char, active_overrides[char_weapon_id], merge_overrides
@@ -2794,7 +2924,7 @@ re.on_frame(function()
                 end
                 if active_overrides[char_weapon_id] then
                     if char and sdk.is_managed_object(char) then
-                        local char_go_ok, char_go = pcall(function() return char:call("get_GameObject") end)
+                        local char_go_ok, char_go = (function() local go = safe_get_game_object(char, "ui_body_switch") if not go then return false end return true, go end)()
                         local char_addr = (char_go_ok and char_go) and tostring(char_go) or tostring(char)
                         local final_overrides = active_overrides[char_weapon_id]
                         local new_overrides, changed = TransformManager.apply_transform_rules(
@@ -2835,7 +2965,7 @@ re.on_draw_ui(function()
                         imgui.table_set_column_index(1)
                         local addr = "N/A"
                         if char and sdk.is_managed_object(char) then
-                            local ok, game_obj = pcall(function() return char:call("get_GameObject") end)
+                            local ok, game_obj = (function() local go = safe_get_game_object(char, "ui_body_mesh") if not go then return false end return true, go end)()
                             if ok and game_obj then addr = tostring(game_obj) end
                         else
                             addr = "Invalid/Destroyed"
@@ -3428,7 +3558,7 @@ re.on_draw_ui(function()
                                     current_config.damage_transform_rules = { { duration = 5, targets = {} } }
                                 end
                                 local dmg_rule = current_config.damage_transform_rules[1]
-                                local char_go_ok, char_go = pcall(function() return character:call("get_GameObject") end)
+                                local char_go_ok, char_go = (function() local go = safe_get_game_object(character, "ui_mode_switch") if not go then return false end return true, go end)()
                                 local char_addr = (char_go_ok and char_go) and tostring(char_go) or tostring(character)
                                 if imgui.button((T("damage_test_btn") or "Test Hit") .. "##test_dmg") then
                                     local cur_hp = TransformManager.get_character_hp(character)
@@ -3782,8 +3912,8 @@ re.on_draw_ui(function()
                                 for idx, w_obj in ipairs(w_objs) do
                                     if sdk.is_managed_object(w_obj) then
                                         local mesh_comp = get_mesh_component_recursive(w_obj)
-                                        if mesh_comp then
-                                            local mesh_game_obj = mesh_comp:call("get_GameObject")
+                                        local mesh_game_obj = mesh_comp and safe_get_game_object(mesh_comp, "draw_weapon_mesh") or nil
+                                        if mesh_game_obj then
                                             local obj_name = mesh_game_obj:call("get_Name")
                                             draw_mesh_toggle(mesh_game_obj, string.format("Weapon %d [%s]", idx - 1, obj_name), body_id, tostring(idx - 1))
                                         else
@@ -3813,9 +3943,9 @@ re.on_draw_ui(function()
                                 local reference_part_data = active_overrides[body_id]
                                     and active_overrides[body_id][tostring(i)]
                                 local mesh_components = get_character_part_meshes(character, i, reference_part_data)
-                                if #mesh_components > 0 then
-                                    local mesh_game_obj = mesh_components[1]:call("get_GameObject")
-                                    local obj_name = mesh_game_obj and mesh_game_obj:call("get_Name") or "Mesh"
+                                local mesh_game_obj = mesh_components[1] and safe_get_game_object(mesh_components[1], "draw_part_mesh") or nil
+                                if mesh_game_obj then
+                                    local obj_name = mesh_game_obj:call("get_Name") or "Mesh"
                                     draw_mesh_toggle(mesh_game_obj, string.format("%s [%s]", part_name, obj_name), body_id, i)
                                 elseif part_obj and not is_player_face_object(part_obj) then
                                     local obj_name = part_obj:call("get_Name")
