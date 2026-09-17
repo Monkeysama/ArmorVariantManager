@@ -42,6 +42,7 @@ local refd2d_module_names = {
     "ArmorVariantManager_UI.Component.Tag",
     "ArmorVariantManager_UI.Component.Window",
     "ArmorVariantManager_UI.Service.BridgeRuntime",
+    "ArmorVariantManager_UI.Service.DrawTransform",
     "ArmorVariantManager_UI.Service.InputBlocker",
     "ArmorVariantManager_UI.Service.NativeTextInput"
 }

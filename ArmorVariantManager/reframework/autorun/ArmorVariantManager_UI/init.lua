@@ -12,6 +12,7 @@ return {
     Tag = require("ArmorVariantManager_UI.Component.Tag"),
     Window = require("ArmorVariantManager_UI.Component.Window"),
     BridgeRuntime = require("ArmorVariantManager_UI.Service.BridgeRuntime"),
+    DrawTransform = require("ArmorVariantManager_UI.Service.DrawTransform"),
     InputBlocker = require("ArmorVariantManager_UI.Service.InputBlocker"),
     NativeTextInput = require("ArmorVariantManager_UI.Service.NativeTextInput")
 }

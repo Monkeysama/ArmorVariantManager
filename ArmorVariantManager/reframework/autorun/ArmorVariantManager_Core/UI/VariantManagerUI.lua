@@ -12,6 +12,7 @@ local Select = require("ArmorVariantManager_UI.Component.Select")
 local BridgeRuntime = require("ArmorVariantManager_UI.Service.BridgeRuntime")
 local InputBlocker = require("ArmorVariantManager_UI.Service.InputBlocker")
 local NativeTextInput = require("ArmorVariantManager_UI.Service.NativeTextInput")
+local DrawTransform = require("ArmorVariantManager_UI.Service.DrawTransform")
 local Documentation = require("ArmorVariantManager_Core.Documentation")
 
 local VariantManagerUI = {}
@@ -188,13 +189,15 @@ function VariantManagerUI:ensure_d2d_backend()
     local api = rawget(_G, "d2d")
     if type(api) ~= "table" or type(api.register) ~= "function" then return false end
 
-    -- 外部旧版 D2D 可能没有整体缩放扩展；使用代理表补齐可选 API，避免改写外部全局。
+    -- 外部旧版 D2D 没有本项目 fork 的 push_transform/pop_transform 扩展。
+    -- 不能只补空实现，否则弹窗整体缩放会静默失效（输入按缩放换算、绘制停在 1.0）。
+    -- DrawTransform 在 Lua 侧等价复现这两个函数的坐标与字号换算语义。
     local adapted_api = api
-    if type(api.push_transform) ~= "function" or type(api.pop_transform) ~= "function" then
-        adapted_api = setmetatable({
-            push_transform = function() end,
-            pop_transform = function() end
-        }, { __index = api })
+    if DrawTransform.needs_wrap(api) then
+        adapted_api = DrawTransform.wrap(api)
+        if log and log.info then
+            log.info("[ArmorVariantManager] 外部 D2D 缺少 push_transform，已启用 Lua 缩放兼容层")
+        end
     end
     self.d2d = adapted_api
     self.available = true
