@@ -1050,6 +1050,33 @@ local function deep_equal(a, b)
     return true
 end
 
+-- 判断主配置是否被外部（mod 管理器）还原，并维护还原提示标记。
+-- 成立条件：备份存在，且主配置与备份不一致。
+-- 注意：主配置缺失/为空/损坏时同样成立——mod 重装常把主配置删掉或换成作者版本，
+-- 此时备份是玩家手里唯一的副本，不能因为"主配置读不出来"就跳过检测，
+-- 否则面板永远不会出现还原入口（旧实现就卡在这里）。
+local function detect_config_restored(body_id)
+    if not body_id then return false end
+    local backup_path = get_backup_path(body_id)
+    if not backup_path then return false end
+    local backup_data = safe_json_load(backup_path)
+    if not backup_data then return false end
+    local raw_config = safe_json_load(get_config_path(body_id))
+    if raw_config and deep_equal(raw_config, backup_data) then
+        config_restored[body_id] = nil
+        return false
+    end
+    config_restored[body_id] = true
+    if log and log.info then
+        -- 该标记会一直保留到玩家点击"恢复/忽略"为止（见 save_current_config_to_file），
+        -- 因此这里只需输出一次，便于事后从日志确认提示是否被触发过。
+        log.info(string.format(
+            "[ArmorVariantManager] 主配置与备份不一致，已提示玩家还原（处理前不覆盖备份）: %s",
+            tostring(body_id)))
+    end
+    return true
+end
+
 -- =============================================================================
 -- 预设和分组 UI 辅助
 -- =============================================================================
@@ -1818,31 +1845,18 @@ local function load_config_data(body_id)
                 { level = 3, targets = {} }
             }
         end
-        -- 检测主配置是否被外部还原：若备份存在且与主配置的核心内容不一致，
-        -- 说明主配置文件被 mod 管理器还原成了作者版本，打上标记供 UI 提示一键恢复。
-        -- 注意：必须用原始文件内容比较（而非补全后的 loaded_data），
-        -- 因为加载流程会为缺失字段补全默认值，导致"补全后数据 vs 原始备份"产生误差。
-        local backup_path = get_backup_path(body_id)
-        if backup_path then
-            local backup_data = safe_json_load(backup_path)
-            if backup_data then
-                local config_path = get_config_path(body_id)
-                local raw_config = safe_json_load(config_path)
-                if raw_config then
-                    local same = deep_equal(raw_config, backup_data)
-                    if not same then
-                        config_restored[body_id] = true
-                    else
-                        config_restored[body_id] = nil
-                    end
-                end
-            end
-        end
+        -- 检测主配置是否被外部还原：备份存在且与主配置不一致时，打上标记供 UI 提示一键恢复。
+        -- 比较必须用原始文件内容（而非补全后的 loaded_data），因为加载流程会为缺失字段
+        -- 补全默认值，导致"补全后数据 vs 原始备份"产生误差。
+        detect_config_restored(body_id)
         -- 写入缓存
         loaded_configs[body_id] = loaded_data
         return loaded_data
     end
-    -- 加载失败（文件不存在或为空）：缓存标记，避免每帧重复尝试并产生日志错误
+    -- 主配置缺失/为空/损坏：仍要检测备份。mod 管理器重装时主配置可能被删掉或换掉，
+    -- 这时备份里的预设就是玩家唯一的内容，必须给出还原入口。
+    detect_config_restored(body_id)
+    -- 加载失败：缓存标记，避免每帧重复读取
     loaded_configs[body_id] = "LOAD_FAILED"
     return nil
 end
@@ -2274,13 +2288,20 @@ local function save_current_config_to_file(body_id)
 
     -- 同步写入备份文件：保存时主配置与备份内容一致，
     -- 后续若主配置被 mod 管理器还原，备份仍保留玩家改动，作为恢复来源。
+    -- 例外：已经检测到"配置被外部还原"、玩家还没决定恢复还是忽略时，绝不能覆盖备份。
+    -- 自动保存默认开启，玩家在面板里点一下预设就会触发保存；若此时覆盖备份，
+    -- 备份会被换成刚被还原的作者版本，玩家自己的预设再也找不回来，提示也会跟着消失。
+    local conflict_pending = config_restored[body_id] == true
+        and config_restore_handled[body_id] ~= true
     local backup_path = get_backup_path(body_id)
-    if backup_path then
+    if backup_path and not conflict_pending then
         safe_json_save(backup_path, current_config)
     end
-    -- 玩家主动保存视为已是最新状态，清除"被还原"标记
-    config_restored[body_id] = nil
-    config_restore_handled[body_id] = nil
+    if not conflict_pending then
+        -- 玩家主动保存视为已是最新状态，清除"被还原"标记
+        config_restored[body_id] = nil
+        config_restore_handled[body_id] = nil
+    end
     -- 清除 active_overrides 缓存，强制下一帧重新合并所有默认预设
     if active_overrides[body_id] then
         active_overrides[body_id] = nil
@@ -2324,18 +2345,34 @@ local function restore_config_from_backup(body_id)
     local backup_path = get_backup_path(body_id)
     if not backup_path then return false end
     local backup_data = safe_json_load(backup_path)
-    if not backup_data then return false end
+    if not backup_data then
+        if log and log.warn then
+            log.warn(string.format("[ArmorVariantManager] 没有可用的备份，无法还原: %s", tostring(body_id)))
+        end
+        return false
+    end
     -- 用备份覆盖主配置文件
     local path = get_config_path(body_id)
-    safe_json_save(path, backup_data)
+    -- 写回失败必须如实返回 false：否则 UI 会以为已经恢复，横幅消失，
+    -- 而备份也会因为"已处理"而不再受保护，玩家的内容就真的丢了。
+    if not safe_json_save(path, backup_data) then
+        if log and log.error then
+            log.error(string.format("[ArmorVariantManager] 还原备份失败，主配置未能写回: %s", tostring(path)))
+        end
+        return false
+    end
+    -- 玩家已完成还原：标记"已处理"，避免重新检测后横幅再次弹出。
+    -- 此刻主配置与备份内容一致，因此保留该标记不会重新触发提示。
+    config_restore_handled[body_id] = true
     -- 清除该 body 的所有内存缓存，强制下一帧重新加载备份内容
-    -- 注意：这里不清除 config_restore_handled，由 UI 调用方设置的"已处理"标记需保留，
-    -- 否则随后的 load_config_data 重新检测会让横幅再次显示。
     loaded_configs[body_id] = nil
     active_overrides[body_id] = nil
     -- 清除恢复前的临时选中预设，确保后续 apply_all_defaults 重新采用备份中的默认预设。
     active_group_presets[body_id] = nil
     config_restored[body_id] = nil
+    if log and log.info then
+        log.info(string.format("[ArmorVariantManager] 已从备份还原玩家配置: %s", tostring(body_id)))
+    end
     -- 重新加载并刷新 UI
     local data = load_config_data(body_id)
     if data then
@@ -2920,9 +2957,10 @@ local variant_manager_ui = VariantManagerUI.new({
     end,
 
     -- 备份恢复与忽略继续使用旧 UI 的会话标记，恢复后会自动刷新当前分组和预设列表。
+    -- "已处理"标记由 restore_config_from_backup 在写回成功后设置：
+    -- 失败时不能提前置位，否则横幅会消失、备份也不再受保护。
     restore_backup = function(body_id)
         if not body_id then return false end
-        config_restore_handled[body_id] = true
         return restore_config_from_backup(body_id) == true
     end,
 
@@ -3680,7 +3718,7 @@ re.on_draw_ui(function()
                             if config_restored[body_id] and not config_restore_handled[body_id] then
                                 imgui.text_colored(T("config_restored_warning"), 0xFF00CCFF)
                                 if imgui.button(T("restore_from_backup") .. "##restore_backup") then
-                                    config_restore_handled[body_id] = true
+                                    -- "已处理"标记由 restore_config_from_backup 在写回成功后设置。
                                     restore_config_from_backup(body_id)
                                 end
                                 imgui.same_line()
