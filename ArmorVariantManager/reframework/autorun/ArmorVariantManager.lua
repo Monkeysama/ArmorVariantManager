@@ -1,5 +1,5 @@
 local mod_name = "ArmorVariantManager"
-local version = "4.2.0"
+local version = "4.2.1"
 local author = "MK,Moon,AZUSA"
 local global_config_path = "ArmorVariantManager/GlobalSettings.json"
 local global_config = {
@@ -810,6 +810,25 @@ local function deep_equal(a, b)
     end
     return true
 end
+local function detect_config_restored(body_id)
+    if not body_id then return false end
+    local backup_path = get_backup_path(body_id)
+    if not backup_path then return false end
+    local backup_data = safe_json_load(backup_path)
+    if not backup_data then return false end
+    local raw_config = safe_json_load(get_config_path(body_id))
+    if raw_config and deep_equal(raw_config, backup_data) then
+        config_restored[body_id] = nil
+        return false
+    end
+    config_restored[body_id] = true
+    if log and log.info then
+        log.info(string.format(
+            "[ArmorVariantManager] 主配置与备份不一致，已提示玩家还原（处理前不覆盖备份）: %s",
+            tostring(body_id)))
+    end
+    return true
+end
 local function update_preset_names_list()
     preset_names_list = {}
     local target_presets = nil
@@ -1445,25 +1464,11 @@ local function load_config_data(body_id)
                 { level = 3, targets = {} }
             }
         end
-        local backup_path = get_backup_path(body_id)
-        if backup_path then
-            local backup_data = safe_json_load(backup_path)
-            if backup_data then
-                local config_path = get_config_path(body_id)
-                local raw_config = safe_json_load(config_path)
-                if raw_config then
-                    local same = deep_equal(raw_config, backup_data)
-                    if not same then
-                        config_restored[body_id] = true
-                    else
-                        config_restored[body_id] = nil
-                    end
-                end
-            end
-        end
+        detect_config_restored(body_id)
         loaded_configs[body_id] = loaded_data
         return loaded_data
     end
+    detect_config_restored(body_id)
     loaded_configs[body_id] = "LOAD_FAILED"
     return nil
 end
@@ -1831,12 +1836,16 @@ local function save_current_config_to_file(body_id)
     loaded_configs[body_id] = current_config
     local path = get_config_path(body_id)
     safe_json_save(path, current_config)
+    local conflict_pending = config_restored[body_id] == true
+        and config_restore_handled[body_id] ~= true
     local backup_path = get_backup_path(body_id)
-    if backup_path then
+    if backup_path and not conflict_pending then
         safe_json_save(backup_path, current_config)
     end
-    config_restored[body_id] = nil
-    config_restore_handled[body_id] = nil
+    if not conflict_pending then
+        config_restored[body_id] = nil
+        config_restore_handled[body_id] = nil
+    end
     if active_overrides[body_id] then
         active_overrides[body_id] = nil
     end
@@ -1867,13 +1876,27 @@ local function restore_config_from_backup(body_id)
     local backup_path = get_backup_path(body_id)
     if not backup_path then return false end
     local backup_data = safe_json_load(backup_path)
-    if not backup_data then return false end
+    if not backup_data then
+        if log and log.warn then
+            log.warn(string.format("[ArmorVariantManager] 没有可用的备份，无法还原: %s", tostring(body_id)))
+        end
+        return false
+    end
     local path = get_config_path(body_id)
-    safe_json_save(path, backup_data)
+    if not safe_json_save(path, backup_data) then
+        if log and log.error then
+            log.error(string.format("[ArmorVariantManager] 还原备份失败，主配置未能写回: %s", tostring(path)))
+        end
+        return false
+    end
+    config_restore_handled[body_id] = true
     loaded_configs[body_id] = nil
     active_overrides[body_id] = nil
     active_group_presets[body_id] = nil
     config_restored[body_id] = nil
+    if log and log.info then
+        log.info(string.format("[ArmorVariantManager] 已从备份还原玩家配置: %s", tostring(body_id)))
+    end
     local data = load_config_data(body_id)
     if data then
         current_config = data
@@ -2383,7 +2406,6 @@ local variant_manager_ui = VariantManagerUI.new({
     end,
     restore_backup = function(body_id)
         if not body_id then return false end
-        config_restore_handled[body_id] = true
         return restore_config_from_backup(body_id) == true
     end,
     dismiss_backup = function(body_id)
@@ -3006,7 +3028,6 @@ re.on_draw_ui(function()
                             if config_restored[body_id] and not config_restore_handled[body_id] then
                                 imgui.text_colored(T("config_restored_warning"), 0xFF00CCFF)
                                 if imgui.button(T("restore_from_backup") .. "##restore_backup") then
-                                    config_restore_handled[body_id] = true
                                     restore_config_from_backup(body_id)
                                 end
                                 imgui.same_line()
