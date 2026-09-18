@@ -184,6 +184,14 @@ return {
         title = "更新日志",
         entries = {
             {
+                title = "V4.2.1",
+                paragraphs = {
+                    "1. 修复还原备份功能失效的问题：mod 管理器重装后主配置被删除或替换时，不再漏掉还原提示。",
+                    "2. 修复玩家处理提示前，自动保存会把备份覆盖成被还原的内容、导致自己的预设无法找回的问题。",
+                    "3. 还原失败时不再误报成功，提示与备份保护会保留。"
+                }
+            },
+            {
                 title = "V4.2.0",
                 paragraphs = {
                     "1. 兼容与 reframework-d2d 同时安装：修复按 Home 键无法打开面板的问题，面板整体缩放恢复正常。",
@@ -286,6 +294,14 @@ return {
         en = {
             title = "Changelog",
             entries = {
+                {
+                    title = "V4.2.1",
+                    paragraphs = {
+                        "1. Fixed the restore-backup prompt not appearing when a mod manager removes or replaces the main config after reinstalling.",
+                        "2. Fixed automatic saving overwriting the backup before the prompt was handled, which made the player's own presets unrecoverable.",
+                        "3. Restoring no longer reports success when writing the config back fails; the prompt and the backup protection are kept."
+                    }
+                },
                 {
                     title = "V4.2.0",
                     paragraphs = {
