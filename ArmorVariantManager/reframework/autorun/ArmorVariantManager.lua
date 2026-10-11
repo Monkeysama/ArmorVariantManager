@@ -904,7 +904,7 @@ local function get_all_characters()
         local count = pm:call("get_InstancedPlayerNum")
         if count then
             for i = 0, count - 1 do
-                local player = pm:call("get_InstancedPlayer", i)
+                local player = pm:call("getInstancedPlayer", i)
                 if player then
                     local char = player:call("get_Character")
                     if char and sdk.is_managed_object(char) then
