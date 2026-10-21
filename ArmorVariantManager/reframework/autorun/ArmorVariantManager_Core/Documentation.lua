@@ -186,8 +186,9 @@ return {
             {
                 title = "V4.3.1",
                 paragraphs = {
-                    "1. 修复变更造型界面中猎人预览模型无法应用差分预设的问题，支持两种猎人体型。",
-                    "2. 变更造型时面板优先操作可见的预览角色，预览角色不参与战斗变身条件判断。"
+                    "1. 修复联机玩家枚举接口调用错误，恢复联机玩家的差分预设识别与应用。",
+                    "2. 修复变更造型界面中猎人预览模型无法应用差分预设的问题，支持两种猎人体型。",
+                    "3. 变更造型时面板优先操作可见的预览角色，预览角色不参与战斗变身条件判断。"
                 }
             },
             {
@@ -318,8 +319,9 @@ return {
                 {
                     title = "V4.3.1",
                     paragraphs = {
-                        "1. Fixed variant presets not applying to the hunter preview in Change Appearance, for both hunter body types.",
-                        "2. The panel now targets the visible appearance preview first. Preview characters do not evaluate combat transformation conditions."
+                        "1. Fixed an incorrect multiplayer player-enumeration API call, restoring variant preset detection and application for multiplayer hunters.",
+                        "2. Fixed variant presets not applying to the hunter preview in Change Appearance, for both hunter body types.",
+                        "3. The panel now targets the visible appearance preview first. Preview characters do not evaluate combat transformation conditions."
                     }
                 },
                 {
