@@ -1,5 +1,5 @@
 local mod_name = "ArmorVariantManager"
-local version = "4.3.0"
+local version = "4.3.1"
 local author = "MK,Moon,AZUSA,Ensicht"
 local global_config_path = "ArmorVariantManager/GlobalSettings.json"
 local global_config = {
@@ -156,6 +156,12 @@ local type_cache = {
     via_transform = sdk.typeof("via.Transform"),
     app_character = sdk.typeof("app.Character"),
     app_hunter_character = sdk.typeof("app.HunterCharacter")
+}
+local preview_character_names = {
+    SaveSelect_HunterXX = true, SaveSelect_HunterXY = true,
+    GuildCard_HunterXX = true, GuildCard_HunterXY = true,
+    Lobby_HunterXX = true, Lobby_HunterXY = true,
+    CharaMake_HunterXX = true, CharaMake_HunterXY = true
 }
 local show_window = true
 local last_body_id = nil
@@ -493,16 +499,7 @@ local function get_character_body_id(character)
             end
             if not result_id then
                 local name = game_obj:call("get_Name")
-                local special_names = {
-                    ["Pl000_00"] = true,
-                    ["SaveSelect_HunterXX"] = true,
-                    ["SaveSelect_HunterXY"] = true,
-                    ["GuildCard_HunterXX"] = true,
-                    ["GuildCard_HunterXY"] = true,
-                    ["Lobby_HunterXX"] = true,
-                    ["Lobby_HunterXY"] = true
-                }
-                if name and special_names[name] then
+                if name and (name == "Pl000_00" or preview_character_names[name]) then
                     local transform = game_obj:call("get_Transform")
                     if transform and transform:call("get_Child") then
                         result_id = name
@@ -568,8 +565,12 @@ local function update_cache_entry(char)
     if draw_status and is_draw == false then return end
     local body_id = get_character_body_id(char)
     if not body_id then return end
-    if not string.find(body_id, "^ch03") then return end
-    character_cache[key] = { char = char, last_seen = os.clock() }
+    local name = game_obj:call("get_Name")
+    if not string.find(body_id, "^ch03") and not preview_character_names[name] then return end
+    character_cache[key] = {
+        char = char, last_seen = os.clock(),
+        is_editor_preview = name == "CharaMake_HunterXX" or name == "CharaMake_HunterXY"
+    }
 end
 local function scan_scene_batch()
     local current_time = os.clock()
@@ -644,14 +645,7 @@ local function scan_scene_batch()
                     if string.sub(name, 1, 2) == "Pl" then
                         is_target = true
                     else
-                        local special_names = {
-                            "SaveSelect_HunterXX", "SaveSelect_HunterXY",
-                            "GuildCard_HunterXX", "GuildCard_HunterXY",
-                            "Lobby_HunterXX", "Lobby_HunterXY"
-                        }
-                        for _, s_name in ipairs(special_names) do
-                            if name == s_name then is_target = true; break end
-                        end
+                        is_target = preview_character_names[name] == true
                     end
                 end
                 if is_target then
@@ -701,7 +695,7 @@ local function get_all_characters()
         local count = pm:call("get_InstancedPlayerNum")
         if count then
             for i = 0, count - 1 do
-                local player = pm:call("get_InstancedPlayer", i)
+                local player = pm:call("getInstancedPlayer", i)
                 if player then
                     local char = player:call("get_Character")
                     if char and sdk.is_managed_object(char) then
@@ -770,6 +764,16 @@ end
 local function get_local_player_character()
     local char = nil
     local current_time = os.clock()
+    for _, data in pairs(character_cache) do
+        if data.is_editor_preview
+            and current_time - data.last_seen <= (global_config.scan_interval or 2.0) + CACHE_TTL_BUFFER then
+            local game_obj = safe_get_game_object(data.char, "local_editor_preview")
+            if game_obj then
+                local ok, visible = pcall(function() return game_obj:call("get_Draw") end)
+                if ok and visible == true then return data.char end
+            end
+        end
+    end
     if not type_player_manager then type_player_manager = get_type("app.PlayerManager") end
     local player_manager = get_player_manager()
     if player_manager then
