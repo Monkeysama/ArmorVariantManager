@@ -1,25 +1,7 @@
 -- ============================================================================
 --  差分管理器（崛起版本）新版独立 UI —— D2D 渲染层
--- ----------------------------------------------------------------------------
---  说明：
---    本文件是「新版 UI」的呈现层，完全通过 deps 回调与崛起版本核心交互，
---    自身不包含任何 sdk / 游戏 API 调用，也不直接读写核心的全局状态。
---    UI 只负责「显示 + 收集用户意图」，所有功能语义仍然由
---    ArmorVariantManager.lua（崛起版本核心）决定。
---
---  与荒野版本（v4.0.0）的差异（全部属于「崛起版本的定义」，不可照搬荒野）：
---    1. 变身条件只有崛起版本支持的 10 种：
---       weapon / scroll / monster_hp / longsword / dual_blades /
---       switch_axe / charge_axe / greatsword_level / hammer / bow
---       （荒野的 hp / damage / spirit / insect_glaive / charge_blade /
---         greatsword_type / bow_level / hammer_level 在崛起不存在）
---    2. 防具部位只有 5 个（无 slinger），显示顺序沿用崛起版本的 {2,1,0,4,3}
---    3. 变身总开关为 config.enable_transform（荒野没有这个字段）
---    4. 规则形状：固定档位的条件由崛起版本的条件定义决定
---       {state=...} 或 {level=...}，怪物血量为动态 {threshold=...}
---    5. 当前状态显示复用崛起版本 TransformManager.get_current_state_display
 -- ============================================================================
---  ★ 重要（实测结论）：REFramework 只在「加载 autorun 脚本期间」把
+--  - 重要（实测结论）：REFramework 只在「加载 autorun 脚本期间」把
 --    reframework/autorun 临时加进 package.path，脚本加载完成后就恢复了。
 --    因此在 re.on_frame / re.on_draw_ui 这类**运行时回调里 require 会直接失败**
 --    （报 module not found，搜索路径里没有 reframework\autorun）。
@@ -37,11 +19,17 @@ local InputNumber = require("ArmorVariantManager_UI.Component.InputNumber")
 local Select = require("ArmorVariantManager_UI.Component.Select")
 local BridgeRuntime = require("ArmorVariantManager_UI.Service.BridgeRuntime")
 local ImGuiBackend = require("ArmorVariantManager_UI.Service.ImGuiBackend")
+local NativeD2DBackend = require("ArmorVariantManager_UI.Service.NativeD2DBackend")
 local InputBlocker = require("ArmorVariantManager_UI.Service.InputBlocker")
 local NativeTextInput = require("ArmorVariantManager_UI.Service.NativeTextInput")
 local Documentation = require("ArmorVariantManager_Core.Documentation")
 
 local VariantManagerUI = {}
+
+-- 每帧 xpcall 的错误处理器提到外面，避免每帧新建一个闭包（GC 压力）
+local function tostring_handler(err_value)
+    return tostring(err_value)
+end
 
 local COLORS = {
     background = 0xE8141820,
@@ -239,13 +227,14 @@ end
 -- ----------------------------------------------------------------------------
 --  顺序：
 --    1. 若 config.new_ui_backend ~= "imgui"，先找原生 reframework-d2d 插件提供的 d2d 全局；
---    2. 找不到（或显式选了 imgui）时，退回内置的 ImGui 绘制列表后端
+--    2. 找不到（或显式选了 imgui）时，退回内置的官方 draw 后端
 --       ArmorVariantManager_UI.Service.ImGuiBackend；
 --    3. 两者都不可用则保持 available=false，面板自动改用旧版 ImGui 界面，绝不报错。
 --  延迟到这里的意义：原生插件的 d2d 全局是在 Lua 状态创建阶段发布的，可能晚于
 --  autorun 脚本执行；在脚本加载时判断会误判为「插件没加载」，面板永远打不开。
 -- ============================================================================
 function VariantManagerUI:ensure_d2d_backend()
+    if self.backend_failed then return false end
     if self.d2d_registered then return true end
     local config = self.deps.config or {}
     local preference = config.new_ui_backend or "auto"
@@ -253,15 +242,20 @@ function VariantManagerUI:ensure_d2d_backend()
 
     if preference ~= "imgui" then
         local native = _G.d2d
-        if type(native) == "table" and type(native.register) == "function"
-            and type(native.fill_rect) == "function" and type(native.text) == "function"
-            and type(native.Font) == "table" then
-            api = native
+        local reason
+        api, reason = NativeD2DBackend.create(native)
+        if api then
             backend_name = "native"
+        elseif native ~= nil and not self.native_backend_warned then
+            self.native_backend_warned = true
+            if log and log.error then
+                pcall(log.error, "[ArmorVariantManager] 原生 d2d 不兼容: " .. tostring(reason))
+            end
         end
     end
 
-    if not api and preference ~= "native" then
+    -- 旧配置可能指定 native；原生插件不存在时仍允许使用内置后端。
+    if not api then
         -- 逐步记录失败原因：任何一步出错都要能写进日志，不能默默失败
         local reason = nil
         local backend = ImGuiBackend
@@ -340,28 +334,42 @@ function VariantManagerUI:ensure_d2d_backend()
         scan_interval = Slider.new(api, COLORS, self.fonts),
         body_id_ttl = Slider.new(api, COLORS, self.fonts),
         scanner_batch_size = Slider.new(api, COLORS, self.fonts),
-        image_quality_rate = Slider.new(api, COLORS, self.fonts)
+        image_quality_rate = Slider.new(api, COLORS, self.fonts),
+        -- v3.1.0 联机
+        multiplayer_tick = Slider.new(api, COLORS, self.fonts),
+        multiplayer_scan = Slider.new(api, COLORS, self.fonts)
     }
 
-    api.register(
+    local register_ok, register_error = pcall(api.register,
         function()
-            local ok = pcall(function()
+            if self.backend_failed then return end
+            local ok, err = pcall(function()
                 self.fonts.title = api.Font.new("Tahoma", 24, true)
                 self.fonts.body = api.Font.new("Tahoma", 18)
                 self.fonts.small = api.Font.new("Tahoma", 16)
                 self.fonts.tiny = api.Font.new("Tahoma", 13)
+                for _, font in pairs(self.fonts) do
+                    assert(font ~= nil, "字体创建返回空值")
+                    local w, h = font:measure("测试 Ag")
+                    assert(type(w) == "number" and type(h) == "number", "字体测量接口不兼容")
+                end
+                assert(self.fonts.title and self.fonts.body and self.fonts.small and self.fonts.tiny,
+                    "字体初始化不完整")
             end)
             self.ready = ok
+            if not ok then self:fail_backend("字体初始化失败: " .. tostring(err)) end
         end,
         function()
-            if not self.deps.config.new_ui_enabled then return end
-            if not self.ready then return end
+            if self.backend_failed or not self.deps.config.new_ui_enabled then return false end
+            if not self.ready or not self.visible then return false end
+            Runtime.begin_frame()
             local ok, err = xpcall(function() self:draw() end, function(draw_error)
                 if debug and debug.traceback then
                     return debug.traceback(tostring(draw_error), 2)
                 end
                 return tostring(draw_error)
             end)
+            self.frame_mouse_wheel=0
             if ok then
                 self.last_error = nil
                 -- 首次**真正画出内容**后打一条统计，日志里就能确认「到底画没画出东西」。
@@ -396,17 +404,22 @@ function VariantManagerUI:ensure_d2d_backend()
                     end
                 end
             else
-                -- 4.2.x 起的行为：绘制失败只记录错误，**不再** self.visible = false。
-                -- 旧写法下一次绘制异常就把面板永久关掉，再也打不开。
-                self.last_error = err
-                if log and log.error then
-                    pcall(function()
-                        log.error("[ArmorVariantManager] D2D draw error: " .. tostring(err))
-                    end)
-                end
+                Runtime.input_clip=nil
+                self:fail_backend("D2D draw error: " .. tostring(err))
             end
+            return ok
+        end,
+        function()
+            -- 面板不可见时不执行任何内置绘制或字体初始化。
+            return not self.backend_failed and self.deps.config.new_ui_enabled == true
+                and self.visible == true
         end
     )
+    if not register_ok then
+        self:fail_backend("绘制注册失败: " .. tostring(register_error))
+        return false
+    end
+    if self.backend_failed then return false end
     self.d2d_registered = true
 
     -- 让 Runtime / InputBlocker 也能取到 surface_size（仅在使用内置后端时补全局）
@@ -441,7 +454,7 @@ end
 function VariantManagerUI:search_key_character(key, force_lowercase)
     if type(key) ~= "number" then return nil end
     if key >= 0x41 and key <= 0x5A then
-        local shift_ok, shift_down = pcall(function() return reframework:is_key_down(0x10) end)
+        local shift_ok, shift_down = pcall(function() return Runtime.key_down(0x10) end)
         local uppercase = (shift_ok and shift_down or false) ~= self.caps_lock_active
         local character = string.char(key + (uppercase and 0 or 32))
         return force_lowercase and string.lower(character) or character
@@ -450,7 +463,7 @@ function VariantManagerUI:search_key_character(key, force_lowercase)
     if key >= 0x60 and key <= 0x69 then return string.char(key - 0x60 + 0x30) end
     if key == 0x20 then return " " end
     if key == 0xBD then
-        local shift_ok, shift_down = pcall(function() return reframework:is_key_down(0x10) end)
+        local shift_ok, shift_down = pcall(function() return Runtime.key_down(0x10) end)
         return shift_ok and shift_down and "_" or "-"
     end
     if key == 0xBE or key == 0x6E then return "." end
@@ -458,7 +471,7 @@ function VariantManagerUI:search_key_character(key, force_lowercase)
 end
 
 function VariantManagerUI:update_caps_lock_state()
-    local ok, down = pcall(function() return reframework:is_key_down(0x14) end)
+    local ok, down = pcall(function() return Runtime.key_down(0x14) end)
     down = ok and down or false
     if down and not self.caps_lock_down then
         self.caps_lock_active = not self.caps_lock_active
@@ -469,26 +482,26 @@ end
 function VariantManagerUI:get_search_key_down()
     local special_keys = { 0x08, 0x0D, 0x1B, 0x20, 0xBD, 0xBE, 0x6E }
     for _, key in ipairs(special_keys) do
-        local ok, down = pcall(function() return reframework:is_key_down(key) end)
+        local ok, down = pcall(function() return Runtime.key_down(key) end)
         if ok and down then return key end
     end
     for key = 0x41, 0x5A do
-        local ok, down = pcall(function() return reframework:is_key_down(key) end)
+        local ok, down = pcall(function() return Runtime.key_down(key) end)
         if ok and down then return key end
     end
     for key = 0x30, 0x39 do
-        local ok, down = pcall(function() return reframework:is_key_down(key) end)
+        local ok, down = pcall(function() return Runtime.key_down(key) end)
         if ok and down then return key end
     end
     for key = 0x60, 0x69 do
-        local ok, down = pcall(function() return reframework:is_key_down(key) end)
+        local ok, down = pcall(function() return Runtime.key_down(key) end)
         if ok and down then return key end
     end
     return nil
 end
 
 function VariantManagerUI:input_key_pressed(key)
-    local ok, down = pcall(function() return reframework:is_key_down(key) end)
+    local ok, down = pcall(function() return Runtime.key_down(key) end)
     down = ok and down == true
     local was_down = self.input_key_down[key] == true
     local now = os.clock()
@@ -505,13 +518,18 @@ function VariantManagerUI:input_key_pressed(key)
     return pressed
 end
 
+function VariantManagerUI:backspace_text(value)
+    local ok, start = pcall(utf8.offset, value, -1)
+    return ok and start and value:sub(1,start-1) or ""
+end
+
 function VariantManagerUI:update_material_filter_input()
     local filter_key = self.material_filter_editing
     if not filter_key then return end
     if self.native_text_input:is_active("material:" .. filter_key) then return end
     local value = self.material_filter[filter_key] or ""
     if self:input_key_pressed(0x08) then
-        value = string.sub(value, 1, math.max(0, #value - 1))
+        value = self:backspace_text(value)
     else
         local key = self:get_search_key_down()
         if key and self:input_key_pressed(key) then
@@ -527,7 +545,7 @@ function VariantManagerUI:update_preset_name_input()
     if self.native_text_input:is_active("preset_name") then return end
     local value = self.preset_name_input or ""
     if self:input_key_pressed(0x08) then
-        value = string.sub(value, 1, math.max(0, #value - 1))
+        value = self:backspace_text(value)
     else
         local key = self:get_search_key_down()
         if key and self:input_key_pressed(key) then
@@ -543,7 +561,7 @@ function VariantManagerUI:update_group_name_input()
     if self.native_text_input:is_active("group_name") then return end
     local value = self.group_name_input or ""
     if self:input_key_pressed(0x08) then
-        value = string.sub(value, 1, math.max(0, #value - 1))
+        value = self:backspace_text(value)
     else
         local key = self:get_search_key_down()
         if key and self:input_key_pressed(key) then
@@ -568,7 +586,7 @@ function VariantManagerUI:update_number_input()
     if not field_key then return end
     local value = self.number_inputs[field_key] or ""
     if self:input_key_pressed(0x08) then
-        value = string.sub(value, 1, math.max(0, #value - 1))
+        value = self:backspace_text(value)
     else
         local key = self:get_search_key_down()
         if key and self:input_key_pressed(key) then
@@ -606,11 +624,15 @@ function VariantManagerUI:update_native_text_input()
 end
 
 function VariantManagerUI:activate_native_text_input(input_id, text, rect, reset)
-    self.native_text_input:activate(input_id, text, rect, reset)
+    local physical = {x=rect.x*Runtime.ui_scale,y=rect.y*Runtime.ui_scale,
+        w=rect.w*Runtime.ui_scale,h=rect.h*Runtime.ui_scale}
+    self.native_text_input:activate(input_id, text, physical, reset)
 end
 
 function VariantManagerUI:sync_native_text_input(input_id, rect)
-    self.native_text_input:sync_rect(input_id, rect)
+    local physical = {x=rect.x*Runtime.ui_scale,y=rect.y*Runtime.ui_scale,
+        w=rect.w*Runtime.ui_scale,h=rect.h*Runtime.ui_scale}
+    self.native_text_input:sync_rect(input_id, physical)
 end
 
 function VariantManagerUI:deactivate_native_text_input(input_id)
@@ -620,7 +642,7 @@ end
 function VariantManagerUI:clear_released_input_keys()
     for key, down in pairs(self.input_key_down) do
         if down then
-            local ok, still_down = pcall(function() return reframework:is_key_down(key) end)
+            local ok, still_down = pcall(function() return Runtime.key_down(key) end)
             if not ok or not still_down then
                 self.input_key_down[key] = false
                 self.input_repeat_at[key] = nil
@@ -691,6 +713,7 @@ end
 
 function VariantManagerUI:begin_key_binding()
     self.waiting_for_key = true
+    self:deactivate_native_text_input()
     self.waiting_for_key_release = false
 end
 
@@ -701,17 +724,54 @@ end
 -- ============================================================================
 --  每帧更新（由核心的 re.on_frame 调用）
 -- ============================================================================
+-- 原生/内置后端共用故障出口。停用到脚本重载，避免每帧重试和残留输入接管。
+function VariantManagerUI:fail_backend(message)
+    self.last_error = tostring(message)
+    self.backend_failed = true
+    self.available = false
+    self.ready = false
+    self.visible = false
+    self.frame_mouse_wheel = 0
+    pcall(function() self:deactivate_native_text_input() end)
+    if self.input_blocker then pcall(function() self.input_blocker:set_enabled(false) end) end
+    Runtime.set_ui_scale(1)
+    if log and log.error then
+        pcall(log.error, "[ArmorVariantManager] 新版面板已停用，使用 REF 菜单中的旧版面板: " .. self.last_error)
+    end
+end
+
+function VariantManagerUI:backend_usable()
+    if self.backend_failed or not self.available then return false end
+    if self.d2d and type(self.d2d.can_draw) == "function" then
+        local ok, value = pcall(self.d2d.can_draw, self.d2d)
+        return ok and value ~= false
+    end
+    return true
+end
+
 function VariantManagerUI:update()
+    Runtime.refresh_input()
     local config = self.deps.config
-    -- 每帧例行尝试（内部有 d2d_registered 短路，成功一次后就是一次布尔判断）
-    self:ensure_d2d_backend()
     if not config.new_ui_enabled then
+        -- 新版面板总开关关闭时不建立后端；已注册的回调由 should_run 短路。
         self:deactivate_native_text_input()
         if self.input_blocker and self.input_blocker.enabled then
             self.input_blocker:set_enabled(false)
         end
         self.key_down = false
         self.frame_mouse_wheel = 0
+        return
+    end
+    -- 每帧例行尝试（内部有 d2d_registered 短路，成功一次后就是一次布尔判断）
+    self:ensure_d2d_backend()
+    if not self:backend_usable() then
+        self.visible = false
+        self.key_down = false
+        self.frame_mouse_wheel = 0
+        self:deactivate_native_text_input()
+        if self.input_blocker and self.input_blocker.enabled then
+            self.input_blocker:set_enabled(false)
+        end
         return
     end
     local update_ok, update_error = xpcall(function()
@@ -752,8 +812,9 @@ function VariantManagerUI:update()
         end
         local key_ok, down = pcall(function()
             return not self.waiting_for_key and not self.material_filter_editing and not self.preset_name_editing
+                and not self.group_name_editing and not self.number_editing
                 and config.new_ui_enabled and config.new_ui_key
-                and reframework:is_key_down(config.new_ui_key)
+                and Runtime.key_down(config.new_ui_key)
         end)
         down = key_ok and down or false
         if self.waiting_for_key then
@@ -762,7 +823,7 @@ function VariantManagerUI:update()
                 if not mouse_ok or not mouse_down then self.waiting_for_key_release = true end
                 return
             end
-            local bind_ok, bind_key = pcall(function() return reframework:get_first_key_down() end)
+            local bind_ok, bind_key = pcall(function() return Runtime.first_key() end)
             if bind_ok and self:is_bindable_key(bind_key) then
                 config.new_ui_key = bind_key
                 self.waiting_for_key = false
@@ -787,6 +848,7 @@ function VariantManagerUI:update()
             if not self.last_toggle_time or (now_clock - self.last_toggle_time) > 0.3 then
                 self.last_toggle_time = now_clock
                 self.visible = not self.visible
+                Runtime.reset_pointer()
                 if log and log.info then
                     pcall(function()
                         log.info("[ArmorVariantManager] 新版面板已"
@@ -809,16 +871,18 @@ function VariantManagerUI:update()
             self.visible = true
             self:open_manual_picker(nil)
         end
-        -- ★ 安全网：面板「开着」但后端已经连续很久没真正画出一帧时，强制关掉并归还鼠标。
+        -- - 安全网：面板「开着」但后端已经连续很久没真正画出一帧时，强制关掉并归还鼠标。
         --   典型场景：改了后端/环境变化导致绘制路径失效，而 InputBlocker 已经把鼠标接管了
         --   —— 这时玩家会看到一个被锁住的鼠标，却看不到任何面板。
         --   宁可自动关掉面板，也不能让鼠标处于失效状态。
+        if self.visible and not self.visible_since then self.visible_since = os.clock() end
+        if not self.visible then self.visible_since = nil end
         if self.visible and self.d2d and type(self.d2d.last_draw_time) == "function" then
             local ok, last_draw = pcall(function() return self.d2d:last_draw_time() end)
-            if ok and type(last_draw) == "number" and last_draw > 0 then
-                local idle = os.clock() - last_draw
+            if ok and type(last_draw) == "number" then
+                local idle = os.clock() - math.max(last_draw, self.visible_since or 0)
                 if idle > 1.5 then
-                    self.visible = false
+                    self:fail_backend("后端超过 1.5 秒没有完成面板绘制")
                     if log and log.info then
                         pcall(function()
                             log.info(string.format(
@@ -845,15 +909,16 @@ function VariantManagerUI:update()
         end
         if self.visible and self.input_blocker then
             self.input_blocker:set_mute_game_input(config.new_ui_mute_game_input ~= false)
+            self.input_blocker.capture_keyboard = self.waiting_for_key or self.group_name_editing
+                or self.preset_name_editing or self.material_filter_editing ~= false or self.number_editing ~= nil
             self.input_blocker:tick()
             local wheel_ok, wheel = pcall(function() return self.input_blocker:get_mouse_wheel() end)
-            self.frame_mouse_wheel = wheel_ok and type(wheel) == "number" and wheel or 0
+            self.frame_mouse_wheel = (self.frame_mouse_wheel or 0)
+                + (wheel_ok and type(wheel) == "number" and wheel or 0)
         else
             self.frame_mouse_wheel = 0
         end
-    end, function(update_error_value)
-        return tostring(update_error_value)
-    end)
+    end, tostring_handler)
     if not update_ok then
         self.last_error = update_error
     end
@@ -889,17 +954,13 @@ function VariantManagerUI:draw_settings()
     end
     -- 后端在运行中可能失效（例如内置 ImGui 后端连续拿不到绘制列表）。
     -- 这种情况必须让位给旧版面板，否则会出现「新旧面板都打不开」的死局。
-    local backend_ok = self.available
-    if backend_ok and self.d2d and type(self.d2d.can_draw) == "function" then
-        local ok, value = pcall(function() return self.d2d:can_draw() end)
-        if ok and value == false then backend_ok = false end
-    end
+    local backend_ok = self:backend_usable()
     if not backend_ok then
         imgui.text_colored(self:T("d2d_not_loaded"), 0xFFFF8080)
+        if self.last_error then imgui.text_colored(tostring(self.last_error), 0xFFFF8080) end
         imgui.separator()
         return false
     end
-    imgui.text_colored(self:T("d2d_backend_current_short") .. self:backend_label(), 0xFF80C0FF)
     imgui.text_colored(self:T("d2d_enabled_hint"), 0xFF80C080)
     return true
 end
@@ -996,7 +1057,8 @@ function VariantManagerUI:draw_group_actions(x, y, w, h, context)
         self.preset_name_editing = false
         self.number_editing = nil
         self:reset_text_input_state()
-        self:activate_native_text_input("group_name", self.group_name_input, input_action.rect, true)
+        self:activate_native_text_input("group_name", self.group_name_input, input_action.rect,
+            self.native_text_input.active_id ~= "group_name")
     elseif input_action.hovered and Runtime.is_mouse_down() then
         self.group_name_editing = true
         self:sync_native_text_input("group_name", input_action.rect)
@@ -1060,7 +1122,8 @@ function VariantManagerUI:draw_preset_actions(x, y, w, h, context, presets)
         self.material_filter_editing = false
         self.group_name_editing = false
         self.number_editing = nil
-        self:activate_native_text_input("preset_name", self.preset_name_input, input_action.rect, true)
+        self:activate_native_text_input("preset_name", self.preset_name_input, input_action.rect,
+            self.native_text_input.active_id ~= "preset_name")
     elseif input_action.hovered and Runtime.is_mouse_down() then
         self.preset_name_editing = true
         self:sync_native_text_input("preset_name", input_action.rect)
@@ -1508,7 +1571,8 @@ function VariantManagerUI:draw_part_content(x, y, w, h, context, part_index)
         self.preset_name_editing = false
         self.group_name_editing = false
         self.number_editing = nil
-        self:activate_native_text_input("material:" .. filter_key, filter_value, input_action.rect, true)
+        self:activate_native_text_input("material:" .. filter_key, filter_value, input_action.rect,
+            self.native_text_input.active_id ~= "material:" .. filter_key)
     elseif input_action.hovered and Runtime.is_mouse_down() then
         self.material_filter_editing = filter_key
         self:sync_native_text_input("material:" .. filter_key, input_action.rect)
@@ -2228,7 +2292,69 @@ function VariantManagerUI:draw_wrapped_text(text, x, y, max_width, font, line_he
     return line_y + line_height
 end
 
-function VariantManagerUI:draw_settings_panel(x, y, w, h)
+-- ============================================================================
+--  v3.1.0：联机（多人）信息
+-- ----------------------------------------------------------------------------
+--  玩家身份由核心的 PlayerDir 统一给出：
+--      本地玩家 = PlayerList 中 getPlayerIndex() == findMasterPlayer() 的那一个
+--  面板这里只负责把「认到了谁」显示出来，方便用户确认主角没认错。
+-- ============================================================================
+function VariantManagerUI:player_directory_info()
+    local dir = _G.__AVM_PLAYER_DIRECTORY
+    if not dir then return { total = 0, others = 0, local_name = nil, lines = {} } end
+    local lines = {}
+    local local_name = nil
+    for _, entry in ipairs(dir.entries or {}) do
+        -- - 名字用目录建表时缓存好的 entry.name：
+        --   这里每帧都会执行，不能每帧为每个玩家各做一次托管调用。
+        local name = entry.name or "?"
+        local tag = entry.is_local and self:T("player_local") or self:T("player_other")
+        lines[#lines + 1] = self:TF("player_line", tag, name, tostring(entry.index or "?"))
+        if entry.is_local then local_name = name end
+    end
+    return {
+        total = #(dir.entries or {}),
+        others = #(dir.others or {}),
+        local_name = local_name,
+        lines = lines,
+    }
+end
+
+function VariantManagerUI:draw_settings_panel(x,y,w,h)
+    local mx,my=Runtime.mouse_position()
+    local offset=self.settings_scroll_offset or 0
+    local maximum=math.max(0,(self.settings_content_height or h)-h)
+    if Runtime.point_in_rect(mx,my,x,y,w,h) then
+        offset=offset-(self.frame_mouse_wheel or 0)*42
+    end
+    offset=math.max(0,math.min(offset,maximum))
+    self.settings_scroll_offset=offset
+    self.d2d.push_clip_rect(x,y,w-12,h)
+    Runtime.input_clip={x=x,y=y,w=w-12,h=h}
+    self.settings_content_height=self:draw_settings_contents(x,y-offset,w-12,h)
+    Runtime.input_clip=nil
+    self.d2d.pop_clip_rect()
+    maximum=math.max(0,self.settings_content_height-h)
+    if maximum>0 then
+        local thumb_h=math.max(24,h*h/self.settings_content_height)
+        local range=h-thumb_h
+        local thumb_y=y+(offset/maximum)*range
+        self.d2d.fill_rect(x+w-8,y,5,h,COLORS.panel_alt)
+        self.d2d.fill_rect(x+w-8,thumb_y,5,thumb_h,COLORS.border)
+        if Runtime.is_mouse_clicked() and Runtime.point_in_rect(mx,my,x+w-14,y,14,h) then
+            self.settings_scroll_dragging=true
+            self.settings_scroll_drag_offset=Runtime.point_in_rect(mx,my,x+w-14,thumb_y,14,thumb_h)
+                and my-thumb_y or thumb_h/2
+        end
+        if not Runtime.is_mouse_down() then self.settings_scroll_dragging=false end
+        if self.settings_scroll_dragging and range>0 then
+            self.settings_scroll_offset=math.max(0,math.min(maximum,
+                (my-y-self.settings_scroll_drag_offset)/range*maximum))
+        end
+    end
+end
+
+function VariantManagerUI:draw_settings_contents(x, y, w, h)
     local config = self.deps.config
     self.panel:draw(x, y, w, h)
     local inset = LAYOUT.panel_inset
@@ -2250,7 +2376,34 @@ function VariantManagerUI:draw_settings_panel(x, y, w, h)
         config.language = "en"
         self.deps.save_settings()
     end
-    cursor_y = cursor_y + 54
+    cursor_y = cursor_y + 50
+    -- ===== 联机（多人）=====
+    -- 放在「性能」上面：这是日常最常动的一个开关（联机卡就关掉、单人玩就无所谓），
+    -- 所以排在语言之后、性能之前，进面板第一眼就能看到。
+    -- 差分配置按模型保存，所以队友穿同一套模型时会共用同一份；这里控制是否也处理他们。
+    Runtime.text(self.d2d, self.fonts.small, self:T("d2d_settings_multiplayer"),
+        inner_x, cursor_y, COLORS.text)
+    cursor_y = cursor_y + 28
+    if self.checkbox:draw(self:T("enable_multiplayer"), inner_x, cursor_y,
+        inner_w, 28, config.enable_multiplayer ~= false) then
+        config.enable_multiplayer = not (config.enable_multiplayer ~= false)
+        self.deps.save_settings()
+    end
+    cursor_y = cursor_y + 30
+    if config.enable_multiplayer ~= false then
+        local info = self:player_directory_info()
+        local summary
+        if info.total > 0 then
+            summary = self:TF("players_summary_short", tostring(info.local_name or "?"), info.others)
+        else
+            summary = self:T("player_none")
+        end
+        Runtime.text(self.d2d, self.fonts.tiny, summary, inner_x, cursor_y, COLORS.muted)
+    else
+        Runtime.text(self.d2d, self.fonts.tiny, self:T("multiplayer_local_only"),
+            inner_x, cursor_y, COLORS.muted)
+    end
+    cursor_y = cursor_y + 28
     Runtime.text(self.d2d, self.fonts.small, self:T("d2d_settings_performance"),
         inner_x, cursor_y, COLORS.text)
     cursor_y = cursor_y + 30
@@ -2365,6 +2518,7 @@ function VariantManagerUI:draw_settings_panel(x, y, w, h)
             cursor_y = cursor_y + 18
         end
     end
+    return cursor_y-y+32
 end
 
 -- ============================================================================
@@ -2419,28 +2573,40 @@ end
 function VariantManagerUI:draw()
     local config = self.deps.config
     if not config.new_ui_enabled or not self.ready or not self.visible then return end
-    local scale = self.window_scale or 1
+    local scale = math.max(0.25,math.min(4,tonumber(self.window_scale) or 1))
+    local pointer_source=Runtime.pointer_source()
+    if self.gesture_source and self.gesture_source~=pointer_source then
+        self.window.dragging=false
+        self.resize_edge=nil
+        self.resize_start=nil
+        self.gesture_source=nil
+        Runtime.reset_pointer()
+    end
     Runtime.set_ui_scale(scale)
-    local raw_sw, raw_sh = self.d2d.surface_size()
+    local raw_sw, raw_sh = Runtime.surface_size(self.d2d)
     if not raw_sw or not raw_sh or raw_sw < 320 or raw_sh < 240 then return end
     local sw, sh = raw_sw / scale, raw_sh / scale
-    -- ★ REFramework 的 imgui.get_display_size() 在本作里返回的是**渲染分辨率**而不是窗口大小
-    --   （实测：桌面/窗口 2560x1440，它返回 3840x2160，且绘制坐标实际是按 1:1 映射到窗口的）。
-    --   如果直接按它右对齐，面板会被放到可视区之外，表现就是「日志在画、屏幕上看不见」。
-    --   所以初始位置一律落在一个保守的安全区域内（两种解释下都在屏幕里）；
-    --   而拖动范围放宽到可能的真实屏幕尺寸，避免被限制得动不了。
-    local safe_w = math.min(sw, 1600)
-    local safe_h = math.min(sh, 900)
-    local drag_w = math.min(sw, 2560)
-    local drag_h = math.min(sh, 1440)
+    -- Client dimensions place the initial window; they never clamp user placement or size.
+    local safe_w = sw
+    local safe_h = sh
+    local drag_w = sw
+    local drag_h = sh
     local mx, my = Runtime.mouse_position()
     local raw_mx, raw_my = Runtime.raw_mouse_position()
-    local panel_w = math.min(1160, safe_w - 24)
-    local panel_h = math.min(700, safe_h - 24)
+    local panel_w = 1160
+    local panel_h = 700
+    -- Only the first presentation fits the client area. User changes are persistent.
+    if self.window_x==nil and self.window_y==nil then
+        scale=math.max(0.25,math.min(scale,raw_sw/(panel_w+48),raw_sh/(panel_h+48)))
+    end
+    self.window_scale = scale
+    Runtime.set_ui_scale(scale)
+    sw, sh = raw_sw / scale, raw_sh / scale
+    safe_w, safe_h, drag_w, drag_h = sw, sh, sw, sh
+    mx,my=Runtime.to_logical_point(raw_mx,raw_my)
     self.last_panel_w, self.last_panel_h = panel_w, panel_h
-    if not self.window_x then self.window_x = math.max(16, safe_w - panel_w - 16) end
+    if not self.window_x then self.window_x = math.max(16, (safe_w - panel_w) / 2) end
     if not self.window_y then self.window_y = math.max(16, (safe_h - panel_h) / 2) end
-    self.window_x, self.window_y = self.window:clamp(self.window_x, self.window_y, safe_w, safe_h, panel_w, panel_h)
     local panel_x, panel_y = self.window_x, self.window_y
     local armor_label = self:T("armor_mode")
     local weapon_label = self:T("weapon_mode")
@@ -2466,6 +2632,8 @@ function VariantManagerUI:draw()
     local physical_x, physical_y = panel_x * scale, panel_y * scale
     local physical_w, physical_h = panel_w * scale, panel_h * scale
     local function edge_at(cursor_x, cursor_y)
+        if cursor_x<physical_x-edge_size or cursor_x>physical_x+physical_w+edge_size
+            or cursor_y<physical_y-edge_size or cursor_y>physical_y+physical_h+edge_size then return nil end
         local left = math.abs(cursor_x - physical_x) <= edge_size
         local right = math.abs(cursor_x - (physical_x + physical_w)) <= edge_size
         local top = math.abs(cursor_y - physical_y) <= edge_size
@@ -2482,39 +2650,39 @@ function VariantManagerUI:draw()
     end
     if self.resize_edge then
         if Runtime.is_mouse_down() then
-            local horizontal = nil
-            if self.resize_edge:find("e") then horizontal = (raw_mx - physical_x) / panel_w end
-            if self.resize_edge:find("w") then horizontal = (physical_x + physical_w - raw_mx) / panel_w end
-            local vertical = nil
-            if self.resize_edge:find("s") then vertical = (raw_my - physical_y) / panel_h end
-            if self.resize_edge:find("n") then vertical = (physical_y + physical_h - raw_my) / panel_h end
-            local next_scale = horizontal or vertical or scale
-            if horizontal and vertical then next_scale = (horizontal + vertical) / 2 end
-            next_scale = math.max(0.65, math.min(1.25, next_scale))
-            if self.resize_edge:find("w") then
-                local right = physical_x + physical_w
-                panel_x = (right - panel_w * next_scale) / next_scale
-            end
-            if self.resize_edge:find("n") then
-                local bottom = physical_y + physical_h
-                panel_y = (bottom - panel_h * next_scale) / next_scale
-            end
-            scale = next_scale
-            self.window_scale = scale
+            local initial=self.resize_start or {x=physical_x,y=physical_y,w=physical_w,h=physical_h}
+            local horizontal,vertical
+            if self.resize_edge:find("e") then horizontal=(raw_mx-initial.x)/panel_w end
+            if self.resize_edge:find("w") then horizontal=(initial.x+initial.w-raw_mx)/panel_w end
+            if self.resize_edge:find("s") then vertical=(raw_my-initial.y)/panel_h end
+            if self.resize_edge:find("n") then vertical=(initial.y+initial.h-raw_my)/panel_h end
+            local next_scale=horizontal or vertical or scale
+            if horizontal and vertical then next_scale=(horizontal+vertical)/2 end
+            scale=math.max(0.25,math.min(4,next_scale))
+            self.window_scale=scale
             Runtime.set_ui_scale(scale)
-            sw, sh = raw_sw / scale, raw_sh / scale
-            safe_w = math.min(sw, 1600)
-            safe_h = math.min(sh, 900)
-            drag_w = math.min(sw, 2560)
-            drag_h = math.min(sh, 1440)
-            mx, my = Runtime.to_logical_point(raw_mx, raw_my)
-        else
-            self.resize_edge = nil
-        end
+            local next_x=initial.x
+            local next_y=initial.y
+            if self.resize_edge:find("w") then next_x=initial.x+initial.w-panel_w*scale end
+            if self.resize_edge:find("n") then next_y=initial.y+initial.h-panel_h*scale end
+            panel_x,panel_y=next_x/scale,next_y/scale
+            sw,sh=raw_sw/scale,raw_sh/scale
+            safe_w,safe_h,drag_w,drag_h=sw,sh,sw,sh
+            mx,my=Runtime.to_logical_point(raw_mx,raw_my)
+        else self.resize_edge=nil; self.resize_start=nil end
     elseif Runtime.is_mouse_clicked() then
-        self.resize_edge = edge_at(raw_mx, raw_my)
+        self.resize_edge=edge_at(raw_mx,raw_my)
+        if self.resize_edge then
+            self.resize_start={x=physical_x,y=physical_y,w=physical_w,h=physical_h}
+            self.window.dragging=false
+            self.gesture_source=pointer_source
+        end
     end
-    panel_x, panel_y = self.window:update(mx, my, panel_x, panel_y, panel_w, panel_h, drag_w, drag_h, excluded, false)
+    if not self.resize_edge then
+        panel_x,panel_y=self.window:update(mx,my,panel_x,panel_y,panel_w,panel_h,drag_w,drag_h,excluded,false)
+    end
+    if self.window.dragging and not self.gesture_source then self.gesture_source=pointer_source end
+    if not self.window.dragging and not self.resize_edge then self.gesture_source=nil end
     self.window_x, self.window_y = panel_x, panel_y
     mode_x = panel_x + (panel_w - mode_group_width) / 2
     mode_y = panel_y + LAYOUT.header_center - LAYOUT.mode_button_height / 2

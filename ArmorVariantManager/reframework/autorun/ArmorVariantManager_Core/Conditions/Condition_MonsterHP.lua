@@ -53,9 +53,36 @@ end
 sdk.hook(questManagerTypeDef:get_method("onChangedGameStatus"), onGameStatusChanged, function(retval) return retval end)
 
 -- Hook 怪物更新函数
+-- 注意：这个钩子对**每一只怪物的每一帧 update** 都会进一次 Lua，
+--       是本文件最需要关注的开销来源，所以单独加了性能统计点。
 local enemyUpdateMethod = sdk.find_type_definition("snow.enemy.EnemyCharacterBase"):get_method("update")
-sdk.hook(enemyUpdateMethod,
-    function(args)
+-- ============================================================================
+--  跟踪开关
+-- ----------------------------------------------------------------------------
+--  - 性能要点：下面那个 sdk.hook 挂在 snow.enemy.EnemyCharacterBase:update 上，
+--    对「每一只怪物的每一帧 update」都会进一次 Lua（实测约 43 次/帧）。
+--    如果当前的差分配置里根本没有启用「怪物血量」条件，这些托管 API 调用
+--    就完全是白费帧数，所以由核心（ArmorVariantManager.lua）在加载/保存配置后
+--    调用 M.set_tracking() 来整体开关。
+-- ============================================================================
+local tracking_enabled = false
+
+function M.set_tracking(enabled)
+    tracking_enabled = enabled == true
+end
+
+function M.is_tracking()
+    return tracking_enabled
+end
+
+local function on_enemy_update(args)
+        -- 没被任何配置用到时直接走人（0 次托管 API 调用）
+        if not tracking_enabled then return end
+        -- - 性能要点：这段代码对「每一只怪物的每一帧 update」都会执行。
+        --   先用纯 Lua 判断挡掉绝大多数调用（0 次托管 API 调用）：
+        --   不在任务里、或当前任务没有目标怪时，血量数据根本不可能被用到
+        --   （M.get_state() 在这种情况下本来也会返回 nil）。
+        if not isInQuest or questTargetNum == 0 then return end
         local enemy = sdk.to_managed_object(args[2])
         local monsterId = enemy:get_field("<EnemyType>k__BackingField")
         if monsterId == nil then return end
@@ -64,6 +91,8 @@ sdk.hook(enemyUpdateMethod,
             if monsterId == id then isTarget = true; break end
         end
         if not isTarget then return end
+        local P = _G.__AVM_PROFILER
+        if P then P.count("monster_hp_hook_target") end
         
         local vitals = enemy:get_field("<PhysicalParam>k__BackingField")
         if not vitals then return end
@@ -85,6 +114,22 @@ sdk.hook(enemyUpdateMethod,
                 monstersHP[enemy].max = maxHP
             end
         end
+end
+sdk.hook(enemyUpdateMethod,
+    function(args)
+        local P = _G.__AVM_PROFILER
+        if not (P and P.enabled) then
+            -- 正常使用（没开性能诊断）时走这条最短路：一次函数调用 + 几个 Lua 判断
+            on_enemy_update(args)
+            return
+        end
+        -- 开了性能诊断时分开统计：
+        --   monster_hp_hook_total = 钩子被调用的总代价（含 Lua 派发开销与门控判断）
+        --   门控关掉后 on_enemy_update 会在第一行返回，真正的血量工作耗时不会计入任何阶段
+        P.count("monster_hp_hook_invocations")
+        local t0 = P.begin("monster_hp_hook_total")
+        on_enemy_update(args)
+        P.finish("monster_hp_hook_total", t0)
     end,
     function(retval) return retval end
 )

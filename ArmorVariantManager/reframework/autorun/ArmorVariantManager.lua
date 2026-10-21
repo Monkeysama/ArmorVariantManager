@@ -1,5 +1,5 @@
 local mod_name = "ArmorVariantManager"
-local version = "3.0.4"
+local version = "3.1.9"
 local author = "Moon、MK"
 
 local global_config_path = "ArmorVariantManager/GlobalSettings.json"
@@ -14,22 +14,47 @@ local global_config = {
     new_ui_key = 0x24,                 -- 新版面板开关按键（默认 Home）
     new_ui_mute_game_input = true,     -- 面板打开时是否屏蔽游戏输入（释放鼠标 / 视角不乱转）
     -- 新版 UI 的绘制后端：
-    --   "auto"   = 优先用原生 reframework-d2d 插件，没有则用内置 ImGui 绘制后端
-    --   "imgui"  = 强制使用内置 ImGui 绘制后端（不依赖任何原生插件）
-    --   "native" = 强制使用原生插件（插件未加载时新版面板不可用）
+    --   "auto"   = 优先用原生 reframework-d2d 插件，没有则用内置 draw 绘制后端
+    --   "imgui"  = 兼容旧配置名，强制使用内置 draw 后端（默认字体，无需原生插件）
+    --   "native" = 优先使用原生插件，不可用时自动使用内置绘制
     new_ui_backend = "auto",
     new_ui_debug_force_visible = false, -- 调试用：强制显示新版面板（不需要按 Hotkey）
     new_ui_debug_manual_picker = false, -- 调试用：自动打开「手动查找预设」文件列表
-    auto_set_selected_preset_as_default = true -- 点击预设时是否自动记录为默认预设
+    auto_set_selected_preset_as_default = true, -- 点击预设时是否自动记录为默认预设
+    debug_profile = false,             -- 性能诊断：把每帧各环节耗时写入 ArmorVariantManager/Profile.json
+
+    -- ===== 联机（多人）=====
+    -- 差分配置是按「模型名（body_id）」保存的，所以同一套模型的玩家天然共用同一份配置。
+    -- 打开后：除了本地玩家（主角），场景里的其他玩家也会被应用差分 —— 队友穿着同一套
+    -- 模型时就能看到同样的差分效果（与荒野版本行为一致）。
+    -- 关闭后：只处理本地玩家，行为与 v3.0.6 完全相同。
+    enable_multiplayer = true,
+    -- 每轮最多处理几个「其他玩家」（摊到多帧执行，避免多人时掉帧）。
+    -- 本地玩家永远每轮都处理，不受这个值影响；其他玩家按轮询依次处理。
+    multiplayer_players_per_tick = 1,
+    -- 「其他玩家」的武器部件重新查找间隔（秒）。武器部件的递归查找偏贵，
+    -- 所以对非本地玩家做限频；本地玩家不受影响。
+    multiplayer_weapon_scan_interval = 2.0,
+    -- 场景兜底扫描每帧处理多少个 Transform 组件。
+    -- - 这个值直接决定「扫描期间每帧多花多少时间」：实测单个组件约 3.6us，
+    --   24 个/帧 ≈ 0.086ms/帧（帧时间的 1.4%），野外的 8000 个组件约 2~3 秒扫完。
+    --   调大 = 恢复更快但扫描期间更吃帧；调小 = 更省但恢复更慢。
+    --   （只在「PlayerManager 完全给不出本地玩家」时才会真正扫描，正常游玩为 0。）
+    scene_scan_batch = 24
 }
 
 local Localization = require("ArmorVariantManager_Core.Localization")
 local Utils = require("ArmorVariantManager_Core.Utils")
+local SceneObject = require("ArmorVariantManager_Core.SceneObject")
 local TransformManager = require("ArmorVariantManager_Core.TransformManager")
+-- 自动查找预设的统一匹配内核（兼容「无分组的老预设」与「使用分组的新预设」）
+local PresetAutoFinder = require("ArmorVariantManager_Core.PresetAutoFinder")
 
 -- 新版 UI 模块：先清空 package.loaded，避免 REFramework 复用旧脚本缓存
 -- （本文件没有 re.on_script_reset，因此用这种方式替代）
 local refd2d_module_names = {
+    "ArmorVariantManager_Core.Profiler",
+    "ArmorVariantManager_Core.PresetAutoFinder",
     "ArmorVariantManager_Core.UI.VariantManagerUI",
     "ArmorVariantManager_Core.Documentation",
     "ArmorVariantManager_UI",
@@ -46,6 +71,10 @@ local refd2d_module_names = {
     "ArmorVariantManager_UI.Component.Window",
     "ArmorVariantManager_UI.Service.BridgeRuntime",
     "ArmorVariantManager_UI.Service.ImGuiBackend",
+    "ArmorVariantManager_UI.Service.WindowsInput",
+    "ArmorVariantManager_UI.Service.EngineMouse",
+    "ArmorVariantManager_UI.Service.DrawClip",
+    "ArmorVariantManager_UI.Service.NativeD2DBackend",
     "ArmorVariantManager_UI.Service.InputBlocker",
     "ArmorVariantManager_UI.Service.NativeTextInput"
 }
@@ -55,6 +84,13 @@ if package and package.loaded then
     end
 end
 local VariantManagerUI = require("ArmorVariantManager_Core.UI.VariantManagerUI")
+
+-- ========== 性能诊断 ==========
+-- 默认关闭。关闭时 Profiler.begin() 只做一次布尔判断后返回 nil，
+-- 所有测量点变成「判断 + 直接返回」，对帧时间的影响可以忽略。
+-- 打开方式：reframework/data/ArmorVariantManager/GlobalSettings.json 里 debug_profile = true
+local Profiler = require("ArmorVariantManager_Core.Profiler")
+_G.__AVM_PROFILER = Profiler
 
 local function T(key)
     if not key then return "nil" end
@@ -91,12 +127,42 @@ local function load_global_settings()
             global_config.auto_set_selected_preset_as_default =
                 loaded.auto_set_selected_preset_as_default == true
         end
+        if loaded.debug_profile ~= nil then
+            global_config.debug_profile = loaded.debug_profile == true
+        end
+        if loaded.enable_multiplayer ~= nil then
+            global_config.enable_multiplayer = loaded.enable_multiplayer == true
+        end
+        if tonumber(loaded.multiplayer_players_per_tick) then
+            local n = math.floor(tonumber(loaded.multiplayer_players_per_tick))
+            if n < 0 then n = 0 elseif n > 8 then n = 8 end
+            global_config.multiplayer_players_per_tick = n
+        end
+        if tonumber(loaded.multiplayer_weapon_scan_interval) then
+            local v = tonumber(loaded.multiplayer_weapon_scan_interval)
+            if v < 0.2 then v = 0.2 elseif v > 30.0 then v = 30.0 end
+            global_config.multiplayer_weapon_scan_interval = v
+        end
+        if tonumber(loaded.scene_scan_batch) then
+            local b = math.floor(tonumber(loaded.scene_scan_batch))
+            if b < 4 then b = 4 elseif b > 128 then b = 128 end
+            global_config.scene_scan_batch = b
+        end
     end
 end
 local function save_global_settings()
     json.dump_file(global_config_path, global_config)
+    -- 同步给 TransformManager 用的语言缓存，避免它为了取一个语言名去读盘
+    _G.__AVM_LANGUAGE = global_config.language
 end
 load_global_settings()
+
+-- 语言值同步一次（内存值优先，TransformManager 不再为此读盘）
+_G.__AVM_LANGUAGE = global_config.language
+
+-- 性能诊断总开关（必须在 load_global_settings 之后，因为开关值来自配置文件）
+Profiler.enabled = global_config.debug_profile == true
+Profiler.reset()
 
 -- 禁用 ImGui ID 冲突警告（避免弹窗）
 pcall(function()
@@ -136,7 +202,43 @@ local is_weapon_mode = false
 -- 状态变量
 local loaded_configs = {}
 local active_overrides = {}
+local merge_overrides
 local active_group_presets = {}   -- body_id -> { group_name = preset_name }
+
+-- ============================================================================
+--  怪物血量跟踪门控
+-- ----------------------------------------------------------------------------
+--  实测数据（37,778 帧 / 270 秒）：sdk.hook 在 snow.enemy.EnemyCharacterBase:update
+--  上的回调被调用了 **1,627,099 次**（约 43 次/帧），累计 6037ms，
+--  是所有环节里最贵的一项（占插件每帧总成本的 ~38%）。
+--  而其中只有 1.41% 的调用真正命中了任务目标怪 —— 绝大多数都是小怪/环境生物。
+--  如果没有任何配置启用「怪物血量」条件，这个钩子里的托管 API 调用就是纯浪费，
+--  所以这里根据「已加载配置里有没有真的用到它」来整体开关跟踪逻辑。
+-- ============================================================================
+local function config_uses_monster_hp(cfg)
+    if not cfg or cfg.enable_transform ~= true then return false end
+    local uses = (cfg.transform_type == "monster_hp")
+        or (cfg.is_parallel and cfg.parallel_settings
+            and cfg.parallel_settings.monster_hp
+            and cfg.parallel_settings.monster_hp.enabled == true)
+    if not uses then return false end
+    local rules = cfg.monster_hp_transform_rules
+    return rules ~= nil and next(rules) ~= nil
+end
+
+local function refresh_monster_hp_gate()
+    local needed = false
+    for _, cfg in pairs(loaded_configs) do
+        if config_uses_monster_hp(cfg) then
+            needed = true
+            break
+        end
+    end
+    if TransformManager.set_monster_hp_tracking then
+        TransformManager.set_monster_hp_tracking(needed)
+    end
+    return needed
+end
 local current_config = {
     default_preset = "",
     presets = {},
@@ -247,20 +349,31 @@ local sort_selected_index = 1
 local config_restored = {}
 local config_restore_handled = {}
 
--- 性能优化：缓存上次应用到渲染的材质状态，避免重复调用 setMaterialsEnable
-local last_applied_overrides = {}  -- body_id -> deep copy of the last applied overrides
 -- 特殊内嵌式 CG 标志（用于临时绕过缓存）
 local g_is_special_cg = false
--- 特殊CG期间的应用帧计数器
-local special_cg_frame_counter = 0
-local SPECIAL_CG_APPLY_INTERVAL = 15  -- 每15帧应用一次（可调整）
-
--- 记录每个 body_id 对应的玩家 GameObject 地址，用于检测换装重建
-local last_player_addresses = {}
+-- ============================================================================
+--  特殊CG期间的应用节流：**按角色 + 按时间**
+-- ----------------------------------------------------------------------------
+--  - v3.1.2 修的问题：事件主角初次登场时是「无预设的初始状态」，要过几秒才正常。
+--    原因是旧的节流用的是**一个全局调用计数器** special_cg_frame_counter：
+--    所有 CG 角色、而且防具与武器**共用**它，只有「第 15 次调用」那一次才真的应用。
+--    于是「这次应用落到哪个角色头上」基本是随机的 ——
+--    单个角色要等到自己的调用正好排到第 15 次才拿到差分。
+--    一场过场里如果有 3~4 个 CG 角色（每人防具+武器各一次调用 = 每轮 6~8 次调用），
+--    就要好几秒才能轮到自己，而且先后顺序不可预测。
+--
+--    现在改成「按角色地址记录上次应用时刻」：节流只限制**同一个角色**的频率，
+--    角色之间不再互相拖累。同时也顺手解决了「防具把武器的额度吃光」的问题。
+-- ============================================================================
+local SPECIAL_CG_APPLY_INTERVAL = 0.08   -- 同一个 CG 角色最快每 0.08 秒应用一次
 
 -- ========== 版本号缓存 ==========
+-- overrides_version[body_id]：这份「意图」被改动过几次。
+-- - v3.1.0 起，「是否已经把这个版本应用到某个角色」不再记在这里，而是记在
+--   char_applied[角色地址]（见 apply_preset_to_character 上方的说明）。
+--   原因：同一个 body_id 可能对应多个玩家（联机时穿同一套模型），
+--   按 body_id 记「已应用」会让第二个玩家永远被跳过。
 local overrides_version = {}        -- body_id -> 版本号（整数）
-local last_overrides_version = {}   -- body_id -> 上次应用时的版本号
 
 -- 递增版本号
 local function bump_overrides_version(body_id)
@@ -277,6 +390,27 @@ local function get_player_manager() return sdk.get_managed_singleton("snow.playe
 -- ========== 多玩家管理 ==========
 local player_list = {}
 
+-- - 性能要点：每帧都会用到「只含本地玩家」的列表和「空列表」。
+--   原来每帧都新建一张表（players_to_process = { local_player }、
+--   event_players = cached_event_players or {}），在 144fps 下就是每秒几百次
+--   垃圾分配，会给 Lua GC 增加没必要的负担。这里改成复用固定表。
+--   （这两张表只被读取，不会被写入，复用是安全的。）
+local single_player_buffer = {}
+local EMPTY_PLAYER_LIST = {}
+
+-- 武器部件缓存：key = player_addr, value = weapon_parts 列表
+-- - 注意：这份缓存必须**提前**声明。因为 get_weapon_attack_part_name（本文件靠前）
+--   会读写它，避免每次逻辑都做一遍「深度 5 的递归查找」。
+--   如果按原来的位置声明在中间，前面那个函数会把它当成全局变量，
+--   写入的是全局表、后面读的是局部表，优化就静默失效了。
+local weapon_part_cache = {}
+
+-- - v3.1.0：get_weapon_attack_part_name 也需要用到「带缓存的武器部件查询」，
+--   而它的实现在文件后面（依赖 clear_player_cache 等）。这里先做前向声明，
+--   后面再赋值；这样查询顺序就是「先查缓存 → 没有再递归找」，联机时不会
+--   因为每个玩家都重跑一遍 DFS 而掉帧。
+local get_cached_weapon_parts = nil
+
 -- ========== 失效对象安全访问 ==========
 -- 切换场景（读图 / 回营地 / 进出任务）后，缓存里可能还留着已经被销毁的对象。
 -- 这时直接调 obj:call("get_Name") / get_Transform 会抛
@@ -284,18 +418,15 @@ local player_list = {}
 --   REMethodDefinition::invoke for via.GameObject.get_Name
 -- REFramework 会把它显示在 ScriptRunner 面板里刷屏（例如
 -- "ArmorVariantManager.lua:514: in upvalue 'get_primary_player'"）。
--- 这里统一用 pcall 包一层：读不到就当作「对象已失效」，返回 nil。
+-- 调用前检查引擎 get_Valid，不能把“仍是托管对象”当作“底层场景对象仍存活”。
 local function safe_object_name(obj)
-    if obj == nil then return nil end
-    local ok, name = pcall(function() return obj:call("get_Name") end)
-    if ok and type(name) == "string" then return name end
+    local name = SceneObject.call(obj, "get_Name")
+    if type(name) == "string" then return name end
     return nil
 end
 
 local function safe_object_alive(obj)
-    if obj == nil then return false end
-    local ok, alive = pcall(function() return sdk.is_managed_object(obj) end)
-    return ok and alive == true
+    return SceneObject.is_alive(obj)
 end
 
 -- 辅助函数：检查玩家是否有 body 子物体
@@ -303,106 +434,135 @@ local function player_has_body(player)
     if not safe_object_alive(player) then return false end
     -- 整条 transform 链都放进 pcall：链条上任一环失效都会抛异常
     local ok, result = pcall(function()
-        local transform = player:call("get_Transform")
+        local transform = SceneObject.call(player, "get_Transform")
         if not transform then return false end
-        local child = transform:call("get_Child")
+        local child = SceneObject.call(transform, "get_Child")
         local guard = 0
         while child do
             guard = guard + 1
             if guard > 256 then break end
-            local child_obj = child:call("get_GameObject")
+            local child_obj = SceneObject.call(child, "get_GameObject")
             if child_obj then
-                local name = child_obj:call("get_Name")
+                local name = SceneObject.call(child_obj, "get_Name")
                 if name and string.find(name, "body") then
                     return true
                 end
             end
-            child = child:call("get_Next")
+            child = SceneObject.call(child, "get_Next")
         end
         return false
     end)
     return ok and result == true
 end
 
--- 按需回退扫描（仅当列表为空时触发，带缓存）
-local fallback_cache = nil
-local fallback_cache_time = 0
-local fallback_cache_ttl = 5.0
-
-local function scan_fallback_once()
-    local now = os.clock()
-    if fallback_cache and (now - fallback_cache_time) < fallback_cache_ttl then
-        return fallback_cache
-    end
-    local scene_manager = sdk.get_native_singleton("via.SceneManager")
-    if not scene_manager then return nil end
-    local scene = sdk.call_native_func(scene_manager, sdk.find_type_definition("via.SceneManager"), "get_CurrentScene")
-    if not scene then return nil end
-    local transforms = scene:call("findComponents(System.Type)", type_cache.via_transform)
-    if not transforms then return nil end
-    local list = transforms:get_elements()
-    for _, t in ipairs(list) do
-        local ok, game_obj = pcall(method_cache.Component_get_GameObject.call, method_cache.Component_get_GameObject, t)
-        if ok and game_obj then
-            local name = safe_object_name(game_obj)
-            if name then
-                local lowerName = name:lower()
-                if string.find(lowerName, "female") or string.find(lowerName, "male") or string.find(lowerName, "player") then
-                    if player_has_body(game_obj) then
-                        fallback_cache = game_obj
-                        fallback_cache_time = now
-                        return game_obj
-                    end
-                end
-            end
-        end
-    end
-    fallback_cache = nil
-    fallback_cache_time = now
-    return nil
+-- 名称是否"像玩家"（大小写不敏感）。
+-- - 不能写成 name:lower() —— 那会为每个组件新建一个字符串，
+--   8000 个组件就是 8000 次分配，是这条扫描路径上很可观的一部分开销。
+--   这里用 Lua 模式做大小写不敏感匹配，零分配。
+local function name_looks_like_player(name)
+    -- "player" / "female" / "male"（"female" 里本来就含 "male"，所以一条就够）
+    return string.find(name, "[Pp][Ll][Aa][Yy][Ee][Rr]") ~= nil
+        or string.find(name, "[Mm][Aa][Ll][Ee]") ~= nil
 end
 
+-- ============================================================================
+--  按需场景扫描（回退用）
+-- ----------------------------------------------------------------------------
+--  - v3.1.0 起这里改成**增量式**（照搬荒野版本 tick_scanner 的思路）：
+--    崛起野外要遍历约 8,000 个 Transform 组件、单次几十毫秒
+--    （v3.0.5 的性能报告实测峰值 ~29ms）。旧实现只把**调用频率**降到
+--    「正命中 10 秒 / 未命中 3 秒」，但**单次代价没变** ——
+--    联机时只要 findMasterPlayer 短暂拿不到人，就会周期性出现这种几十毫秒的尖峰，
+--    表现出来就是「联机时突然卡一下」。
+--
+--    现在扫描被切成每帧一小批（global_config.scanner_batch_size），
+--    由 PlayerDir.scan_tick() 每帧推进；PlayerDir.scan_once() 变成**非阻塞**：
+--    它只返回已有结果，没有就返回 nil（下一帧继续推进）。
+--    实现挂在 PlayerDir 上，见下面的 PlayerDir.scan / scan_tick / scan_once。
+-- ============================================================================
+
 -- 获取 Body ID（防具模式）
-local function get_character_body_id(character)
+local get_character_body_id = nil
+local function get_character_body_id_impl(character)
     if not character then return nil end
     if not safe_object_alive(character) then return nil end
     -- 整条 transform 链 + get_Name 都放进 pcall（场景切换后对象可能已失效）
     local ok, body_id = pcall(function()
-        local transform = character:call("get_Transform")
+        local transform = SceneObject.call(character, "get_Transform")
         if transform then
-            local child = transform:call("get_Child")
+            local child = SceneObject.call(transform, "get_Child")
             local guard = 0
             while child do
                 guard = guard + 1
                 if guard > 256 then break end
-                local child_obj = child:call("get_GameObject")
+                local child_obj = SceneObject.call(child, "get_GameObject")
                 if child_obj then
-                    local name = child_obj:call("get_Name")
+                    local name = SceneObject.call(child_obj, "get_Name")
                     if name and string.find(name, "body") then
                         return name
                     end
                 end
-                child = child:call("get_Next")
+                child = SceneObject.call(child, "get_Next")
             end
         end
-        local go_name = character:call("get_Name")
+        local go_name = SceneObject.call(character, "get_Name")
         if go_name then return go_name end
         return nil
     end)
     if ok then return body_id end
     return nil
 end
+get_character_body_id = function(character)
+    local t0 = Profiler.begin("body_id")
+    local result = get_character_body_id_impl(character)
+    Profiler.finish("body_id", t0)
+    Profiler.count("body_id_calls")
+    return result
+end
 
 -- ========== 获取武器的主要攻击部件名称（用于预设管理ID） ==========
 -- 采用原有崛起版本逻辑：基于部件前缀确定主要部件
-local function get_weapon_attack_part_name(player_obj)
-    if not player_obj then return nil end
-    if not sdk.is_managed_object(player_obj) then return nil end
+-- - 性能要点：原来固定按 1：主列表、2：联机玩家 的顺序遍历，这里保持语义不变，
+--   但把这张映射表提到外面（原来每次调用都要新建一张表，144fps 下就是每秒几百次分配）。
+local WEAPON_MAIN_PART_INDEX = {
+    [Utils.WEAPON_TYPE.GREATSWORD] = 1,
+    [Utils.WEAPON_TYPE.SWITCH_AXE] = 1,
+    [Utils.WEAPON_TYPE.LONGSWORD] = 2,
+    [Utils.WEAPON_TYPE.LIGHT_BOWGUN] = 1,
+    [Utils.WEAPON_TYPE.HEAVY_BOWGUN] = 1,
+    [Utils.WEAPON_TYPE.HAMMER] = 1,
+    [Utils.WEAPON_TYPE.GUNLANCE] = 2,
+    [Utils.WEAPON_TYPE.LANCE] = 2,
+    [Utils.WEAPON_TYPE.SWORD_SHIELD] = 2,
+    [Utils.WEAPON_TYPE.DUAL_BLADES] = 1,
+    [Utils.WEAPON_TYPE.HUNTING_HORN] = 1,
+    [Utils.WEAPON_TYPE.CHARGE_BLADE] = 2,
+    [Utils.WEAPON_TYPE.INSECT_GLAIVE] = 2,
+    [Utils.WEAPON_TYPE.BOW] = 1,
+}
 
-    local weapon_parts = Utils.get_current_weapon_parts(player_obj)
-    if not weapon_parts or #weapon_parts == 0 then return nil end
-    
-    local weapon_type = Utils.get_current_weapon_type(player_obj)
+local get_weapon_attack_part_name = nil
+-- player_handle：该玩家的 snow.player.Player 托管对象（可选）。
+-- - 联机时它很关键：武器类型（_playerWeaponType）必须读**这名玩家自己**的，
+--   旧实现永远读本地玩家的，于是队友会被套上主角的武器部件。
+local function get_weapon_attack_part_name_impl(player_obj, player_handle)
+    if not player_obj then return nil end
+    if not safe_object_alive(player_obj) then return nil end
+
+    -- - 先查缓存（命中就不做递归查找）。
+    --   旧实现是「每次都重新递归查一遍，再顺手写缓存」，等于缓存只是给
+    --   紧接着的 get_cached_weapon_parts 用，自己从不命中 —— 联机时
+    --   4 个玩家每轮就是 4 次深度 5 的递归。
+    local weapon_parts = nil
+    if get_cached_weapon_parts then
+        weapon_parts = get_cached_weapon_parts(player_obj, player_handle)
+    end
+    if not weapon_parts then
+        weapon_parts = Utils.get_current_weapon_parts(player_handle or player_obj)
+    end
+    if not weapon_parts then return nil end
+
+    local weapon_type = Utils.get_current_weapon_type(player_handle or player_obj)
     if not weapon_type then return nil end
 
     -- 对于双刀特殊处理
@@ -412,22 +572,7 @@ local function get_weapon_attack_part_name(player_obj)
         end
     end
     
-    local main_part_index = {
-        [Utils.WEAPON_TYPE.GREATSWORD] = 1,
-        [Utils.WEAPON_TYPE.SWITCH_AXE] = 1,
-        [Utils.WEAPON_TYPE.LONGSWORD] = 2,
-        [Utils.WEAPON_TYPE.LIGHT_BOWGUN] = 1,
-        [Utils.WEAPON_TYPE.HEAVY_BOWGUN] = 1,
-        [Utils.WEAPON_TYPE.HAMMER] = 1,
-        [Utils.WEAPON_TYPE.GUNLANCE] = 2,
-        [Utils.WEAPON_TYPE.LANCE] = 2,
-        [Utils.WEAPON_TYPE.SWORD_SHIELD] = 2,
-        [Utils.WEAPON_TYPE.DUAL_BLADES] = 1,
-        [Utils.WEAPON_TYPE.HUNTING_HORN] = 1,
-        [Utils.WEAPON_TYPE.CHARGE_BLADE] = 2,
-        [Utils.WEAPON_TYPE.INSECT_GLAIVE] = 2,
-        [Utils.WEAPON_TYPE.BOW] = 1,
-    }
+    local main_part_index = WEAPON_MAIN_PART_INDEX
     
     local idx = main_part_index[weapon_type] or 1
     if weapon_parts[idx] then
@@ -438,39 +583,571 @@ local function get_weapon_attack_part_name(player_obj)
     end
     return nil
 end
+get_weapon_attack_part_name = function(player_obj, player_handle)
+    local t0 = Profiler.begin("weapon_attack_part_name")
+    local result = get_weapon_attack_part_name_impl(player_obj, player_handle)
+    Profiler.finish("weapon_attack_part_name", t0)
+    Profiler.count("weapon_attack_part_name_calls")
+    return result
+end
 
--- 获取正常玩家（通过 PlayerManager 的 PlayerList）
-local function get_normal_players()
-    local players = {}
+-- 前向声明：Mesh 组件的真实查找实现在文件后面（那时 type_mesh / get_type 都已就绪）。
+-- PlayerDir.mesh_of 会对它做「按对象地址 + TTL + 存活校验」的缓存。
+local get_mesh_component_recursive_uncached = nil
+
+-- ============================================================================
+--  玩家目录（PlayerDir）
+-- ----------------------------------------------------------------------------
+--  统一回答两个问题：① 谁是本地玩家（主角）？ ② 场景里还有哪些玩家？
+--
+--  - 为什么需要这一层
+--    旧实现找主角的方式是「PlayerList 里第一个名字以 player 开头的对象」。
+--    这在联机时**必然出错**。游戏内实测（4 人联机，崛起）：
+--        player00 / player01 / player02  = 队友
+--        player03                        = 本地玩家（主角）
+--    对象名是按**加入房间的顺序**分配的，和「谁是本地玩家」毫无关系，
+--    所以旧写法会让面板显示到队友的配置上去。
+--
+--  - 可靠判定方式（同样来自游戏内实测，与 Lua Bone / Lua Face 一致）
+--      master = PlayerManager:findMasterPlayer()
+--      本地玩家 = PlayerList 中 getPlayerIndex() == master:getPlayerIndex() 的那一个
+--    4 个玩家里**恰好只有一个** index 匹配；再用对象同一性做双保险。
+--    完全不再依赖对象名字。
+--
+--  - 性能
+--    整个目录按 refresh_interval 节流重建，帧循环里读的是缓存表；
+--    本地玩家的 GameObject 还会额外持久化 persist 秒，
+--    避免读图 / 过场切换的瞬间面板闪烁或掉回「未知」。
+--
+--  - 写成一张表（而不是一堆顶层 local function）是刻意的：
+--    ArmorVariantManager.lua 的 main chunk 已经用掉 189 个局部变量槽位，
+--    而 Lua 的上限是 200。表字段不占槽位，所以这里统一挂在 PlayerDir 下。
+-- ============================================================================
+local PlayerDir = {
+    entries = {},          -- { { player = 托管对象, obj = GameObject, index = n, is_local = bool } }
+    others = {},           -- 只含「其他玩家」的数组（帧循环用，复用同一张表）
+    local_entry = nil,
+    local_index = nil,
+    last_local_obj = nil,  -- 持久化：最近一次确认过的本地玩家 GameObject
+    last_local_time = 0,
+    last_refresh = -math.huge,
+    valid = false,
+    refresh_interval = 0.5,   -- 目录最长重建间隔（秒）
+    persist = 1.0,            -- 本地玩家短暂读不到时沿用上次结果的时间（秒）
+    refresh_count = 0,
+    -- 主角 body_id 的短 TTL 缓存（省一个顶层局部变量槽位）
+    primary_body_id = { ttl = 0.25, key = nil, value = nil, time = 0 },
+    -- 防具部件缓存的重试间隔（见 PlayerDir.parts）
+    parts_retry = 0.5,
+
+    -- ========================================================================
+    --  body_id 缓存（按角色地址）
+    -- ------------------------------------------------------------------------
+    --  - 照搬荒野版本的 body_id_cache + body_id_ttl：
+    --    取一次 body_id 要遍历角色子物体（12 个部件 × 3 次托管调用 ≈ 36 次），
+    --    而联机时每个处理周期都要给**每个玩家**取一次。缓存 1 秒后，
+    --    这些遍历从「每轮 × 人数」降到「每秒 × 人数」。
+    --    TTL 直接用设置里的 body_id_ttl（默认 1.0 秒，可调）。
+    -- ========================================================================
+    body_id = { by_char = {}, default_ttl = 1.0 },
+
+    -- ========================================================================
+    --  Mesh 组件缓存（按部件对象地址）
+    -- ------------------------------------------------------------------------
+    --  - 照搬荒野版本的 character_mesh_cache：
+    --    get_mesh_component_recursive 每次都要 type:get_runtime_type() + getComponent，
+    --    一次应用要跑 5 次。缓存后只在换装/模型重建时重算。
+    -- ========================================================================
+    mesh = { by_obj = {}, ttl = 2.0 },
+
+    -- ========================================================================
+    --  增量式场景扫描的状态（见下方 scan_tick / scan_once）
+    -- ========================================================================
+    scan = {
+        state = "IDLE",           -- IDLE / PROCESSING
+        transforms = nil,
+        count = 0,
+        index = 1,
+        last_scan_time = -math.huge,
+        hit_ttl = 10.0,           -- 找到玩家后的结果有效期
+        miss_ttl = 3.0,           -- 「没找到」的结果有效期
+        result = nil,
+        result_time = -math.huge,
+        result_valid = false,
+        scan_count = 0,
+        retry_at = -math.huge,    -- 失效快照丢弃后短暂等待，避免读图期间每帧重扫
+    },
+}
+
+function PlayerDir.reset()
+    PlayerDir.entries = {}
+    PlayerDir.others = {}
+    PlayerDir.local_entry = nil
+    PlayerDir.local_index = nil
+    PlayerDir.last_local_obj = nil
+    PlayerDir.last_local_time = 0
+    PlayerDir.last_refresh = -math.huge
+    PlayerDir.valid = false
+    PlayerDir.scan_reset()
+    PlayerDir.body_id.by_char = {}
+    PlayerDir.mesh.by_obj = {}
+end
+
+-- body_id：带 TTL 缓存（见 PlayerDir.body_id 上的说明）
+-- - TTL 到期时先用**部件签名**判断模型有没有换：
+--   签名没变就只续期、不重算，于是那个「遍历 12 个子物体」的动作
+--   从「每轮每人一次」降到「只有真的换装时才做一次」。
+--
+-- - v3.1.2 补的一个坑：只有真的读到「身体部件」（名字里有 body）才值得缓存。
+--   get_character_body_id 在没有 body 子物体时会退化成「角色自己的对象名」
+--   （例如 player03 / 过场角色的对象名），这代表**模型还没生成完**。
+--   旧实现把这种结果也按 1 秒缓存，于是事件主角初次登场后会先拿着一个找不到
+--   配置的假 id 卡住，要等缓存过期才重新识别 —— 体感就是「过几秒才出现预设」。
+--   现在这种结果只缓存 0.1 秒，下一拍就会重算。
+function PlayerDir.body_id_of(character)
+    if not safe_object_alive(character) then return nil end
+    local addr = tostring(character)
+    local now = os.clock()
+    local ttl = tonumber(global_config.body_id_ttl) or PlayerDir.body_id.default_ttl
+    if ttl < 0.1 then ttl = 0.1 end
+    local cached = PlayerDir.body_id.by_char[addr]
+    if cached then
+        local eff_ttl = cached.short and 0.1 or ttl
+        if (now - cached.time) < eff_ttl then
+            return cached.id
+        end
+    end
+    local parts = PlayerDir.parts(character)
+    -- 只对「真的读到了身体部件」的结果续期；退化成对象名的结果不续期（见上面的说明）
+    if cached and not cached.short and cached.id ~= nil
+        and parts and cached.sig == parts.sig then
+        cached.time = now            -- 模型没换 → 续期
+        return cached.id
+    end
+    local id = get_character_body_id(character)
+    local looks_like_body_part = id ~= nil and string.find(id, "body", 1, true) ~= nil
+    PlayerDir.body_id.by_char[addr] = {
+        id = id, time = now, sig = parts and parts.sig or nil,
+        short = not looks_like_body_part
+    }
+    return id
+end
+
+function PlayerDir.invalidate_body_id(character)
+    if not character then return end
+    PlayerDir.body_id.by_char[tostring(character)] = nil
+end
+
+-- mesh 组件：带 TTL + 存活校验的缓存（见 PlayerDir.mesh 上的说明）
+function PlayerDir.mesh_of(game_obj)
+    if not safe_object_alive(game_obj) then return nil end
+    local addr = tostring(game_obj)
+    local now = os.clock()
+    local cached = PlayerDir.mesh.by_obj[addr]
+    if cached and (now - cached.time) < PlayerDir.mesh.ttl
+        and cached.mesh ~= nil and safe_object_alive(cached.mesh) then
+        return cached.mesh
+    end
+    local mesh = get_mesh_component_recursive_uncached(game_obj)
+    if mesh ~= nil then
+        PlayerDir.mesh.by_obj[addr] = { mesh = mesh, time = now }
+    else
+        PlayerDir.mesh.by_obj[addr] = nil
+    end
+    return mesh
+end
+
+-- ============================================================================
+--  增量式场景扫描（照搬荒野版本 tick_scanner 的思路）
+-- ----------------------------------------------------------------------------
+--  scan_tick()：每帧调用一次，空闲时只做一次时间比较；扫描中每次只处理
+--               scanner_batch_size 个 Transform 组件，所以永远不会出现
+--               「一帧卡几十毫秒」的情况。
+--  scan_once()：给「找不到本地玩家」时兜底用。非阻塞 —— 有结果就给结果，
+--               没有就顺手推进一步并返回 nil（下一帧接着推进）。
+-- ============================================================================
+function PlayerDir.scan_reset()
+    local scan = PlayerDir.scan
+    scan.state = "IDLE"
+    scan.transforms = nil
+    scan.count = 0
+    scan.index = 1
+    scan.result = nil
+    scan.result_valid = false
+    scan.result_time = -math.huge
+    scan.last_scan_time = -math.huge
+    scan.retry_at = -math.huge
+end
+
+function PlayerDir.scan_tick()
+    local scan = PlayerDir.scan
+    local now = os.clock()
+
+    if now < scan.retry_at then return end
+
+    if scan.state == "IDLE" then
+        -- 结果还在有效期内 → 什么都不用做（正常游玩每帧走到这里只有一次比较）
+        if scan.result_valid then
+            local ttl = scan.result and scan.hit_ttl or scan.miss_ttl
+            if (now - scan.result_time) < ttl then return end
+        end
+        -- 取场景里的全部 Transform（这一次调用本身不贵，贵的是逐个读名字）
+        local t_start = Profiler.begin("scene_scan_start")
+        local scene_manager = sdk.get_native_singleton("via.SceneManager")
+        if not scene_manager then return end
+        local scene = sdk.call_native_func(scene_manager,
+            sdk.find_type_definition("via.SceneManager"), "get_CurrentScene")
+        if not scene then return end
+        local transforms = SceneObject.call(scene, "findComponents(System.Type)", type_cache.via_transform)
+        if not transforms then return end
+        local list = transforms:get_elements()
+        if not list then return end
+        Profiler.finish("scene_scan_start", t_start)
+        scan.transforms = list
+        scan.count = #list
+        scan.index = 1
+        scan.state = "PROCESSING"
+        scan.result = nil
+        scan.result_valid = false
+        scan.scan_count = scan.scan_count + 1
+        scan.last_scan_time = now
+        return
+    end
+
+    -- PROCESSING：这一帧只处理一小批
+    -- - 批大小用专用的 scene_scan_batch（默认 24），不直接用 UI 上的
+    --   scanner_batch_size —— 后者默认 100，扫描期间会吃掉约 0.36ms/帧。
+    local batch = tonumber(global_config.scene_scan_batch) or 24
+    if batch < 4 then batch = 4 end
+    if batch > 128 then batch = 128 end
+    local t_batch = Profiler.begin("scene_scan_batch")
+    local i = scan.index
+    local last = i + batch - 1
+    if last > scan.count then last = scan.count end
+    local get_component_go = method_cache.Component_get_GameObject
+    while i <= last do
+        -- SystemArray/get_elements 的元素在读取时才解包；场景切换后，
+        -- scan.transforms[i] 本身就可能抛 sol_lua_push，并不只是在 call 时抛。
+        -- 整个读取与调用一起保护；失效后丢弃旧快照，不能每帧卡在同一批。
+        local ok, game_obj = pcall(function()
+            local t = scan.transforms[i]
+            if t == nil then return nil end
+            if not safe_object_alive(t) then error("AVM: stale Transform snapshot", 0) end
+            return get_component_go:call(t)
+        end)
+        if not ok then
+            PlayerDir.scan_reset()
+            scan.retry_at = now + 0.1
+            Profiler.count("scene_scan_stale_snapshot")
+            Profiler.finish("scene_scan_batch", t_batch)
+            return
+        end
+        if game_obj then
+            local name = safe_object_name(game_obj)
+            if name and name_looks_like_player(name) and player_has_body(game_obj) then
+                scan.result = game_obj
+                scan.result_time = os.clock()
+                scan.result_valid = true
+                scan.state = "IDLE"
+                scan.transforms = nil
+                scan.count = 0
+                scan.index = 1
+                Profiler.count("scene_scan_hits")
+                Profiler.max_value("scene_scan_index_at_hit", i)
+                Profiler.finish("scene_scan_batch", t_batch)
+                return
+            end
+        end
+        i = i + 1
+    end
+    scan.index = i
+    Profiler.finish("scene_scan_batch", t_batch)
+
+    if scan.index > scan.count then
+        -- 扫完了：把「没找到」也记成有效结果（否则会一直重扫）
+        scan.result = nil
+        scan.result_time = os.clock()
+        scan.result_valid = true
+        scan.state = "IDLE"
+        scan.transforms = nil
+        scan.count = 0
+        scan.index = 1
+        Profiler.count("scene_scan_complete")
+    end
+end
+
+-- 非阻塞版「扫一次」：返回已有结果；没有就返回 nil 并推进一步
+function PlayerDir.scan_once()
+    local scan = PlayerDir.scan
+    local function current()
+        if not scan.result_valid then return nil end
+        if scan.result and not safe_object_alive(scan.result) then
+            PlayerDir.scan_reset()
+            return nil
+        end
+        local ttl = scan.result and scan.hit_ttl or scan.miss_ttl
+        if (os.clock() - scan.result_time) < ttl then return scan.result or false end
+        return nil
+    end
+    local value = current()
+    if value ~= nil then return value or nil end
+    PlayerDir.scan_tick()
+    value = current()
+    if value ~= nil then return value or nil end
+    return nil
+end
+
+-- getPlayerIndex()：联机时区分本地玩家与其他玩家的**唯一可靠依据**
+function PlayerDir.index_of(player)
+    if not safe_object_alive(player) then return nil end
+    local ok, idx = pcall(function() return SceneObject.call(player, "getPlayerIndex") end)
+    if ok and type(idx) == "number" then return idx end
+    return nil
+end
+
+function PlayerDir.to_game_object(player)
+    if not safe_object_alive(player) then return nil end
+    local ok, go = pcall(function() return SceneObject.call(player, "get_GameObject") end)
+    if ok and go and safe_object_alive(go) then return go end
+    return nil
+end
+
+-- PlayerManager:findMasterPlayer()（getMasterPlayer 作为兜底）
+function PlayerDir.find_master()
     local pm = get_player_manager()
-    if not pm or not playerListGetItem then return players end
-    local playerList = pm:get_field("PlayerList")
-    if not playerList then return players end
-    for i = 0, 8 do
-        local player = playerListGetItem:call(playerList, i)
-        if player then
-            local ok, go = pcall(function() return player:call("get_GameObject") end)
-            if ok and go then
-                table.insert(players, go)
+    if not pm then return nil end
+    local ok, master = pcall(function() return pm:call("findMasterPlayer()") end)
+    if not (ok and master and safe_object_alive(master)) then
+        ok, master = pcall(function() return pm:call("getMasterPlayer") end)
+        if not (ok and master and safe_object_alive(master)) then
+            master = nil
+        end
+    end
+    return master
+end
+
+-- 读 PlayerList 里的第 i 个玩家。
+-- - 先走「托管对象标准调用」list:call("get_Item", i)（最稳，兼容性最好），
+--   失败再退回预先缓存的 MethodDefinition 形式。
+function PlayerDir.read_list_item(list, i)
+    local ok, item = pcall(function() return list:call("get_Item", i) end)
+    if ok and item then return item end
+    if playerListGetItem then
+        local ok2, item2 = pcall(playerListGetItem.call, playerListGetItem, list, i)
+        if ok2 and item2 then return item2 end
+    end
+    return nil
+end
+
+function PlayerDir.rebuild()
+    local started = Profiler.begin("player_directory_rebuild")
+    PlayerDir.refresh_count = PlayerDir.refresh_count + 1
+    PlayerDir.last_refresh = os.clock()
+
+    local entries = {}
+    local local_entry = nil
+
+    local master = PlayerDir.find_master()
+    local master_index = PlayerDir.index_of(master)
+    local master_go = PlayerDir.to_game_object(master)
+
+    local pm = get_player_manager()
+    local list = nil
+    if pm then
+        local ok, field = pcall(function() return pm:get_field("PlayerList") end)
+        if ok then list = field end
+    end
+
+    if list then
+        local count = nil
+        local ok_count, c = pcall(function() return list:call("get_Count") end)
+        if ok_count and type(c) == "number" then count = c end
+        local limit = 16
+        if count and count > 0 and count - 1 < limit then limit = count - 1 end
+
+        for i = 0, limit do
+            local item = PlayerDir.read_list_item(list, i)
+            if item and safe_object_alive(item) then
+                local go = PlayerDir.to_game_object(item)
+                if go then
+                    local idx = PlayerDir.index_of(item)
+                    local is_local = (master ~= nil and item == master)
+                        or (master_index ~= nil and idx ~= nil and idx == master_index)
+                        or (master_go ~= nil and go == master_go)
+                    -- - 名字顺手缓存下来：面板每帧都要显示「检测到的玩家」，
+                    --   不能每帧为每个玩家各做一次托管调用（旧写法就是那样）。
+                    local entry = { player = item, obj = go, index = idx,
+                                    is_local = is_local, name = safe_object_name(go) }
+                    entries[#entries + 1] = entry
+                    if is_local and local_entry == nil then local_entry = entry end
+                end
             end
         end
     end
-    return players
+
+    -- 极端情况：findMasterPlayer 拿到了玩家，但它不在 PlayerList 里
+    if local_entry == nil and master_go ~= nil then
+        local_entry = { player = master, obj = master_go, index = master_index,
+                        is_local = true, from_master = true,
+                        name = safe_object_name(master_go) }
+        table.insert(entries, 1, local_entry)
+    end
+
+    -- 最后兜底：PlayerManager 不可用或被清空（读图、菜单、存档预览界面）
+    -- 此时才退回「场景扫描」（增量式、非阻塞，见 PlayerDir.scan_once），
+    -- 而且只有在场景里**只有一个**候选时才认它是主角，以免联机时又抓成队友。
+    if local_entry == nil then
+        local scanned = PlayerDir.scan_once()
+        if scanned then
+            if #entries == 0 then
+                local_entry = { player = nil, obj = scanned, index = nil, is_local = true,
+                                from_scan = true, name = safe_object_name(scanned) }
+                entries[#entries + 1] = local_entry
+            elseif #entries == 1 then
+                entries[1].is_local = true
+                local_entry = entries[1]
+            end
+        elseif #entries == 1 then
+            -- 只有一个人物在场（存档预览 / 单人读图）：它就是主角
+            entries[1].is_local = true
+            local_entry = entries[1]
+        end
+    end
+
+    -- 其他玩家（复用同一张表，避免每 0.5 秒新建垃圾）
+    local others = PlayerDir.others
+    for i = #others, 1, -1 do others[i] = nil end
+    for _, entry in ipairs(entries) do
+        if not entry.is_local then others[#others + 1] = entry end
+    end
+
+    PlayerDir.entries = entries
+    PlayerDir.local_entry = local_entry
+    PlayerDir.local_index = local_entry and local_entry.index or master_index
+    if local_entry and safe_object_alive(local_entry.obj) then
+        PlayerDir.last_local_obj = local_entry.obj
+        PlayerDir.last_local_time = os.clock()
+    end
+    PlayerDir.valid = true
+
+    Profiler.count("player_directory_rebuilds")
+    Profiler.count("player_directory_entries", #entries)
+    Profiler.count("player_directory_others", #others)
+    Profiler.finish("player_directory_rebuild", started)
+end
+
+-- 取（必要时重建）玩家目录
+function PlayerDir.get()
+    local now = os.clock()
+    if not PlayerDir.valid
+        or (now - PlayerDir.last_refresh) > PlayerDir.refresh_interval then
+        PlayerDir.rebuild()
+    elseif PlayerDir.local_entry ~= nil
+        and not safe_object_alive(PlayerDir.local_entry.obj) then
+        -- 本地玩家对象失效（换装重建 / 切场景）→ 立刻重建，不等节流
+        PlayerDir.rebuild()
+    elseif PlayerDir.local_entry == nil and #PlayerDir.entries == 0
+        and PlayerDir.scan.result_valid and PlayerDir.scan.result ~= nil then
+        -- - 场景扫描刚把人找出来（PlayerManager 完全没给出玩家的情况）：
+        --   立刻重建一次，不要等到下一个节流周期，否则面板会白等半秒。
+        --   注意条件里带了 #entries == 0：一旦目录里已经有候选就不会再进来，
+        --   所以这里不会变成「每帧重建」。
+        PlayerDir.rebuild()
+    end
+    return PlayerDir
+end
+
+-- 兼容旧代码：player_list 现在表示「除本地玩家以外的其他玩家」
+local function refresh_player_list()
+    PlayerDir.rebuild()
+    player_list = PlayerDir.others
+    return player_list
+end
+
+-- 诊断出口：面板与离线模拟测试都靠它读「这一拍认到了哪些玩家」
+_G.__AVM_PLAYER_DIRECTORY = PlayerDir
+
+-- ============================================================================
+--  旧版 ImGui 面板：联机（多人）段落
+-- ----------------------------------------------------------------------------
+--  - 抽成函数是为了「在一处维护、在需要的位置调用」——
+--    这一段在面板里要排在「语言」与「性能设置」**中间**。
+--
+--  - 面板必须永远显示**本地玩家**的配置。本地玩家由 PlayerDir 用
+--    getPlayerIndex() 精确挑出（对象名 player00/01/02… 是按加入房间顺序
+--    分配的，靠名字猜必然认错人）。这里把「认到了谁」直接列出来，方便一眼确认。
+-- ============================================================================
+local function draw_multiplayer_panel()
+    if not imgui.tree_node(T("d2d_settings_multiplayer") .. "##avm_multiplayer") then
+        return
+    end
+    local changed_multi, new_multi = imgui.checkbox(T("enable_multiplayer") .. "##mp_enable",
+        global_config.enable_multiplayer ~= false)
+    if changed_multi then
+        global_config.enable_multiplayer = new_multi == true
+        save_global_settings()
+    end
+    local changed_tick, new_tick = imgui.slider_int(T("multiplayer_players_per_tick") .. "##mp_tick",
+        tonumber(global_config.multiplayer_players_per_tick) or 1, 0, 4)
+    if changed_tick and new_tick then
+        global_config.multiplayer_players_per_tick = new_tick
+        save_global_settings()
+    end
+    local changed_scan, new_scan = imgui.slider_float(T("multiplayer_weapon_scan_interval") .. "##mp_scan",
+        tonumber(global_config.multiplayer_weapon_scan_interval) or 2.0, 0.2, 10.0, "%.1f")
+    if changed_scan and new_scan then
+        global_config.multiplayer_weapon_scan_interval = new_scan
+        save_global_settings()
+    end
+    if global_config.enable_multiplayer == false then
+        imgui.text_colored(T("multiplayer_local_only"), 0xFF80C0FF)
+    else
+        imgui.text_colored(T("multiplayer_desc"), 0xFF909090)
+    end
+    imgui.separator()
+    imgui.text_colored(T("players_title"), 0xFF80C0FF)
+    local dir = PlayerDir.get()
+    if #dir.entries == 0 then
+        imgui.text_colored(T("player_none"), 0xFF8080FF)
+        imgui.text_colored(T("player_none_hint"), 0xFF909090)
+    else
+        for _, entry in ipairs(dir.entries) do
+            -- - 用目录建表时缓存好的名字：这里每帧都会执行，
+            --   不能每帧为每个玩家各做一次托管调用。
+            local name = entry.name or "?"
+            local tag = entry.is_local and T("player_local") or T("player_other")
+            imgui.text(string.format(T("player_line"), tag, name, tostring(entry.index or "?")))
+        end
+        local local_name = (dir.local_entry and dir.local_entry.name) or "?"
+        imgui.text_colored(string.format(T("players_summary"), #dir.entries, local_name), 0xFF80FF80)
+    end
+    imgui.tree_pop()
 end
 
 -- 获取事件玩家（CG）
 -- 特殊内嵌式 CG：使用 get_Count / get_Item；普通 CG：使用 ToArray
-local function get_event_players()
+-- REFramework SystemArray 的下标从 0 开始，不能直接 ipairs（会漏首项，
+-- 单元素栈会被读成空）。先用 get_elements() 取得从 1 开始的可遍历序列。
+-- 当前 REF 返回的是 std::vector userdata，不能限定 type(elements)=="table"。
+function PlayerDir.sequence(value)
+    if value == nil then return EMPTY_PLAYER_LIST end
+    local ok, elements = pcall(function() return value:get_elements() end)
+    if ok and elements ~= nil then return elements end
+    if type(value) == "table" then return value end
+    return EMPTY_PLAYER_LIST
+end
+local get_event_players = nil
+local function get_event_players_impl()
     local players = {}
     local eventManager = sdk.get_managed_singleton("snow.eventcut.EventManager")
     if not eventManager then return players end
     local loadHandlerStack = eventManager:call("get_LoadHandlerStack")
     if not loadHandlerStack then return players end
-    for _, handler in ipairs(loadHandlerStack) do
+    for _, handler in ipairs(PlayerDir.sequence(loadHandlerStack)) do
         if handler then
-            local uniqueEventManager = handler:call("findUniqueEventManager")
+            local uniqueEventManager = SceneObject.call(handler, "findUniqueEventManager")
             if uniqueEventManager then
-                local eventPlayerList = uniqueEventManager:call("get_EventPlayerList")
+                local eventPlayerList = SceneObject.call(uniqueEventManager, "get_EventPlayerList")
                 if eventPlayerList then
                     -- 优先尝试 get_Count / get_Item（特殊内嵌式 CG）
                     local ok_count, count = pcall(function() return eventPlayerList:call("get_Count") end)
@@ -478,7 +1155,7 @@ local function get_event_players()
                         for i = 0, count - 1 do
                             local ok_player, eventPlayer = pcall(function() return eventPlayerList:call("get_Item", i) end)
                             if ok_player and eventPlayer then
-                                local ok_go, go = pcall(function() return eventPlayer:call("get_GameObject") end)
+                                local ok_go, go = pcall(function() return SceneObject.call(eventPlayer, "get_GameObject") end)
                                 if ok_go and go then
                                     table.insert(players, go)
                                 end
@@ -488,9 +1165,9 @@ local function get_event_players()
                         -- 回退到 ToArray（普通独立过场 CG）
                         local ok_arr, arr = pcall(function() return eventPlayerList:call("ToArray") end)
                         if ok_arr and arr then
-                            for _, eventPlayer in ipairs(arr) do
+                            for _, eventPlayer in ipairs(PlayerDir.sequence(arr)) do
                                 if eventPlayer then
-                                    local ok_go, go = pcall(function() return eventPlayer:call("get_GameObject") end)
+                                    local ok_go, go = pcall(function() return SceneObject.call(eventPlayer, "get_GameObject") end)
                                     if ok_go and go then
                                         table.insert(players, go)
                                     end
@@ -504,82 +1181,89 @@ local function get_event_players()
     end
     return players
 end
-
--- 刷新玩家列表
-local function refresh_player_list()
-    local new_list = {}
-    local normal = get_normal_players()
-    for _, p in ipairs(normal) do
-        table.insert(new_list, p)
-    end
-    local event = get_event_players()
-    for _, p in ipairs(event) do
-        local found = false
-        for _, existing in ipairs(new_list) do
-            if existing == p then found = true; break end
-        end
-        if not found then
-            table.insert(new_list, p)
-        end
-    end
-    if #new_list == 0 then
-        local fallback = scan_fallback_once()
-        if fallback then
-            table.insert(new_list, fallback)
-        end
-    end
-    player_list = new_list
+get_event_players = function()
+    local t0 = Profiler.begin("get_event_players")
+    local result = get_event_players_impl()
+    Profiler.finish("get_event_players", t0)
+    Profiler.count("get_event_players_calls")
+    return result
 end
 
 -- 获取本地玩家（MasterPlayer）的 GameObject
-local function get_master_player_object()
-    local master = Utils.get_master_player()
-    if not master then return nil end
-    local ok, go = pcall(function() return master:call("get_GameObject") end)
-    if ok and go and sdk.is_managed_object(go) then
-        return go
+-- 直接走玩家目录：目录里已经用 getPlayerIndex 精确挑出了本地玩家，
+-- 不再有「按名字猜」的环节。
+local get_master_player_object = nil
+local function get_master_player_object_impl()
+    local dir = PlayerDir.get()
+    if dir.local_entry and safe_object_alive(dir.local_entry.obj) then
+        return dir.local_entry.obj
+    end
+    -- 本地玩家短暂读不到（读图 / 菜单）：沿用最近一次确认过的对象，避免面板闪烁。
+    -- 超过 PlayerDir.persist 秒还是拿不到就放弃（避免一直对着已销毁的对象调用）。
+    local last = dir.last_local_obj
+    if last and safe_object_alive(last)
+        and (os.clock() - dir.last_local_time) <= PlayerDir.persist then
+        return last
     end
     return nil
 end
-
--- 获取主玩家（优先本地玩家，回退到列表中的第一个 "player" 对象）
-local function get_primary_player()
-    -- 1. 优先使用本地玩家（MasterPlayer）
-    local master_go = get_master_player_object()
-    if master_go then
-        return master_go
-    end
-    -- 2. 回退到 player_list（联机场景或特殊情况下）
-    if #player_list == 0 then return nil end
-    local fallback = nil
-    for _, player in ipairs(player_list) do
-        local name = safe_object_name(player)
-        if name and string.sub(name, 1, 6):lower() == "player" then
-            if player_has_body(player) then
-                return player
-            end
-            fallback = fallback or player
-        end
-    end
-    if fallback then return fallback end
-    -- 第一个元素还能读到名字就沿用旧行为；读不到 => 场景切换后残留的失效对象，
-    -- 清空缓存让下一帧重建，避免后面一直对着死对象调用而反复报错
-    if safe_object_name(player_list[1]) then
-        return player_list[1]
-    end
-    player_list = {}
-    return nil
+get_master_player_object = function()
+    local t0 = Profiler.begin("get_master_player_object")
+    local result = get_master_player_object_impl()
+    Profiler.finish("get_master_player_object", t0)
+    Profiler.count("get_master_player_object_calls")
+    return result
 end
 
--- 获取主玩家 ID（防具模式返回 body 子物体名，武器模式返回主要攻击部件名）
+-- 获取主角（本地玩家）的 GameObject
+-- - 这里**只**认玩家目录给出的结果。旧实现会在拿不到 master 时退化成
+--   「列表里第一个像玩家的对象」，联机时那往往是队友 —— 面板因此显示别人的配置。
+--   现在连「场景扫描兜底」也统一交给玩家目录（它只在场景里只有一个候选时才接受扫描结果），
+--   宁可不显示，也不显示错的。
+local get_primary_player = nil
+local function get_primary_player_impl()
+    return get_master_player_object()
+end
+get_primary_player = function()
+    local t0 = Profiler.begin("get_primary_player")
+    local result = get_primary_player_impl()
+    Profiler.finish("get_primary_player", t0)
+    Profiler.count("get_primary_player_calls")
+    return result
+end
+
+-- 获取主角 ID（防具模式返回 body 子物体名，武器模式返回主要攻击部件名）
+-- - 性能要点：面板每帧都会问「当前 body_id 是什么」，而算一次要遍历一次子物体。
+--   这里按「对象地址 + 模式」缓存 0.25 秒：面板、自动查找、应用逻辑共用同一份结果。
+--   （缓存挂成 PlayerDir 的字段是为了省一个顶层局部变量槽位。）
 local function get_primary_body_id()
     local primary = get_primary_player()
     if not primary then return nil end
-    if is_weapon_mode then
-        return get_weapon_attack_part_name(primary)
-    else
-        return get_character_body_id(primary)
+    local cache = PlayerDir.primary_body_id
+    local key = tostring(primary) .. (is_weapon_mode and "|w" or "|a")
+    local now = os.clock()
+    if cache.key == key and (now - cache.time) < cache.ttl then
+        return cache.value
     end
+    local value
+    if is_weapon_mode then
+        value = get_weapon_attack_part_name(primary)
+    else
+        -- - 走 body_id 的 TTL 缓存：面板每帧都会问，旧写法每次都遍历一次子物体
+        value = PlayerDir.body_id_of(primary)
+    end
+    cache.key = key
+    cache.value = value
+    cache.time = now
+    return value
+end
+
+-- 装备 / 模式 / 场景变化时作废主角 ID 缓存
+local function invalidate_primary_body_id()
+    local cache = PlayerDir.primary_body_id
+    cache.key = nil
+    cache.value = nil
+    cache.time = 0
 end
 
 -- ========== 全局分组辅助函数 ==========
@@ -773,55 +1457,165 @@ local function update_group_names_list()
     elseif selected_group_index > #group_names_list then selected_group_index = 1 end
 end
 
-local function get_mesh_component_recursive(game_obj)
+-- Mesh 组件的真实查找（无缓存）。
+-- 每次都要 type_mesh:get_runtime_type() + getComponent(...)，一次应用要跑 5 次，
+-- 所以外面套一层 PlayerDir.mesh_of 的缓存。
+get_mesh_component_recursive_uncached = function(game_obj)
+    Profiler.count("get_mesh_component_uncached_calls")
     if not game_obj then return nil end
-    if not sdk.is_managed_object(game_obj) then return nil end
+    if not safe_object_alive(game_obj) then return nil end
     if not type_mesh then
         type_mesh = get_type("via.render.Mesh")
         if not type_mesh then return nil end
     end
-    local mesh = game_obj:call("getComponent(System.Type)", type_mesh:get_runtime_type())
+    local runtime_type = type_mesh:get_runtime_type()
+    local mesh = SceneObject.call(game_obj, "getComponent(System.Type)", runtime_type)
     if mesh then return mesh end
-    local transform = game_obj:call("get_Transform")
+    local transform = SceneObject.call(game_obj, "get_Transform")
     if transform then
-        local child = transform:call("get_Child")
+        local child = SceneObject.call(transform, "get_Child")
         while child do
-            local child_obj = child:call("get_GameObject")
+            local child_obj = SceneObject.call(child, "get_GameObject")
             if child_obj then
-                mesh = child_obj:call("getComponent(System.Type)", type_mesh:get_runtime_type())
+                mesh = SceneObject.call(child_obj, "getComponent(System.Type)", runtime_type)
                 if mesh then return mesh end
             end
-            child = child:call("get_Next")
+            child = SceneObject.call(child, "get_Next")
         end
     end
     return nil
 end
 
-local function get_character_part(character, part_index)
-    if not character then return nil end
-    local transform = character:call("get_Transform")
-    if not transform then return nil end
-    local child = transform:call("get_Child")
-    while child do
-        local child_obj = child:call("get_GameObject")
-        if child_obj then
-            local name = child_obj:call("get_Name")
-            if name then
-                local target_index = nil
-                if string.find(name, "body") then target_index = 1
-                elseif string.find(name, "helm") then target_index = 0
-                elseif string.find(name, "arm") then target_index = 2
-                elseif string.find(name, "wst") then target_index = 3
-                elseif string.find(name, "leg") then target_index = 4
+-- 带缓存的对外接口（所有调用点都走这里）
+local function get_mesh_component_recursive(game_obj)
+    Profiler.count("get_mesh_component_calls")
+    if game_obj == nil then return nil end
+    return PlayerDir.mesh_of(game_obj)
+end
+
+-- ============================================================================
+--  防具部件缓存（按角色地址）
+-- ----------------------------------------------------------------------------
+--  - 为什么提前到这里：apply_preset_to_character 每轮都要拿 5 个部件，
+--    旧实现每个部件都重新遍历一次子物体（5 × 12 次托管调用）。
+--    联机时要对 4 个玩家做同一件事，这一项会线性放大，所以必须缓存。
+--
+--  - 必须处理「换装后部件被重建」的情况，否则差分会在换装后静默失效：
+--      part_cache[addr] = { [0..4] = 部件对象, sig = 签名, walked_at = 时间 }
+--    * 签名 = 5 个部件对象地址拼接；签名变了说明模型换了 → 让上层重新应用一遍差分；
+--    * 缓存里的部件一旦有失效对象，立刻重建；
+--    * 部件不齐（模型还没加载好）时按 PlayerDir.parts_retry 限频重试，不每帧狂扫。
+--
+--  - 这几个函数挂在 PlayerDir 上（而不是新增顶层 local function）也是刻意的：
+--    主 chunk 的局部变量槽位已经接近 Lua 上限 200，表字段不占槽位。
+-- ============================================================================
+local part_cache = {}   -- key: 角色地址, value: { [0..4]=对象, sig=字符串, walked_at=时间 }
+
+function PlayerDir.parts_valid(entry)
+    if not entry then return false, false end
+    local complete = true
+    for i = 0, 4 do
+        local obj = entry[i]
+        if obj == nil then
+            complete = false
+        elseif not safe_object_alive(obj) then
+            return false, false -- 有部件已销毁 → 必须立刻丢弃，不能按缺件重试限频沿用
+        end
+    end
+    return complete, true
+end
+
+function PlayerDir.walk_parts(character)
+    -- 与旧的「一次性获取玩家所有防具部件」保持完全一致：
+    --   * 递归遍历（部件不一定都在第一层）；
+    --   * 同一编号只记第一个，但「先遇到 ch00（游戏原版）后来遇到非 ch00（MOD）」时替换，
+    --     也就是优先使用 MOD 部件。
+    local parts = {}
+    local ok = pcall(function()
+        local transform = SceneObject.call(character, "get_Transform")
+        if not transform then return end
+        local function traverse(node)
+            local child = SceneObject.call(node, "get_Child")
+            local guard = 0
+            while child do
+                guard = guard + 1
+                if guard > 256 then break end
+                local child_obj = SceneObject.call(child, "get_GameObject")
+                if child_obj then
+                    local name = safe_object_name(child_obj)
+                    if name then
+                        local target_index = nil
+                        if string.find(name, "body") then target_index = 1
+                        elseif string.find(name, "helm") then target_index = 0
+                        elseif string.find(name, "arm") then target_index = 2
+                        elseif string.find(name, "wst") then target_index = 3
+                        elseif string.find(name, "leg") then target_index = 4
+                        end
+                        if target_index ~= nil then
+                            if parts[target_index] then
+                                local old_name = safe_object_name(parts[target_index])
+                                local is_old_ch00 = old_name and string.find(old_name, "^ch00")
+                                local is_new_ch00 = string.find(name, "^ch00")
+                                if is_old_ch00 and not is_new_ch00 then
+                                    parts[target_index] = child_obj
+                                end
+                            else
+                                parts[target_index] = child_obj
+                            end
+                        end
+                    end
+                    traverse(child)
                 end
-                if target_index == part_index then
-                    return child_obj
-                end
+                child = SceneObject.call(child, "get_Next")
             end
         end
-        child = child:call("get_Next")
+        traverse(transform)
+    end)
+    if not ok then return nil end
+    local sig_parts = {}
+    for i = 0, 4 do
+        sig_parts[#sig_parts + 1] = parts[i] and tostring(parts[i]) or "-"
     end
-    return nil
+    parts.sig = table.concat(sig_parts, "|")
+    parts.walked_at = os.clock()
+    return parts
+end
+
+-- 取「某角色 5 个防具部件」的缓存表（缺失时重建）
+function PlayerDir.parts(character)
+    if not character then return nil end
+    if not safe_object_alive(character) then return nil end
+    local addr = tostring(character)
+    local entry = part_cache[addr]
+    local now = os.clock()
+    if entry then
+        local complete, alive = PlayerDir.parts_valid(entry)
+        if complete then return entry end
+        if not alive then
+            part_cache[addr] = nil
+            entry = nil
+        end
+        -- 不完整（模型还在生成，或该模型确实缺件）：限频重扫，不要每帧狂扫
+        if entry and entry.walked_at and (now - entry.walked_at) < PlayerDir.parts_retry then
+            return entry
+        end
+    end
+    local parts = PlayerDir.walk_parts(character)
+    if not parts then return entry end
+    -- 签名变化（换装 / 模型重建）时打个标记，让应用层强制重刷一次差分
+    if entry and entry.sig and entry.sig ~= parts.sig then
+        parts.changed = true
+    end
+    part_cache[addr] = parts
+    Profiler.count("parts_walk")
+    return parts
+end
+
+local function get_character_part(character, part_index)
+    Profiler.count("get_character_part_calls")
+    local parts = PlayerDir.parts(character)
+    if not parts then return nil end
+    return parts[part_index]
 end
 
 -- 获取材质所属的非全局分组（独占）
@@ -881,78 +1675,192 @@ local function is_overrides_equal(a, b)
 end
 
 -- ============================================================================
--- 应用预设到角色（增加版本号缓存）
+--  角色级「已应用」记账（v3.1.0 联机支持的关键）
+-- ----------------------------------------------------------------------------
+--  - 差分的「意图」（active_overrides）按 body_id（模型名）共享：
+--    两个玩家穿同一套模型，本来就该看到同一份差分 —— 这部分不用改。
+--  - 但「应用」必须按**角色**分别记账。v3.0.6 是按 body_id 记账的，于是联机时
+--    第二个穿同款模型的玩家会被第一个玩家的版本号挡掉，永远拿不到差分。
+--
+--      char_applied[角色地址] = {
+--          armor_body_id / armor_version,   -- 防具：已应用的 body_id 与版本号
+--          weapon_id / weapon_version,      -- 武器：已应用的部件名与版本号
+--          parts_sig                        -- 上次应用时的部件签名（用于检测换装）
+--      }
+--
+--  - 每一处写入前先「读一次当前值」，只有真的不一样才写 —— 这是多人不掉帧的
+--    另一半原因：N 个角色每轮只做 N×M 次读，写只在状态真的变了才发生。
+--    （照搬荒野版本 v4.2.2 的做法，但在崛起上是按 body_id 共享意图 + 按角色记账。）
 -- ============================================================================
-local function apply_preset_to_character(character, preset_data, ignore_context)
+--  - 同样写成一张表：主 chunk 的局部变量槽位接近 Lua 上限 200，表字段不占槽位。
+-- ============================================================================
+local Applied = { by_char = {}, parts_check_interval = 0.5,
+                  -- 特殊CG期间按角色记录「上次应用时刻」（见 SPECIAL_CG_APPLY_INTERVAL 的说明）
+                  cg_at = {}, cg_weapon_at = {} }
+
+function Applied.get(character)
+    local addr = tostring(character)
+    local st = Applied.by_char[addr]
+    if not st then
+        st = {}
+        Applied.by_char[addr] = st
+    end
+    return st
+end
+
+function Applied.clear()
+    Applied.by_char = {}
+    Applied.cg_at = {}
+    Applied.cg_weapon_at = {}
+end
+
+-- 进入/离开过场时清空 CG 节流记录：新一场过场的角色应该立刻拿到差分，
+-- 而不是被上一场的节流记录挡住。
+function Applied.reset_cg()
+    Applied.cg_at = {}
+    Applied.cg_weapon_at = {}
+end
+
+-- 某个 body_id 的意图变了：所有用这个模型的角色下一轮都要重新应用
+function Applied.invalidate_body(body_id)
+    if not body_id then return end
+    bump_overrides_version(body_id)
+    for _, st in pairs(Applied.by_char) do
+        if st.armor_body_id == body_id then st.armor_version = nil end
+        if st.weapon_id == body_id then st.weapon_version = nil end
+    end
+end
+
+-- 角色部件被重建（换装 / 模型重建）时，本角色的「已应用」记账必须作废，
+-- 否则差分会在换装后静默失效。
+-- 返回 true 表示「真的换装了」（调用方据此放弃这一拍的应用，等下一拍用新的 body_id）。
+--
+-- - v3.1.2 修：**首次见到某个角色**时不能算「换装」。
+--   旧实现里 st.parts_sig 从 nil 变成真实签名也会判定为变化 → 调用方直接 return，
+--   于是每个新角色（尤其是过场里刚登场的事件主角）都要多等一整轮才拿到差分。
+--   首次见面时并不存在「旧 body_id 套到新部件上」的风险，所以直接放行。
+function Applied.sync_parts(character, st)
+    if not st then return false end
+    local parts = PlayerDir.parts(character)
+    if not parts then return false end
+    if st.parts_sig ~= parts.sig then
+        local had_sig = st.parts_sig ~= nil
+        st.parts_sig = parts.sig
+        st.armor_version = nil
+        st.weapon_version = nil
+        if had_sig then
+            -- 真的换装：body_id 与 mesh 缓存都可能已经过期，一起作废
+            PlayerDir.invalidate_body_id(character)
+            PlayerDir.mesh.by_obj = {}
+            return true
+        end
+    end
+    return false
+end
+
+-- ============================================================================
+--  应用预设到角色（角色级版本号缓存 + 先读后写）
+-- ============================================================================
+local apply_preset_to_character = nil
+local function apply_preset_to_character_impl(character, preset_data, ignore_context, known_body_id)
+    Profiler.count("apply_character_calls")
     if not character or not preset_data then return end
-    if not sdk.is_managed_object(character) then return end
+    if not safe_object_alive(character) then return end
     if not type_mesh then
         type_mesh = get_type("via.render.Mesh")
         if not type_mesh then return end
     end
 
-    -- 特殊CG期间降低应用频率
+    -- 特殊CG期间按「角色 + 时间」节流（见 SPECIAL_CG_APPLY_INTERVAL 的说明）
     if g_is_special_cg then
-        special_cg_frame_counter = special_cg_frame_counter + 1
-        if special_cg_frame_counter < SPECIAL_CG_APPLY_INTERVAL then
-            return
-        else
-            special_cg_frame_counter = 0
-        end
+        local addr = tostring(character)
+        local now = os.clock()
+        local last = Applied.cg_at[addr]
+        if last and (now - last) < SPECIAL_CG_APPLY_INTERVAL then return end
+        Applied.cg_at[addr] = now
     end
 
-    -- 获取当前 body_id（用于缓存键）
-    local body_id = get_character_body_id(character)
+    -- 获取当前 body_id
+    -- known_body_id：调用方（帧循环）刚刚已经算过一次，直接复用即可，
+    -- 避免同一次逻辑里对玩家子物体做两遍遍历。
+    -- - 兜底这里也走 TTL 缓存，避免内部再遍历一次子物体。
+    local body_id = known_body_id or PlayerDir.body_id_of(character)
     if not body_id then return end
 
     -- 获取当前应该应用的意图值（active_overrides）
     local current_intent = active_overrides[body_id]
-    if not current_intent then return end
-
-    -- ===== 版本号缓存检查 =====
-    local current_version = overrides_version[body_id]
-    local last_version = last_overrides_version[body_id]
-    if not g_is_special_cg and current_version and last_version and current_version == last_version then
-        -- 内容未变，跳过
+    if not current_intent then
+        Profiler.count("apply_character_skip_no_intent")
         return
     end
 
-    -- 快速检查：仅在非特殊CG且与上次应用的状态相同时跳过（深度比较作为回退）
-    local last_applied = last_applied_overrides[body_id]
-    if not g_is_special_cg and last_applied and is_overrides_equal(current_intent, last_applied) then
-        -- 更新版本号缓存，避免下次深度比较
-        last_overrides_version[body_id] = current_version
+    -- ===== 角色级版本号检查（- 联机的关键：记账按角色，不按模型）=====
+    local st = Applied.get(character)
+    local current_version = overrides_version[body_id] or 0
+    local parts_changed = false
+    if not g_is_special_cg and current_version ~= 0
+        and st.armor_body_id == body_id and st.armor_version == current_version then
+        -- - 快路径：版本号一致时先不碰任何托管对象。
+        --   部件签名只用来发现「换装 / 模型重建」，没必要每个处理周期都复核一次；
+        --   按 Applied.parts_check_interval 限频（默认 0.5 秒）即可。
+        --   多人时这一条把「每轮每人 5 次存活检查」直接省掉。
+        local now = os.clock()
+        if (now - (st.parts_checked_at or 0)) < Applied.parts_check_interval then
+            Profiler.count("apply_character_skip_version")
+            return
+        end
+        st.parts_checked_at = now
+        parts_changed = Applied.sync_parts(character, st)
+        if not parts_changed
+            and st.armor_body_id == body_id and st.armor_version == current_version then
+            Profiler.count("apply_character_skip_version")
+            return
+        end
+    else
+        parts_changed = Applied.sync_parts(character, st)
+    end
+    if parts_changed then
+        -- 模型刚换：这一拍不要拿旧 body_id 的意图往新部件上套，等下一拍用新的 body_id 处理
+        Profiler.count("apply_character_skip_parts_changed")
         return
     end
+    st.armor_body_id = body_id
+    st.armor_version = current_version
+    st.parts_checked_at = os.clock()
 
-    -- 应用材质
+    Profiler.count("apply_character_applied")
+    local parts = PlayerDir.parts(character)
     for i = 0, 4 do
-        local part_obj = get_character_part(character, i)
-        if part_obj then
+        local part_obj = parts and parts[i] or nil
+        if part_obj and safe_object_alive(part_obj) then
             local part_data = preset_data[tostring(i)]
             if part_data then
                 local mesh_component = get_mesh_component_recursive(part_obj)
                 if mesh_component then
+                    TransformManager.capture_mesh(body_id, tostring(i), mesh_component, part_data, SceneObject.call)
                     if part_data.mesh_enabled ~= nil then
-                        mesh_component:call("set_Enabled", part_data.mesh_enabled)
+                        local ok_cur, cur_en = pcall(function() return SceneObject.call(mesh_component, "get_Enabled") end)
+                        if not ok_cur or cur_en ~= part_data.mesh_enabled then
+                            SceneObject.call(mesh_component, "set_Enabled", part_data.mesh_enabled)
+                        end
                     end
                     if part_data.materials then
-                        local mat_count = mesh_component:call("get_MaterialNum")
-                        if mat_count then
-                            for j = 0, mat_count - 1 do
-                                local mat_name = mesh_component:call("getMaterialName", j)
-                                if ignore_context or is_material_in_current_context(i, mat_name) then
-                                    local mat_enabled = part_data.materials[mat_name]
-                                    if mat_enabled ~= nil then
-                                        if mat_enabled == false then
-                                            mesh_component:call("setMaterialsEnable", j, false)
-                                        elseif mat_enabled == true then
-                                            if is_globally_hidden(i, mat_name) then
-                                                mesh_component:call("setMaterialsEnable", j, false)
-                                            else
-                                                mesh_component:call("setMaterialsEnable", j, true)
-                                            end
-                                        end
+                        local mat_count = SceneObject.call(mesh_component, "get_MaterialNum") or 0
+                        for j = 0, mat_count - 1 do
+                            local mat_name = SceneObject.call(mesh_component, "getMaterialName", j)
+                            if mat_name and (ignore_context or is_material_in_current_context(i, mat_name)) then
+                                local mat_enabled = part_data.materials[mat_name]
+                                if mat_enabled ~= nil then
+                                    -- 全局分组的隐藏永远优先
+                                    local want = mat_enabled
+                                    if want == true and is_globally_hidden(i, mat_name) then
+                                        want = false
+                                    end
+                                    local ok_cur, cur = pcall(function()
+                                        return SceneObject.call(mesh_component, "getMaterialsEnable", j)
+                                    end)
+                                    if not ok_cur or cur ~= want then
+                                        SceneObject.call(mesh_component, "setMaterialsEnable", j, want)
                                     end
                                 end
                             end
@@ -962,16 +1870,20 @@ local function apply_preset_to_character(character, preset_data, ignore_context)
             end
         end
     end
-
-    -- 更新缓存
-    last_applied_overrides[body_id] = deep_copy_table(current_intent)
-    last_overrides_version[body_id] = current_version
+end
+apply_preset_to_character = function(character, preset_data, ignore_context, known_body_id)
+    local t0 = Profiler.begin("apply_character")
+    apply_preset_to_character_impl(character, preset_data, ignore_context, known_body_id)
+    Profiler.finish("apply_character", t0)
 end
 
 -- ============================================================================
--- 应用预设到武器（增加版本号缓存）
+-- 应用预设到武器（角色级版本号缓存 + 先读后写）
+-- character：目标角色，可选。旧调用点不带它时回退到主角。
 -- ============================================================================
-local function apply_preset_to_weapon(weapon_parts, preset_data, ignore_context, body_id)
+local apply_preset_to_weapon = nil
+local function apply_preset_to_weapon_impl(weapon_parts, preset_data, ignore_context, body_id, character)
+    Profiler.count("apply_weapon_calls")
     if not weapon_parts or not preset_data then return end
     if not type_mesh then
         type_mesh = get_type("via.render.Mesh")
@@ -981,50 +1893,73 @@ local function apply_preset_to_weapon(weapon_parts, preset_data, ignore_context,
     -- 使用传入的 body_id，不再调用 get_primary_body_id
     if not body_id then return end
 
-    -- 特殊CG期间降低应用频率
+    -- 特殊CG期间按「角色 + 时间」节流（武器单独记一份，不再吃防具的额度）
     if g_is_special_cg then
-        special_cg_frame_counter = special_cg_frame_counter + 1
-        if special_cg_frame_counter < SPECIAL_CG_APPLY_INTERVAL then
-            return
-        else
-            special_cg_frame_counter = 0
-        end
+        local addr = character and tostring(character) or "__primary__"
+        local now = os.clock()
+        local last = Applied.cg_weapon_at[addr]
+        if last and (now - last) < SPECIAL_CG_APPLY_INTERVAL then return end
+        Applied.cg_weapon_at[addr] = now
     end
 
     local current_intent = active_overrides[body_id]
-    if not current_intent then return end
-
-    -- ===== 版本号缓存检查 =====
-    local current_version = overrides_version[body_id]
-    local last_version = last_overrides_version[body_id]
-    if not g_is_special_cg and current_version and last_version and current_version == last_version then
+    if not current_intent then
+        Profiler.count("apply_weapon_skip_no_intent")
         return
     end
 
-    local last_applied = last_applied_overrides[body_id]
-    if not g_is_special_cg and last_applied and is_overrides_equal(current_intent, last_applied) then
-        last_overrides_version[body_id] = current_version
-        return
+    -- 角色级记账（旧调用点不传 character 时，按主角记账，语义与原来一致）
+    local target = character
+    if not (target and safe_object_alive(target)) then
+        target = get_primary_player()
+    end
+    local st = nil
+    if target then
+        st = Applied.get(target)
+        if Applied.sync_parts(target, st) then
+            -- 模型刚换：等下一拍用新的武器/防具标识处理
+            Profiler.count("apply_weapon_skip_parts_changed")
+            return
+        end
     end
 
+    local current_version = overrides_version[body_id] or 0
+    if not g_is_special_cg and st and current_version ~= 0
+        and st.weapon_id == body_id and st.weapon_version == current_version then
+        Profiler.count("apply_weapon_skip_version")
+        return
+    end
+    if st then
+        st.weapon_id = body_id
+        st.weapon_version = current_version
+    end
+
+    Profiler.count("apply_weapon_applied")
     for i, part_obj in ipairs(weapon_parts) do
-        if part_obj and sdk.is_managed_object(part_obj) then
+        if part_obj and safe_object_alive(part_obj) then
             local part_data = preset_data[tostring(i - 1)]
             if part_data then
                 local mesh_component = get_mesh_component_recursive(part_obj)
                 if mesh_component then
+                    TransformManager.capture_mesh(body_id, tostring(i - 1), mesh_component, part_data, SceneObject.call)
                     if part_data.mesh_enabled ~= nil then
-                        mesh_component:call("set_Enabled", part_data.mesh_enabled)
+                        local ok_cur, cur_en = pcall(function() return SceneObject.call(mesh_component, "get_Enabled") end)
+                        if not ok_cur or cur_en ~= part_data.mesh_enabled then
+                            SceneObject.call(mesh_component, "set_Enabled", part_data.mesh_enabled)
+                        end
                     end
                     if part_data.materials then
-                        local mat_count = mesh_component:call("get_MaterialNum")
-                        if mat_count then
-                            for j = 0, mat_count - 1 do
-                                local mat_name = mesh_component:call("getMaterialName", j)
-                                if ignore_context or is_material_in_current_context(i - 1, mat_name) then
-                                    local mat_enabled = part_data.materials[mat_name]
-                                    if mat_enabled ~= nil then
-                                        mesh_component:call("setMaterialsEnable", j, mat_enabled)
+                        local mat_count = SceneObject.call(mesh_component, "get_MaterialNum") or 0
+                        for j = 0, mat_count - 1 do
+                            local mat_name = SceneObject.call(mesh_component, "getMaterialName", j)
+                            if mat_name and (ignore_context or is_material_in_current_context(i - 1, mat_name)) then
+                                local mat_enabled = part_data.materials[mat_name]
+                                if mat_enabled ~= nil then
+                                    local ok_cur, cur = pcall(function()
+                                        return SceneObject.call(mesh_component, "getMaterialsEnable", j)
+                                    end)
+                                    if not ok_cur or cur ~= mat_enabled then
+                                        SceneObject.call(mesh_component, "setMaterialsEnable", j, mat_enabled)
                                     end
                                 end
                             end
@@ -1034,9 +1969,11 @@ local function apply_preset_to_weapon(weapon_parts, preset_data, ignore_context,
             end
         end
     end
-
-    last_applied_overrides[body_id] = deep_copy_table(current_intent)
-    last_overrides_version[body_id] = current_version
+end
+apply_preset_to_weapon = function(weapon_parts, preset_data, ignore_context, body_id, character)
+    local t0 = Profiler.begin("apply_weapon")
+    apply_preset_to_weapon_impl(weapon_parts, preset_data, ignore_context, body_id, character)
+    Profiler.finish("apply_weapon", t0)
 end
 
 -- 创建分组（支持 is_global）
@@ -1126,6 +2063,13 @@ local function get_backup_path(body_id)
 end
 
 -- 从备份恢复配置
+-- - 前置声明：下面三个函数在本文件里声明得更靠后。若不前置声明，
+--   restore_config_from_backup 里的调用会被编译成**全局变量**（值为 nil），
+--   运行时必然报 `attempt to call a nil value (global 'load_config_data')` ——
+--   面板上的「恢复我的修改」按钮因此一直是坏的（v3.0.5 的性能报告里记录过这个既有 bug）。
+--   这里补上前置声明，后面那三处只做赋值、不再写 local。
+local load_config_data, apply_all_defaults, apply_preset
+
 local function restore_config_from_backup(body_id)
     if not body_id then return false end
     local path = get_config_path(body_id)
@@ -1141,9 +2085,8 @@ local function restore_config_from_backup(body_id)
     active_overrides[body_id] = nil
     config_restored[body_id] = nil
     config_restore_handled[body_id] = nil
-    last_applied_overrides[body_id] = nil   -- 清除渲染缓存
-    overrides_version[body_id] = nil
-    last_overrides_version[body_id] = nil
+    -- 清除渲染缓存，强制所有角色下一帧重新应用这个模型
+    Applied.invalidate_body(body_id)
     
     local data = load_config_data(body_id)
     if data then
@@ -1189,8 +2132,8 @@ local function save_current_config_to_file(body_id)
     
     config_restored[body_id] = nil
     config_restore_handled[body_id] = nil
-    last_applied_overrides[body_id] = nil   -- 保存后清除缓存，强制下一帧重绘
-    last_overrides_version[body_id] = nil
+    -- 保存后强制下一帧重绘
+    Applied.invalidate_body(body_id)
     
     -- 清除 active_overrides 缓存，强制下一帧重新合并所有默认预设
     if active_overrides[body_id] then
@@ -1203,14 +2146,21 @@ local function save_current_config_to_file(body_id)
     
     -- 清除状态机缓存，强制下一帧重新应用最新的预设内容
     if TransformManager.clear_cache then
-        TransformManager.clear_cache()
+        TransformManager.clear_cache(nil,nil,true) -- 保留稀疏预设写入前的原值，保存规则也能回退
     end
+
+    -- 用户可能在面板里刚把「怪物血量」条件开关改掉，这里重新评估钩子门控
+    refresh_monster_hp_gate()
 end
 
 -- 加载配置数据（带备份比对）
-local function load_config_data(body_id)
+load_config_data = nil
+local function load_config_data_impl(body_id)
     if not body_id then return nil end
-    if loaded_configs[body_id] then return loaded_configs[body_id] end
+    if loaded_configs[body_id] then
+        Profiler.count("load_config_data_cache_hit")
+        return loaded_configs[body_id]
+    end
     local path = get_config_path(body_id)
     local loaded_data = json.load_file(path)
     
@@ -1352,9 +2302,18 @@ local function load_config_data(body_id)
         fix_transform_rules(loaded_data.bow_transform_rules)
         fix_transform_rules(loaded_data.monster_hp_transform_rules)
         loaded_configs[body_id] = loaded_data
+        -- 配置从磁盘加载进来后，重新评估「是否需要怪物血量跟踪」
+        refresh_monster_hp_gate()
         return loaded_data
     end
     return nil
+end
+load_config_data = function(body_id)
+    local t0 = Profiler.begin("load_config_data")
+    local result = load_config_data_impl(body_id)
+    Profiler.finish("load_config_data", t0)
+    Profiler.count("load_config_data_calls")
+    return result
 end
 
 -- ============================================================================
@@ -1383,15 +2342,15 @@ end
 -- 初始化默认预设（按正确顺序：主列表 -> 普通分组 -> 全局分组）
 -- 为全局分组增加 Fallback：若 default_preset 缺失，则自动选取该分组的第一个预设
 -- ============================================================================
-local function apply_all_defaults(body_id)
+apply_all_defaults = nil
+local function apply_all_defaults_impl(body_id)
     local config = load_config_data(body_id)
     if not config then return end
     active_overrides[body_id] = {}
     bump_overrides_version(body_id)
-    if not active_group_presets[body_id] then active_group_presets[body_id] = {} end
-    -- 清除渲染缓存，强制下一帧重新应用
-    last_applied_overrides[body_id] = nil
-    last_overrides_version[body_id] = nil
+    active_group_presets[body_id] = {}
+    -- 清除渲染缓存，强制下一帧重新应用（apply_all_defaults 上面已经 bump 过版本号）
+    Applied.invalidate_body(body_id)
 
     -- 1. 主列表默认预设
     if config.default_preset and config.default_preset ~= "" and config.presets then
@@ -1420,6 +2379,8 @@ local function apply_all_defaults(body_id)
             end
         end
     end
+
+    active_overrides[body_id] = TransformManager.set_model_base(body_id, active_overrides[body_id], active_group_presets[body_id])
 
     -- 3. 全局分组默认预设（仅隐藏覆盖），增加 Fallback 机制
     if config.groups then
@@ -1453,11 +2414,18 @@ local function apply_all_defaults(body_id)
                     merge_global_preset_into_overrides(body_id, g_def)  -- 内部会递增版本号
                     if not active_group_presets[body_id][g_name] or active_group_presets[body_id][g_name] == "" then
                         active_group_presets[body_id][g_name] = default_preset
+                        TransformManager.update_base_preset(body_id, config, g_name, default_preset, function(a) return a end)
                     end
                 end
             end
         end
     end
+end
+apply_all_defaults = function(body_id)
+    local t0 = Profiler.begin("apply_all_defaults")
+    apply_all_defaults_impl(body_id)
+    Profiler.finish("apply_all_defaults", t0)
+    Profiler.count("apply_all_defaults_calls")
 end
 
 local function get_current_preset_data(preset_name)
@@ -1474,13 +2442,15 @@ local function get_current_preset_data(preset_name)
 end
 
 -- 应用预设（支持全局分组覆盖重建）
-local function apply_preset(preset_name)
+-- （apply_preset 已在 restore_config_from_backup 之前前置声明，所以这里只赋值）
+apply_preset = function(preset_name)
     local preset_data = get_current_preset_data(preset_name)
     if not preset_data then return end
     local current_id = get_primary_body_id()
     if current_id then
         if not active_group_presets[current_id] then active_group_presets[current_id] = {} end
         active_group_presets[current_id][current_group_name] = preset_name
+        TransformManager.update_base_preset(current_id, current_config, current_group_name, preset_name, merge_overrides)
         local is_current_global = (current_group_name ~= "" and current_config.groups
             and current_config.groups[current_group_name]
             and current_config.groups[current_group_name].is_global)
@@ -1540,8 +2510,7 @@ local function apply_preset(preset_name)
             end
         end
         -- 清除渲染缓存，强制下一帧重新应用
-        last_applied_overrides[current_id] = nil
-        last_overrides_version[current_id] = nil
+        Applied.invalidate_body(current_id)
     end
     local primary = get_primary_player()
     if not primary then return end
@@ -1555,72 +2524,6 @@ local function apply_preset(preset_name)
     end
 end
 
--- ============================================================================
--- 全量重建 overrides（当变身规则激活全局分组时使用）
--- ============================================================================
-local function rebuild_overrides_for_transform(body_id, config, activated_targets)
-    if not body_id or not config then return end
-    active_overrides[body_id] = {}
-    bump_overrides_version(body_id)
-    local saved = active_group_presets[body_id] or {}
-
-    -- 1. 主列表当前预设
-    local main_preset_name = saved[""]
-    if main_preset_name and main_preset_name ~= "" and config.presets and config.presets[main_preset_name] then
-        merge_preset_into_overrides(body_id, config.presets[main_preset_name])
-    elseif config.default_preset and config.default_preset ~= "" and config.presets then
-        local def = config.presets[config.default_preset]
-        if def then merge_preset_into_overrides(body_id, def) end
-    end
-
-    -- 2. 非全局分组当前预设
-    if config.groups then
-        for g_name, g_data in pairs(config.groups) do
-            if not g_data.is_global then
-                local gp_name = saved[g_name]
-                if gp_name and gp_name ~= "" and g_data.presets and g_data.presets[gp_name] then
-                    merge_preset_into_overrides(body_id, g_data.presets[gp_name])
-                elseif g_data.default_preset and g_data.default_preset ~= "" and g_data.presets then
-                    local g_def = g_data.presets[g_data.default_preset]
-                    if g_def then merge_preset_into_overrides(body_id, g_def) end
-                end
-            end
-        end
-    end
-
-    -- 3. 变身规则激活的非全局分组预设（覆盖步骤2）
-    if activated_targets and config.groups then
-        for g_name, p_name in pairs(activated_targets) do
-            if g_name ~= "" and config.groups[g_name] and not config.groups[g_name].is_global then
-                if p_name and p_name ~= "" and config.groups[g_name].presets and config.groups[g_name].presets[p_name] then
-                    merge_preset_into_overrides(body_id, config.groups[g_name].presets[p_name])
-                end
-            elseif g_name == "" then
-                -- 激活主列表预设
-                if p_name and p_name ~= "" and config.presets and config.presets[p_name] then
-                    merge_preset_into_overrides(body_id, config.presets[p_name])
-                end
-            end
-        end
-    end
-
-    -- 4. 所有全局分组（只锁隐藏），使用 activated_targets 中的预设（如果有），否则用已保存或默认
-    if config.groups then
-        for g_name, g_data in pairs(config.groups) do
-            if g_data.is_global then
-                local gp_name = (activated_targets and activated_targets[g_name]) or saved[g_name]
-                if not gp_name or gp_name == "" then gp_name = g_data.default_preset end
-                if gp_name and gp_name ~= "" and g_data.presets and g_data.presets[gp_name] then
-                    merge_global_preset_into_overrides(body_id, g_data.presets[gp_name])
-                end
-            end
-        end
-    end
-
-    -- 清除渲染缓存，强制下一帧应用
-    last_applied_overrides[body_id] = nil
-    last_overrides_version[body_id] = nil
-end
 
 -- ============================================================================
 -- 保存预设（全局分组仅存储隐藏材质 false，普通分组存储全部状态）
@@ -1649,15 +2552,15 @@ local function save_preset(preset_name, body_id)
                     local mesh_component = get_mesh_component_recursive(part_obj)
                     if mesh_component then
                         local part_data = {
-                            mesh_enabled = mesh_component:call("get_Enabled"),
+                            mesh_enabled = SceneObject.call(mesh_component, "get_Enabled"),
                             materials = {}
                         }
-                        local mat_count = mesh_component:call("get_MaterialNum")
+                        local mat_count = SceneObject.call(mesh_component, "get_MaterialNum")
                         if mat_count then
                             for j = 0, mat_count - 1 do
-                                local mat_name = mesh_component:call("getMaterialName", j)
+                                local mat_name = SceneObject.call(mesh_component, "getMaterialName", j)
                                 if is_material_in_current_context(i - 1, mat_name) then
-                                    local is_mat_enabled = mesh_component:call("getMaterialsEnable", j)
+                                    local is_mat_enabled = SceneObject.call(mesh_component, "getMaterialsEnable", j)
                                     -- 全局分组：仅存储 false（隐藏），跳过 true
                                     if is_global_context then
                                         if is_mat_enabled == false then
@@ -1684,15 +2587,15 @@ local function save_preset(preset_name, body_id)
                 local mesh_component = get_mesh_component_recursive(part_obj)
                 if mesh_component then
                     local part_data = {
-                        mesh_enabled = mesh_component:call("get_Enabled"),
+                        mesh_enabled = SceneObject.call(mesh_component, "get_Enabled"),
                         materials = {}
                     }
-                    local mat_count = mesh_component:call("get_MaterialNum")
+                    local mat_count = SceneObject.call(mesh_component, "get_MaterialNum")
                     if mat_count then
                         for j = 0, mat_count - 1 do
-                            local mat_name = mesh_component:call("getMaterialName", j)
+                            local mat_name = SceneObject.call(mesh_component, "getMaterialName", j)
                             if is_material_in_current_context(i, mat_name) then
-                                local is_mat_enabled = mesh_component:call("getMaterialsEnable", j)
+                                local is_mat_enabled = SceneObject.call(mesh_component, "getMaterialsEnable", j)
                                 -- 全局分组：仅存储 false（隐藏），跳过 true
                                 if is_global_context then
                                     if is_mat_enabled == false then
@@ -1747,114 +2650,133 @@ local function save_preset(preset_name, body_id)
     return true
 end
 
+-- ================== 自动查找预设（统一实现，见 PresetAutoFinder.lua） ==================
+-- 旧实现的三个致命限制（导致「使用了分组的预设」必定查不到）：
+--   1) 只检查顶层 presets 里的**第一个**预设；
+--   2) 只检查固定部件（防具固定 "1"、武器固定 "0"）；
+--      而分组预设的材质放在各分组的 mask 里，顶层母部件材质常常是 null；
+--   3) 只要文件名里出现过目标 body_id 就直接 continue 跳过。
+-- 现在改为：扫描全部预设文件 → 读取身上**所有部件**的真实材质 → 逐个求交集打分
+-- → 命中材质数最多的胜出（文件名相同给加成，材质读不到时退化为文件名匹配）。
+
+-- 防具模式下的部件索引（0=头 1=身 2=腕 3=腰 4=脚），与 get_character_part 的映射一致
+local AUTO_FIND_ARMOR_PART_INDICES = { 0, 1, 2, 3, 4 }
+
+-- 收集一个 GameObject 上的全部材质名
+local function collect_materials_from_object(obj, out)
+    if not obj then return 0 end
+    local mesh = get_mesh_component_recursive(obj)
+    if not mesh then return 0 end
+    local mat_count = SceneObject.call(mesh, "get_MaterialNum")
+    if not mat_count or mat_count == 0 then return 0 end
+    local added = 0
+    for i = 0, mat_count - 1 do
+        local name = SceneObject.call(mesh, "getMaterialName", i)
+        if name then
+            out[name] = true
+            added = added + 1
+        end
+    end
+    return added
+end
+
+-- 读取当前角色（或当前武器）身上的真实材质
+-- 返回：材质集合, 有效部件数, 错误信息
+local function collect_current_materials(primary)
+    local mats = {}
+    local part_hits = 0
+    if is_weapon_mode then
+        local weapon_parts = Utils.get_current_weapon_parts(primary)
+        if not weapon_parts or #weapon_parts == 0 then
+            return mats, 0, "未找到武器部件"
+        end
+        for _, part in ipairs(weapon_parts) do
+            if collect_materials_from_object(part, mats) > 0 then
+                part_hits = part_hits + 1
+            end
+        end
+    else
+        for _, idx in ipairs(AUTO_FIND_ARMOR_PART_INDICES) do
+            local part = get_character_part(primary, idx)
+            if collect_materials_from_object(part, mats) > 0 then
+                part_hits = part_hits + 1
+            end
+        end
+    end
+    return mats, part_hits, nil
+end
+
 local function find_auto_preset(target_body_id)
     if not target_body_id then return false, "No Body ID" end
     local primary = get_primary_player()
     if not primary then return false, "No Character" end
-    local current_mats = {}
-    if is_weapon_mode then
-        local weapon_parts = Utils.get_current_weapon_parts(primary)
-        if not weapon_parts or #weapon_parts == 0 then return false, "No weapon parts found" end
-        local wt = Utils.get_current_weapon_type(primary)
-        local main_part_idx = nil
-        if wt == Utils.WEAPON_TYPE.DUAL_BLADES then
-            main_part_idx = 1
-        else
-            local main_part_index_map = {
-                [Utils.WEAPON_TYPE.GREATSWORD] = 1,
-                [Utils.WEAPON_TYPE.SWITCH_AXE] = 1,
-                [Utils.WEAPON_TYPE.LONGSWORD] = 2,
-                [Utils.WEAPON_TYPE.LIGHT_BOWGUN] = 1,
-                [Utils.WEAPON_TYPE.HEAVY_BOWGUN] = 1,
-                [Utils.WEAPON_TYPE.HAMMER] = 1,
-                [Utils.WEAPON_TYPE.GUNLANCE] = 2,
-                [Utils.WEAPON_TYPE.LANCE] = 2,
-                [Utils.WEAPON_TYPE.SWORD_SHIELD] = 2,
-                [Utils.WEAPON_TYPE.HUNTING_HORN] = 1,
-                [Utils.WEAPON_TYPE.CHARGE_BLADE] = 2,
-                [Utils.WEAPON_TYPE.INSECT_GLAIVE] = 2,
-                [Utils.WEAPON_TYPE.BOW] = 1,
-            }
-            main_part_idx = main_part_index_map[wt] or 1
+
+    local t0 = Profiler.begin("auto_find_preset")
+    local current_mats, part_hits, collect_err = collect_current_materials(primary)
+    local mat_total = 0
+    for _ in pairs(current_mats) do mat_total = mat_total + 1 end
+
+    local candidates, scan_diag = PresetAutoFinder.scan({
+        fs = fs,
+        load_json = json.load_file,
+        analyze = PresetAutoFinder.analyze_config
+    })
+    local best, diag = PresetAutoFinder.find_best(candidates, current_mats, target_body_id)
+
+    -- 诊断信息：无论成功失败都拼进返回文本，UI 会直接显示，方便排查
+    local function build_detail()
+        local parts = {
+            string.format("扫描%d份", #candidates),
+            string.format("身上材质%d个/%d部位", mat_total, part_hits)
+        }
+        if diag and diag.reason and diag.reason ~= "" then
+            table.insert(parts, diag.reason)
         end
-        local main_part = weapon_parts[main_part_idx]
-        if not main_part then
-            for _, p in ipairs(weapon_parts) do if p then main_part = p; break end end
+        if diag and diag.top and #diag.top > 0 then
+            local head = diag.top[1]
+            local kind = head.has_groups and "分组" or "顶层"
+            table.insert(parts, string.format("最佳:%s[%s]命中%d/%d材质(%.0f%%)%s",
+                head.base, kind, head.intersect_mats, head.file_mats,
+                (head.coverage or 0) * 100,
+                head.filename_match and "·与当前编号同名" or ""))
         end
-        if not main_part then return false, "No valid weapon part" end
-        local mesh = get_mesh_component_recursive(main_part)
-        if not mesh then return false, "No mesh on weapon part" end
-        local mat_count = mesh:call("get_MaterialNum")
-        if not mat_count or mat_count == 0 then return false, "No materials on weapon" end
-        for i = 0, mat_count - 1 do
-            local name = mesh:call("getMaterialName", i)
-            if name then current_mats[name] = true end
+        return table.concat(parts, "，")
+    end
+
+    if not best then
+        Profiler.finish("auto_find_preset", t0)
+        local msg = "未找到匹配的预设"
+        if collect_err then
+            msg = collect_err
+        elseif scan_diag and scan_diag.loaded == 0 then
+            msg = "未读取到任何预设文件"
         end
-    else
-        local body_part = get_character_part(primary, 1)
-        if not body_part then return false, "Body part not found" end
-        local mesh = get_mesh_component_recursive(body_part)
-        if not mesh then return false, "Mesh not found" end
-        local mat_count = mesh:call("get_MaterialNum")
-        if not mat_count or mat_count == 0 then return false, "No materials on Body" end
-        for i = 0, mat_count - 1 do
-            local name = mesh:call("getMaterialName", i)
-            if name then current_mats[name] = true end
+        return false, msg .. "｜" .. build_detail()
+    end
+
+    -- 加载：依次尝试扫描阶段记录下来的几种路径写法
+    local data = nil
+    for _, p in ipairs({ best.path, "reframework/data/" .. best.path,
+                         string.gsub(best.path, "^ArmorVariantManager[/\\]", "") }) do
+        local loaded = json.load_file(p)
+        if type(loaded) == "table" and (loaded.presets or loaded.groups) then
+            data = loaded
+            break
         end
     end
-    if not fs or not fs.glob then return false, "fs.glob missing" end
-    local search_patterns = {
-        "reframework/data/ArmorVariantManager/.*\\.json",
-        "reframework\\\\data\\\\ArmorVariantManager\\\\.*\\.json",
-        "ArmorVariantManager/.*\\.json",
-        "ArmorVariantManager\\\\.*\\.json",
-        "data/ArmorVariantManager/.*\\.json"
-    }
-    local files = {}
-    for _, pattern in ipairs(search_patterns) do
-        local found = fs.glob(pattern)
-        if found and #found > 0 then
-            for _, f in ipairs(found) do table.insert(files, f) end
-        end
+    if not data then
+        Profiler.finish("auto_find_preset", t0)
+        return false, "预设文件读取失败: " .. tostring(best.path)
     end
-    if #files == 0 then return false, "No preset files found" end
-    for _, file in ipairs(files) do
-        if not string.find(file, target_body_id) then
-            local load_path = file
-            local data_prefix = "reframework\\data\\"
-            local s, e = string.find(file, data_prefix)
-            if not s then
-                data_prefix = "reframework/data/"
-                s, e = string.find(file, data_prefix)
-            end
-            if e then load_path = string.sub(file, e + 1) end
-            local data = json.load_file(load_path)
-            if not data then data = json.load_file(file) end
-            if data and data.presets then
-                local first_preset = nil
-                for _, preset in pairs(data.presets) do first_preset = preset; break end
-                if first_preset then
-                    local part_to_check = is_weapon_mode and "0" or "1"
-                    local materials_table = first_preset[part_to_check] and first_preset[part_to_check].materials
-                    if materials_table then
-                        local match = true
-                        local match_count = 0
-                        for mat_name, _ in pairs(materials_table) do
-                            if not current_mats[mat_name] then match = false; break end
-                            match_count = match_count + 1
-                        end
-                        if match and match_count > 0 then
-                            current_config = data
-                            save_current_config_to_file(target_body_id)
-                            update_preset_names_list()
-                            return true, "Success! Loaded from " .. file
-                        end
-                    end
-                end
-            end
-        end
-    end
-    return false, "No matching preset found"
+
+    current_config = data
+    save_current_config_to_file(target_body_id)
+    -- 分组预设必须顺带刷新分组列表并重建默认覆盖，否则新 UI 里分组是空的
+    update_preset_names_list()
+    update_group_names_list()
+    apply_all_defaults(target_body_id)
+    Profiler.finish("auto_find_preset", t0)
+    return true, string.format("已匹配: %s｜%s", best.base, build_detail())
 end
 
 -- ================== 手动查找预设（新版 UI 用） ==================
@@ -2058,7 +2980,7 @@ end
 -- 武器差分模式下，Mesh 开关强制为启用且不可关闭，以维持UI布局一致
 local function draw_mesh_toggle(game_object, label, body_id, part_index)
     if not game_object then return end
-    if not sdk.is_managed_object(game_object) then return end
+    if not safe_object_alive(game_object) then return end
     if not type_mesh then
         type_mesh = get_type("via.render.Mesh")
         if not type_mesh then
@@ -2066,11 +2988,11 @@ local function draw_mesh_toggle(game_object, label, body_id, part_index)
             return
         end
     end
-    local mesh_component = game_object:call("getComponent(System.Type)", type_mesh:get_runtime_type())
+    local mesh_component = SceneObject.call(game_object, "getComponent(System.Type)", type_mesh:get_runtime_type())
     if mesh_component then
         if imgui.tree_node(label) then
             -- 启用模型复选框：武器模式下强制开启并禁用，防具模式正常交互
-            local is_enabled = mesh_component:call("get_Enabled")
+            local is_enabled = SceneObject.call(mesh_component, "get_Enabled")
             if is_weapon_mode then
                 imgui.begin_disabled(true)
                 imgui.checkbox(T("enable_mesh"), true)  -- 始终显示勾选，不可修改
@@ -2078,18 +3000,19 @@ local function draw_mesh_toggle(game_object, label, body_id, part_index)
             else
                 local changed, new_value = imgui.checkbox(T("enable_mesh"), is_enabled)
                 if changed then
-                    mesh_component:call("set_Enabled", new_value)
+                    SceneObject.call(mesh_component, "set_Enabled", new_value)
                     if body_id and part_index then
                         local s_idx = tostring(part_index)
                         if not active_overrides[body_id] then active_overrides[body_id] = {} end
                         if not active_overrides[body_id][s_idx] then active_overrides[body_id][s_idx] = { materials = {} } end
                         active_overrides[body_id][s_idx].mesh_enabled = new_value
+                        TransformManager.edit_base_field(body_id, s_idx, nil, new_value)
                         bump_overrides_version(body_id)
                     end
                 end
             end
 
-            local mat_count = mesh_component:call("get_MaterialNum")
+            local mat_count = SceneObject.call(mesh_component, "get_MaterialNum")
             if mat_count and mat_count > 0 then
                 local s_idx = tostring(part_index)
                 local function mat_is_operable(mat_name)
@@ -2108,7 +3031,7 @@ local function draw_mesh_toggle(game_object, label, body_id, part_index)
                 if imgui.button(T("select_all") .. "##sa_" .. s_idx) then
                     local all_on = true
                     for k = 0, mat_count - 1 do
-                        local mn = mesh_component:call("getMaterialName", k)
+                        local mn = SceneObject.call(mesh_component, "getMaterialName", k)
                         if mn and mat_is_operable(mn) then
                             if is_selection_mode then
                                 if not (pending_material_selections[s_idx] and pending_material_selections[s_idx][mn]) then
@@ -2119,7 +3042,7 @@ local function draw_mesh_toggle(game_object, label, body_id, part_index)
                                     and active_overrides[body_id][s_idx]
                                     and active_overrides[body_id][s_idx].materials
                                     and active_overrides[body_id][s_idx].materials[mn])
-                                local cur_on = (intent ~= nil) and intent or mesh_component:call("getMaterialsEnable", k)
+                                local cur_on = (intent ~= nil) and intent or SceneObject.call(mesh_component, "getMaterialsEnable", k)
                                 if not cur_on then
                                     all_on = false; break
                                 end
@@ -2128,18 +3051,19 @@ local function draw_mesh_toggle(game_object, label, body_id, part_index)
                     end
                     local target_val = not all_on
                     for k = 0, mat_count - 1 do
-                        local mn = mesh_component:call("getMaterialName", k)
+                        local mn = SceneObject.call(mesh_component, "getMaterialName", k)
                         if mn and mat_is_operable(mn) then
                             if is_selection_mode then
                                 if not pending_material_selections[s_idx] then pending_material_selections[s_idx] = {} end
                                 pending_material_selections[s_idx][mn] = target_val or nil
                             else
-                                mesh_component:call("setMaterialsEnable", k, target_val)
+                                SceneObject.call(mesh_component, "setMaterialsEnable", k, target_val)
                                 if body_id then
                                     if not active_overrides[body_id] then active_overrides[body_id] = {} end
                                     if not active_overrides[body_id][s_idx] then active_overrides[body_id][s_idx] = { materials = {} } end
                                     if not active_overrides[body_id][s_idx].materials then active_overrides[body_id][s_idx].materials = {} end
                                     active_overrides[body_id][s_idx].materials[mn] = target_val
+                                    TransformManager.edit_base_field(body_id, s_idx, mn, target_val)
                                     bump_overrides_version(body_id)
                                 end
                             end
@@ -2150,21 +3074,22 @@ local function draw_mesh_toggle(game_object, label, body_id, part_index)
                 imgui.same_line()
                 if imgui.button(T("invert_select") .. "##inv_" .. s_idx) then
                     for k = 0, mat_count - 1 do
-                        local mn = mesh_component:call("getMaterialName", k)
+                        local mn = SceneObject.call(mesh_component, "getMaterialName", k)
                         if mn and mat_is_operable(mn) then
                             if is_selection_mode then
                                 if not pending_material_selections[s_idx] then pending_material_selections[s_idx] = {} end
                                 local cur = pending_material_selections[s_idx][mn]
                                 pending_material_selections[s_idx][mn] = (not cur) or nil
                             else
-                                local cur = mesh_component:call("getMaterialsEnable", k)
+                                local cur = SceneObject.call(mesh_component, "getMaterialsEnable", k)
                                 local nv = not cur
-                                mesh_component:call("setMaterialsEnable", k, nv)
+                                SceneObject.call(mesh_component, "setMaterialsEnable", k, nv)
                                 if body_id then
                                     if not active_overrides[body_id] then active_overrides[body_id] = {} end
                                     if not active_overrides[body_id][s_idx] then active_overrides[body_id][s_idx] = { materials = {} } end
                                     if not active_overrides[body_id][s_idx].materials then active_overrides[body_id][s_idx].materials = {} end
                                     active_overrides[body_id][s_idx].materials[mn] = nv
+                                    TransformManager.edit_base_field(body_id, s_idx, mn, nv)
                                     bump_overrides_version(body_id)
                                 end
                             end
@@ -2186,10 +3111,10 @@ local function draw_mesh_toggle(game_object, label, body_id, part_index)
                 imgui.text(T("materials") .. " (" .. tostring(mat_count) .. "):")
                 local filter_str = string.lower(mat_filter_text[part_index] or "")
                 for i = 0, mat_count - 1 do
-                    local mat_name = mesh_component:call("getMaterialName", i)
+                    local mat_name = SceneObject.call(mesh_component, "getMaterialName", i)
                     if mat_name then
                         if filter_str == "" or string.find(string.lower(mat_name), filter_str, 1, true) then
-                            local is_mat_enabled = mesh_component:call("getMaterialsEnable", i)
+                            local is_mat_enabled = SceneObject.call(mesh_component, "getMaterialsEnable", i)
                             local owner = get_material_group_owner(part_index, mat_name)
                             local global_groups = get_material_global_groups(part_index, mat_name)
                             if is_selection_mode then
@@ -2236,6 +3161,7 @@ local function draw_mesh_toggle(game_object, label, body_id, part_index)
                                             if not active_overrides[body_id][s_idx] then active_overrides[body_id][s_idx] = { materials = {} } end
                                             if not active_overrides[body_id][s_idx].materials then active_overrides[body_id][s_idx].materials = {} end
                                             active_overrides[body_id][s_idx].materials[mat_name] = mat_new_val
+                                            TransformManager.edit_base_field(body_id, s_idx, mat_name, mat_new_val)
                                             bump_overrides_version(body_id)
                                         end
                                         local render_val
@@ -2244,7 +3170,7 @@ local function draw_mesh_toggle(game_object, label, body_id, part_index)
                                         else
                                             render_val = mat_new_val
                                         end
-                                        mesh_component:call("setMaterialsEnable", i, render_val)
+                                        SceneObject.call(mesh_component, "setMaterialsEnable", i, render_val)
                                     end
                                     if #global_groups > 0 then
                                         local body_id_hint2 = get_primary_body_id()
@@ -2379,7 +3305,7 @@ local function draw_targets_ui(targets, rule_type, rule_idx, body_id, player_obj
 end
 
 -- 纯函数合并覆盖（用于 TransformManager）
-local function merge_overrides(base, add)
+merge_overrides = function(base, add)
     local result = deep_copy_table(base) or {}
     if not add then return result end
     for p_idx, p_data in pairs(add) do
@@ -2411,7 +3337,8 @@ end) then
 end
 
 -- ========== 运行时配置加载（独立于 UI 的 current_config） ==========
-local function get_runtime_config(body_id)
+local get_runtime_config = nil
+local function get_runtime_config_impl(body_id)
     if not loaded_configs[body_id] then
         local default_config = {
             default_preset = "",
@@ -2490,8 +3417,16 @@ local function get_runtime_config(body_id)
             end
         end
         loaded_configs[body_id] = default_config
+        refresh_monster_hp_gate()
     end
     return loaded_configs[body_id]
+end
+get_runtime_config = function(body_id)
+    local t0 = Profiler.begin("get_runtime_config")
+    local result = get_runtime_config_impl(body_id)
+    Profiler.finish("get_runtime_config", t0)
+    Profiler.count("get_runtime_config_calls")
+    return result
 end
 
 -- ========== 帧率解锁与渲染比例 ==========
@@ -2576,13 +3511,17 @@ if questManagerTypeDef then
                 local flow_state = sdk.to_int64(args[3])
                 current_flow_state = flow_state
 
+                -- 性能诊断：进出任务/据点时先把当前窗口落盘，避免最后一段数据丢失
+                if Profiler.enabled then Profiler.flush() end
+
                 -- 场景切换时重置所有缓存（但不重置首次刷新标志）
-                last_applied_overrides = {}
-                last_player_addresses = {}
+                Applied.clear()     -- 角色级「已应用」记账
+                PlayerDir.reset()        -- 玩家目录（场景换了，玩家对象全部作废）
+                invalidate_primary_body_id()
+                PlayerDir.scan_reset()   -- 场景换了，旧的玩家对象引用必须作废
                 part_cache = {}          -- 清空防具部件缓存
                 weapon_part_cache = {}   -- 清空武器部件缓存
                 overrides_version = {}   -- 清空版本号
-                last_overrides_version = {} -- 清空上次版本号
                 if TransformManager.clear_cache then TransformManager.clear_cache() end
                 current_group_name = ""
                 active_overrides = {}
@@ -2600,11 +3539,19 @@ if questManagerTypeDef then
 end
 
 -- ========== 特殊CG刷新间隔与每帧处理玩家数量（可手动调节） ==========
-local SPECIAL_CG_UPDATE_INTERVAL = 15      -- 特殊CG每N帧处理一次，默认15帧
-local SPECIAL_CG_PLAYERS_PER_FRAME = 2     -- 每次处理的玩家数量，默认2个
+-- - v3.1.2：这两个值都调高了 —— 事件主角初次登场要「过几秒」才正常，
+--   除了节流口径的问题（见 SPECIAL_CG_APPLY_INTERVAL），处理节奏本身也偏慢：
+--   旧值是「每 15 帧处理一批、每批 2 人」，一场过场里有 3~4 个角色时，
+--   同一个角色要好几轮才轮到一次。
+local SPECIAL_CG_UPDATE_INTERVAL = 8       -- 特殊CG每N帧处理一次（原 15）
+local SPECIAL_CG_PLAYERS_PER_FRAME = 3     -- 每次处理几个角色（原 2）
 
 -- ========== 正常游玩刷新间隔（可手动调节） ==========
 local NORMAL_UPDATE_INTERVAL = 10           -- 正常游玩每N帧处理一次，默认10帧
+-- - v3.1.0：其他玩家用**更慢**的节奏（见帧循环里的说明）。
+--   队友身上的差分变化不需要 14 次/秒，0.2 秒的延迟肉眼分辨不出来，
+--   但开销直接降到 1/3。
+local MULTIPLAYER_UPDATE_INTERVAL = 30      -- 联机：其他玩家每N帧推进一次，默认30帧
 
 -- ========== 事件玩家缓存（每5帧刷新） ==========
 local cached_event_players = {}
@@ -2629,114 +3576,65 @@ if force_open_presets_node == nil then
 end
 
 -- ========== 玩家部件缓存（防具） ==========
-local part_cache = {}  -- key: player_addr, value: { [part_index] = part_obj }
-
--- 一次性获取玩家所有防具部件并缓存
+-- - 实现在文件靠前处（PlayerDir.parts / part_cache）。
+--   这里只保留一个兼容别名，避免同一件事有两份实现、两套行为。
 local function get_all_cached_character_parts(character)
-    if not character then return nil end
-    local player_addr = tostring(character)
-    -- 检查缓存是否已完整（所有部件都存在）
-    local cache_entry = part_cache[player_addr]
-    if cache_entry and cache_entry[0] and cache_entry[1] and cache_entry[2] and cache_entry[3] and cache_entry[4] then
-        return cache_entry
-    end
-    
-    -- 缓存未完整，遍历一次 Transform
-    local parts = {}
-    local transform = character:call("get_Transform")
-    if not transform then return nil end
-    
-    -- 递归遍历子物体
-    local function traverse(node)
-        local child = node:call("get_Child")
-        while child do
-            local child_obj = child:call("get_GameObject")
-            if child_obj then
-                local name = child_obj:call("get_Name")
-                if name then
-                    local target_index = nil
-                    if string.find(name, "body") then target_index = 1
-                    elseif string.find(name, "helm") then target_index = 0
-                    elseif string.find(name, "arm") then target_index = 2
-                    elseif string.find(name, "wst") then target_index = 3
-                    elseif string.find(name, "leg") then target_index = 4
-                    end
-                    if target_index ~= nil then
-                        -- 优先级逻辑与原有 get_character_part 保持一致
-                        if parts[target_index] then
-                            local old_name = parts[target_index]:call("get_Name")
-                            local is_old_ch00 = string.find(old_name, "^ch00")
-                            local is_new_ch00 = string.find(name, "^ch00")
-                            if is_old_ch00 and not is_new_ch00 then
-                                -- 旧的是ch00，新的是非ch00，替换
-                                parts[target_index] = child_obj
-                            -- 其他情况保留先找到的
-                            end
-                        else
-                            parts[target_index] = child_obj
-                        end
-                    end
-                end
-                -- 递归子节点
-                traverse(child)
-            end
-            child = child:call("get_Next")
-        end
-    end
-    
-    traverse(transform)
-    
-    -- 写入缓存
-    if not part_cache[player_addr] then
-        part_cache[player_addr] = {}
-    end
-    for idx, obj in pairs(parts) do
-        part_cache[player_addr][idx] = obj
-    end
-    
-    return part_cache[player_addr]
+    Profiler.count("get_all_cached_character_parts_calls")
+    return PlayerDir.parts(character)
 end
 
--- 缓存版 get_character_part（利用一次性获取所有部件）
+-- 兼容旧调用：取某个角色的单个防具部件
 local function get_cached_character_part(character, part_index)
-    if not character then return nil end
-    local player_addr = tostring(character)
-    local cache_entry = part_cache[player_addr]
-    -- 检查该部件是否已缓存
-    if cache_entry and cache_entry[part_index] then
-        return cache_entry[part_index]
-    end
-    -- 缓存缺失或该部件缺失，调用一次性获取所有部件
-    cache_entry = get_all_cached_character_parts(character)
-    if cache_entry and cache_entry[part_index] then
-        return cache_entry[part_index]
-    end
-    return nil
+    return get_character_part(character, part_index)
 end
 
 -- ========== 玩家部件缓存（武器） ==========
-local weapon_part_cache = {}  -- key: player_addr, value: weapon_parts table
+-- （weapon_part_cache 已提前到文件靠前处声明，原因见那里的注释）
 
 -- 缓存版获取武器部件列表
-local function get_cached_weapon_parts(player_obj)
+-- player_handle：该玩家的 Player 托管对象（可选），用来读**他自己**的武器类型
+local function weapon_parts_alive(parts)
+    if not parts then return false end
+    local found_any = false
+    -- 最多 2 个部件（各武器类型在 Utils.WEAPON_PARTS_MAP 里），循环上限给 8 足够
+    for i = 1, 8 do
+        local p = parts[i]
+        if p ~= nil then
+            found_any = true
+            if not safe_object_alive(p) then return false end
+        end
+    end
+    return found_any
+end
+
+local function get_cached_weapon_parts_impl(player_obj, player_handle)
     if not player_obj then return nil end
+    if not safe_object_alive(player_obj) then return nil end
     local player_addr = tostring(player_obj)
     local cached = weapon_part_cache[player_addr]
     if cached then
-        -- 验证缓存的部件是否仍然有效（简单检查第一个部件是否 still managed）
-        if #cached > 0 and sdk.is_managed_object(cached[1]) then
+        -- - 缓存里**任一**部件失效都要重查（旧实现只看第一个部件，
+        --   换武器时可能留下部分失效的列表）
+        if weapon_parts_alive(cached) then
             return cached
-        else
-            -- 如果部件无效，清除缓存
-            weapon_part_cache[player_addr] = nil
         end
+        weapon_part_cache[player_addr] = nil
     end
-    -- 缓存缺失或无效，调用原始函数获取
-    local weapon_parts = Utils.get_current_weapon_parts(player_obj)
-    if weapon_parts and #weapon_parts > 0 then
+    -- 缓存缺失或失效：重新递归查找
+    local weapon_parts = Utils.get_current_weapon_parts(player_handle or player_obj)
+    if weapon_parts_alive(weapon_parts) then
         weapon_part_cache[player_addr] = weapon_parts
+    else
+        weapon_parts = nil
     end
     return weapon_parts
+end
+get_cached_weapon_parts = function(player_obj, player_handle)
+    local t0 = Profiler.begin("get_cached_weapon_parts")
+    local result = get_cached_weapon_parts_impl(player_obj, player_handle)
+    Profiler.finish("get_cached_weapon_parts", t0)
+    Profiler.count("get_cached_weapon_parts_calls")
+    return result
 end
 
 -- ========== 清除缓存函数 ==========
@@ -2752,32 +3650,10 @@ local function clear_player_cache(player_addr)
     end
 end
 
--- ========== 刷新玩家列表（仅包含非本地玩家的普通玩家） ==========
-local function refresh_player_list()
-    local new_list = {}
-    -- 获取本地玩家的 GameObject（若存在）
-    local local_player_go = get_master_player_object()
-    local normal = get_normal_players()
-    for _, p in ipairs(normal) do
-        -- 如果本地玩家存在且当前玩家就是本地玩家，则跳过
-        if local_player_go and p == local_player_go then
-            -- 跳过本地玩家
-        else
-            table.insert(new_list, p)
-        end
-    end
-    -- 若没有普通玩家，尝试回退扫描
-    if #new_list == 0 then
-        local fallback = scan_fallback_once()
-        if fallback then
-            -- 同样过滤掉本地玩家
-            if not (local_player_go and fallback == local_player_go) then
-                table.insert(new_list, fallback)
-            end
-        end
-    end
-    player_list = new_list
-end
+-- ========== 刷新玩家列表 ==========
+-- - v3.1.0：这份实现已经合并进玩家目录（见文件靠前的 refresh_player_list）。
+--   旧版本这里还有第二份定义，会**覆盖**靠前那份，导致「联机时把队友当成主角」的
+--   回退逻辑又把玩家列表塞满队友。现在只保留一份，避免两套语义打架。
 
 -- ============================================================================
 --  新版 UI（D2D）接入层
@@ -2844,13 +3720,13 @@ local function get_part_meshes(character, body_id, part_index)
     if is_weapon_mode then
         local weapon_parts = get_cached_weapon_parts(character)
         local part_obj = weapon_parts and weapon_parts[part_index + 1]
-        if not part_obj or not sdk.is_managed_object(part_obj) then return {} end
+        if not part_obj or not safe_object_alive(part_obj) then return {} end
         local mesh = get_mesh_component_recursive(part_obj)
         return mesh and { mesh } or {}
     end
     if not character then return {} end
     local part_obj = get_cached_character_part(character, part_index)
-    if not part_obj or not sdk.is_managed_object(part_obj) then return {} end
+    if not part_obj or not safe_object_alive(part_obj) then return {} end
     local mesh = get_mesh_component_recursive(part_obj)
     return mesh and { mesh } or {}
 end
@@ -2858,17 +3734,17 @@ end
 -- 读取网格当前的显示状态与材质列表
 local function get_part_mesh_view(meshes)
     local mesh = meshes and meshes[1]
-    if not mesh or not sdk.is_managed_object(mesh) then return nil end
+    if not mesh or not safe_object_alive(mesh) then return nil end
     local ok, view = pcall(function()
         local result = {
-            mesh_enabled = mesh:call("get_Enabled") ~= false,
+            mesh_enabled = SceneObject.call(mesh, "get_Enabled") ~= false,
             materials = {}
         }
-        local count = mesh:call("get_MaterialNum") or 0
+        local count = SceneObject.call(mesh, "get_MaterialNum") or 0
         for i = 0, count - 1 do
             table.insert(result.materials, {
-                name = mesh:call("getMaterialName", i),
-                enabled = mesh:call("getMaterialsEnable", i) ~= false,
+                name = SceneObject.call(mesh, "getMaterialName", i),
+                enabled = SceneObject.call(mesh, "getMaterialsEnable", i) ~= false,
                 index = i
             })
         end
@@ -2889,10 +3765,11 @@ local function set_part_mesh_enabled(body_id, part_index, meshes, enabled)
         active_overrides[body_id][key].materials = {}
     end
     active_overrides[body_id][key].mesh_enabled = enabled == true
+    TransformManager.edit_base_field(body_id, key, nil, enabled == true)
     bump_overrides_version(body_id)
     for _, mesh in ipairs(meshes or {}) do
-        if sdk.is_managed_object(mesh) then
-            pcall(function() mesh:call("set_Enabled", enabled == true) end)
+        if safe_object_alive(mesh) then
+            pcall(function() SceneObject.call(mesh, "set_Enabled", enabled == true) end)
         end
     end
 end
@@ -2908,18 +3785,19 @@ local function set_part_material_enabled(body_id, part_index, meshes, material_n
         active_overrides[body_id][key].materials = {}
     end
     active_overrides[body_id][key].materials[material_name] = enabled == true
+    TransformManager.edit_base_field(body_id, key, material_name, enabled == true)
     bump_overrides_version(body_id)
     local render_enabled = enabled == true
     if render_enabled and is_globally_hidden(part_index, material_name) then
         render_enabled = false
     end
     for _, mesh in ipairs(meshes or {}) do
-        if sdk.is_managed_object(mesh) then
+        if safe_object_alive(mesh) then
             pcall(function()
-                local count = mesh:call("get_MaterialNum") or 0
+                local count = SceneObject.call(mesh, "get_MaterialNum") or 0
                 for i = 0, count - 1 do
-                    if mesh:call("getMaterialName", i) == material_name then
-                        mesh:call("setMaterialsEnable", i, render_enabled)
+                    if SceneObject.call(mesh, "getMaterialName", i) == material_name then
+                        SceneObject.call(mesh, "setMaterialsEnable", i, render_enabled)
                     end
                 end
             end)
@@ -2943,11 +3821,11 @@ local function get_part_label(character, weapon_mode, part_index)
     if not weapon_mode then return nil end
     local weapon_parts = get_cached_weapon_parts(character)
     local part_obj = weapon_parts and weapon_parts[part_index + 1]
-    if not part_obj or not sdk.is_managed_object(part_obj) then return nil end
+    if not part_obj or not safe_object_alive(part_obj) then return nil end
     local weapon_type = Utils.get_current_weapon_type(character)
     local part_name = Utils.get_weapon_part_name(weapon_type, part_index)
     if part_name and part_name ~= "" then return part_name end
-    local ok, name = pcall(function() return part_obj:call("get_Name") end)
+    local ok, name = pcall(function() return SceneObject.call(part_obj, "get_Name") end)
     return ok and name or nil
 end
 
@@ -2958,7 +3836,7 @@ local function set_enable_transform(context, enabled)
     current_config.enable_transform = enabled
     if not body_id then return end
     local primary = (context and context.character) or get_primary_player()
-    if primary and sdk.is_managed_object(primary) then
+    if primary and safe_object_alive(primary) then
         if enabled then
             local char_addr = tostring(primary)
             TransformManager.clear_cache(char_addr)
@@ -3294,38 +4172,229 @@ end
 -- ========== 运行时循环 ==========
 -- 整个每帧循环放进 xpcall 里执行：
 --   切换场景时 via.GameObject 等引擎对象可能瞬间失效，调用它们会抛异常。
---   这类异常不影响正常使用，但 REFramework 会把它们显示在 ScriptRunner 面板里刷屏。
---   现在只把**首次**出现的错误安静地记一条到日志文件，不再冒到 ScriptRunner 面板。
+--   失效场景对象由 SceneObject 在调用前排除；此处仅为意外异常兜底。
+--   意外异常按错误级别保留堆栈及计数，同一位置限频，不再永久隐藏后续故障。
 local reported_frame_errors = {}
+
+-- 错误处理器提到函数外面：原来每帧都会新建一个闭包，是没必要的 GC 压力
+local function frame_error_handler(e)
+    if debug and debug.traceback then
+        return debug.traceback(tostring(e), 2)
+    end
+    return tostring(e)
+end
+
 local function run_frame_quietly(frame_body)
-    local ok, err = xpcall(frame_body, function(e)
-        if debug and debug.traceback then
-            return debug.traceback(tostring(e), 2)
-        end
-        return tostring(e)
-    end)
+    local ok, err = xpcall(frame_body, frame_error_handler)
     if ok then return end
+    SceneObject.frame_errors = (SceneObject.frame_errors or 0) + 1
     local message = tostring(err)
     local key = string.match(message, "ArmorVariantManager%.lua:%d+[^\n]*") or message
-    if reported_frame_errors[key] then return end
-    reported_frame_errors[key] = true
-    if log and log.info then
+    local now = os.clock()
+    if reported_frame_errors[key] and now - reported_frame_errors[key] < 10 then return end
+    reported_frame_errors[key] = now
+    if log and log.error then
         pcall(function()
-            log.info("[ArmorVariantManager] 每帧循环出现异常（已抑制，不再显示在 ScriptRunner）："
+            log.error("[ArmorVariantManager] 帧更新失败（累计 " .. SceneObject.frame_errors .. " 次）："
                 .. message)
         end)
     end
 end
 
-local function avm_frame_update()
-    -- 新版 UI 的每帧输入 / 开关处理（未启用时内部会立即返回）
-    variant_manager_ui:update()
+-- ============================================================================
+--  联机辅助（MP）：配置存在性判断 / 武器查找限频 / 单玩家处理
+-- ----------------------------------------------------------------------------
+--  - 统一挂在一张表上，理由同 PlayerDir：主 chunk 的局部变量槽位接近 Lua 上限 200。
+-- ============================================================================
+local MP = {
+    presence_ttl = 2.0,
+    presence = {},      -- body_id -> { value = bool, time = number }
+    scan_time = {},     -- 角色地址 -> 上次武器部件查找时刻
+    next_index = 1,     -- 其他玩家轮询下标
+    cg_buffer = {},     -- CG 事件玩家的 entry 复用表
+}
 
+-- 没有配置的玩家直接跳过（只对「其他玩家」生效，本地玩家行为与 v3.0.6 完全一致）。
+-- 用短 TTL 缓存判断结果，避免每次去翻预设表。
+function MP.has_config(body_id)
+    if not body_id then return false end
     local now = os.clock()
-    if now - last_frame_time > frame_interval then
-        refresh_player_list()
-        last_frame_time = now
+    local cached = MP.presence[body_id]
+    if cached and (now - cached.time) < MP.presence_ttl then
+        return cached.value
     end
+    local cfg = get_runtime_config(body_id)
+    local value = false
+    if cfg then
+        if cfg.presets and next(cfg.presets) ~= nil then
+            value = true
+        elseif cfg.groups then
+            for _, g_data in pairs(cfg.groups) do
+                if g_data and g_data.presets and next(g_data.presets) ~= nil then
+                    value = true
+                    break
+                end
+            end
+        end
+    end
+    MP.presence[body_id] = { value = value, time = now }
+    return value
+end
+
+-- 非本地玩家的武器部件查找限频（武器部件的递归查找偏贵）
+function MP.scan_allowed(player_obj, is_local)
+    if is_local then return true end
+    local interval = tonumber(global_config.multiplayer_weapon_scan_interval) or 2.0
+    local addr = tostring(player_obj)
+    local now = os.clock()
+    local last = MP.scan_time[addr]
+    if last and (now - last) < interval then return false end
+    MP.scan_time[addr] = now
+    return true
+end
+
+-- ============================================================================
+--  单轮处理一个玩家（防具 + 武器）—— CG 与非 CG 共用同一份实现
+-- ----------------------------------------------------------------------------
+--  entry = { obj = GameObject, player = snow.player.Player 或 nil,
+--            index = getPlayerIndex() 或 nil, is_local = bool }
+--  cg_mode = true 表示这是过场里的角色：跳过规则评估，直接套用当前意图
+--            （保持 v3.0.6 的轻量行为）
+--
+--  - 联机的两条关键改动都在这里：
+--     1. 规则评估会把「这名玩家自己」的 handle 传下去
+--        （武器类型 / 各武器状态都读他自己的，而不是永远读主角的）；
+--     2. 没有差分配置的玩家直接跳过，避免给队友白跑一遍 apply_all_defaults。
+-- ============================================================================
+function MP.process(entry, cg_mode)
+    if not entry then return end
+    local player_obj = entry.obj
+    if not (player_obj and safe_object_alive(player_obj)) then return end
+    local player_handle = entry.player
+    if player_handle and not safe_object_alive(player_handle) then return end
+    local is_local = entry.is_local == true
+    -- 性能诊断分段名：本地玩家与其他玩家分开统计，
+    -- 打开 debug_profile 后一眼就能看出掉帧到底是谁的开销。
+    local phase_armor = is_local and "player_armor" or "other_armor"
+    local phase_weapon = is_local and "player_weapon" or "other_weapon"
+
+    -- ============================================================
+    -- 防具
+    -- ============================================================
+    local t_armor = Profiler.begin(phase_armor)
+    -- - body_id 走 TTL 缓存（照搬荒野的 body_id_cache）：
+    --   否则每个处理周期都要为每个玩家遍历一遍子物体（≈36 次托管调用）。
+    local armor_id = PlayerDir.body_id_of(player_obj)
+    if armor_id and (is_local or MP.has_config(armor_id)) then
+        local armor_config = get_runtime_config(armor_id)
+        -- - 必须先初始化「默认意图」再评估变身规则：
+        --   变身规则是把目标预设**合并到**当前意图上的，若这里是空的 {},
+        --   那些没有被任何规则引用到的默认材质就会丢失（与 v3.0.6 行为不一致）。
+        if not active_overrides[armor_id] then
+            apply_all_defaults(armor_id)
+        end
+        if armor_config and armor_config.enable_transform and not cg_mode then
+            local char_addr = tostring(player_obj)
+            local new_overrides, changed, activated_targets, all_targeted_groups =
+                TransformManager.apply_transform_rules(
+                    char_addr, "armor_" .. armor_id, armor_config, player_obj,
+                    active_overrides[armor_id] or {}, merge_overrides, player_handle)
+            if not active_group_presets[armor_id] then active_group_presets[armor_id] = {} end
+            if activated_targets then
+                for g_name, p_name in pairs(activated_targets) do
+                    active_group_presets[armor_id][g_name] = p_name
+                end
+            end
+
+            if armor_config.groups then
+                for g_name, g_data in pairs(armor_config.groups) do
+                    if g_data.is_global then
+                        if activated_targets and activated_targets[g_name] then
+                            active_group_presets[armor_id][g_name] = activated_targets[g_name]
+                        elseif all_targeted_groups and all_targeted_groups[g_name] then
+                            active_group_presets[armor_id][g_name] = g_data.default_preset or ""
+                        end
+                    end
+                end
+            end
+
+            if changed then
+                active_overrides[armor_id] = new_overrides
+                bump_overrides_version(armor_id)
+            end
+            apply_preset_to_character(player_obj, new_overrides, true, armor_id)
+        else
+            -- CG 角色 / 未启用变身规则：直接套用当前意图
+            apply_preset_to_character(player_obj, active_overrides[armor_id], true, armor_id)
+        end
+    end
+    Profiler.finish(phase_armor, t_armor)
+
+    -- ============================================================
+    -- 武器
+    -- ============================================================
+    local t_weapon = Profiler.begin(phase_weapon)
+    if is_local or MP.scan_allowed(player_obj, false) then
+        local weapon_id = get_weapon_attack_part_name(player_obj, player_handle)
+        if weapon_id and (is_local or MP.has_config(weapon_id)) then
+            local weapon_config = get_runtime_config(weapon_id)
+            if not active_overrides[weapon_id] then
+                apply_all_defaults(weapon_id)
+            end
+            local weapon_parts = get_cached_weapon_parts(player_obj, player_handle)
+            if weapon_parts then
+                if weapon_config and weapon_config.enable_transform and not cg_mode then
+                    local char_addr = tostring(player_obj)
+                    local new_overrides, changed, activated_targets, all_targeted_groups =
+                        TransformManager.apply_transform_rules(
+                            char_addr, "weapon_" .. weapon_id, weapon_config, player_obj,
+                            active_overrides[weapon_id] or {}, merge_overrides, player_handle)
+                    if not active_group_presets[weapon_id] then active_group_presets[weapon_id] = {} end
+                    if activated_targets then
+                        for g_name, p_name in pairs(activated_targets) do
+                            active_group_presets[weapon_id][g_name] = p_name
+                        end
+                    end
+
+                    if weapon_config.groups then
+                        for g_name, g_data in pairs(weapon_config.groups) do
+                            if g_data.is_global then
+                                if activated_targets and activated_targets[g_name] then
+                                    active_group_presets[weapon_id][g_name] = activated_targets[g_name]
+                                elseif all_targeted_groups and all_targeted_groups[g_name] then
+                                    active_group_presets[weapon_id][g_name] = g_data.default_preset or ""
+                                end
+                            end
+                        end
+                    end
+
+                    if changed then
+                        active_overrides[weapon_id] = new_overrides
+                        bump_overrides_version(weapon_id)
+                    end
+                    apply_preset_to_weapon(weapon_parts, new_overrides, true, weapon_id, player_obj)
+                else
+                    if active_overrides[weapon_id] then
+                        apply_preset_to_weapon(weapon_parts, active_overrides[weapon_id], true, weapon_id, player_obj)
+                    end
+                end
+            end
+        end
+    end
+    Profiler.finish(phase_weapon, t_weapon)
+end
+
+-- 联机：其他玩家的轮询下标 + CG 事件玩家的 entry 复用表，都在 MP 表里
+-- （MP.next_index / MP.cg_buffer，见上面 MP 的定义）
+
+local function avm_frame_update()
+    Profiler.enter_frame()
+    local plugin_t0 = Profiler.begin("plugin_frame")
+
+    -- 新版 UI 的每帧输入 / 开关处理（未启用时内部会立即返回）
+    local t_ui_update = Profiler.begin("ui_update")
+    variant_manager_ui:update()
+    Profiler.finish("ui_update", t_ui_update)
 
     -- 帧计数器递增
     global_frame_counter = global_frame_counter + 1
@@ -3334,29 +4403,49 @@ local function avm_frame_update()
     end
 
     -- ====================================================================
+    -- 场景扫描（增量式，非阻塞）
+    -- --------------------------------------------------------------------
+    -- - 只有在「确实没有本地玩家」时才推进扫描：正常游玩（据点/任务里
+    --   findMasterPlayer 正常）这一段每帧只做一次「本地玩家对象是否还活着」
+    --   的判断，不产生任何其它开销。
+    --   旧实现是「一次性全场景扫描」，野外要遍历约 8000 个组件、单次几十毫秒，
+    --   联机时只要短暂拿不到 master 就会出现肉眼可见的尖峰。
+    -- ====================================================================
+    if PlayerDir.local_entry == nil
+        or not safe_object_alive(PlayerDir.local_entry.obj) then
+        PlayerDir.scan_tick()
+    end
+
+    -- ====================================================================
     -- 获取事件玩家列表（CG角色），每5帧刷新一次
     -- ====================================================================
     local event_players
     local has_event_players
     if global_frame_counter % 5 == 0 then
+        local t_event = Profiler.begin("event_players_poll")
         event_players = get_event_players()
         has_event_players = (#event_players > 0)
+        Profiler.finish("event_players_poll", t_event)
         -- 检测事件玩家列表变化（进入或离开CG），重置所有缓存
         if has_event_players ~= last_has_event_players then
-            last_applied_overrides = {}
-            last_player_addresses = {}
+            Applied.clear()
+            PlayerDir.reset()
+            invalidate_primary_body_id()
             part_cache = {}
             weapon_part_cache = {}
+            PlayerDir.scan_reset()
             overrides_version = {}
-            last_overrides_version = {}
             if TransformManager.clear_cache then TransformManager.clear_cache() end
             current_group_name = ""
             active_overrides = {}
             active_group_presets = {}
             update_preset_names_list()
             update_group_names_list()
+            -- - 无论进还是出过场，CG 节流记录都要清掉：
+            --   新一场过场的角色必须**立刻**拿到差分，不能被上一场的节流记录挡住
+            --   （这正是「事件主角初次登场是无预设状态」的另一个成因）。
+            Applied.reset_cg()
             if not has_event_players then
-                special_cg_frame_counter = 0
                 special_cg_next_index = 1  -- 重置轮询索引
             end
             last_has_event_players = has_event_players
@@ -3365,26 +4454,32 @@ local function avm_frame_update()
         cached_event_players = event_players
         cached_has_event_players = has_event_players
     else
-        event_players = cached_event_players or {}
+        event_players = cached_event_players or EMPTY_PLAYER_LIST
         has_event_players = cached_has_event_players or false
     end
     -- 更新全局CG标志（供 apply_preset_to_character 等使用）
     g_is_special_cg = has_event_players
 
     -- ====================================================================
-    -- 确定要处理的玩家列表
-    -- 如果有事件玩家（CG），则只处理事件玩家；否则处理本地玩家（或回退到 player_list，即其他玩家）
+    -- 确定要处理的玩家
+    -- --------------------------------------------------------------------
+    --  - v3.1.0 起，玩家身份由玩家目录统一给出：
+    --      * 本地玩家 = PlayerList 中 getPlayerIndex() == findMasterPlayer() 的那一个；
+    --      * 其他玩家 = 列表里剩下的（联机队友）。
+    --    旧实现在这里退化成「列表里第一个像玩家的对象」，联机时会把队友当成主角。
+    --
+    --  - 处理顺序与预算：
+    --      * 本地玩家：每轮都处理（响应速度和单人时完全一样）；
+    --      * 其他玩家：每轮最多处理 multiplayer_players_per_tick 个，轮询推进，
+    --        并且没有差分配置的会被 MP.has_config 直接挡掉。
+    --        这样联机时的额外开销是「可预期的常数」，而不是随人数线性增长。
     -- ====================================================================
-    local local_player = get_primary_player()
-    local players_to_process
-    if has_event_players then
-        players_to_process = event_players
-    else
-        if local_player then
-            players_to_process = { local_player }
-        else
-            players_to_process = player_list
-        end
+    local local_entry = nil
+    local targets = nil
+    if not has_event_players then
+        local dir = PlayerDir.get()
+        local_entry = dir.local_entry
+        targets = dir.entries
     end
 
     -- ====================================================================
@@ -3392,7 +4487,9 @@ local function avm_frame_update()
     -- 模拟面板展开操作：调用 load_body_config 强制重新加载配置
     -- 该操作不受降频影响，以确保启动时立即生效
     -- ====================================================================
+    local local_player = get_primary_player()
     if local_player and not first_apply_done then
+        local t_first_apply = Profiler.begin("first_apply")
         local armor_id = get_character_body_id(local_player)
         if armor_id then
             -- 强制重新加载配置（从磁盘读取，模拟面板展开）
@@ -3406,8 +4503,10 @@ local function avm_frame_update()
             local armor_config = get_runtime_config(armor_id)
             if armor_config and armor_config.enable_transform then
                 local char_addr = tostring(local_player)
+                local player_handle = local_entry and local_entry.player or nil
                 local new_overrides, changed, activated_targets, all_targeted_groups = TransformManager.apply_transform_rules(
-                    char_addr, "armor_" .. armor_id, armor_config, local_player, active_overrides[armor_id] or {}, merge_overrides
+                    char_addr, "armor_" .. armor_id, armor_config, local_player,
+                    active_overrides[armor_id] or {}, merge_overrides, player_handle
                 )
                 if not active_group_presets[armor_id] then active_group_presets[armor_id] = {} end
                 if activated_targets then
@@ -3425,257 +4524,90 @@ local function avm_frame_update()
             end
         end
         first_apply_done = true
+        Profiler.finish("first_apply", t_first_apply)
     end
 
     -- ====================================================================
-    -- CG场景（有事件玩家）使用降频与轮询处理
-    -- 非CG场景（无事件玩家）使用正常降频
+    -- CG 场景（有事件玩家）：降频 + 轮询处理
+    --   过场里的角色不是 snow.player.Player，拿不到「他自己的」武器状态，
+    --   所以沿用 v3.0.6 的轻量做法：跳过规则评估，直接套用当前意图。
     -- ====================================================================
     if has_event_players then
-        -- 仅当达到刷新间隔时才处理
+        local t_cg_block = Profiler.begin("cg_block")
         if global_frame_counter % SPECIAL_CG_UPDATE_INTERVAL == 0 then
-            local player_count = #players_to_process
-            if player_count > 0 then
-                -- 确保索引有效
-                if special_cg_next_index > player_count then
-                    special_cg_next_index = 1
+            local cg_count = #event_players
+            if cg_count > 0 then
+                for i = #MP.cg_buffer, 1, -1 do MP.cg_buffer[i] = nil end
+                for i = 1, cg_count do
+                    MP.cg_buffer[i] = { obj = event_players[i], is_local = false, is_event = true }
                 end
+                if special_cg_next_index > cg_count then special_cg_next_index = 1 end
                 local start_idx = special_cg_next_index
-                local end_idx = math.min(start_idx + SPECIAL_CG_PLAYERS_PER_FRAME - 1, player_count)
+                local end_idx = math.min(start_idx + SPECIAL_CG_PLAYERS_PER_FRAME - 1, cg_count)
                 for i = start_idx, end_idx do
-                    local player_obj = players_to_process[i]
-                    if player_obj and sdk.is_managed_object(player_obj) then
-                        -- 处理该玩家（防具和武器）
-                        -- 防具处理
-                        local armor_id = get_character_body_id(player_obj)
-                        if armor_id then
-                            local player_addr = tostring(player_obj)
-                            if last_player_addresses[armor_id] and last_player_addresses[armor_id] ~= player_addr then
-                                local old_addr = last_player_addresses[armor_id]
-                                clear_player_cache(old_addr)
-                                last_applied_overrides[armor_id] = nil
-                                active_overrides[armor_id] = nil
-                                loaded_configs[armor_id] = nil
-                                active_group_presets[armor_id] = nil
-                                overrides_version[armor_id] = nil
-                                last_overrides_version[armor_id] = nil
-                            end
-                            last_player_addresses[armor_id] = player_addr
-
-                            local armor_config = get_runtime_config(armor_id)
-
-                            -- CG轻量级应用：CG中的角色（事件玩家）跳过规则评估，直接应用 active_overrides
-                            if not active_overrides[armor_id] then
-                                apply_all_defaults(armor_id)
-                            end
-                            apply_preset_to_character(player_obj, active_overrides[armor_id], true)
-                        end
-
-                        -- 武器处理（使用缓存）
-                        local weapon_part_name = get_weapon_attack_part_name(player_obj)
-                        if weapon_part_name then
-                            local weapon_id = weapon_part_name
-                            local player_addr = tostring(player_obj)
-                            if last_player_addresses[weapon_id] and last_player_addresses[weapon_id] ~= player_addr then
-                                clear_player_cache(player_addr)
-                                last_applied_overrides[weapon_id] = nil
-                                active_overrides[weapon_id] = nil
-                                loaded_configs[weapon_id] = nil
-                                active_group_presets[weapon_id] = nil
-                                overrides_version[weapon_id] = nil
-                                last_overrides_version[weapon_id] = nil
-                            end
-                            last_player_addresses[weapon_id] = player_addr
-
-                            local weapon_config = get_runtime_config(weapon_id)
-                            if not active_overrides[weapon_id] then
-                                apply_all_defaults(weapon_id)
-                            end
-                            local weapon_parts = get_cached_weapon_parts(player_obj)
-                            if weapon_parts then
-                                apply_preset_to_weapon(weapon_parts, active_overrides[weapon_id], true, weapon_id)
-                            end
-                        end
-                    end
+                    MP.process(MP.cg_buffer[i], true)
                 end
-                -- 更新轮询索引
                 special_cg_next_index = end_idx + 1
-                if special_cg_next_index > player_count then
-                    special_cg_next_index = 1
-                end
+                if special_cg_next_index > cg_count then special_cg_next_index = 1 end
             end
         end
-        -- CG处理完成，跳过非CG逻辑
-        goto skip_non_cg_processing
-    end
+        Profiler.finish("cg_block", t_cg_block)
+    elseif global_frame_counter % NORMAL_UPDATE_INTERVAL == 0 then
+        -- ================================================================
+        -- 正常游玩（非 CG）
+        -- ================================================================
+        local t_noncg_block = Profiler.begin("noncg_block")
 
-    -- ====================================================================
-    -- 正常游玩（非CG）：每 N 帧处理一次
-    -- ====================================================================
-    if global_frame_counter % NORMAL_UPDATE_INTERVAL == 0 then
-        for _, player_obj in ipairs(players_to_process) do
-            if not (player_obj and sdk.is_managed_object(player_obj)) then
-                goto continue_player_non_cg
-            end
-
-            -- ============================================================
-            -- 防具处理（非CG）
-            -- ============================================================
-            local armor_id = get_character_body_id(player_obj)
-            if armor_id then
-                local player_addr = tostring(player_obj)
-                if last_player_addresses[armor_id] and last_player_addresses[armor_id] ~= player_addr then
-                    local old_addr = last_player_addresses[armor_id]
-                    clear_player_cache(old_addr)
-                    last_applied_overrides[armor_id] = nil
-                    active_overrides[armor_id] = nil
-                    loaded_configs[armor_id] = nil
-                    active_group_presets[armor_id] = nil
-                    overrides_version[armor_id] = nil
-                    last_overrides_version[armor_id] = nil
-                end
-                last_player_addresses[armor_id] = player_addr
-
-                local armor_config = get_runtime_config(armor_id)
-                if not active_overrides[armor_id] then
-                    apply_all_defaults(armor_id)
-                end
-
-                if armor_config and armor_config.enable_transform then
-                    local char_addr = tostring(player_obj)
-                    local new_overrides, changed, activated_targets, all_targeted_groups = TransformManager.apply_transform_rules(
-                        char_addr, "armor_" .. armor_id, armor_config, player_obj, active_overrides[armor_id] or {}, merge_overrides
-                    )
-                    if not active_group_presets[armor_id] then active_group_presets[armor_id] = {} end
-                    if activated_targets then
-                        for g_name, p_name in pairs(activated_targets) do
-                            active_group_presets[armor_id][g_name] = p_name
-                        end
-                    end
-
-                    local has_global_target = false
-                    if armor_config.groups then
-                        for g_name, g_data in pairs(armor_config.groups) do
-                            if g_data.is_global then
-                                if activated_targets and activated_targets[g_name] then
-                                    active_group_presets[armor_id][g_name] = activated_targets[g_name]
-                                    has_global_target = true
-                                elseif all_targeted_groups and all_targeted_groups[g_name] then
-                                    active_group_presets[armor_id][g_name] = g_data.default_preset or ""
-                                    has_global_target = true
-                                end
-                            end
-                        end
-                    end
-
-                    if changed then
-                        if has_global_target then
-                            rebuild_overrides_for_transform(armor_id, armor_config, activated_targets)
-                            apply_preset_to_character(player_obj, active_overrides[armor_id], true)
-                        else
-                            active_overrides[armor_id] = new_overrides
-                            bump_overrides_version(armor_id)
-                            apply_preset_to_character(player_obj, new_overrides, true)
-                        end
-                    else
-                        if has_global_target then
-                            apply_preset_to_character(player_obj, active_overrides[armor_id], true)
-                        else
-                            apply_preset_to_character(player_obj, new_overrides, true)
-                        end
-                    end
-                else
-                    if active_overrides[armor_id] then
-                        apply_preset_to_character(player_obj, active_overrides[armor_id], true)
-                    end
-                end
-            end
-
-            -- ============================================================
-            -- 武器处理（非CG，使用缓存）- 已修复 has_global_target 分支
-            -- ============================================================
-            local weapon_part_name = get_weapon_attack_part_name(player_obj)
-            if weapon_part_name then
-                local weapon_id = weapon_part_name
-                local player_addr = tostring(player_obj)
-                if last_player_addresses[weapon_id] and last_player_addresses[weapon_id] ~= player_addr then
-                    clear_player_cache(player_addr)
-                    last_applied_overrides[weapon_id] = nil
-                    active_overrides[weapon_id] = nil
-                    loaded_configs[weapon_id] = nil
-                    active_group_presets[weapon_id] = nil
-                    overrides_version[weapon_id] = nil
-                    last_overrides_version[weapon_id] = nil
-                end
-                last_player_addresses[weapon_id] = player_addr
-
-                local weapon_config = get_runtime_config(weapon_id)
-                if not active_overrides[weapon_id] then
-                    apply_all_defaults(weapon_id)
-                end
-
-                local weapon_parts = get_cached_weapon_parts(player_obj)
-                if weapon_parts then
-                    if weapon_config and weapon_config.enable_transform then
-                        local char_addr = tostring(player_obj)
-                        local new_overrides, changed, activated_targets, all_targeted_groups = TransformManager.apply_transform_rules(
-                            char_addr, "weapon_" .. weapon_id, weapon_config, player_obj, active_overrides[weapon_id] or {}, merge_overrides
-                        )
-                        if not active_group_presets[weapon_id] then active_group_presets[weapon_id] = {} end
-                        if activated_targets then
-                            for g_name, p_name in pairs(activated_targets) do
-                                active_group_presets[weapon_id][g_name] = p_name
-                            end
-                        end
-
-                        local has_global_target = false
-                        if weapon_config.groups then
-                            for g_name, g_data in pairs(weapon_config.groups) do
-                                if g_data.is_global then
-                                    if activated_targets and activated_targets[g_name] then
-                                        active_group_presets[weapon_id][g_name] = activated_targets[g_name]
-                                        has_global_target = true
-                                    elseif all_targeted_groups and all_targeted_groups[g_name] then
-                                        active_group_presets[weapon_id][g_name] = g_data.default_preset or ""
-                                        has_global_target = true
-                                    end
-                                end
-                            end
-                        end
-
-                        if changed then
-                            if has_global_target then
-                                rebuild_overrides_for_transform(weapon_id, weapon_config, activated_targets)
-                                apply_preset_to_weapon(weapon_parts, active_overrides[weapon_id], true, weapon_id)
-                            else
-                                active_overrides[weapon_id] = new_overrides
-                                bump_overrides_version(weapon_id)
-                                apply_preset_to_weapon(weapon_parts, new_overrides, true, weapon_id)
-                            end
-                        else
-                            if has_global_target then
-                                apply_preset_to_weapon(weapon_parts, active_overrides[weapon_id], true, weapon_id)
-                            else
-                                apply_preset_to_weapon(weapon_parts, new_overrides, true, weapon_id)
-                            end
-                        end
-                    else
-                        if active_overrides[weapon_id] then
-                            apply_preset_to_weapon(weapon_parts, active_overrides[weapon_id], true, weapon_id)
-                        end
-                    end
-                end
-            end
-
-            ::continue_player_non_cg::
+        -- 1) 本地玩家（主角）：每轮都处理，响应速度与单机完全一致
+        if local_entry and safe_object_alive(local_entry.obj) then
+            MP.process(local_entry, false)
+            Profiler.count("players_processed_local")
+        elseif local_player then
+            -- 玩家目录这一拍没给出本地玩家（读图 / 切场景）：用主角对象兜一下
+            MP.process({ obj = local_player, is_local = true }, false)
+            Profiler.count("players_processed_local_fallback")
         end
+
+        -- 2) 其他玩家（联机队友）
+        -- ------------------------------------------------------------------
+        --  - 单独用一个**更慢**的节奏：队友身上的差分变化不需要 14 次/秒，
+        --    肉眼能分辨的延迟在 0.2 秒以上。这里用 MULTIPLAYER_UPDATE_INTERVAL
+        --    帧推进一次（默认 30 帧 ≈ 0.2 秒 @144fps），每次只处理预算内的 1 人。
+        --    于是「其他玩家」的总开销被压到本地玩家的 1/3 以下，
+        --    而且与具体人数无关（轮询保证每个人都会被轮到）。
+        -- ------------------------------------------------------------------
+        if global_config.enable_multiplayer ~= false and targets
+            and global_frame_counter % MULTIPLAYER_UPDATE_INTERVAL == 0 then
+            local others = PlayerDir.others
+            local other_count = #others
+            if other_count > 0 then
+                local budget = tonumber(global_config.multiplayer_players_per_tick) or 1
+                if budget < 0 then budget = 0 end
+                if budget > other_count then budget = other_count end
+                for _ = 1, budget do
+                    if MP.next_index > other_count then MP.next_index = 1 end
+                    local entry = others[MP.next_index]
+                    MP.next_index = MP.next_index + 1
+                    MP.process(entry, false)
+                    Profiler.count("players_processed_other")
+                end
+            else
+                MP.next_index = 1
+            end
+        end
+        Profiler.finish("noncg_block", t_noncg_block)
     end
 
-    ::skip_non_cg_processing::
+    Profiler.finish("plugin_frame", plugin_t0)
 end
 
 re.on_frame(function()
     run_frame_quietly(avm_frame_update)
+end)
+
+-- 性能诊断：脚本被重置前先把最后一个窗口写出去
+re.on_script_reset(function()
+    if Profiler.enabled then Profiler.flush() end
 end)
 
 -- ========== UI 绘制（使用主玩家） ==========
@@ -3690,6 +4622,7 @@ re.on_draw_ui(function()
             imgui.tree_pop()
             return
         end
+
         local status, err = pcall(function()
             local primary = get_primary_player()
             if primary then
@@ -5022,7 +5955,7 @@ end
                             local weapon_type = Utils.get_current_weapon_type(primary)
                             if weapon_parts and #weapon_parts > 0 then
                                 for idx, part_obj in ipairs(weapon_parts) do
-                                    if part_obj and sdk.is_managed_object(part_obj) then
+                                    if part_obj and safe_object_alive(part_obj) then
                                         local mesh_comp = get_mesh_component_recursive(part_obj)
                                         if mesh_comp then
                                             local mesh_game_obj = mesh_comp:call("get_GameObject")
@@ -5030,7 +5963,7 @@ end
                                             local part_name = Utils.get_weapon_part_name(weapon_type, idx - 1)
                                             draw_mesh_toggle(mesh_game_obj, string.format("%s [%s]", part_name, obj_name), body_id, idx - 1)
                                         else
-                                            local obj_name = part_obj:call("get_Name")
+                                            local obj_name = SceneObject.call(part_obj, "get_Name")
                                             imgui.text_colored(string.format("Part %d [%s] (No Mesh)", idx - 1, obj_name), 0xFF808080)
                                         end
                                     else
@@ -5051,12 +5984,16 @@ end
                                 local part_name = armor_parts[idx]
                                 if part_obj then
                                     local mesh_comp = get_mesh_component_recursive(part_obj)
-                                    if mesh_comp then
-                                        local mesh_game_obj = mesh_comp:call("get_GameObject")
+                                    -- - get_GameObject() 有可能拿不到（部件刚重建、mesh 还没就绪）。
+                                    --   以前这里直接索引它，一旦为 nil 就会抛错 —— 而这段在 pcall
+                                    --   里，于是错误后面的**整块面板内容（语言 / 联机 / 性能设置…）
+                                    --   全部被截断**，玩家只会看到「面板少了一截」。必须判空。
+                                    local mesh_game_obj = mesh_comp and mesh_comp:call("get_GameObject")
+                                    if mesh_game_obj then
                                         local obj_name = mesh_game_obj:call("get_Name")
                                         draw_mesh_toggle(mesh_game_obj, string.format("%s [%s]", part_name, obj_name), body_id, idx)
                                     else
-                                        local obj_name = part_obj:call("get_Name")
+                                        local obj_name = SceneObject.call(part_obj, "get_Name")
                                         imgui.text_colored(string.format("%s [%s] (No Mesh)", part_name, obj_name), 0xFF808080)
                                     end
                                 else
@@ -5084,6 +6021,11 @@ end
                         end
                         imgui.tree_pop()
                     end
+                    imgui.separator()
+                    -- - 联机（多人）排在「语言」与「性能设置」中间：
+                    --   它是最常动的开关（联机卡就关掉、单人玩无所谓），
+                    --   放这里进面板翻两下就能看到，不必越过一大堆内容。
+                    draw_multiplayer_panel()
                     imgui.separator()
                     if imgui.tree_node(T("performance_settings")) then
                         imgui.text(T("performance_desc"))

@@ -1,5 +1,37 @@
 -- Utils.lua
 local Utils = {}
+local SceneObject = require("ArmorVariantManager_Core.SceneObject")
+
+-- ============================================================================
+--  玩家句柄解析
+-- ============================================================================
+
+-- 判断一个句柄是不是 snow.player.Player（而不是 GameObject）：
+-- 只有 Player 才有 getPlayerIndex()，这是最稳的判别方式。
+local function is_player_object(handle)
+    if not SceneObject.is_alive(handle) then return false end
+    local ok, idx = pcall(function() return SceneObject.call(handle, "getPlayerIndex") end)
+    return ok and type(idx) == "number"
+end
+
+-- 返回 player（可能为 nil）, game_object（可能为 nil）
+local function resolve_player(handle)
+    if handle == nil then
+        local master = Utils.get_master_player()
+        if not master then return nil, nil end
+        local ok, go = pcall(function() return SceneObject.call(master, "get_GameObject") end)
+        return master, (ok and go) or nil
+    end
+    if not SceneObject.is_alive(handle) then return nil, nil end
+    if is_player_object(handle) then
+        local ok, go = pcall(function() return SceneObject.call(handle, "get_GameObject") end)
+        return handle, (ok and go) or nil
+    end
+    -- 传进来的是 GameObject
+    return nil, handle
+end
+Utils.is_player_object = is_player_object
+Utils.resolve_player = resolve_player
 
 function Utils.deep_copy_table(orig)
     local orig_type = type(orig)
@@ -27,26 +59,47 @@ end
 function Utils.get_master_player()
     local pm = Utils.get_player_manager()
     if not pm then return nil end
-    if pm.getMasterPlayer then
-        return pm:call("getMasterPlayer")
-    elseif pm.findMasterPlayer then
-        return pm:call("findMasterPlayer()")
-    end
+    -- - 崛起里实测可用的是 findMasterPlayer()（Lua Bone System / Lua Face System 也是这么拿的）；
+    --   getMasterPlayer 作为兜底，兼容其它版本。
+    local ok, master = pcall(function() return pm:call("findMasterPlayer()") end)
+    if ok and master and SceneObject.is_alive(master) then return master end
+    ok, master = pcall(function() return pm:call("getMasterPlayer") end)
+    if ok and master and SceneObject.is_alive(master) then return master end
     return nil
 end
 
-function Utils.is_weapon_on(master_player)
-    if not master_player then return false end
-    if master_player.isWeaponOn then
-        return master_player:isWeaponOn()
+function Utils.is_weapon_on(handle)
+    local player = resolve_player(handle)
+    if not player then return false end
+    if player.isWeaponOn then
+        local ok, v = pcall(function() return player:isWeaponOn() end)
+        if ok then return v end
     end
-    if master_player.get_IsWeaponOn then
-        return master_player:get_IsWeaponOn()
+    if player.get_IsWeaponOn then
+        local ok, v = pcall(function() return player:get_IsWeaponOn() end)
+        if ok then return v end
     end
     return false
 end
 
-function Utils.get_current_scroll_state()
+function Utils.get_current_scroll_state(handle)
+    -- 红蓝书状态是从本地玩家的 HUD 控件上读的，只对本地玩家有意义。
+    -- 联机时如果问的是「别的玩家」，正确答案是「不知道」，
+    -- 而不是把主角的状态套到队友身上（那样队友的书会跟着你的书乱变）。
+    if handle ~= nil then
+        local player, go = resolve_player(handle)
+        local master = Utils.get_master_player()
+        local master_go = nil
+        if master then
+            local ok, g = pcall(function() return SceneObject.call(master, "get_GameObject") end)
+            if ok then master_go = g end
+        end
+        if player ~= nil then
+            if master == nil or player ~= master then return nil end
+        elseif master_go ~= nil and go ~= master_go then
+            return nil
+        end
+    end
     local gui_manager = sdk.get_managed_singleton("snow.gui.GuiManager")
     if not gui_manager then return nil end
     local gui_hud = gui_manager:call("get_refGuiHud_WeaponTechniqueMySet")
@@ -139,59 +192,61 @@ Utils.WEAPON_PARTS_MAP = {
     }
 }
 
--- 获取当前玩家武器类型（直接使用主玩家）
-function Utils.get_current_weapon_type()
-    local master = Utils.get_master_player()
-    if not master then return nil end
-    local weaponType = master:get_field("_playerWeaponType")
-    if type(weaponType) == "number" then
+-- 获取武器类型（_playerWeaponType）
+-- handle 可以是 Player 托管对象 / GameObject / nil（= 本地玩家）。
+-- - 联机关键：传入队友的 Player 对象时读到的是**他自己**的武器类型。
+--   拿不到指定玩家时兜底回本地玩家，保证旧调用点的行为不变。
+function Utils.get_current_weapon_type(handle)
+    local player = resolve_player(handle)
+    if not player then player = Utils.get_master_player() end
+    if not player then return nil end
+    local ok, weaponType = pcall(function() return player:get_field("_playerWeaponType") end)
+    if ok and type(weaponType) == "number" then
         return weaponType
     end
     return nil
 end
 
 -- 递归查找子物体中名称以指定前缀开头的 GameObject
+-- （dfs_nodes 只用于性能诊断：统计一次查找到底访问了多少个节点）
+local dfs_nodes = 0
 local function find_child_with_prefix(transform, prefix, depth, maxDepth)
     if depth > maxDepth then return nil end
-    local child = transform:call("get_Child")
+    local child = SceneObject.call(transform, "get_Child")
     while child do
-        local child_obj = child:call("get_GameObject")
+        dfs_nodes = dfs_nodes + 1
+        local child_obj = SceneObject.call(child, "get_GameObject")
         if child_obj then
-            local name = child_obj:call("get_Name")
+            local name = SceneObject.call(child_obj, "get_Name")
             if name and string.sub(name, 1, #prefix) == prefix then
                 return child_obj
             end
             local deeper = find_child_with_prefix(child, prefix, depth + 1, maxDepth)
             if deeper then return deeper end
         end
-        child = child:call("get_Next")
+        child = SceneObject.call(child, "get_Next")
     end
     return nil
 end
 
--- 获取当前武器部件列表（基于主玩家的 GameObject）
-function Utils.get_current_weapon_parts()
-    local master = Utils.get_master_player()
-    if not master then return nil end
-    local weaponType = Utils.get_current_weapon_type()
+-- 获取武器部件列表
+-- handle 可以是 Player 托管对象 / GameObject / nil（= 本地玩家）。
+-- - 联机关键：武器类型与 GameObject 必须来自**同一个玩家**，
+--   否则队友会被套上主角的武器部件（旧实现就是这样）。
+local function get_current_weapon_parts_impl(handle)
+    dfs_nodes = 0
+    local player, go = resolve_player(handle)
+    if not go then return nil end
+    -- 用同一个玩家的类型去查表；player 为 nil（只给了 GameObject）时，
+    -- get_current_weapon_type 会兜底回本地玩家，与旧行为一致。
+    local weaponType = Utils.get_current_weapon_type(player or go)
     if weaponType == nil then return nil end
 
     local partsConfig = Utils.WEAPON_PARTS_MAP[weaponType]
     if not partsConfig then return nil end
 
-    -- 获取玩家的 GameObject
-    local playerObj = master
-    if not playerObj.get_Transform then
-        local ok, go = pcall(function() return master:call("get_GameObject") end)
-        if ok and go then
-            playerObj = go
-        else
-            return nil
-        end
-    end
-
-    local transform = playerObj:call("get_Transform")
-    if not transform then return nil end
+    local ok_tf, transform = pcall(function() return SceneObject.call(go, "get_Transform") end)
+    if not (ok_tf and transform) then return nil end
 
     local parts = {}
     for idx, partInfo in ipairs(partsConfig) do
@@ -201,10 +256,22 @@ function Utils.get_current_weapon_parts()
     end
     return parts
 end
+function Utils.get_current_weapon_parts(handle)
+    local P = _G.__AVM_PROFILER
+    local t0 = P and P.begin("utils_weapon_parts")
+    local parts = get_current_weapon_parts_impl(handle)
+    if P then
+        P.finish("utils_weapon_parts", t0)
+        P.count("utils_weapon_parts_calls")
+        P.count("utils_weapon_dfs_nodes", dfs_nodes)
+        P.max_value("utils_weapon_dfs_nodes_one_call", dfs_nodes)
+    end
+    return parts
+end
 
 -- 获取武器模式配置文件名
-function Utils.get_weapon_config_id()
-    local weaponType = Utils.get_current_weapon_type()
+function Utils.get_weapon_config_id(handle)
+    local weaponType = Utils.get_current_weapon_type(handle)
     if weaponType == nil then return nil end
     return "weapon_" .. tostring(weaponType)
 end

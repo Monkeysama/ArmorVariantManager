@@ -18,6 +18,8 @@
 --    探测结果会写进 self.backend / self.failed_hooks 供设置面板显示。
 -- ============================================================================
 local InputBlocker = {}
+local WindowsInput = require("ArmorVariantManager_UI.Service.WindowsInput")
+local EngineMouse = require("ArmorVariantManager_UI.Service.EngineMouse")
 local BridgeRuntime = require("ArmorVariantManager_UI.Service.BridgeRuntime")
 
 -- 崛起版本候选的游戏级输入管理器类型（按优先级）
@@ -129,6 +131,9 @@ function InputBlocker.new(options)
     }
     setmetatable(component, { __index = InputBlocker })
     component:install()
+    if re and type(re.on_script_reset)=="function" then
+        re.on_script_reset(function() component:set_enabled(false) end)
+    end
     return component
 end
 
@@ -228,6 +233,7 @@ function InputBlocker:set_mouse_mode(blocked, force)
                     self:to_native_ptr(null_value))
             end
             self:call_mouse_native("set_AbsoluteMode(System.Boolean)", self:to_bool_ptr(true))
+            self:call_mouse_native("set_ClipCursorToScreen(System.Boolean)", self:to_bool_ptr(false))
             self:call_mouse_native("set_ShowCursor(System.Boolean)", self:to_bool_ptr(false))
         elseif self.mouse_mode_saved then
             if self.saved_mouse_manipulator ~= nil then
@@ -250,20 +256,12 @@ end
 
 -- 从引擎读取绝对光标位置（优先），失败返回 nil
 function InputBlocker:read_engine_cursor()
+    local state = WindowsInput.state()
+    if state and state.foreground then return state.cursor_x,state.cursor_y end
     if not self:probe_engine_mouse() then return nil, nil end
-    for _, method_name in ipairs({ "get_PresentRectCursorPosition()", "get_ScreenCursorPosition()",
-        "get_CursorPosition()", "get_Position()" }) do
-        local ok, point = self:call_mouse_native(method_name)
-        if ok and point then
-            local x, y = point.x, point.y
-            if type(x) ~= "number" then x = nil end
-            if type(y) ~= "number" then y = nil end
-            if x and y and x >= 0 and y >= 0 then
-                return x, y
-            end
-        end
-    end
-    return nil, nil
+    return EngineMouse.read(function(method_name)
+        return self:call_mouse_native(method_name)
+    end, function() return self:get_surface_size() end)
 end
 
 -- ============================================================================
@@ -276,6 +274,12 @@ function InputBlocker:find_input_manager()
         end)
         if ok and type_definition then
             self.input_manager_type = type_definition
+            local native_ok,native = safe_call(function() return sdk.get_native_singleton(type_name) end)
+            if native_ok then self.input_manager = native end
+            if not self.input_manager then
+                local managed_ok,managed = safe_call(function() return sdk.get_managed_singleton(type_name) end)
+                if managed_ok then self.input_manager = managed end
+            end
             self.backend = type_name
             return type_definition
         end
@@ -419,6 +423,13 @@ end
 --  滚轮 / 光标
 -- ============================================================================
 function InputBlocker:get_mouse_wheel()
+    local state = WindowsInput.state()
+    if state then
+        local total = tonumber(state.wheel_total) or 0
+        local delta = self.last_wheel_total and (total-self.last_wheel_total)/120 or 0
+        self.last_wheel_total = total
+        return delta
+    end
     -- 优先 ImGui（WM_MOUSEWHEEL 驱动，与游戏无关，最可靠）
     local io_ok, io = safe_call(function() return imgui.get_io() end)
     if io_ok and io then
@@ -434,6 +445,8 @@ function InputBlocker:get_mouse_wheel()
 end
 
 function InputBlocker:get_surface_size()
+    local width,height = WindowsInput.surface_size()
+    if width then return width,height end
     local d2d_ok, width, height = safe_call(function()
         if d2d and d2d.surface_size then return d2d.surface_size() end
         return nil, nil
@@ -489,7 +502,8 @@ end
 -- ============================================================================
 function InputBlocker:write_cursor_bridge_state(blocked)
     local ok, error_value = safe_call(function()
-        json.dump_file(self.cursor_bridge_state_path, { blocked = blocked == true })
+        json.dump_file(self.cursor_bridge_state_path, { blocked = blocked == true,
+            mute_game_input = self.mute_game_input, capture_keyboard = self.capture_keyboard == true })
     end)
     if not ok then self.last_error = tostring(error_value) end
 end
@@ -501,6 +515,8 @@ function InputBlocker:set_enabled(enabled)
     if next_enabled == self.enabled then return end
     self.enabled = next_enabled
     if next_enabled then
+        local state=WindowsInput.state()
+        self.last_wheel_total=state and tonumber(state.wheel_total) or nil
         self.cursor_initialized = false
         self:update_cursor_position()
         if not self.cursor_initialized then
@@ -521,6 +537,10 @@ end
 -- 每帧由 UI 调用（UI 自己的 update 里已处理开关，这里只刷新光标）
 function InputBlocker:tick()
     if not self.enabled then return end
+    if not self.last_bridge_heartbeat or os.clock()-self.last_bridge_heartbeat > 0.2 then
+        self.last_bridge_heartbeat = os.clock()
+        self:write_cursor_bridge_state(true)
+    end
     self:update_cursor_position()
 end
 

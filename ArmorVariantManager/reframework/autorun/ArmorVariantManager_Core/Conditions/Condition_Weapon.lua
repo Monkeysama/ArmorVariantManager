@@ -1,19 +1,21 @@
--- Condition_Weapon.lua
+-- Condition_Weapon.lua —— 武器「收起 / 拔出」
 local M = {}
 M.id = "weapon"
 
 local Utils = require("ArmorVariantManager_Core.Utils")
 
-function M.get_state(character)
-    local master = Utils.get_master_player()
-    if not master then
-        return nil  -- 无法获取玩家对象（如存档界面），不返回状态
+-- handle：指定玩家的句柄（Player 对象 / GameObject / nil = 本地玩家）
+function M.get_state(handle)
+    local player = Utils.resolve_player(handle)
+    if not player then player = Utils.get_master_player() end
+    if not player then
+        return nil  -- 拿不到玩家对象（存档界面 / 读图中），不返回状态
     end
-    return Utils.is_weapon_on(master)
+    return Utils.is_weapon_on(player)
 end
 
-function M.evaluate(config, character, char_addr)
-    local drawn = M.get_state(character)
+function M.evaluate(config, character, char_addr, player)
+    local drawn = M.get_state(player or character)
     if drawn == nil then
         return nil, nil  -- 未检测到状态，不激活规则
     end

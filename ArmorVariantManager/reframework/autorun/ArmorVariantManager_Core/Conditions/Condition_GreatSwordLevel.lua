@@ -1,32 +1,35 @@
--- Condition_GreatSwordLevel.lua
+-- Condition_GreatSwordLevel.lua —— 大剑：蓄力等级
 local M = {}
 M.id = "greatsword_level"
 
-function M.get_state()
-    local playerManager = sdk.get_managed_singleton("snow.player.PlayerManager")
-    if not playerManager then return nil end
-    local masterPlayer = playerManager:call("findMasterPlayer()")
-    if not masterPlayer then return nil end
+local Utils = require("ArmorVariantManager_Core.Utils")
 
-    -- 武器类型检查（大剑类型为0）
-    local weaponType = masterPlayer:get_field("_playerWeaponType")
-    if weaponType ~= 0 then
+local function field(player, name)
+    local ok, v = pcall(function() return player:get_field(name) end)
+    if ok then return v end
+    return nil
+end
+
+-- handle：指定玩家的句柄（Player 对象 / GameObject / nil = 本地玩家）
+function M.get_state(handle)
+    local player = Utils.resolve_player(handle)
+    if not player then player = Utils.get_master_player() end
+    if not player then return nil end
+
+    -- 大剑类型为 0
+    if field(player, "_playerWeaponType") ~= 0 then
         return nil
     end
 
-    -- 读取蓄力等级字段 _TameLv
-    local tameLv = masterPlayer:get_field("_TameLv")
-    if tameLv == nil then
-        return 0  -- 无法读取时视为无蓄力
-    end
-    if type(tameLv) == "number" then
-        return tameLv  -- 0~3
-    end
+    -- 蓄力等级字段 _TameLv
+    local tameLv = field(player, "_TameLv")
+    if tameLv == nil then return 0 end  -- 读不到视为无蓄力
+    if type(tameLv) == "number" then return tameLv end  -- 0~3
     return 0
 end
 
-function M.evaluate(config, character, char_addr)
-    local level = M.get_state()
+function M.evaluate(config, character, char_addr, player)
+    local level = M.get_state(player or character)
     if level ~= nil and config.greatsword_level_transform_rules then
         for _, r in ipairs(config.greatsword_level_transform_rules) do
             if r.level == level then

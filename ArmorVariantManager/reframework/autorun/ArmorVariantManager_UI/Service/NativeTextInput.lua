@@ -1,7 +1,8 @@
 local NativeTextInput = {}
+local WindowsInput = require("ArmorVariantManager_UI.Service.WindowsInput")
 local BridgeRuntime = require("ArmorVariantManager_UI.Service.BridgeRuntime")
-local default_request_path = "ArmorVariantManager/Runtime/D2DTextInputRequest.json"
-local default_result_path = "ArmorVariantManager/Runtime/D2DTextInputResult.json"
+local default_request_path = "ArmorVariantManager/Runtime/AVMTextInputRequest.json"
+local default_result_path = "ArmorVariantManager/Runtime/AVMTextInputResult.json"
 function NativeTextInput.new(options)
     options = options or {}
     local paths = BridgeRuntime.paths(options.runtime_directory)
@@ -33,6 +34,7 @@ function NativeTextInput:write_request(active, text, rect)
         request.y = math.floor((rect and rect.y or 0) + 0.5)
         request.width = math.max(1, math.floor((rect and rect.w or 1) + 0.5))
         request.height = math.max(1, math.floor((rect and rect.h or 28) + 0.5))
+        request.protocol = 1
     end
     pcall(function() json.dump_file(self.request_path, request) end)
 end
@@ -43,6 +45,8 @@ function NativeTextInput:activate(input_id, text, rect, reset)
         _G.__AVM_UI_TEXT_FOCUS_SEQUENCE = (_G.__AVM_UI_TEXT_FOCUS_SEQUENCE or 0) + 1
         self.focus_sequence = _G.__AVM_UI_TEXT_FOCUS_SEQUENCE
         self.active_id = input_id
+        self.active_started = os.clock()
+        self.bridge_ack_at = nil
         self.active_token = self.token_prefix .. ":" .. tostring(self.session)
         self.active_text = text or ""
         self.composition = ""
@@ -60,6 +64,7 @@ function NativeTextInput:sync_rect(input_id, rect)
     local signature = string.format("%s:%d:%d:%d:%d:%d", input_id, self.session, x, y, w, h)
     if signature == self.last_request_signature then return end
     self.last_request_signature = signature
+    self.active_rect = { x=x,y=y,w=w,h=h }
     self:write_request(true, self.active_text, { x = x, y = y, w = w, h = h })
 end
 function NativeTextInput:deactivate(input_id)
@@ -74,7 +79,10 @@ function NativeTextInput:deactivate(input_id)
     self:write_request(false)
 end
 function NativeTextInput:is_active(input_id)
-    return self.active_id == input_id
+    if self.active_id ~= input_id or not WindowsInput.state() then return false end
+    local now = os.clock()
+    return (self.bridge_ack_at and now-self.bridge_ack_at < 0.75)
+        or now-(self.active_started or 0) < 0.5
 end
 function NativeTextInput:get_composition(input_id)
     if self.active_id == input_id then return self.composition or "" end
@@ -82,13 +90,19 @@ function NativeTextInput:get_composition(input_id)
 end
 function NativeTextInput:update()
     if self.active_id == nil then return nil end
-    local ok, result = pcall(function() return json.load_file(self.result_path) end)
-    if not ok or type(result) ~= "table" then return nil end
+    if not self.last_heartbeat or os.clock()-self.last_heartbeat > 0.2 then
+        self.last_heartbeat = os.clock()
+        self:write_request(true,self.active_text,self.active_rect)
+    end
+    if not WindowsInput.state() then return nil end
+    local result = BridgeRuntime.read_optional_json(self.result_path)
+    if type(result) ~= "table" then return nil end
     local sequence = tonumber(result.sequence)
     if not sequence or sequence <= self.last_sequence then return nil end
     if result.id ~= self.active_id or tonumber(result.session) ~= self.session
         or result.token ~= self.active_token then return nil end
     self.last_sequence = sequence
+    self.bridge_ack_at = os.clock()
     self.active_text = type(result.text) == "string" and result.text or ""
     self.composition = type(result.composition) == "string" and result.composition or ""
     return self.active_id, self.active_text, self.composition, result.focused ~= false

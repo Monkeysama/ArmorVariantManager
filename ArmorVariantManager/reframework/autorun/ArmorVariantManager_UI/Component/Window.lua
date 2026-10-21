@@ -6,18 +6,14 @@ function Window.new()
         offset_x = 0,
         offset_y = 0
     }
-    function component:clamp(x, y, sw, sh, w, h)
-        local margin = 24
-        local max_x = math.max(margin, sw - w - margin)
-        local max_y = math.max(margin, sh - h - margin)
-        return math.max(margin, math.min(x, max_x)), math.max(margin, math.min(y, max_y))
-    end
+    -- The user controls placement; screen bounds are not an implicit layout constraint.
+    function component:clamp(x,y) return x,y end
+
     function component:update(mx, my, x, y, w, h, sw, sh, excluded_rects, allow_edge_drag)
         if self.dragging then
             if Runtime.is_mouse_down() then
                 x = mx - self.offset_x
                 y = my - self.offset_y
-                x, y = self:clamp(x, y, sw, sh, w, h)
             else
                 self.dragging = false
             end

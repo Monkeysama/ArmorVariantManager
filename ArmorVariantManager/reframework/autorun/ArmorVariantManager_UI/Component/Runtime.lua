@@ -1,4 +1,33 @@
+local WindowsInput = require("ArmorVariantManager_UI.Service.WindowsInput")
+local EngineMouse = require("ArmorVariantManager_UI.Service.EngineMouse")
 local Runtime = {}
+Runtime.last_click_sequence = nil
+function Runtime.pointer_source()
+    local state=WindowsInput.state()
+    if state then return state.foreground and "windows" or "unfocused" end
+    return _G.__AVM_REFD2D_INPUT_BLOCKED and "engine" or "imgui"
+end
+function Runtime.reset_pointer()
+    local state = WindowsInput.state()
+    Runtime.last_click_sequence = state and state.click_sequence or nil
+    Runtime.frame_clicked = false
+end
+function Runtime.begin_frame()
+    local state = WindowsInput.state()
+    if state then
+        Runtime.frame_clicked = Runtime.last_click_sequence ~= nil
+            and state.click_sequence ~= Runtime.last_click_sequence and state.foreground == true
+        Runtime.last_click_sequence = state.click_sequence
+    else Runtime.frame_clicked = nil end
+end
+function Runtime.surface_size(api)
+    local w,h = WindowsInput.surface_size()
+    if w then return w,h end
+    return api.surface_size()
+end
+Runtime.key_down = WindowsInput.key_down
+Runtime.first_key = WindowsInput.first_key
+Runtime.refresh_input = WindowsInput.refresh
 Runtime.ui_scale = 1
 function Runtime.set_ui_scale(scale)
     Runtime.ui_scale = math.max(0.01, tonumber(scale) or 1)
@@ -21,12 +50,6 @@ end
 local engine_mouse_singleton = nil
 local engine_mouse_typedef = nil
 local engine_mouse_probed_at = -1
-Runtime.engine_mouse_getters = {
-    "get_PresentRectCursorPosition()",
-    "get_ScreenCursorPosition()",
-    "get_CursorPosition()",
-    "get_Position()"
-}
 function Runtime.engine_mouse_position()
     if not engine_mouse_singleton then
         -- 只缓存「成功」；失败时最多每秒重试一次，避免启动早期探测失败被永久缓存
@@ -43,78 +66,56 @@ function Runtime.engine_mouse_position()
         end
     end
     if not engine_mouse_singleton then return nil, nil end
-    for _, method_name in ipairs(Runtime.engine_mouse_getters) do
-        local ok, point = pcall(function()
+    return EngineMouse.read(function(method_name)
+        return pcall(function()
             return sdk.call_native_func(engine_mouse_singleton, engine_mouse_typedef, method_name)
         end)
-        if ok and point then
-            local x, y = point.x, point.y
-            if type(x) == "number" and type(y) == "number" and x >= 0 and y >= 0 then
-                return x, y
-            end
-        end
-    end
-    return nil, nil
+    end, function()
+        local size = imgui.get_display_size()
+        return size.x or size[1], size.y or size[2]
+    end)
 end
 
 function Runtime.raw_mouse_position()
+    local state = WindowsInput.state()
+    if state and state.foreground then return state.cursor_x, state.cursor_y end
     if _G.__AVM_REFD2D_INPUT_BLOCKED == true then
         local engine_x, engine_y = Runtime.engine_mouse_position()
         if engine_x and engine_y then return engine_x, engine_y end
     end
     local ok, mouse = pcall(function() return imgui.get_mouse() end)
-    if ok and mouse and type(mouse.x) == "number" and type(mouse.y) == "number" then
-        return mouse.x, mouse.y
+    if ok and mouse then
+        local x, y = EngineMouse.coordinates(mouse)
+        if x then return x, y end
     end
     return -1, -1
 end
 
 function Runtime.mouse_position()
-    local custom_cursor = _G.__AVM_REFD2D_CURSOR_POSITION
-    if _G.__AVM_REFD2D_INPUT_BLOCKED == true then
-        -- 接管输入期间：引擎绝对坐标 > InputBlocker 维护的光标 > imgui
-        local engine_x, engine_y = Runtime.engine_mouse_position()
-        if engine_x and engine_y then
-            return Runtime.to_logical_point(engine_x, engine_y)
-        end
-        if type(custom_cursor) == "table" and type(custom_cursor.x) == "number"
-            and type(custom_cursor.y) == "number" then
-            return Runtime.to_logical_point(custom_cursor.x, custom_cursor.y)
-        end
-        local real_ok, real_mouse = pcall(function() return imgui.get_mouse() end)
-        if real_ok and real_mouse and type(real_mouse.x) == "number"
-            and type(real_mouse.y) == "number" and real_mouse.x >= 0 and real_mouse.y >= 0 then
-            return Runtime.to_logical_point(real_mouse.x, real_mouse.y)
-        end
-        return -1, -1
-    end
-    local ok, mouse = pcall(function() return imgui.get_mouse() end)
-    if ok and mouse then
-        local x, y = mouse.x, mouse.y
-        if type(x) == "number" and type(y) == "number" and x >= 0 and y >= 0 then
-            return Runtime.to_logical_point(x, y)
-        end
-    end
-    local engine_x, engine_y = Runtime.engine_mouse_position()
-    if engine_x and engine_y then
-        return Runtime.to_logical_point(engine_x, engine_y)
-    end
-    return -1, -1
+    local x,y = Runtime.raw_mouse_position()
+    x,y = Runtime.to_logical_point(x,y)
+    local c=Runtime.input_clip
+    if c and (x<c.x or y<c.y or x>c.x+c.w or y>c.y+c.h) then return -1,-1 end
+    return x,y
 end
+
 function Runtime.point_in_rect(mx, my, x, y, w, h)
     return mx >= x and mx <= x + w and my >= y and my <= y + h
 end
 function Runtime.is_mouse_down()
+    local state = WindowsInput.state()
+    if state then return state.foreground == true and state.mouse_down == true end
     local ok, value = pcall(function() return imgui.is_mouse_down(0) end)
     return ok and value or false
 end
 function Runtime.is_mouse_clicked()
+    if Runtime.frame_clicked ~= nil then return Runtime.frame_clicked end
     local ok, value = pcall(function() return imgui.is_mouse_clicked(0) end)
     return ok and value or false
 end
 function Runtime.real_mouse_inside_surface()
     local size_ok, width, height = pcall(function()
-        if d2d and d2d.surface_size then return d2d.surface_size() end
+        if d2d and d2d.surface_size then return Runtime.surface_size(d2d) end
         return nil, nil
     end)
     if not size_ok or type(width) ~= "number" or type(height) ~= "number"
