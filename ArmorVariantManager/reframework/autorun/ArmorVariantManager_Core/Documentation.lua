@@ -61,7 +61,7 @@ return {
                 title = "8. 陷地修正（陷地修复）",
                 paragraphs = {
                     "用于高跟鞋穿脱等外观切换时的高度修正。新界面在防具部件面板底部启用，旧界面位于预设管理内部；默认关闭，高度范围为 -10～50 cm。",
-                    "调整后实时预览，新增或覆盖当前分组预设时保存启用状态与高度；切换预设会恢复对应设置。多个分组依次应用时，以最后应用的预设高度为准。",
+                    "调整后实时预览，新增或覆盖当前分组预设时保存勾选状态与高度。只有勾选的预设参与高度控制，未勾选保留当前高度；以最后应用的勾选预设为准。归零需使用勾选且为 0 cm 的预设，归零按钮也会勾选并设为 0 cm。默认加载和变身规则跳过未勾选预设，变身条件结束仍回退手动基线。",
                     "适用于本机显示的玩家、菜单与存档等预览及过场玩家模型，按各自防具读取预设，人物与所属武器一起抬升。加载切场及骑乘鹭鹰龙时暂停。",
                     "仅修正本机显示的骨架高度，不改变物理坐标、碰撞或其他玩家客户端。兼容旧 JSON，未配置的旧预设默认关闭。"
                 }
@@ -128,7 +128,7 @@ return {
                     title = "8. Ground Clipping Fix",
                     paragraphs = {
                         "Adjusts visual height when switching appearances such as wearing or removing high heels. Enable it at the bottom of the armor parts panel, or inside Preset Management in the legacy UI. Disabled by default; range: -10 to 50 cm.",
-                        "Changes preview immediately. Create or overwrite a preset in the current group to save the enabled state and height. Selecting a preset restores its settings; the last applied group preset determines the height.",
+                        "Changes preview immediately; create or overwrite a group preset to save. Only checked presets control height, and the last checked preset applied wins. Unchecked presets keep the current height. Use a checked 0 cm preset to reset; Reset also checks the option and sets 0 cm. Default loading and transformation rules skip unchecked presets; ending a condition still restores the manual baseline.",
                         "Applies to players rendered on this computer, menu and save previews, and player cutscene actors, using each model's armor presets. The character and attached weapons rise together. Paused during loading, scene transitions and Seikret riding.",
                         "Only changes the skeleton's local visual appearance, without changing physics, collision or other players' clients. Existing JSON files remain compatible; old presets without height settings default to disabled."
                     }
@@ -201,6 +201,14 @@ return {
     {
         title = "更新日志",
         entries = {
+            {
+                title = "V4.3.4",
+                paragraphs = {
+                    "1. 调整陷地修复的多分组控制逻辑：只有勾选的预设参与高度控制，未勾选的预设不再覆盖当前高度。",
+                    "2. 支持在勾选的 +10 cm 与 0 cm 预设之间切换；归零按钮会勾选并设为 0 cm。",
+                    "3. 默认加载与变身规则同步采用上述逻辑，保留规则优先级与条件结束后的回退行为，兼容旧 JSON。"
+                }
+            },
             {
                 title = "V4.3.3",
                 paragraphs = {
@@ -349,6 +357,14 @@ return {
         en = {
             title = "Changelog",
             entries = {
+                {
+                    title = "V4.3.4",
+                    paragraphs = {
+                        "1. Only checked Ground Clipping Fix presets now control height across groups; unchecked presets no longer override the current height.",
+                        "2. Switch between checked +10 cm and 0 cm presets to raise or reset height. Reset now checks the option and sets 0 cm.",
+                        "3. Default loading and transformation rules use the same behavior, preserving rule priority and rollback when conditions end, with existing JSON compatibility."
+                    }
+                },
                 {
                     title = "V4.3.3",
                     paragraphs = {

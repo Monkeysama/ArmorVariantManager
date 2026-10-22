@@ -1,5 +1,5 @@
 local TransformManager = {}
-local legacy_ground_clipping_disabled = { enabled = false, height_cm = 10 }
+local GroundClippingFix = require("ArmorVariantManager_Core.GroundClippingFix")
 
 -- 引入条件注册表
 local ConditionRegistry = {
@@ -304,10 +304,11 @@ function TransformManager.apply_transform_rules(char_addr, config, character, ac
                             end
                         end
                         if preset_data then
+                            local previous_height = new_overrides.ground_clipping_fix
                             new_overrides = merge_overrides(new_overrides, preset_data)
-                            -- 高度跟随条件目标预设，沿用规则优先级；旧预设读取装备级兼容值。
-                            new_overrides.ground_clipping_fix = preset_data.ground_clipping_fix
-                                or config.ground_clipping_fix or config.high_heel_height or legacy_ground_clipping_disabled
+                            -- 仅勾选的目标参与高度优先级；未勾选保留低优先级规则或手动基线。
+                            new_overrides.ground_clipping_fix = GroundClippingFix.participating_settings(preset_data, config)
+                                or previous_height
                         end
                     end
                 end

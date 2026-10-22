@@ -1,7 +1,7 @@
 local mod_name = "ArmorVariantManager"
 -- 开发中遵守
 -- 版本号-开发状态-开发状态标识
-local version = "4.3.3"
+local version = "4.3.4"
 local author = "MK,Moon,AZUSA,Ensicht"
 
 -- =============================================================================
@@ -1950,7 +1950,8 @@ local function merge_overrides(base_data, add_data)
     if not add_data then return result end
     for p_idx, p_data in pairs(add_data) do
         if p_idx == "ground_clipping_fix" then
-            result.ground_clipping_fix = GroundClippingFix.read_settings(p_data)
+            local settings = GroundClippingFix.read_settings(p_data)
+            if settings.enabled then result.ground_clipping_fix = settings end
             goto continue_override_part
         end
         if not result[p_idx] then result[p_idx] = { materials = {} } end
@@ -2132,6 +2133,8 @@ local function apply_preset(preset_name)
     if not preset_data then return end
     local current_body_id = get_body_id()
     if current_body_id then
+        -- 全局分组会重建材质状态，先保留高度，未勾选的预设不能借重建清空其他分组的修正。
+        local previous_height = active_overrides[current_body_id] and active_overrides[current_body_id].ground_clipping_fix
         -- 记录当前分组的选中预设（用于全局分组全量重算时恢复）
         if not active_group_presets[current_body_id] then active_group_presets[current_body_id] = {} end
         active_group_presets[current_body_id][current_group_name] = preset_name
@@ -2197,9 +2200,10 @@ local function apply_preset(preset_name)
                 end
             end
         end
-        -- 高度不能按材质叠加；手动选择以本次应用的分组预设为准，包括关闭状态。
+        -- 仅勾选的预设覆盖高度；未勾选只切换材质，勾选的 0 cm 可主动归零。
         if not is_weapon_id(current_body_id) then
-            active_overrides[current_body_id].ground_clipping_fix = GroundClippingFix.preset_settings(preset_data, current_config)
+            active_overrides[current_body_id].ground_clipping_fix = GroundClippingFix.participating_settings(preset_data, current_config)
+                or previous_height or GroundClippingFix.default_settings(current_config)
         end
         temp_applied_presets[current_body_id] = preset_name
     end
@@ -3033,7 +3037,8 @@ local function set_ground_clipping_settings(changes, body_id)
         or group and group.default_preset
     local settings = ground_clipping_presets.edit(current_config, body_id, current_group_name, selected, changes)
     if not active_overrides[body_id] then active_overrides[body_id] = {} end
-    active_overrides[body_id].ground_clipping_fix = settings
+    -- 取消勾选只退出本预设的高度控制，不撤销之前的有效高度；归零需勾选并设置 0 cm。
+    if settings.enabled then active_overrides[body_id].ground_clipping_fix = settings end
     ground_clipping_fix.settings_changed()
     return true
 end
@@ -4140,7 +4145,7 @@ re.on_draw_ui(function()
                                 if changed then set_ground_clipping_settings({ height_cm = value }, body_id) end
                                 imgui.same_line()
                                 if imgui.button(T("heel_reset_short") .. "##ground_clipping_reset") then
-                                    set_ground_clipping_settings({ enabled = false, height_cm = 0 }, body_id)
+                                    set_ground_clipping_settings({ enabled = true, height_cm = 0 }, body_id)
                                 end
                                 imgui.separator()
                             end

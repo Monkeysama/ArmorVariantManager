@@ -2156,7 +2156,7 @@ function VariantManagerUI:draw_ground_clipping_fix(x, y, w, context)
         self.heel_save_failed = not self.deps.set_ground_clipping_settings({ height_cm = value }, context.body_id)
     end
     if self.button:draw(reset_label, reset_x, y + 8, reset_width, 30, false, nil, self.fonts.small) then
-        self.heel_save_failed = not self.deps.set_ground_clipping_settings({ enabled = false, height_cm = 0 }, context.body_id)
+        self.heel_save_failed = not self.deps.set_ground_clipping_settings({ enabled = true, height_cm = 0 }, context.body_id)
     end
     local status = self.deps.get_ground_clipping_status()
     local status_key = self.heel_save_failed and "heel_save_failed" or status.key

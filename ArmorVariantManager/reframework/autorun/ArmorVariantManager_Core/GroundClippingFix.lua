@@ -27,7 +27,14 @@ function GroundClippingFix.preset_settings(preset, config)
         or GroundClippingFix.config_settings(config))
 end
 
--- 多组同时加载时按默认分组、普通分组、全局分组顺序取最后一个预设的高度。
+-- 只有勾选的预设参与高度控制；勾选且为 0 cm 时仍是有效的归零指令。
+function GroundClippingFix.participating_settings(preset, config)
+    local settings = GroundClippingFix.preset_settings(preset, config)
+    if settings.enabled then return settings end
+    return nil
+end
+
+-- 多组同时加载时按默认分组、普通分组、全局分组顺序取最后一个勾选预设的高度。
 -- 分组内使用 UI 排序，旧 JSON 缺少排序的部分按名称排序，避免 pairs 导致高度随机变化。
 function GroundClippingFix.default_settings(config)
     config = config or {}
@@ -48,7 +55,7 @@ function GroundClippingFix.default_settings(config)
             local group = config.groups[name]
             local preset = group.presets and group.presets[group.default_preset]
             if (group.is_global == true) == global and preset then
-                settings = GroundClippingFix.preset_settings(preset, config)
+                settings = GroundClippingFix.participating_settings(preset, config) or settings
             end
         end
     end
