@@ -55,6 +55,15 @@ return {
                     "装备以当前身体（Body）部位为准，以当前身体部位 ID 命名，例如 ch03_060_0002.json。",
                     "武器直接记录当前武器 ID，例如 it0300_0020。"
                 }
+            },
+            {
+                title = "8. 陷地修正（陷地修复）",
+                paragraphs = {
+                    "用于高跟鞋穿脱等外观切换时的高度修正。新界面在防具部件面板底部启用，旧界面位于预设管理内部；默认关闭，高度范围为 -10～50 cm。",
+                    "调整后实时预览，新增或覆盖当前分组预设时保存启用状态与高度；切换预设会恢复对应设置。多个分组依次应用时，以最后应用的预设高度为准。",
+                    "适用于本机显示的玩家、菜单与存档等预览及过场玩家模型，按各自防具读取预设，人物与所属武器一起抬升。加载切场及骑乘鹭鹰龙时暂停。",
+                    "仅修正本机显示的骨架高度，不改变物理坐标、碰撞或其他玩家客户端。兼容旧 JSON，未配置的旧预设默认关闭。"
+                }
             }
         },
         en = {
@@ -112,6 +121,15 @@ return {
                         "Presets are saved in the reframework\\data\\ArmorVariantManager folder.",
                         "Armor files use the current Body part ID as the file name, for example ch03_060_0002.json.",
                         "Weapon files use the current Weapon ID, for example it0300_0020."
+                    }
+                },
+                {
+                    title = "8. Ground Clipping Fix",
+                    paragraphs = {
+                        "Adjusts visual height when switching appearances such as wearing or removing high heels. Enable it at the bottom of the armor parts panel, or inside Preset Management in the legacy UI. Disabled by default; range: -10 to 50 cm.",
+                        "Changes preview immediately. Create or overwrite a preset in the current group to save the enabled state and height. Selecting a preset restores its settings; the last applied group preset determines the height.",
+                        "Applies to players rendered on this computer, menu and save previews, and player cutscene actors, using each model's armor presets. The character and attached weapons rise together. Paused during loading, scene transitions and Seikret riding.",
+                        "Only changes the skeleton's local visual appearance, without changing physics, collision or other players' clients. Existing JSON files remain compatible; old presets without height settings default to disabled."
                     }
                 }
             }
@@ -182,6 +200,13 @@ return {
     {
         title = "更新日志",
         entries = {
+            {
+                title = "V4.3.3",
+                paragraphs = {
+                    "1. 新增陷地修正功能，满足一些高跟鞋穿脱时的高度修正需求。",
+                    "2. 修正高度随分组预设保存与切换，可配合差分和变身规则切换鞋履外观。"
+                }
+            },
             {
                 title = "V4.3.2",
                 paragraphs = {
@@ -323,6 +348,13 @@ return {
         en = {
             title = "Changelog",
             entries = {
+                {
+                    title = "V4.3.3",
+                    paragraphs = {
+                        "1. Added Ground Clipping Fix to adjust character height when wearing or removing high heels.",
+                        "2. Height settings are saved and restored with group presets, supporting footwear changes through variants and transformation rules."
+                    }
+                },
                 {
                     title = "V4.3.2",
                     paragraphs = {

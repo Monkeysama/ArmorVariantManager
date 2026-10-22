@@ -4,11 +4,14 @@ function Slider.new(d2d_api, colors, fonts)
     local component = {
         dragging = false
     }
-    function component:draw(label, value, x, y, w, minimum, maximum, step, formatter)
+    function component:draw(label, value, x, y, w, minimum, maximum, step, formatter, options)
+        options = options or {}
         local mx, my = Runtime.mouse_position()
-        local label_width = math.min(210, math.max(130, w * 0.42))
+        local value_width = options.value_width or 0
+        local value_gap = value_width > 0 and 12 or 0
+        local label_width = options.label_width or math.min(210, math.max(130, w * 0.42))
         local track_x = x + label_width
-        local track_w = math.max(80, w - label_width)
+        local track_w = math.max(80, w - label_width - value_width - value_gap)
         local track_y = y + 13
         local track_h = 5
         local range = math.max(0.0001, maximum - minimum)
@@ -35,10 +38,12 @@ function Slider.new(d2d_api, colors, fonts)
         d2d_api.fill_rounded_rect(track_x, track_y, math.max(0, thumb_x - track_x), track_h,
             3, 3, colors.accent_dark)
         d2d_api.fill_rounded_rect(thumb_x - 7, track_y - 6, 14, 17, 5, 5,
-            self.dragging or hovered and colors.accent or colors.border)
+            (self.dragging or hovered) and colors.accent or colors.border)
         local display_value = formatter and formatter(value) or tostring(value)
+        local display_x = value_width > 0 and x + w - value_width or track_x
+        local display_w = value_width > 0 and value_width or track_w
         local value_x, value_y = Runtime.center_text(fonts.small, display_value,
-            track_x, y, track_w, 30)
+            display_x, y, display_w, 30)
         Runtime.text(d2d_api, fonts.small, display_value, value_x, value_y, colors.muted)
         return changed, value
     end

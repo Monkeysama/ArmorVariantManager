@@ -193,7 +193,8 @@ function VariantManagerUI:ensure_d2d_backend()
     self.sliders = {
         scan_interval = Slider.new(adapted_api, COLORS, self.fonts),
         body_id_ttl = Slider.new(adapted_api, COLORS, self.fonts),
-        scanner_batch_size = Slider.new(adapted_api, COLORS, self.fonts)
+        scanner_batch_size = Slider.new(adapted_api, COLORS, self.fonts),
+        high_heel_height = Slider.new(adapted_api, COLORS, self.fonts)
     }
     api.register(
         function()
@@ -1920,6 +1921,47 @@ function VariantManagerUI:draw_settings_panel(x, y, w, h)
             x + LAYOUT.panel_inset + 152, y + LAYOUT.settings_shortcut_controls + 1, COLORS.muted)
     end
 end
+function VariantManagerUI:draw_ground_clipping_fix(x, y, w, context)
+    if self.heel_body_id ~= context.body_id or self.heel_group_name ~= context.group_name
+        or self.heel_preset_name ~= context.selected_preset_name then
+        self.heel_body_id, self.heel_save_failed = context.body_id, false
+        self.heel_group_name, self.heel_preset_name = context.group_name, context.selected_preset_name
+        self.sliders.high_heel_height.dragging = false
+    end
+    local settings = self.deps.get_ground_clipping_settings()
+    local reset_label = self:T("heel_reset_short")
+    local reset_width = self.fonts.small:measure(reset_label) + 24
+    local enable_width = self.fonts.body:measure(self:T("heel_title")) + 34
+    local reset_x = x + w - reset_width
+    self.d2d.line(x, y, x + w, y, 1, COLORS.border)
+    if self.checkbox:draw(self:T("heel_title"), x, y + 8, enable_width, 30, settings.enabled) then
+        self.heel_save_failed = not self.deps.set_ground_clipping_settings({ enabled = not settings.enabled }, context.body_id)
+    end
+    local height_label = self:T("heel_height")
+    local changed, value = self.sliders.high_heel_height:draw(self:T("heel_height"),
+        settings.height_cm, x, y + 44, w, -10, 50, 0.1,
+        function(height) return string.format("%.1f cm", height) end,
+        { label_width = self.fonts.body:measure(height_label) + 16, value_width = 80 })
+    if changed then
+        self.heel_save_failed = not self.deps.set_ground_clipping_settings({ height_cm = value }, context.body_id)
+    end
+    if self.button:draw(reset_label, reset_x, y + 8, reset_width, 30, false, nil, self.fonts.small) then
+        self.heel_save_failed = not self.deps.set_ground_clipping_settings({ enabled = false, height_cm = 0 }, context.body_id)
+    end
+    local status = self.deps.get_ground_clipping_status()
+    local status_key = self.heel_save_failed and "heel_save_failed" or status.key
+    if self.heel_save_failed or (settings.enabled and status_key ~= "heel_applied" and status_key ~= "heel_disabled") then
+        local status_x = x + enable_width + LAYOUT.panel_gap
+        local status_w = reset_x - LAYOUT.panel_gap - status_x
+        if status_w > 40 then
+            local lines = Runtime.wrap_text(self.fonts.tiny, self:T(status_key), status_w)
+            for index = 1, math.min(2, #lines) do
+                Runtime.text(self.d2d, self.fonts.tiny, lines[index], status_x, y + 8 + (index - 1) * 16,
+                    self.heel_save_failed and COLORS.danger or COLORS.muted)
+            end
+        end
+    end
+end
 function VariantManagerUI:draw_parts(x, y, w, h, context)
     self.panel:draw(x, y, w, h)
     Runtime.text(self.d2d, self.fonts.small,
@@ -1931,11 +1973,19 @@ function VariantManagerUI:draw_parts(x, y, w, h, context)
     local list_w = math.min(LAYOUT.part_list_width_max,
         math.max(LAYOUT.part_list_width_min, math.floor(w * 0.26)))
     local list_x = x + LAYOUT.panel_inset
-    local header_y = y + LAYOUT.panel_inset + LAYOUT.title_height
+    local parts_top = y + LAYOUT.panel_inset + LAYOUT.title_height
+    local parts_bottom = y + h - LAYOUT.panel_inset
+    if not context.weapon_mode then
+        local correction_top = parts_bottom - 84
+        self:draw_ground_clipping_fix(list_x, correction_top,
+            w - LAYOUT.panel_inset * 2, context)
+        parts_bottom = correction_top - LAYOUT.panel_gap
+    end
+    local header_y = parts_top
     local header_h = 30
     local header_gap = LAYOUT.list_gap
     for i = 0, part_count - 1 do
-        if header_y + header_h > y + h then break end
+        if header_y + header_h > parts_bottom then break end
         local label = self.deps.get_part_label
             and self.deps.get_part_label(context.character, context.weapon_mode, i)
         if not label or label == "" then
@@ -1953,17 +2003,17 @@ function VariantManagerUI:draw_parts(x, y, w, h, context)
     end
     local detail_x = list_x + list_w + LAYOUT.panel_gap
     local detail_w = x + w - detail_x - LAYOUT.panel_inset
-    self.d2d.line(detail_x - LAYOUT.panel_gap / 2, y + LAYOUT.panel_inset + LAYOUT.title_height,
-        detail_x - LAYOUT.panel_gap / 2, y + h - LAYOUT.panel_inset, 1, COLORS.border)
+    self.d2d.line(detail_x - LAYOUT.panel_gap / 2, parts_top,
+        detail_x - LAYOUT.panel_gap / 2, parts_bottom, 1, COLORS.border)
     if self.expanded_part ~= nil and self.expanded_part < part_count then
-        local content_y = y + LAYOUT.panel_inset + LAYOUT.title_height
-        local content_h = h - (LAYOUT.panel_inset + LAYOUT.title_height + LAYOUT.panel_inset)
+        local content_y = parts_top
+        local content_h = parts_bottom - content_y
         if content_h > 30 and detail_w > 80 then
             self:draw_part_content(detail_x, content_y, detail_w, content_h, context, self.expanded_part)
         end
     else
         Runtime.text(self.d2d, self.fonts.small, self:T("d2d_expand_hint"),
-            detail_x, y + LAYOUT.panel_inset + LAYOUT.title_height, COLORS.muted)
+            detail_x, parts_top, COLORS.muted)
     end
 end
 function VariantManagerUI:draw()

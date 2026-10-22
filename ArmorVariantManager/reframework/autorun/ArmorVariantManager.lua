@@ -1,5 +1,5 @@
 local mod_name = "ArmorVariantManager"
-local version = "4.3.2"
+local version = "4.3.3"
 local author = "MK,Moon,AZUSA,Ensicht"
 local global_config_path = "ArmorVariantManager/GlobalSettings.json"
 local global_config = {
@@ -15,6 +15,8 @@ local Localization = require("ArmorVariantManager_Core.Localization")
 local TransformManager = require("ArmorVariantManager_Core.TransformManager")
 local RuntimeGuard = require("ArmorVariantManager_Core.RuntimeGuard")
 local refd2d_module_names = {
+    "ArmorVariantManager_Core.GroundClippingFix",
+    "ArmorVariantManager_Core.GroundClippingTargets",
     "ArmorVariantManager_Core.UI.VariantManagerUI",
     "ArmorVariantManager_Core.Documentation",
     "ArmorVariantManager_UI",
@@ -40,6 +42,8 @@ if package and package.loaded then
     end
 end
 local VariantManagerUI = require("ArmorVariantManager_Core.UI.VariantManagerUI")
+local GroundClippingFix = require("ArmorVariantManager_Core.GroundClippingFix")
+local GroundClippingTargets = require("ArmorVariantManager_Core.GroundClippingTargets")
 local function T(key)
     if not key then return "nil" end
     local lang = global_config.language or "en"
@@ -170,6 +174,7 @@ local loaded_configs = {}
 local temp_applied_presets = {} 
 local active_overrides = {} 
 local active_group_presets = {}
+local ground_clipping_presets = GroundClippingFix.new_preset_state()
 local transform_player_characters = {}
 local runtime_guard, variant_manager_ui
 local function can_use_transform(character)
@@ -178,11 +183,14 @@ local function can_use_transform(character)
 end
 local function apply_transform_rules_for_character(config, character, overrides, merge_fn)
     if not TransformManager.has_configured_rules(config) or not can_use_transform(character) then
+        ground_clipping_presets.set_runtime(character, config, overrides and overrides.ground_clipping_fix)
         return overrides, false, nil, nil
     end
     local game_object = safe_get_game_object(character, "transform_rules")
     local char_addr = tostring(game_object or character)
-    return TransformManager.apply_transform_rules(char_addr, config, character, overrides, merge_fn)
+    local result, changed, targets, all_targets = TransformManager.apply_transform_rules(char_addr, config, character, overrides, merge_fn)
+    ground_clipping_presets.set_runtime(character, config, result and result.ground_clipping_fix)
+    return result, changed, targets, all_targets
 end
 local config_restored = {}
 local config_restore_handled = {}
@@ -1532,6 +1540,7 @@ local function merge_preset_into_overrides(body_id, preset_data)
     if not active_overrides[body_id] then active_overrides[body_id] = {} end
     local overrides = active_overrides[body_id]
     for p_idx, p_data in pairs(preset_data) do
+        if p_idx == "ground_clipping_fix" then goto continue_preset_part end
         if not overrides[p_idx] then overrides[p_idx] = { materials = {} } end
         if p_data.mesh_enabled ~= nil then
             overrides[p_idx].mesh_enabled = p_data.mesh_enabled
@@ -1542,12 +1551,17 @@ local function merge_preset_into_overrides(body_id, preset_data)
                 overrides[p_idx].materials[mat_name] = is_enabled
             end
         end
+        ::continue_preset_part::
     end
 end
 local function merge_overrides(base_data, add_data)
     local result = deep_copy_table(base_data) or {}
     if not add_data then return result end
     for p_idx, p_data in pairs(add_data) do
+        if p_idx == "ground_clipping_fix" then
+            result.ground_clipping_fix = GroundClippingFix.read_settings(p_data)
+            goto continue_override_part
+        end
         if not result[p_idx] then result[p_idx] = { materials = {} } end
         if p_data.mesh_enabled ~= nil then
             result[p_idx].mesh_enabled = p_data.mesh_enabled
@@ -1558,6 +1572,7 @@ local function merge_overrides(base_data, add_data)
                 result[p_idx].materials[mat_name] = is_enabled
             end
         end
+        ::continue_override_part::
     end
     return result
 end
@@ -1566,6 +1581,7 @@ local function merge_global_preset_into_overrides(body_id, preset_data)
     if not active_overrides[body_id] then active_overrides[body_id] = {} end
     local overrides = active_overrides[body_id]
     for p_idx, p_data in pairs(preset_data) do
+        if p_idx == "ground_clipping_fix" then goto continue_global_part end
         if p_data.materials then
             if not overrides[p_idx] then overrides[p_idx] = { materials = {} } end
             if not overrides[p_idx].materials then overrides[p_idx].materials = {} end
@@ -1578,12 +1594,15 @@ local function merge_global_preset_into_overrides(body_id, preset_data)
                 end
             end
         end
+        ::continue_global_part::
     end
 end
 local function apply_all_defaults(body_id)
     local config = load_config_data(body_id)
     if not config then return end
     active_overrides[body_id] = {}
+    ground_clipping_presets.reset(body_id)
+    active_overrides[body_id].ground_clipping_fix = GroundClippingFix.default_settings(config)
     if not active_group_presets[body_id] then active_group_presets[body_id] = {} end
     if config.default_preset and config.default_preset ~= "" and config.presets then
         local def = config.presets[config.default_preset]
@@ -1627,7 +1646,8 @@ local function apply_all_defaults(body_id)
 end
 local function rebuild_overrides_for_transform(body_id, config, activated_targets)
     if not body_id or not config then return end
-    active_overrides[body_id] = {}
+    local height = active_overrides[body_id] and active_overrides[body_id].ground_clipping_fix
+    active_overrides[body_id] = { ground_clipping_fix = height or GroundClippingFix.default_settings(config) }
     local saved = active_group_presets[body_id] or {}
     local main_preset_name = saved[""]
     if main_preset_name and main_preset_name ~= "" and config.presets and config.presets[main_preset_name] then
@@ -1691,6 +1711,7 @@ local function apply_preset(preset_name)
     if current_body_id then
         if not active_group_presets[current_body_id] then active_group_presets[current_body_id] = {} end
         active_group_presets[current_body_id][current_group_name] = preset_name
+        ground_clipping_presets.reset(current_body_id, current_group_name)
         local is_current_global = (current_group_name ~= "" and current_config.groups
             and current_config.groups[current_group_name]
             and current_config.groups[current_group_name].is_global)
@@ -1742,6 +1763,9 @@ local function apply_preset(preset_name)
                     end
                 end
             end
+        end
+        if not is_weapon_id(current_body_id) then
+            active_overrides[current_body_id].ground_clipping_fix = GroundClippingFix.preset_settings(preset_data, current_config)
         end
         temp_applied_presets[current_body_id] = preset_name
     end
@@ -1882,12 +1906,12 @@ local function load_body_config(body_id)
     end
     return false
 end
-local function save_current_config_to_file(body_id)
+local function save_current_config_to_file(body_id, preserve_active_state)
     if not body_id then return end
-    TransformManager.refresh_config_rules(current_config)
+    if not preserve_active_state then TransformManager.refresh_config_rules(current_config) end
     loaded_configs[body_id] = current_config
     local path = get_config_path(body_id)
-    safe_json_save(path, current_config)
+    if not safe_json_save(path, current_config) then return false end
     local conflict_pending = config_restored[body_id] == true
         and config_restore_handled[body_id] ~= true
     local backup_path = get_backup_path(body_id)
@@ -1898,6 +1922,7 @@ local function save_current_config_to_file(body_id)
         config_restored[body_id] = nil
         config_restore_handled[body_id] = nil
     end
+    if preserve_active_state then return true end
     if active_overrides[body_id] then
         active_overrides[body_id] = nil
     end
@@ -1905,6 +1930,7 @@ local function save_current_config_to_file(body_id)
     if TransformManager.clear_last_state_cache then
         TransformManager.clear_last_state_cache()
     end
+    return true
 end
 local function set_preset_as_default(preset_name, body_id)
     if not body_id or not preset_name or preset_name == "" or not current_config then return false end
@@ -1914,8 +1940,12 @@ local function set_preset_as_default(preset_name, body_id)
         target = current_config.groups[current_group_name]
     end
     if not target.presets or not target.presets[preset_name] then return false end
+    local previous_default = target.default_preset
     target.default_preset = preset_name
-    save_current_config_to_file(body_id)
+    if not save_current_config_to_file(body_id, true) then
+        target.default_preset = previous_default
+        return false
+    end
     update_preset_names_list()
     return true
 end
@@ -2046,6 +2076,16 @@ local function save_preset(preset_name, body_id)
             end
         end
     end
+    if not is_weapon_id(body_id) then
+        local group = current_group_name == "" and current_config or current_config.groups[current_group_name]
+        local selected = active_group_presets[body_id] and active_group_presets[body_id][current_group_name]
+            or group and group.default_preset
+        new_preset_data.ground_clipping_fix = ground_clipping_presets.get_editor(
+            current_config, body_id, current_group_name, selected)
+    end
+    local previous_preset = get_current_preset_data(preset_name)
+    local previous_target = current_group_name == "" and current_config or current_config.groups and current_config.groups[current_group_name]
+    local previous_order = previous_target and deep_copy_table(previous_target.preset_order)
     if current_group_name == "" then
         if not current_config.presets then current_config.presets = {} end
         if not current_config.presets[preset_name] then
@@ -2069,8 +2109,13 @@ local function save_preset(preset_name, body_id)
         end
         current_config.groups[current_group_name].presets[preset_name] = new_preset_data
     end
+    if not save_current_config_to_file(body_id) then
+        local target = current_group_name == "" and current_config or current_config.groups[current_group_name]
+        target.presets[preset_name], target.preset_order = previous_preset, previous_order
+        update_preset_names_list()
+        return false
+    end
     update_preset_names_list()
-    save_current_config_to_file(body_id)
     return true
 end
 local function find_auto_preset(target_body_id)
@@ -2403,6 +2448,45 @@ local function draw_mesh_toggle(game_object, label, body_id, part_index)
         imgui.text_colored(label .. " " .. T("no_mesh"), 0xFF808080)
     end
 end
+local collect_ground_clipping_targets = GroundClippingTargets.new({
+    get_scene = function() return runtime_guard:get_scene() end,
+    get_game_object = safe_get_game_object
+})
+local ground_clipping_fix = GroundClippingFix.new({
+    is_suspended = function() return runtime_guard.scene_suspended end,
+    get_targets = collect_ground_clipping_targets,
+    get_status_target = function()
+        local object = safe_get_game_object(get_local_player_character(), "ground_clipping_status")
+        local transform = object and object:call("get_Transform")
+        return transform and transform:get_address()
+    end,
+    get_settings = function(hunter)
+        local body_id = get_character_body_id(hunter)
+        if not body_id then return nil end
+        local config = not is_weapon_mode and body_id == last_body_id and current_config
+            or load_config_data(body_id)
+        local base = active_overrides[body_id] and active_overrides[body_id].ground_clipping_fix
+        return ground_clipping_presets.get_runtime(hunter, config, base), body_id
+    end
+})
+local function get_ground_clipping_settings()
+    local group = current_group_name == "" and current_config or current_config.groups and current_config.groups[current_group_name]
+    local body_id = get_body_id()
+    local selected = body_id and active_group_presets[body_id] and active_group_presets[body_id][current_group_name]
+        or group and group.default_preset
+    return ground_clipping_presets.get_editor(current_config, body_id, current_group_name, selected)
+end
+local function set_ground_clipping_settings(changes, body_id)
+    if is_weapon_mode or not body_id or body_id ~= last_body_id or body_id ~= get_body_id() then return false end
+    local group = current_group_name == "" and current_config or current_config.groups and current_config.groups[current_group_name]
+    local selected = active_group_presets[body_id] and active_group_presets[body_id][current_group_name]
+        or group and group.default_preset
+    local settings = ground_clipping_presets.edit(current_config, body_id, current_group_name, selected, changes)
+    if not active_overrides[body_id] then active_overrides[body_id] = {} end
+    active_overrides[body_id].ground_clipping_fix = settings
+    ground_clipping_fix.settings_changed()
+    return true
+end
 variant_manager_ui = VariantManagerUI.new({
     is_suspended = function() return runtime_guard.suspended end,
     config = global_config,
@@ -2410,6 +2494,9 @@ variant_manager_ui = VariantManagerUI.new({
     version = version,
     author = author,
     save_settings = save_global_settings,
+    get_ground_clipping_settings = get_ground_clipping_settings,
+    set_ground_clipping_settings = set_ground_clipping_settings,
+    get_ground_clipping_status = ground_clipping_fix.get_status,
     get_context = function()
         local body_id = get_body_id()
         local active_preset_name = body_id and active_group_presets[body_id]
@@ -3311,6 +3398,21 @@ re.on_draw_ui(function()
                                     end
                                 end
                                 if auto_find_log ~= "" then imgui.text_colored(auto_find_log, 0xFF00FFFF) end
+                            end
+                            if not is_weapon_mode then
+                                imgui.separator()
+                                local settings = get_ground_clipping_settings()
+                                local changed, value = imgui.checkbox(T("heel_title"), settings.enabled)
+                                if changed then set_ground_clipping_settings({ enabled = value }, body_id) end
+                                imgui.same_line()
+                                imgui.set_next_item_width(160)
+                                changed, value = imgui.slider_float("##ground_clipping_height", settings.height_cm, -10, 50, "%.1f cm")
+                                if changed then set_ground_clipping_settings({ height_cm = value }, body_id) end
+                                imgui.same_line()
+                                if imgui.button(T("heel_reset_short") .. "##ground_clipping_reset") then
+                                    set_ground_clipping_settings({ enabled = false, height_cm = 0 }, body_id)
+                                end
+                                imgui.separator()
                             end
                         end)
                         if not ui_status then

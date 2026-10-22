@@ -1,4 +1,5 @@
 local TransformManager = {}
+local legacy_ground_clipping_disabled = { enabled = false, height_cm = 10 }
 local ConditionRegistry = {
     hp = require("ArmorVariantManager_Core.Conditions.Condition_HP"),
     damage = require("ArmorVariantManager_Core.Conditions.Condition_Damage"),
@@ -220,10 +221,15 @@ function TransformManager.apply_transform_rules(char_addr, config, character, ac
     last_state_cache[cache_key] = state_signature
     local new_overrides = {}
     for p, data in pairs(active_overrides) do
+        if p == "ground_clipping_fix" then
+            new_overrides[p] = data
+            goto continue_base_part
+        end
         new_overrides[p] = { mesh_enabled = data.mesh_enabled, materials = {} }
         if data.materials then
             for m, en in pairs(data.materials) do new_overrides[p].materials[m] = en end
         end
+        ::continue_base_part::
     end
     if #active_rules > 0 then
         table.sort(active_rules, function(a, b) return a.priority > b.priority end)
@@ -246,6 +252,8 @@ function TransformManager.apply_transform_rules(char_addr, config, character, ac
                         end
                         if preset_data then
                             new_overrides = merge_overrides(new_overrides, preset_data)
+                            new_overrides.ground_clipping_fix = preset_data.ground_clipping_fix
+                                or config.ground_clipping_fix or config.high_heel_height or legacy_ground_clipping_disabled
                         end
                     end
                 end

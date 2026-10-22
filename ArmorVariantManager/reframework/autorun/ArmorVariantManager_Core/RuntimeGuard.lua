@@ -1,6 +1,6 @@
 local RuntimeGuard = {}
 function RuntimeGuard.new(clear_runtime)
-    local guard = { generation = 0, suspended = false, active = false }
+    local guard = { generation = 0, suspended = false, scene_suspended = false, active = false }
     local pending_clear, end_seen, saw_loading, scene_changed = false, false, false, false
     local requires_fade_in, stable_scene_key = false, ""
     local quest_menu_id, gui_manager, menu_latched = nil, nil, false
@@ -29,6 +29,7 @@ function RuntimeGuard.new(clear_runtime)
         pending_clear, end_seen = true, false
         requires_fade_in = requires_fade_in or fade_in == true
         self.suspended = true
+        self.scene_suspended = true
     end
     function guard:mark_load_end(fade_in)
         if self.active and (not requires_fade_in or fade_in == true) then end_seen = true end
@@ -43,6 +44,7 @@ function RuntimeGuard.new(clear_runtime)
     end
     function guard:block_frame()
         self.suspended = true
+        self.scene_suspended = true
     end
     local function is_quest_menu_open()
         if quest_menu_id == nil then
@@ -68,6 +70,7 @@ function RuntimeGuard.new(clear_runtime)
         return menu_latched
     end
     function guard:update()
+        self.scene_suspended = true
         local ok, loading = pcall(function()
             local manager = loading_getter and sdk.get_managed_singleton("app.GameFlowManager")
             return manager and loading_getter:call(manager) == true or false
@@ -89,6 +92,7 @@ function RuntimeGuard.new(clear_runtime)
             self.active = false
             end_seen, saw_loading, scene_changed, requires_fade_in = false, false, false, false
         end
+        self.scene_suspended = false
         self.suspended = is_quest_menu_open()
         return self.suspended
     end
