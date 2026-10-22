@@ -1,7 +1,7 @@
 local mod_name = "ArmorVariantManager"
 -- 开发中遵守
 -- 版本号-开发状态-开发状态标识
-local version = "4.3.2"
+local version = "4.3.3"
 local author = "MK,Moon,AZUSA,Ensicht"
 
 -- =============================================================================
@@ -28,6 +28,8 @@ local TransformManager = require("ArmorVariantManager_Core.TransformManager")
 local RuntimeGuard = require("ArmorVariantManager_Core.RuntimeGuard")
 -- REFramework 重载脚本时可能保留 Lua 模块缓存，新UI必须重新加载最新实现。
 local refd2d_module_names = {
+    "ArmorVariantManager_Core.GroundClippingFix",
+    "ArmorVariantManager_Core.GroundClippingTargets",
     "ArmorVariantManager_Core.UI.VariantManagerUI",
     "ArmorVariantManager_Core.Documentation",
     "ArmorVariantManager_UI",
@@ -53,6 +55,8 @@ if package and package.loaded then
     end
 end
 local VariantManagerUI = require("ArmorVariantManager_Core.UI.VariantManagerUI")
+local GroundClippingFix = require("ArmorVariantManager_Core.GroundClippingFix")
+local GroundClippingTargets = require("ArmorVariantManager_Core.GroundClippingTargets")
 
 -- 获取本地化字符串
 local function T(key)
@@ -243,6 +247,7 @@ local active_overrides = {} -- 记录当前生效的配置状态 (BodyID -> { [p
 -- 记录各分组当前选中的预设名 (BodyID -> { [""] = "主列表预设名", ["分组名"] = "预设名" })
 -- 用于全局分组切换时全量重算，确保其他分组的当前预设也一起被应用
 local active_group_presets = {}
+local ground_clipping_presets = GroundClippingFix.new_preset_state()
 local transform_player_characters = {}
 local runtime_guard, variant_manager_ui
 
@@ -255,11 +260,14 @@ end
 -- 先查配置摘要，无目标时连角色地址也不读取；六处入口保留玩家过滤及四返回值。
 local function apply_transform_rules_for_character(config, character, overrides, merge_fn)
     if not TransformManager.has_configured_rules(config) or not can_use_transform(character) then
+        ground_clipping_presets.set_runtime(character, config, overrides and overrides.ground_clipping_fix)
         return overrides, false, nil, nil
     end
     local game_object = safe_get_game_object(character, "transform_rules")
     local char_addr = tostring(game_object or character)
-    return TransformManager.apply_transform_rules(char_addr, config, character, overrides, merge_fn)
+    local result, changed, targets, all_targets = TransformManager.apply_transform_rules(char_addr, config, character, overrides, merge_fn)
+    ground_clipping_presets.set_runtime(character, config, result and result.ground_clipping_fix)
+    return result, changed, targets, all_targets
 end
 
 -- 记录配置是否被外部还原 (BodyID -> true)
@@ -1919,6 +1927,7 @@ local function merge_preset_into_overrides(body_id, preset_data)
     if not active_overrides[body_id] then active_overrides[body_id] = {} end
     local overrides = active_overrides[body_id]
     for p_idx, p_data in pairs(preset_data) do
+        if p_idx == "ground_clipping_fix" then goto continue_preset_part end
         if not overrides[p_idx] then overrides[p_idx] = { materials = {} } end
         -- 合并 Mesh 整体开关
         if p_data.mesh_enabled ~= nil then
@@ -1931,6 +1940,7 @@ local function merge_preset_into_overrides(body_id, preset_data)
                 overrides[p_idx].materials[mat_name] = is_enabled
             end
         end
+        ::continue_preset_part::
     end
 end
 
@@ -1939,6 +1949,10 @@ local function merge_overrides(base_data, add_data)
     local result = deep_copy_table(base_data) or {}
     if not add_data then return result end
     for p_idx, p_data in pairs(add_data) do
+        if p_idx == "ground_clipping_fix" then
+            result.ground_clipping_fix = GroundClippingFix.read_settings(p_data)
+            goto continue_override_part
+        end
         if not result[p_idx] then result[p_idx] = { materials = {} } end
         if p_data.mesh_enabled ~= nil then
             result[p_idx].mesh_enabled = p_data.mesh_enabled
@@ -1949,6 +1963,7 @@ local function merge_overrides(base_data, add_data)
                 result[p_idx].materials[mat_name] = is_enabled
             end
         end
+        ::continue_override_part::
     end
     return result
 end
@@ -1962,6 +1977,7 @@ local function merge_global_preset_into_overrides(body_id, preset_data)
     if not active_overrides[body_id] then active_overrides[body_id] = {} end
     local overrides = active_overrides[body_id]
     for p_idx, p_data in pairs(preset_data) do
+        if p_idx == "ground_clipping_fix" then goto continue_global_part end
         if p_data.materials then
             if not overrides[p_idx] then overrides[p_idx] = { materials = {} } end
             if not overrides[p_idx].materials then overrides[p_idx].materials = {} end
@@ -1977,6 +1993,7 @@ local function merge_global_preset_into_overrides(body_id, preset_data)
                 end
             end
         end
+        ::continue_global_part::
     end
 end
 
@@ -1987,6 +2004,8 @@ local function apply_all_defaults(body_id)
     if not config then return end
     -- 彻底重置该 Body 的复合状态
     active_overrides[body_id] = {}
+    ground_clipping_presets.reset(body_id)
+    active_overrides[body_id].ground_clipping_fix = GroundClippingFix.default_settings(config)
     -- 同步初始化 active_group_presets，使 is_globally_hidden 等函数能找到正确的预设
     if not active_group_presets[body_id] then active_group_presets[body_id] = {} end
     -- 1. 首先合并主列表默认预设
@@ -2041,7 +2060,8 @@ end
 -- 参数 activated_targets: 变身规则激活的 group→preset 映射
 local function rebuild_overrides_for_transform(body_id, config, activated_targets)
     if not body_id or not config then return end
-    active_overrides[body_id] = {}
+    local height = active_overrides[body_id] and active_overrides[body_id].ground_clipping_fix
+    active_overrides[body_id] = { ground_clipping_fix = height or GroundClippingFix.default_settings(config) }
     local saved = active_group_presets[body_id] or {}
     -- 1. 主列表当前预设
     local main_preset_name = saved[""]
@@ -2115,6 +2135,7 @@ local function apply_preset(preset_name)
         -- 记录当前分组的选中预设（用于全局分组全量重算时恢复）
         if not active_group_presets[current_body_id] then active_group_presets[current_body_id] = {} end
         active_group_presets[current_body_id][current_group_name] = preset_name
+        ground_clipping_presets.reset(current_body_id, current_group_name)
 
         -- 判断当前是否为全局分组
         local is_current_global = (current_group_name ~= "" and current_config.groups
@@ -2175,6 +2196,10 @@ local function apply_preset(preset_name)
                     end
                 end
             end
+        end
+        -- 高度不能按材质叠加；手动选择以本次应用的分组预设为准，包括关闭状态。
+        if not is_weapon_id(current_body_id) then
+            active_overrides[current_body_id].ground_clipping_fix = GroundClippingFix.preset_settings(preset_data, current_config)
         end
         temp_applied_presets[current_body_id] = preset_name
     end
@@ -2327,14 +2352,14 @@ local function load_body_config(body_id)
 end
 
 -- 辅助函数：保存配置到文件
-local function save_current_config_to_file(body_id)
+local function save_current_config_to_file(body_id, preserve_active_state)
     if not body_id then return end
     -- 新旧 UI 的规则、预设和分组修改都走此处，避免摘要在编辑后继续沿用旧结果。
-    TransformManager.refresh_config_rules(current_config)
+    if not preserve_active_state then TransformManager.refresh_config_rules(current_config) end
     -- 更新缓存
     loaded_configs[body_id] = current_config
     local path = get_config_path(body_id)
-    safe_json_save(path, current_config)
+    if not safe_json_save(path, current_config) then return false end
 
     -- 同步写入备份文件：保存时主配置与备份内容一致，
     -- 后续若主配置被 mod 管理器还原，备份仍保留玩家改动，作为恢复来源。
@@ -2352,6 +2377,8 @@ local function save_current_config_to_file(body_id)
         config_restored[body_id] = nil
         config_restore_handled[body_id] = nil
     end
+    -- 允许调用方仅持久化数据，不重置用户当前选中的分组、预设与变身状态。
+    if preserve_active_state then return true end
     -- 清除 active_overrides 缓存，强制下一帧重新合并所有默认预设
     if active_overrides[body_id] then
         active_overrides[body_id] = nil
@@ -2364,6 +2391,7 @@ local function save_current_config_to_file(body_id)
     if TransformManager.clear_last_state_cache then
         TransformManager.clear_last_state_cache()
     end
+    return true
 end
 
 -- 将指定预设写为当前分组的默认预设，供旧 UI、新 UI 和自动保存开关共用。
@@ -2375,8 +2403,13 @@ local function set_preset_as_default(preset_name, body_id)
         target = current_config.groups[current_group_name]
     end
     if not target.presets or not target.presets[preset_name] then return false end
+    local previous_default = target.default_preset
     target.default_preset = preset_name
-    save_current_config_to_file(body_id)
+    -- 只修改默认名称，不重新应用其他分组默认值，否则自动保存会覆盖刚选中的预设高度。
+    if not save_current_config_to_file(body_id, true) then
+        target.default_preset = previous_default
+        return false
+    end
     update_preset_names_list()
     return true
 end
@@ -2529,6 +2562,18 @@ local function save_preset(preset_name, body_id)
             end
         end
     end
+    -- 与当前分组的材质状态一起捕获高度草稿；武器预设不保存防具修复。
+    if not is_weapon_id(body_id) then
+        local group = current_group_name == "" and current_config or current_config.groups[current_group_name]
+        local selected = active_group_presets[body_id] and active_group_presets[body_id][current_group_name]
+            or group and group.default_preset
+        new_preset_data.ground_clipping_fix = ground_clipping_presets.get_editor(
+            current_config, body_id, current_group_name, selected)
+    end
+    -- 保留被覆盖的预设和排序，写盘失败时撤销本次修改，不向 UI 报告保存成功。
+    local previous_preset = get_current_preset_data(preset_name)
+    local previous_target = current_group_name == "" and current_config or current_config.groups and current_config.groups[current_group_name]
+    local previous_order = previous_target and deep_copy_table(previous_target.preset_order)
     -- 保存到当前分组或主列表
     if current_group_name == "" then
         -- 保存到主列表
@@ -2558,8 +2603,13 @@ local function save_preset(preset_name, body_id)
         end
         current_config.groups[current_group_name].presets[preset_name] = new_preset_data
     end
+    if not save_current_config_to_file(body_id) then
+        local target = current_group_name == "" and current_config or current_config.groups[current_group_name]
+        target.presets[preset_name], target.preset_order = previous_preset, previous_order
+        update_preset_names_list()
+        return false
+    end
     update_preset_names_list()
-    save_current_config_to_file(body_id)
     return true
 end
 
@@ -2944,6 +2994,50 @@ end
 -- =============================================================================
 -- 新UI
 -- 基于原生 UI Runtime 的差分管理器界面。
+-- 独立解析战斗、菜单与过场角色；各骨架按自己的防具读取预设，不依赖 MasterPlayer 存在。
+local collect_ground_clipping_targets = GroundClippingTargets.new({
+    get_scene = function() return runtime_guard:get_scene() end,
+    get_game_object = safe_get_game_object
+})
+local ground_clipping_fix = GroundClippingFix.new({
+    is_suspended = function() return runtime_guard.scene_suspended end,
+    get_targets = collect_ground_clipping_targets,
+    get_status_target = function()
+        local object = safe_get_game_object(get_local_player_character(), "ground_clipping_status")
+        local transform = object and object:call("get_Transform")
+        return transform and transform:get_address()
+    end,
+    get_settings = function(hunter)
+        local body_id = get_character_body_id(hunter)
+        if not body_id then return nil end
+        local config = not is_weapon_mode and body_id == last_body_id and current_config
+            or load_config_data(body_id)
+        local base = active_overrides[body_id] and active_overrides[body_id].ground_clipping_fix
+        return ground_clipping_presets.get_runtime(hunter, config, base), body_id
+    end
+})
+
+-- 新旧界面共用预设草稿，实时预览；新增或覆盖预设时才持久化到 JSON 和备份。
+local function get_ground_clipping_settings()
+    local group = current_group_name == "" and current_config or current_config.groups and current_config.groups[current_group_name]
+    local body_id = get_body_id()
+    local selected = body_id and active_group_presets[body_id] and active_group_presets[body_id][current_group_name]
+        or group and group.default_preset
+    return ground_clipping_presets.get_editor(current_config, body_id, current_group_name, selected)
+end
+
+local function set_ground_clipping_settings(changes, body_id)
+    if is_weapon_mode or not body_id or body_id ~= last_body_id or body_id ~= get_body_id() then return false end
+    local group = current_group_name == "" and current_config or current_config.groups and current_config.groups[current_group_name]
+    local selected = active_group_presets[body_id] and active_group_presets[body_id][current_group_name]
+        or group and group.default_preset
+    local settings = ground_clipping_presets.edit(current_config, body_id, current_group_name, selected, changes)
+    if not active_overrides[body_id] then active_overrides[body_id] = {} end
+    active_overrides[body_id].ground_clipping_fix = settings
+    ground_clipping_fix.settings_changed()
+    return true
+end
+
 variant_manager_ui = VariantManagerUI.new({
     is_suspended = function() return runtime_guard.suspended end,
     config = global_config,
@@ -2951,6 +3045,9 @@ variant_manager_ui = VariantManagerUI.new({
     version = version,
     author = author,
     save_settings = save_global_settings,
+    get_ground_clipping_settings = get_ground_clipping_settings,
+    set_ground_clipping_settings = set_ground_clipping_settings,
+    get_ground_clipping_status = ground_clipping_fix.get_status,
 
     -- 提供新 UI 所需的当前装备上下文。
     get_context = function()
@@ -4029,6 +4126,23 @@ re.on_draw_ui(function()
                                     end
                                 end
                                 if auto_find_log ~= "" then imgui.text_colored(auto_find_log, 0xFF00FFFF) end
+                            end
+
+                            -- 陷地修复放在预设、分组及自动查找按钮和结果提示下方。
+                            if not is_weapon_mode then
+                                imgui.separator()
+                                local settings = get_ground_clipping_settings()
+                                local changed, value = imgui.checkbox(T("heel_title"), settings.enabled)
+                                if changed then set_ground_clipping_settings({ enabled = value }, body_id) end
+                                imgui.same_line()
+                                imgui.set_next_item_width(160)
+                                changed, value = imgui.slider_float("##ground_clipping_height", settings.height_cm, -10, 50, "%.1f cm")
+                                if changed then set_ground_clipping_settings({ height_cm = value }, body_id) end
+                                imgui.same_line()
+                                if imgui.button(T("heel_reset_short") .. "##ground_clipping_reset") then
+                                    set_ground_clipping_settings({ enabled = false, height_cm = 0 }, body_id)
+                                end
+                                imgui.separator()
                             end
                         end)
                         if not ui_status then

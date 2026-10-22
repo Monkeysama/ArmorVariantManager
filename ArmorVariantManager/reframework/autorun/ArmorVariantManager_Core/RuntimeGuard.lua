@@ -3,7 +3,7 @@ local RuntimeGuard = {}
 
 -- 每次脚本启动创建独立状态，避免 require 缓存把上一次的暂停标记带进来。
 function RuntimeGuard.new(clear_runtime)
-    local guard = { generation = 0, suspended = false, active = false }
+    local guard = { generation = 0, suspended = false, scene_suspended = false, active = false }
     local pending_clear, end_seen, saw_loading, scene_changed = false, false, false, false
     local requires_fade_in, stable_scene_key = false, ""
     local quest_menu_id, gui_manager, menu_latched = nil, nil, false
@@ -36,6 +36,7 @@ function RuntimeGuard.new(clear_runtime)
         pending_clear, end_seen = true, false
         requires_fade_in = requires_fade_in or fade_in == true
         self.suspended = true
+        self.scene_suspended = true
     end
 
     -- 快速旅行必须等待自己的 fade-in；普通任务的 load-end 不能提前释放黑屏过渡。
@@ -56,6 +57,7 @@ function RuntimeGuard.new(clear_runtime)
     -- 场景暂不可读时仅隔离当前帧；单个扫描对象失效不进入全局暂停。
     function guard:block_frame()
         self.suspended = true
+        self.scene_suspended = true
     end
 
     -- 首次看见任务列表激活才暂停；内部子页不解除，GUI050000真正退出才恢复。
@@ -85,6 +87,8 @@ function RuntimeGuard.new(clear_runtime)
 
     -- 每帧一次轻量门禁；正常时不读取 Scene、不扫描角色。菜单暂停不清缓存。
     function guard:update()
+        -- 展示骨架只受场景安全门禁约束；任务列表暂停材质扫描时仍可保持视觉高度。
+        self.scene_suspended = true
         local ok, loading = pcall(function()
             local manager = loading_getter and sdk.get_managed_singleton("app.GameFlowManager")
             return manager and loading_getter:call(manager) == true or false
@@ -106,6 +110,7 @@ function RuntimeGuard.new(clear_runtime)
             self.active = false
             end_seen, saw_loading, scene_changed, requires_fade_in = false, false, false, false
         end
+        self.scene_suspended = false
         self.suspended = is_quest_menu_open()
         return self.suspended
     end
