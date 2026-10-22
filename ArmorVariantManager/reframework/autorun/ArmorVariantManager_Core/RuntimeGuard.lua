@@ -53,7 +53,7 @@ function RuntimeGuard.new(clear_runtime)
         return false
     end
 
-    -- 坏快照只隔离当前帧。调用者清空对象缓存并请求下一帧重新采样。
+    -- 场景暂不可读时仅隔离当前帧；单个扫描对象失效不进入全局暂停。
     function guard:block_frame()
         self.suspended = true
     end

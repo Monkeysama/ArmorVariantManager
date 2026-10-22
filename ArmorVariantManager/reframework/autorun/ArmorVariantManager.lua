@@ -728,10 +728,13 @@ end
 
 runtime_guard = RuntimeGuard.new(flush_scene_reset)
 
--- 首错丢弃整份快照并终止本帧，下一帧可重扫；保留上游的死对象短期拒绝标记。
+-- 扫描失败只丢弃枚举快照，按正常间隔重试；对象缓存与 UI 只在确认换场景后清理。
 local function discard_unreliable_scanner_snapshot()
-    flush_scene_reset(false)
-    runtime_guard:block_frame()
+    scanner.state = "IDLE"
+    scanner.transforms = nil
+    scanner.count, scanner.index, scanner.scene_key = 0, 1, ""
+    scanner.force_rescan = false
+    scanner.last_scan_time = os.clock()
 end
 
 -- 更新单个角色的缓存。返回值 game_obj 为 nil 表示该包装对象已随场景销毁：
@@ -756,6 +759,24 @@ local function update_cache_entry(char)
     }
 end
 
+-- 单个对象的生命周期不代表整个场景失效；异常由批次逐项捕获，继续扫描其他有效对象。
+local function scan_transform_entry(transform)
+    if not transform or not sdk.is_managed_object(transform) then return false end
+    local game_obj = safe_get_game_object(transform, "scanner_transform")
+    if not game_obj then return false end
+    local name = method_cache.GameObject_get_Name:call(game_obj)
+    if not name or (string.sub(name, 1, 2) ~= "Pl" and not preview_character_names[name]) then return true end
+    local char
+    if type_cache.app_character then
+        char = method_cache.GameObject_getComponent:call(game_obj, type_cache.app_character)
+    end
+    if not char and type_cache.app_hunter_character then
+        char = method_cache.GameObject_getComponent:call(game_obj, type_cache.app_hunter_character)
+    end
+    update_cache_entry(char or transform)
+    return true
+end
+
 -- 批次绑定Scene原生地址与代际；生命周期变化后不继续读取跨帧保存的旧Transform。
 local function scan_scene_batch()
     local current_time = os.clock()
@@ -776,7 +797,7 @@ local function scan_scene_batch()
                     local components = scene:call("findComponents(System.Type)", type_cache.app_character:get_runtime_type())
                     if components then
                         local list = components:get_elements()
-                        for _, char in ipairs(list) do update_cache_entry(char) end
+                        for _, char in ipairs(list) do pcall(update_cache_entry, char) end
                     end
                 end
                 -- 2. 开始 via.Transform 扫描 (分帧处理)
@@ -797,6 +818,9 @@ local function scan_scene_batch()
                 end
             else
                 scanner.last_scan_time = current_time
+                scanner.force_rescan = true
+                runtime_guard:block_frame()
+                return false
             end
         end
     elseif scanner.state == "PROCESSING" then
@@ -805,72 +829,24 @@ local function scan_scene_batch()
             or scanner.scene_key ~= scene_key then
             runtime_guard:accept_scene(scene_key)
             discard_unreliable_scanner_snapshot()
+            scanner.force_rescan = true
+            runtime_guard:block_frame()
             return false
         end
-        -- 处理当前批次。
-        -- 换装/换场景瞬间整批 Transform 可能同时失效，若一次处理 batch_size 个对象，
-        -- 会连续抛出上百次 InvalidOperationException 并把日志刷满。
-        -- 一旦出现死对象，立即停止本批次并放弃整份快照。
+        -- 跳过个别已销毁对象；一批内多次失败时停止枚举以限制原生异常数量，但不暂停 UI。
         local batch_size = global_config.scanner_batch_size or 100
         local limit = scanner.index + batch_size - 1
         if limit > scanner.count then limit = scanner.count end
-        local batch_dead = false
+        local failures = 0
         for i = scanner.index, limit do
-            -- 防御性编程：使用 pcall 包裹对象的获取和有效性检查
-            -- 防止因对象跨帧销毁导致的 sol: runtime error
-            local safe_get_transform = function()
-                local t = scanner.transforms[i]
-                return (t and sdk.is_managed_object(t)) and t or nil
+            local ok, valid = pcall(scan_transform_entry, scanner.transforms[i])
+            if not ok or not valid then
+                failures = failures + 1
+                if failures >= 8 then
+                    discard_unreliable_scanner_snapshot()
+                    return true
+                end
             end
-            local status, transform = pcall(safe_get_transform)
-            if status and transform then
-                -- 安全获取 GameObject；返回 nil 说明该对象已随场景销毁
-                local game_obj = safe_get_game_object(transform, "scanner_transform")
-                if not game_obj then
-                    batch_dead = true
-                    break
-                end
-                -- 极速获取 Name (再次使用 pcall 确保安全)
-                local name_ok, name = pcall(method_cache.GameObject_get_Name.call, method_cache.GameObject_get_Name, game_obj)
-                if not name_ok then
-                    batch_dead = true
-                    break
-                end
-                -- 快速筛选
-                local is_target = false
-                if name_ok and name then
-                    -- 检查 "Pl" 前缀 (使用 string.sub 比 find 快)
-                    if string.sub(name, 1, 2) == "Pl" then
-                        is_target = true
-                    else
-                        -- 检查特殊名称
-                        is_target = preview_character_names[name] == true
-                    end
-                end
-                if is_target then
-                    -- 找到目标，进一步获取 Character 组件
-                    local char = nil
-                    if type_cache.app_character then
-                        -- 使用 pcall 包裹 getComponent
-                        local char_ok, c = pcall(method_cache.GameObject_getComponent.call, method_cache.GameObject_getComponent, game_obj, type_cache.app_character)
-                        if not char_ok then discard_unreliable_scanner_snapshot(); return false end
-                        char = c
-                    end
-                    if not char and type_cache.app_hunter_character then
-                        local char_ok, c = pcall(method_cache.GameObject_getComponent.call, method_cache.GameObject_getComponent, game_obj, type_cache.app_hunter_character)
-                        if not char_ok then discard_unreliable_scanner_snapshot(); return false end
-                        char = c
-                    end
-                    if char then update_cache_entry(char) else update_cache_entry(transform) end
-                end
-            else
-                batch_dead = true
-                break
-            end
-        end
-        if batch_dead then
-            discard_unreliable_scanner_snapshot()
-            return false
         end
         scanner.index = limit + 1
         -- 检查是否完成
@@ -883,10 +859,19 @@ local function scan_scene_batch()
     return true
 end
 
--- 场景采样/组件枚举也可能随销毁失败；只捕获本批次并作废，不带着旧缓存继续应用。
+-- 枚举异常不等于换场景；仅场景地址变化或无法读取场景时隔离本帧。
 local function tick_scanner()
     local ok, ready = pcall(scan_scene_batch)
-    if not ok then discard_unreliable_scanner_snapshot(); return false end
+    if not ok then
+        discard_unreliable_scanner_snapshot()
+        local _, key = runtime_guard:get_scene()
+        if key == "" or not runtime_guard:accept_scene(key) then
+            scanner.force_rescan = true
+            runtime_guard:block_frame()
+            return false
+        end
+        return true
+    end
     return ready
 end
 
@@ -3696,8 +3681,12 @@ end)
 -- UI 绘制回调
 re.on_draw_ui(function()
     -- D2D与旧ImGui回调都读取同一状态，不在这里重复轮询游戏菜单/加载状态。
-    if runtime_guard.suspended then return end
     if imgui.tree_node(T("mod_name")) then
+        if runtime_guard.suspended then
+            imgui.text(T("runtime_paused"))
+            imgui.tree_pop()
+            return
+        end
         imgui.text_colored(string.format(T("version") .. ": %s | " .. T("author") .. ": %s", version, author), 0xFF808080)
         imgui.separator()
 
