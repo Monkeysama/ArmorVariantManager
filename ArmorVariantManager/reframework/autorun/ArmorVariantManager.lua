@@ -1,5 +1,5 @@
 local mod_name = "ArmorVariantManager"
-local version = "4.3.1"
+local version = "4.3.2"
 local author = "MK,Moon,AZUSA,Ensicht"
 local global_config_path = "ArmorVariantManager/GlobalSettings.json"
 local global_config = {
@@ -553,8 +553,11 @@ local function flush_scene_reset(reset_dead_marks)
 end
 runtime_guard = RuntimeGuard.new(flush_scene_reset)
 local function discard_unreliable_scanner_snapshot()
-    flush_scene_reset(false)
-    runtime_guard:block_frame()
+    scanner.state = "IDLE"
+    scanner.transforms = nil
+    scanner.count, scanner.index, scanner.scene_key = 0, 1, ""
+    scanner.force_rescan = false
+    scanner.last_scan_time = os.clock()
 end
 local function update_cache_entry(char)
     if not char then return end
@@ -571,6 +574,22 @@ local function update_cache_entry(char)
         char = char, last_seen = os.clock(),
         is_editor_preview = name == "CharaMake_HunterXX" or name == "CharaMake_HunterXY"
     }
+end
+local function scan_transform_entry(transform)
+    if not transform or not sdk.is_managed_object(transform) then return false end
+    local game_obj = safe_get_game_object(transform, "scanner_transform")
+    if not game_obj then return false end
+    local name = method_cache.GameObject_get_Name:call(game_obj)
+    if not name or (string.sub(name, 1, 2) ~= "Pl" and not preview_character_names[name]) then return true end
+    local char
+    if type_cache.app_character then
+        char = method_cache.GameObject_getComponent:call(game_obj, type_cache.app_character)
+    end
+    if not char and type_cache.app_hunter_character then
+        char = method_cache.GameObject_getComponent:call(game_obj, type_cache.app_hunter_character)
+    end
+    update_cache_entry(char or transform)
+    return true
 end
 local function scan_scene_batch()
     local current_time = os.clock()
@@ -589,7 +608,7 @@ local function scan_scene_batch()
                     local components = scene:call("findComponents(System.Type)", type_cache.app_character:get_runtime_type())
                     if components then
                         local list = components:get_elements()
-                        for _, char in ipairs(list) do update_cache_entry(char) end
+                        for _, char in ipairs(list) do pcall(update_cache_entry, char) end
                     end
                 end
                 if method_cache.Scene_findComponents and type_cache.via_transform then
@@ -609,6 +628,9 @@ local function scan_scene_batch()
                 end
             else
                 scanner.last_scan_time = current_time
+                scanner.force_rescan = true
+                runtime_guard:block_frame()
+                return false
             end
         end
     elseif scanner.state == "PROCESSING" then
@@ -617,59 +639,23 @@ local function scan_scene_batch()
             or scanner.scene_key ~= scene_key then
             runtime_guard:accept_scene(scene_key)
             discard_unreliable_scanner_snapshot()
+            scanner.force_rescan = true
+            runtime_guard:block_frame()
             return false
         end
         local batch_size = global_config.scanner_batch_size or 100
         local limit = scanner.index + batch_size - 1
         if limit > scanner.count then limit = scanner.count end
-        local batch_dead = false
+        local failures = 0
         for i = scanner.index, limit do
-            local safe_get_transform = function()
-                local t = scanner.transforms[i]
-                return (t and sdk.is_managed_object(t)) and t or nil
+            local ok, valid = pcall(scan_transform_entry, scanner.transforms[i])
+            if not ok or not valid then
+                failures = failures + 1
+                if failures >= 8 then
+                    discard_unreliable_scanner_snapshot()
+                    return true
+                end
             end
-            local status, transform = pcall(safe_get_transform)
-            if status and transform then
-                local game_obj = safe_get_game_object(transform, "scanner_transform")
-                if not game_obj then
-                    batch_dead = true
-                    break
-                end
-                local name_ok, name = pcall(method_cache.GameObject_get_Name.call, method_cache.GameObject_get_Name, game_obj)
-                if not name_ok then
-                    batch_dead = true
-                    break
-                end
-                local is_target = false
-                if name_ok and name then
-                    if string.sub(name, 1, 2) == "Pl" then
-                        is_target = true
-                    else
-                        is_target = preview_character_names[name] == true
-                    end
-                end
-                if is_target then
-                    local char = nil
-                    if type_cache.app_character then
-                        local char_ok, c = pcall(method_cache.GameObject_getComponent.call, method_cache.GameObject_getComponent, game_obj, type_cache.app_character)
-                        if not char_ok then discard_unreliable_scanner_snapshot(); return false end
-                        char = c
-                    end
-                    if not char and type_cache.app_hunter_character then
-                        local char_ok, c = pcall(method_cache.GameObject_getComponent.call, method_cache.GameObject_getComponent, game_obj, type_cache.app_hunter_character)
-                        if not char_ok then discard_unreliable_scanner_snapshot(); return false end
-                        char = c
-                    end
-                    if char then update_cache_entry(char) else update_cache_entry(transform) end
-                end
-            else
-                batch_dead = true
-                break
-            end
-        end
-        if batch_dead then
-            discard_unreliable_scanner_snapshot()
-            return false
         end
         scanner.index = limit + 1
         if scanner.index > scanner.count then
@@ -682,7 +668,16 @@ local function scan_scene_batch()
 end
 local function tick_scanner()
     local ok, ready = pcall(scan_scene_batch)
-    if not ok then discard_unreliable_scanner_snapshot(); return false end
+    if not ok then
+        discard_unreliable_scanner_snapshot()
+        local _, key = runtime_guard:get_scene()
+        if key == "" or not runtime_guard:accept_scene(key) then
+            scanner.force_rescan = true
+            runtime_guard:block_frame()
+            return false
+        end
+        return true
+    end
     return ready
 end
 local function get_all_characters()
@@ -3014,8 +3009,12 @@ re.on_frame(function()
     end
 end)
 re.on_draw_ui(function()
-    if runtime_guard.suspended then return end
     if imgui.tree_node(T("mod_name")) then
+        if runtime_guard.suspended then
+            imgui.text(T("runtime_paused"))
+            imgui.tree_pop()
+            return
+        end
         imgui.text_colored(string.format(T("version") .. ": %s | " .. T("author") .. ": %s", version, author), 0xFF808080)
         imgui.separator()
         if variant_manager_ui:draw_settings() then
