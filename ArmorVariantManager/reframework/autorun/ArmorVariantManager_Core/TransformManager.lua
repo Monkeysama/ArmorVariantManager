@@ -1,5 +1,5 @@
 local TransformManager = {}
-local legacy_ground_clipping_disabled = { enabled = false, height_cm = 10 }
+local GroundClippingFix = require("ArmorVariantManager_Core.GroundClippingFix")
 local ConditionRegistry = {
     hp = require("ArmorVariantManager_Core.Conditions.Condition_HP"),
     damage = require("ArmorVariantManager_Core.Conditions.Condition_Damage"),
@@ -251,9 +251,10 @@ function TransformManager.apply_transform_rules(char_addr, config, character, ac
                             end
                         end
                         if preset_data then
+                            local previous_height = new_overrides.ground_clipping_fix
                             new_overrides = merge_overrides(new_overrides, preset_data)
-                            new_overrides.ground_clipping_fix = preset_data.ground_clipping_fix
-                                or config.ground_clipping_fix or config.high_heel_height or legacy_ground_clipping_disabled
+                            new_overrides.ground_clipping_fix = GroundClippingFix.participating_settings(preset_data, config)
+                                or previous_height
                         end
                     end
                 end

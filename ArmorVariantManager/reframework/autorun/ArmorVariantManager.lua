@@ -1,5 +1,5 @@
 local mod_name = "ArmorVariantManager"
-local version = "4.3.3"
+local version = "4.3.4"
 local author = "MK,Moon,AZUSA,Ensicht"
 local global_config_path = "ArmorVariantManager/GlobalSettings.json"
 local global_config = {
@@ -1559,7 +1559,8 @@ local function merge_overrides(base_data, add_data)
     if not add_data then return result end
     for p_idx, p_data in pairs(add_data) do
         if p_idx == "ground_clipping_fix" then
-            result.ground_clipping_fix = GroundClippingFix.read_settings(p_data)
+            local settings = GroundClippingFix.read_settings(p_data)
+            if settings.enabled then result.ground_clipping_fix = settings end
             goto continue_override_part
         end
         if not result[p_idx] then result[p_idx] = { materials = {} } end
@@ -1709,6 +1710,7 @@ local function apply_preset(preset_name)
     if not preset_data then return end
     local current_body_id = get_body_id()
     if current_body_id then
+        local previous_height = active_overrides[current_body_id] and active_overrides[current_body_id].ground_clipping_fix
         if not active_group_presets[current_body_id] then active_group_presets[current_body_id] = {} end
         active_group_presets[current_body_id][current_group_name] = preset_name
         ground_clipping_presets.reset(current_body_id, current_group_name)
@@ -1765,7 +1767,8 @@ local function apply_preset(preset_name)
             end
         end
         if not is_weapon_id(current_body_id) then
-            active_overrides[current_body_id].ground_clipping_fix = GroundClippingFix.preset_settings(preset_data, current_config)
+            active_overrides[current_body_id].ground_clipping_fix = GroundClippingFix.participating_settings(preset_data, current_config)
+                or previous_height or GroundClippingFix.default_settings(current_config)
         end
         temp_applied_presets[current_body_id] = preset_name
     end
@@ -2483,7 +2486,7 @@ local function set_ground_clipping_settings(changes, body_id)
         or group and group.default_preset
     local settings = ground_clipping_presets.edit(current_config, body_id, current_group_name, selected, changes)
     if not active_overrides[body_id] then active_overrides[body_id] = {} end
-    active_overrides[body_id].ground_clipping_fix = settings
+    if settings.enabled then active_overrides[body_id].ground_clipping_fix = settings end
     ground_clipping_fix.settings_changed()
     return true
 end
@@ -3410,7 +3413,7 @@ re.on_draw_ui(function()
                                 if changed then set_ground_clipping_settings({ height_cm = value }, body_id) end
                                 imgui.same_line()
                                 if imgui.button(T("heel_reset_short") .. "##ground_clipping_reset") then
-                                    set_ground_clipping_settings({ enabled = false, height_cm = 0 }, body_id)
+                                    set_ground_clipping_settings({ enabled = true, height_cm = 0 }, body_id)
                                 end
                                 imgui.separator()
                             end

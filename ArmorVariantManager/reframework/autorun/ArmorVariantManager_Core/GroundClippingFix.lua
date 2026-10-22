@@ -18,6 +18,11 @@ function GroundClippingFix.preset_settings(preset, config)
     return GroundClippingFix.read_settings(type(preset) == "table" and preset.ground_clipping_fix
         or GroundClippingFix.config_settings(config))
 end
+function GroundClippingFix.participating_settings(preset, config)
+    local settings = GroundClippingFix.preset_settings(preset, config)
+    if settings.enabled then return settings end
+    return nil
+end
 function GroundClippingFix.default_settings(config)
     config = config or {}
     local settings = GroundClippingFix.preset_settings(config.presets and config.presets[config.default_preset], config)
@@ -37,7 +42,7 @@ function GroundClippingFix.default_settings(config)
             local group = config.groups[name]
             local preset = group.presets and group.presets[group.default_preset]
             if (group.is_global == true) == global and preset then
-                settings = GroundClippingFix.preset_settings(preset, config)
+                settings = GroundClippingFix.participating_settings(preset, config) or settings
             end
         end
     end
