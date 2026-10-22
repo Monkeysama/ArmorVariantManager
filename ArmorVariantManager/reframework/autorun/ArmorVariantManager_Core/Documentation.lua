@@ -184,6 +184,14 @@ return {
         title = "更新日志",
         entries = {
             {
+                title = "V4.3.2",
+                paragraphs = {
+                    "1. 修复场景中个别对象失效时，新界面像重载一样反复消失、旧界面入口同时消失的问题。",
+                    "2. 扫描异常只重试受影响的扫描快照，保留当前界面和操作状态；场景切换、加载及游戏菜单期间继续安全暂停。",
+                    "3. 旧界面暂停时保留入口并显示提示，准备就绪后自动恢复。"
+                }
+            },
+            {
                 title = "V4.3.1",
                 paragraphs = {
                     "1. 修复联机玩家枚举接口调用错误，恢复联机玩家的差分预设识别与应用。",
@@ -316,6 +324,14 @@ return {
         en = {
             title = "Changelog",
             entries = {
+                {
+                    title = "V4.3.2",
+                    paragraphs = {
+                        "1. Fixed individual scene objects becoming invalid and making the new panel repeatedly disappear as if reloading, while also hiding the legacy UI entry.",
+                        "2. Scanner errors now retry only the affected snapshot while preserving the current UI and interaction state. Scene transitions, loading and game menus still pause safely.",
+                        "3. The legacy UI entry remains visible with a pause message and resumes automatically when ready."
+                    }
+                },
                 {
                     title = "V4.3.1",
                     paragraphs = {
