@@ -13,6 +13,9 @@ function Runtime.reset_pointer()
     Runtime.frame_clicked = false
 end
 function Runtime.begin_frame()
+    -- The load-time draw dispatcher may run before the main update callback.
+    -- Sample here as well so drawing/hit testing do not use last frame's input.
+    WindowsInput.refresh()
     local state = WindowsInput.state()
     if state then
         Runtime.frame_clicked = Runtime.last_click_sequence ~= nil

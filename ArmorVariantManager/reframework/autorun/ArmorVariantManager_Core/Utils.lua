@@ -2,6 +2,41 @@
 local Utils = {}
 local SceneObject = require("ArmorVariantManager_Core.SceneObject")
 
+local sample_epoch, samples
+local actor_aliases=setmetatable({}, {__mode='k'})
+local NIL={}
+function Utils.begin_frame(epoch)
+    if sample_epoch~=epoch then sample_epoch,samples=epoch,{} end
+end
+function Utils.invalidate_samples() sample_epoch,samples=nil,nil end
+function Utils.bind_actor(player,game_object)
+    if player and game_object then actor_aliases[game_object]=player end
+end
+local function memo(handle,key,reader)
+    if not samples then return reader() end
+    handle=handle or NIL
+    local values=samples[handle]
+    if not values then values={};samples[handle]=values end
+    local value=values[key]
+    if value~=nil then if value==NIL then return nil end;return value end
+    value=reader();values[key]=value==nil and NIL or value
+    return value
+end
+function Utils.read_player_field(player,name)
+    return memo(player,name,function()
+        local ok,value=pcall(function() return player:get_field(name) end)
+        if ok then return value end
+    end)
+end
+function Utils.sample_condition(kind,handler,character,player)
+    local handle=player or character
+    local owner=actor_aliases[handle] or handle
+    return memo(owner,'condition:'..kind,function()
+        return handler.get_state(player or character)
+    end)
+end
+
+
 -- ============================================================================
 --  玩家句柄解析
 -- ============================================================================
@@ -31,7 +66,10 @@ local function resolve_player(handle)
     return nil, handle
 end
 Utils.is_player_object = is_player_object
-Utils.resolve_player = resolve_player
+Utils.resolve_player = function(handle)
+    local result=memo(handle,'resolved_player',function() return table.pack(resolve_player(handle)) end)
+    return table.unpack(result,1,result.n)
+end
 
 function Utils.deep_copy_table(orig)
     local orig_type = type(orig)
@@ -56,7 +94,7 @@ function Utils.get_player_manager()
     return sdk.get_managed_singleton("snow.player.PlayerManager") or sdk.get_managed_singleton("app.PlayerManager")
 end
 
-function Utils.get_master_player()
+local function get_master_player_uncached()
     local pm = Utils.get_player_manager()
     if not pm then return nil end
     -- - 崛起里实测可用的是 findMasterPlayer()（Lua Bone System / Lua Face System 也是这么拿的）；
@@ -68,8 +106,10 @@ function Utils.get_master_player()
     return nil
 end
 
+function Utils.get_master_player() return memo(nil,'master',get_master_player_uncached) end
+
 function Utils.is_weapon_on(handle)
-    local player = resolve_player(handle)
+    local player = Utils.resolve_player(handle)
     if not player then return false end
     if player.isWeaponOn then
         local ok, v = pcall(function() return player:isWeaponOn() end)
@@ -87,7 +127,7 @@ function Utils.get_current_scroll_state(handle)
     -- 联机时如果问的是「别的玩家」，正确答案是「不知道」，
     -- 而不是把主角的状态套到队友身上（那样队友的书会跟着你的书乱变）。
     if handle ~= nil then
-        local player, go = resolve_player(handle)
+        local player, go = Utils.resolve_player(handle)
         local master = Utils.get_master_player()
         local master_go = nil
         if master then
@@ -197,11 +237,11 @@ Utils.WEAPON_PARTS_MAP = {
 -- - 联机关键：传入队友的 Player 对象时读到的是**他自己**的武器类型。
 --   拿不到指定玩家时兜底回本地玩家，保证旧调用点的行为不变。
 function Utils.get_current_weapon_type(handle)
-    local player = resolve_player(handle)
+    local player = Utils.resolve_player(handle)
     if not player then player = Utils.get_master_player() end
     if not player then return nil end
-    local ok, weaponType = pcall(function() return player:get_field("_playerWeaponType") end)
-    if ok and type(weaponType) == "number" then
+    local weaponType = Utils.read_player_field(player, "_playerWeaponType")
+    if type(weaponType) == "number" then
         return weaponType
     end
     return nil
@@ -235,7 +275,7 @@ end
 --   否则队友会被套上主角的武器部件（旧实现就是这样）。
 local function get_current_weapon_parts_impl(handle)
     dfs_nodes = 0
-    local player, go = resolve_player(handle)
+    local player, go = Utils.resolve_player(handle)
     if not go then return nil end
     -- 用同一个玩家的类型去查表；player 为 nil（只给了 GameObject）时，
     -- get_current_weapon_type 会兜底回本地玩家，与旧行为一致。

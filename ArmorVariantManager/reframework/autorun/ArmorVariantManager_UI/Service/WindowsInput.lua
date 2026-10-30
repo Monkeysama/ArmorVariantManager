@@ -16,7 +16,12 @@ function WindowsInput.refresh()
         elseif value.sequence ~= sequence then
             snapshot, sequence, changed_at = value, value.sequence, now
         end
-    else retry_at = now + 1 end
+    else
+        -- Replacement/open races are normal for the live snapshot. Retry on
+        -- the next sample, retaining the last valid state until its TTL.
+        -- Only missing files need backoff (handled by BridgeRuntime).
+        retry_at = now + 0.008
+    end
     -- A file left over after a crash is never accepted until a new sequence arrives.
     if not changed_at or os.clock() - changed_at > 0.75 then return nil end
     return snapshot

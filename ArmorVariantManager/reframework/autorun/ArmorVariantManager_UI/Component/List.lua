@@ -1,146 +1,141 @@
 local Runtime = require("ArmorVariantManager_UI.Component.Runtime")
 local List = {}
 function List.new(button, d2d_api, colors)
-    local component = {
-        drag_key = nil,
-        drag_index = nil,
-        drag_items = nil,
-        drag_target_index = nil
-    }
-    local function copy_items(items)
-        local copied = {}
-        for index, item in ipairs(items or {}) do copied[index] = item end
-        return copied
+    local component = { views = {} }
+    local function copy(items)
+        local result = {}
+        for i,item in ipairs(items) do result[i]=item end
+        return result
     end
-    local function reorder_items(items, from_index, target_index, options)
-        if not target_index or target_index == from_index then return items end
-        local reordered = copy_items(items)
+    local function cancel(self)
+        self.drag_key,self.drag_index,self.drag_items,self.drag_ids,self.drag_target_index,self.changed=nil,nil,nil,nil,nil,nil
+    end
+    local function reorder(items,from,target,options)
+        local result=copy(items)
         if options.reorderable_only then
-            local movable_indices = {}
-            for index, item in ipairs(reordered) do
-                if options.draggable(item, index) == true then
-                    table.insert(movable_indices, index)
+            local indices,movable={},{}
+            local a,b
+            for i,item in ipairs(items) do
+                if options.draggable(item,i) then
+                    indices[#indices+1]=i; movable[#movable+1]=item
+                    if i==from then a=#movable end
+                    if i==target then b=#movable end
                 end
             end
-            local from_position, target_position
-            for position, index in ipairs(movable_indices) do
-                if index == from_index then from_position = position end
-                if index == target_index then target_position = position end
-            end
-            if not from_position or not target_position then return reordered end
-            local movable_items = {}
-            for _, index in ipairs(movable_indices) do
-                table.insert(movable_items, reordered[index])
-            end
-            local moved = table.remove(movable_items, from_position)
-            table.insert(movable_items, target_position, moved)
-            for position, index in ipairs(movable_indices) do
-                reordered[index] = movable_items[position]
-            end
-            return reordered
-        end
-        local moved = table.remove(reordered, from_index)
-        table.insert(reordered, target_index, moved)
-        return reordered
+            if not a or not b then return result end
+            table.insert(movable,b,table.remove(movable,a))
+            for i,index in ipairs(indices) do result[index]=movable[i] end
+        else table.insert(result,target,table.remove(result,from)) end
+        return result
     end
-    local function get_drop_index(items, list_y, mouse_y, h, options)
-        local row_height = options.row_height or 28
-        local row_gap = options.row_gap or 6
-        local top_padding = options.top_padding or 0
-        local bottom_padding = options.bottom_padding or 0
-        local max_items = math.floor((h - top_padding - bottom_padding + row_gap) / (row_height + row_gap))
-        max_items = math.max(0, math.min(#items, max_items))
-        if max_items == 0 or mouse_y < list_y + top_padding
-            or mouse_y > list_y + top_padding + max_items * (row_height + row_gap) then
-            return nil
+    function component:draw(items,x,y,w,h,options)
+        items,options=items or {},options or {}
+        local row_h,gap=options.row_height or 28,options.row_gap or 6
+        local stride=row_h+gap
+        local top,bottom=y+(options.top_padding or 0),y+h-(options.bottom_padding or 0)
+        local room=math.max(0,bottom-top)
+        local capacity=math.max(0,math.floor((room+gap)/stride))
+        local overflow=#items>capacity
+        if overflow then capacity=math.max(0,math.floor((room-26+gap)/stride)) end
+        local key=options.key or tostring(x)..":"..tostring(y)..":"..tostring(w)
+        local scope=options.scope or ""
+        local view=self.views[key]
+        if not view or view.scope~=scope then
+            view={scope=scope,offset=0}; self.views[key]=view
+            if self.drag_key==key then cancel(self) end
         end
-        local relative = mouse_y - (list_y + top_padding)
-        local index = math.floor(relative / (row_height + row_gap)) + 1
-        index = math.max(1, math.min(max_items, index))
-        local function can_drag(item, item_index)
-            return not options.draggable or options.draggable(item, item_index) == true
+        local function id(item,index) return options.item_key and options.item_key(item,index) or item end
+        -- A live edit or equipment switch must not commit stale drag contents.
+        if self.drag_key==key then
+            local same=self.drag_ids and #items==#self.drag_ids
+            if same then
+                for i,item in ipairs(items) do if id(item,i)~=self.drag_ids[i] then same=false; break end end
+            end
+            if not same then cancel(self) end
         end
-        if can_drag(items[index], index) then return index end
-        for distance = 1, max_items do
-            local before, after = index - distance, index + distance
-            if before >= 1 and can_drag(items[before], before) then return before end
-            if after <= max_items and can_drag(items[after], after) then return after end
+        local limit=math.max(0,#items-capacity)
+        local function clamp(n) return math.max(0,math.min(limit,n)) end
+        local selected,selected_id
+        for i,item in ipairs(items) do
+            if options.selected and options.selected(item,i) then selected,selected_id=i,id(item,i); break end
         end
-        return nil
-    end
-    function component:draw(items, x, y, w, h, options)
-        options = options or {}
-        local row_height = options.row_height or 28
-        local row_gap = options.row_gap or 6
-        local top_padding = options.top_padding or 0
-        local bottom_padding = options.bottom_padding or 0
-        local max_items = math.floor((h - top_padding - bottom_padding + row_gap) / (row_height + row_gap))
-        max_items = math.max(0, max_items)
-        local row_y = y + top_padding
-        local list_key = options.key or tostring(x) .. ":" .. tostring(y) .. ":" .. tostring(w)
-        local mouse_x, mouse_y = Runtime.mouse_position()
-        local display_items = items or {}
-        if self.drag_key == list_key and self.drag_items then
-            display_items = self.drag_items
-            local target_index = get_drop_index(display_items, y, mouse_y, h, options)
-            self.drag_target_index = target_index
-            if target_index and target_index ~= self.drag_index then
-                self.drag_items = reorder_items(display_items, self.drag_index, target_index, options)
-                self.drag_index = target_index
-                display_items = self.drag_items
+        if selected and (view.selected~=selected_id or view.capacity~=capacity) then
+            if selected<=view.offset then view.offset=selected-1
+            elseif selected>view.offset+capacity then view.offset=selected-capacity end
+        end
+        view.selected,view.capacity=selected_id,capacity
+        view.offset=clamp(view.offset)
+        local mx,my=Runtime.mouse_position()
+        if overflow and Runtime.point_in_rect(mx,my,x,top,w,room) then
+            view.offset=clamp(view.offset-math.floor((options.wheel or 0)*3))
+        end
+        -- Navigation stays inside the list viewport, above the action area.
+        if overflow and room>=26 then
+            local nav_y,nav_w=bottom-24,math.min(32,w/3)
+            if button:draw("^",x,nav_y,nav_w,22,false,nil,options.font,view.offset==0) then
+                view.offset=clamp(view.offset-math.max(1,capacity))
+            end
+            if button:draw("v",x+w-nav_w,nav_y,nav_w,22,false,nil,options.font,view.offset==limit) then
+                view.offset=clamp(view.offset+math.max(1,capacity))
+            end
+            if options.font then
+                local label=string.format("%d-%d / %d",math.min(#items,view.offset+1),math.min(#items,view.offset+capacity),#items)
+                local tx,ty=Runtime.center_text(options.font,label,x+nav_w,nav_y,w-nav_w*2,22)
+                Runtime.text(d2d_api,options.font,label,tx,ty,colors.muted)
             end
         end
-        if self.drag_key == list_key and self.drag_index and not Runtime.is_mouse_down() then
-            local from_index = self.drag_index
-            local reordered = self.drag_items or display_items
-            if options.on_reorder and reordered then
-                options.on_reorder(reordered, from_index, self.drag_index)
+        local display=self.drag_key==key and self.drag_items or items
+        local first,last=view.offset+1,math.min(#display,view.offset+capacity)
+        if self.drag_key==key then
+            local target
+            if capacity>0 and Runtime.point_in_rect(mx,my,x,top,w,capacity*stride) then
+                local candidate=math.min(last,first+math.floor((my-top)/stride))
+                for distance=0,capacity do
+                    for _,index in ipairs({candidate-distance,candidate+distance}) do
+                        if index>=first and index<=last and (not options.draggable or options.draggable(display[index],index)) then target=index; break end
+                    end
+                    if target then break end
+                end
             end
-            self.drag_key = nil
-            self.drag_index = nil
-            self.drag_items = nil
-            self.drag_target_index = nil
+            self.drag_target_index=target
+            if target and target~=self.drag_index then
+                self.drag_items=reorder(display,self.drag_index,target,options)
+                self.drag_index,self.changed=target,true; display=self.drag_items
+            end
+            if not Runtime.is_mouse_down() then
+                if self.changed and options.on_reorder then options.on_reorder(display) end
+                cancel(self)
+            end
         end
-        for i, item in ipairs(display_items) do
-            if i > max_items then break end
-            local label = options.label and options.label(item, i) or tostring(item)
-            local selected = options.selected and options.selected(item, i) or false
-            local draggable = options.draggable and options.draggable(item, i) == true
-            local handle_x = x + w - 28
-            local handle_hovered = draggable and Runtime.point_in_rect(mouse_x, mouse_y,
-                handle_x, row_y, 28, row_height)
-            local is_dragged = self.drag_key == list_key and self.drag_index == i
-            local clicked = button:draw(label, x, row_y, w, row_height, selected,
-                is_dragged and "dragging" or nil)
+        for i=first,last do
+            local item=display[i]
+            local row_y=top+(i-first)*stride
+            local handle_x=x+w-28
+            local draggable=options.draggable and options.draggable(item,i)==true
+            local handle_hovered=draggable and Runtime.point_in_rect(mx,my,handle_x,row_y,28,row_h)
+            local dragged=self.drag_key==key and self.drag_index==i
+            local label=options.label and options.label(item,i) or tostring(item)
+            local clicked=button:draw(label,x,row_y,w,row_h,options.selected and options.selected(item,i) or false,dragged and "dragging" or nil)
             if draggable and d2d_api and colors then
-                local handle_dragging = self.drag_key == list_key and self.drag_index == i
-                local handle_color = (handle_hovered or handle_dragging)
-                    and colors.accent or colors.muted
-                for line = 0, 2 do
-                    local line_y = row_y + 9 + line * 5
-                    d2d_api.line(handle_x + 9, line_y, handle_x + 19, line_y, 2, handle_color)
+                for line=0,2 do
+                    local ly=row_y+9+line*5
+                    d2d_api.line(handle_x+9,ly,handle_x+19,ly,2,(handle_hovered or dragged) and colors.accent or colors.muted)
                 end
             end
-            if options.draw_after then
-                options.draw_after(item, i, x, row_y, w, row_height, handle_x - 4)
+            if options.draw_after then options.draw_after(item,i,x,row_y,w,row_h,handle_x-4) end
+            if clicked and not self.drag_key then
+                if handle_hovered then
+                    self.drag_key,self.drag_index,self.drag_items=key,i,copy(display)
+                    self.drag_ids={}
+                    for index,entry in ipairs(items) do self.drag_ids[index]=id(entry,index) end
+                elseif options.on_click then options.on_click(item,i) end
             end
-            if clicked and not handle_hovered and not self.drag_key then
-                if options.on_click then options.on_click(item, i) end
-            end
-            if draggable and clicked and handle_hovered and not self.drag_key then
-                self.drag_key = list_key
-                self.drag_index = i
-                self.drag_items = copy_items(display_items)
-                self.drag_target_index = i
-            end
-            row_y = row_y + row_height + row_gap
         end
-        if self.drag_key == list_key and self.drag_target_index then
-            local target_y = y + top_padding + (self.drag_target_index - 1) * (row_height + row_gap)
-            d2d_api.line(x, target_y - 2, x + w, target_y - 2, 2,
-                colors and colors.accent or 0xFF55B8C8)
+        if self.drag_key==key and self.drag_target_index then
+            local target_y=top+(self.drag_target_index-first)*stride
+            d2d_api.line(x,target_y-2,x+w,target_y-2,2,colors and colors.accent or 0xFF55B8C8)
         end
-        return max_items
+        return capacity
     end
     return component
 end

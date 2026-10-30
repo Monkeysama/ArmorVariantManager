@@ -471,7 +471,10 @@ function VariantManagerUI:search_key_character(key, force_lowercase)
 end
 
 function VariantManagerUI:update_caps_lock_state()
-    local ok, down = pcall(function() return Runtime.key_down(0x14) end)
+    local ok, down = pcall(function()
+        if self.visible then return Runtime.key_down(0x14) end
+        return reframework:is_key_down(0x14)
+    end)
     down = ok and down or false
     if down and not self.caps_lock_down then
         self.caps_lock_active = not self.caps_lock_active
@@ -750,8 +753,12 @@ function VariantManagerUI:backend_usable()
 end
 
 function VariantManagerUI:update()
-    Runtime.refresh_input()
     local config = self.deps.config
+    -- Closed panels need one hotkey, not a 125 Hz JSON input stream. Active
+    -- drawing/binding retains the full bridge (mouse, IME and key isolation).
+    if self.visible or self.waiting_for_key or config.new_ui_debug_force_visible then
+        Runtime.refresh_input()
+    end
     if not config.new_ui_enabled then
         -- 新版面板总开关关闭时不建立后端；已注册的回调由 should_run 短路。
         self:deactivate_native_text_input()
@@ -811,10 +818,17 @@ function VariantManagerUI:update()
             if not select_ok then self.last_error = tostring(select_err) end
         end
         local key_ok, down = pcall(function()
-            return not self.waiting_for_key and not self.material_filter_editing and not self.preset_name_editing
-                and not self.group_name_editing and not self.number_editing
+            return not self.waiting_for_key and (not self.visible or
+                (not self.material_filter_editing and not self.preset_name_editing
+                    and not self.group_name_editing and not self.number_editing))
                 and config.new_ui_enabled and config.new_ui_key
-                and Runtime.key_down(config.new_ui_key)
+                and (function()
+                    if self.visible or self.waiting_for_key then return Runtime.key_down(config.new_ui_key) end
+                    local ok,value=pcall(function() return reframework:is_key_down(config.new_ui_key) end)
+                    if ok then return value end
+                    Runtime.refresh_input()
+                    return Runtime.key_down(config.new_ui_key)
+                end)()
         end)
         down = key_ok and down or false
         if self.waiting_for_key then
@@ -834,12 +848,14 @@ function VariantManagerUI:update()
             end
         end
         self:update_caps_lock_state()
-        self:update_native_text_input()
-        self:update_material_filter_input()
-        self:update_preset_name_input()
-        self:update_group_name_input()
-        self:update_number_input()
-        self:clear_released_input_keys()
+        if self.visible then
+            self:update_native_text_input()
+            self:update_material_filter_input()
+            self:update_preset_name_input()
+            self:update_group_name_input()
+            self:update_number_input()
+            self:clear_released_input_keys()
+        end
         if down and not self.key_down and self.available then
             -- 去抖：实测 reframework:is_key_down 在个别情况下会在一瞬间抖动多次
             -- （一次按键被判定成多次按下/松开），导致面板连续开关。
@@ -848,6 +864,7 @@ function VariantManagerUI:update()
             if not self.last_toggle_time or (now_clock - self.last_toggle_time) > 0.3 then
                 self.last_toggle_time = now_clock
                 self.visible = not self.visible
+                if self.visible then Runtime.refresh_input() end
                 Runtime.reset_pointer()
                 if log and log.info then
                     pcall(function()
@@ -1205,6 +1222,10 @@ function VariantManagerUI:draw_library(x, y, w, h, context, preset_w)
         bottom_padding = LAYOUT.group_actions_height,
         row_gap = LAYOUT.list_gap,
         key = "group_list",
+        scope = context.body_id,
+        wheel = self.frame_mouse_wheel,
+        font = self.fonts.tiny,
+        item_key = function(item) return item.name end,
         label = function(item) return item.label end,
         selected = function(item) return context.group_name == item.name end,
         on_click = function(item)
@@ -1274,6 +1295,9 @@ function VariantManagerUI:draw_library(x, y, w, h, context, preset_w)
         bottom_padding = LAYOUT.preset_actions_height + 38,
         row_gap = LAYOUT.list_gap,
         key = "preset_list",
+        scope = tostring(context.body_id) .. ":" .. tostring(context.group_name),
+        wheel = self.frame_mouse_wheel,
+        font = self.fonts.tiny,
         label = function(item) return item end,
         selected = function(item) return item == selected_preset_name end,
         on_click = function(item, index)
@@ -1458,15 +1482,28 @@ end
 --  部位 / 材质 面板
 -- ============================================================================
 function VariantManagerUI:draw_part_content(x, y, w, h, context, part_index)
-    local meshes = self.deps.get_meshes
-        and self.deps.get_meshes(context.character, context.body_id, part_index)
+    -- Only retain the currently displayed part. No engine calls on cache hits;
+    -- live changes from other mods are reflected within 100 ms. Writes still
+    -- validate their target in the core, and intent overlays update immediately.
+    local now = os.clock()
+    local snapshot = self.part_snapshot
+    if not snapshot or snapshot.character ~= context.character
+        or snapshot.body_id ~= context.body_id or snapshot.part_index ~= part_index
+        or snapshot.weapon_mode ~= context.weapon_mode or now - snapshot.at >= 0.1 then
+        local meshes = self.deps.get_meshes
+            and self.deps.get_meshes(context.character, context.body_id, part_index) or {}
+        snapshot = { character = context.character, body_id = context.body_id,
+            part_index = part_index, weapon_mode = context.weapon_mode, at = now, meshes = meshes,
+            view = self.deps.get_mesh_view and #meshes > 0
+                and self.deps.get_mesh_view(meshes, context.body_id, part_index) or nil }
+        self.part_snapshot = snapshot
+    end
+    local meshes, view = snapshot.meshes, snapshot.view
     if not meshes or #meshes == 0 then
         Runtime.text(self.d2d, self.fonts.tiny, self:T("d2d_no_part_mesh"),
             x + LAYOUT.panel_inset, y + 8, COLORS.muted)
         return
     end
-    local view = self.deps.get_mesh_view
-        and self.deps.get_mesh_view(meshes, context.body_id, part_index) or nil
     if not view then view = { materials = {} } end
     local override = self.deps.get_override and self.deps.get_override(context.body_id, part_index)
     local mesh_enabled = view.mesh_enabled ~= false
@@ -1515,7 +1552,8 @@ function VariantManagerUI:draw_part_content(x, y, w, h, context, part_index)
             return selected == true
         end
         local intent = override and override.materials and override.materials[material.name]
-        return intent ~= nil and intent or material.enabled ~= false
+        if intent ~= nil then return intent end
+        return material.enabled ~= false
     end
     local controls_y = y + 62
     local action_width = 46
@@ -2407,24 +2445,11 @@ function VariantManagerUI:draw_settings_contents(x, y, w, h)
     Runtime.text(self.d2d, self.fonts.small, self:T("d2d_settings_performance"),
         inner_x, cursor_y, COLORS.text)
     cursor_y = cursor_y + 30
-    local changed, value = self.sliders.scan_interval:draw(self:T("scan_interval"),
-        tonumber(config.scan_interval) or 0.5, inner_x, cursor_y, inner_w,
-        0.1, 5.0, 0.1, function(v) return string.format("%.1f s", v) end)
-    if changed then config.scan_interval = value; self.deps.save_settings() end
-    cursor_y = cursor_y + 42
-    changed, value = self.sliders.body_id_ttl:draw(self:T("refresh_interval"),
-        tonumber(config.body_id_ttl) or 1.0, inner_x, cursor_y, inner_w,
-        0.1, 10.0, 0.1, function(v) return string.format("%.1f s", v) end)
-    if changed then config.body_id_ttl = value; self.deps.save_settings() end
-    cursor_y = cursor_y + 42
-    changed, value = self.sliders.scanner_batch_size:draw(self:T("scanner_batch_size"),
-        tonumber(config.scanner_batch_size) or 100, inner_x, cursor_y, inner_w,
-        10, 1000, 10, function(v) return tostring(math.floor(v + 0.5)) end)
-    if changed then config.scanner_batch_size = value; self.deps.save_settings() end
-    cursor_y = cursor_y + 34
-    cursor_y = self:draw_wrapped_text(self:T("performance_desc"), inner_x,
-        cursor_y, inner_w, self.fonts.tiny, 18, COLORS.muted)
-    cursor_y = cursor_y + 14
+    local changed,value
+    cursor_y=self:draw_wrapped_text(self:T("runtime_architecture_hint"),inner_x,
+        cursor_y,inner_w,self.fonts.tiny,18,COLORS.muted)+8
+    cursor_y=self:draw_wrapped_text(self:T("runtime_teammate_hint"),inner_x,
+        cursor_y,inner_w,self.fonts.tiny,18,COLORS.muted)+14
     Runtime.text(self.d2d, self.fonts.small, self:T("image_quality"),
         inner_x, cursor_y, COLORS.text)
     cursor_y = cursor_y + 30
@@ -2700,13 +2725,14 @@ function VariantManagerUI:draw()
             (context.body_id or self:T("waiting_for_player")),
         panel_x + LAYOUT.header_inset,
         panel_y + LAYOUT.header_text_top + LAYOUT.header_text_gap + 29, COLORS.muted)
+    local mode_changed = false
     if self.button:draw(armor_label, mode_x, mode_y,
         mode_button_width, LAYOUT.mode_button_height, not context.weapon_mode) then
-        if context.weapon_mode and self.deps.set_mode then self.deps.set_mode(false) end
+        if context.weapon_mode and self.deps.set_mode then self.deps.set_mode(false); mode_changed = true end
     end
     if self.button:draw(weapon_label, weapon_mode_x, mode_y,
         mode_button_width, LAYOUT.mode_button_height, context.weapon_mode) then
-        if not context.weapon_mode and self.deps.set_mode then self.deps.set_mode(true) end
+        if not context.weapon_mode and self.deps.set_mode then self.deps.set_mode(true); mode_changed = true end
     end
     if self.button:draw("×", close_x, mode_y,
         LAYOUT.close_button_size, LAYOUT.close_button_size, false) then
@@ -2714,7 +2740,7 @@ function VariantManagerUI:draw()
     end
     local content_y = panel_y + LAYOUT.content_top
     local content_h = panel_h - LAYOUT.content_top - LAYOUT.footer_height - LAYOUT.footer_gap
-    context = self.deps.get_context() or context
+    if mode_changed then context = self.deps.get_context() or context end
     local available_width = panel_w - LAYOUT.content_inset * 2 - LAYOUT.panel_gap * 2
     local library_width = available_width * 0.25
     local preset_width = available_width * 0.25

@@ -48,6 +48,7 @@ function ImGuiBackend.create()
     local failed, last_error, last_draw = false, nil, 0
     local scale, offset_x, offset_y = 1, 0, 0
     local stack, commands = {}, nil
+    local command_pool, command_count = {}, 0
     local ready, registered = false, false
     local stats = { frames = 0, drawn_frames = 0, filled = 0, outline = 0, line = 0, text = 0 }
     local width_cache, cache_count = {}, 0
@@ -69,9 +70,17 @@ function ImGuiBackend.create()
     clip=DrawClip.new(px,py,function() return scale end)
     api.push_clip_rect=clip.push
     api.pop_clip_rect=clip.pop
-    local function queue(kind, fn, ...)
+    local function queue(kind, fn, a, b, c, d, e)
         assert(commands, "draw 图元只能在绘制回调内使用")
-        commands[#commands + 1] = { kind = kind, fn = fn, args = table.pack(...) }
+        command_count = command_count + 1
+        local command = command_pool[command_count]
+        if not command then
+            command = {}
+            command_pool[command_count] = command
+        end
+        command.kind, command.fn = kind, fn
+        command[1], command[2], command[3], command[4], command[5] = a, b, c, d, e
+        command.n = kind == "text" and 4 or 5
     end
     function api.Font.new()
         local font = {}
@@ -143,7 +152,7 @@ function ImGuiBackend.create()
             if failed or (should_run and not should_run()) then return end
             stats.frames = stats.frames + 1
             reset()
-            commands = {}
+            commands, command_count = command_pool, 0
             local submitted = false
             local ok, result = pcall(function()
                 if not ready then
@@ -152,13 +161,17 @@ function ImGuiBackend.create()
                 end
                 if on_frame and on_frame() == false then return false end
                 assert(#stack == 0, "绘制结束时变换栈未恢复")
-                for _, command in ipairs(commands) do
-                    command.fn(table.unpack(command.args, 1, command.args.n))
+                for i = 1, command_count do
+                    local command = command_pool[i]
+                    command.fn(table.unpack(command, 1, command.n))
                     stats[command.kind] = stats[command.kind] + 1
                 end
-                submitted = #commands > 0
+                submitted = command_count > 0
                 return true
             end)
+            -- Drop inactive tail entries when switching to a smaller panel.
+            -- Keep the active command slots for the next frame.
+            for i = #command_pool, command_count + 1, -1 do command_pool[i] = nil end
             commands = nil
             reset()
             if not ok then

@@ -5,9 +5,7 @@ M.id = "hammer"
 local Utils = require("ArmorVariantManager_Core.Utils")
 
 local function field(player, name)
-    local ok, v = pcall(function() return player:get_field(name) end)
-    if ok then return v end
-    return nil
+    return Utils.read_player_field(player, name)
 end
 
 -- handle：指定玩家的句柄（Player 对象 / GameObject / nil = 本地玩家）

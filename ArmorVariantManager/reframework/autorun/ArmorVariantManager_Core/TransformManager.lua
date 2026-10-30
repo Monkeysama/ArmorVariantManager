@@ -1,5 +1,7 @@
 -- TransformManager.lua
 local TransformManager = {}
+local RulePlan = require("ArmorVariantManager_Core.RulePlan")
+local Utils = require("ArmorVariantManager_Core.Utils")
 
 -- 引入条件注册表（所有条件模块）
 local ConditionRegistry = {
@@ -50,6 +52,7 @@ end
 -- 状态缓存（避免每帧重复评估相同状态）
 -- 键格式：char_addr .. "|" .. context_id
 local last_state_cache = {}
+local evaluation_scratch = {}
 local model_bases = {}
 local function copy(value)
     if type(value) ~= "table" then return value end
@@ -144,6 +147,8 @@ end
 
 -- 清除指定角色和上下文的缓存
 function TransformManager.clear_cache(char_addr, context_id, keep_bases)
+    RulePlan.invalidate()
+    evaluation_scratch={}
     -- Rule edits may keep exactly the same weapon state. Invalidate composed outputs as well.
     for _,base in pairs(model_bases) do
         base.composed=nil; base.composed_order=nil
@@ -166,6 +171,21 @@ function TransformManager.clear_cache(char_addr, context_id, keep_bases)
     end
 end
 
+-- Edits invalidate only the affected model/config. Other actors keep their
+-- immutable composed output and native binding state.
+function TransformManager.invalidate_config(body_id, config)
+    RulePlan.invalidate(config)
+    local base=model_bases[body_id]
+    if base then base.composed=nil;base.composed_order=nil;base.revision=base.revision+1 end
+end
+
+function TransformManager.forget_actor(char_addr)
+    local prefix=tostring(char_addr)..'|'
+    for key in pairs(last_state_cache) do
+        if key:sub(1,#prefix)==prefix then last_state_cache[key]=nil;evaluation_scratch[key]=nil end
+    end
+end
+
 -- 由核心根据「是否有配置真的用到怪物血量条件」来开关怪物 HP 跟踪。
 -- 关掉之后，sdk.hook(snow.enemy.EnemyCharacterBase:update) 的回调会在第一行直接返回，
 -- 不再做任何托管 API 调用。
@@ -184,6 +204,18 @@ end
 local function get_active_rule_for_type(t_type, config, character, char_addr, player)
     local handler = ConditionRegistry[t_type]
     if handler then
+        if type(handler.get_state)=='function' then
+            local state=Utils.sample_condition(t_type,handler,character,player)
+            local plan=RulePlan.get(config,ConditionRegistry)
+            for _,condition in ipairs(plan.conditions) do
+                if condition.kind==t_type then
+                    local rule=RulePlan.select(condition,state)
+                    if t_type=='weapon' and state~=nil then state=state and 'drawn' or 'sheathed' end
+                    return rule,state
+                end
+            end
+            return nil,state
+        end
         return handler.evaluate(config, character, char_addr, player)
     end
     return nil, nil
@@ -209,57 +241,69 @@ local function apply_transform_rules_impl(char_addr, context_id, config, charact
         TransformManager.set_model_base(id, active_overrides, {})
         base = model_bases[id]
     end
-    local active, states, all_groups = {}, {}, {}
-    local function evaluate(kind, priority)
-        if not ConditionRegistry[kind] then return end
-        -- 所有可能被规则引用的分组都要返回，退出某状态时调用方才知道归还默认组。
-        for _, candidate in ipairs(config[RULE_FIELDS[kind]] or {}) do
-            for _, target in ipairs(candidate.targets or {}) do all_groups[target.group or ""] = true end
-        end
-        local rule, state = get_active_rule_for_type(kind, config, character, char_addr, player)
-        states[#states + 1] = kind .. ":" .. tostring(state)
-        if rule then active[#active + 1] = {rule = rule, priority = priority or 1, kind = kind} end
-    end
-    if config.is_parallel then
-        for kind, setting in pairs(config.parallel_settings or {}) do
-            if setting.enabled then evaluate(kind, setting.priority) end
-        end
-    else evaluate(config.transform_type, 1) end
-    table.sort(states)
-    local signature = table.concat(states, "|") .. "@" .. base.revision
+    local plan=RulePlan.get(config,ConditionRegistry)
     local key = tostring(char_addr) .. "|" .. tostring(context_id)
     local previous = last_state_cache[key]
-    if previous and previous.signature == signature then
+    local work=evaluation_scratch[key]
+    if not work or work.plan~=plan then
+        work={plan=plan,rules={},ids={}};evaluation_scratch[key]=work
+    end
+    local rules,ids=work.rules,work.ids
+    local unchanged=previous and previous.plan==plan and previous.base==base
+        and previous.revision==base.revision
+    for index,condition in ipairs(plan.conditions) do
+        local handler=ConditionRegistry[condition.kind]
+        local rule
+        if type(handler.get_state)=='function' then
+            local state=Utils.sample_condition(condition.kind,handler,character,player)
+            rule=RulePlan.select(condition,state)
+        else
+            -- Minimal host fixtures / compatible third-party condition modules.
+            rule=handler.evaluate(config,character,char_addr,player)
+        end
+        rules[index]=rule or false
+        ids[index]=condition.ids[rule] or 0
+        if unchanged and previous.ids[index]~=ids[index] then unchanged=false end
+    end
+    local all_groups=plan.all_groups
+    if unchanged then
         -- 同模型队友拥有独立输出；不能把上一个玩家的变身结果直接传回来。
         return previous.output, active_overrides ~= previous.output, previous.targets, all_groups
     end
+    local signature=table.concat(ids,':')..'@'..base.revision
     -- Same-model players in the same state can share an immutable result; avoid version churn.
     local cached=base.composed and base.composed[signature]
-    if cached then
+    if cached and cached.plan==plan then
         last_state_cache[key]=cached
         return cached.output,active_overrides~=cached.output,cached.targets,all_groups
     end
     local output, targets = copy(base.normal), {}
-    -- 数字 1 为最高优先级，保留已有排序语义；同优先级按条件名稳定排序。
-    table.sort(active, function(a, b)
-        if a.priority == b.priority then return a.kind < b.kind end
-        return a.priority > b.priority
-    end)
-    for _, item in ipairs(active) do
-        for _, target in ipairs(item.rule.targets or {}) do
-            local group, name = target.group or "", target.preset
-            local data = group ~= "" and config.groups and config.groups[group] or nil
-            local presets = group == "" and config.presets or data and data.presets
-            local preset = presets and presets[name]
-            if name and name ~= "None" and preset then
-                targets[group] = name
-                if not (data and data.is_global) then output = merge(output, preset) end
+    -- Conditions were compiled in the established descending priority order.
+    for _,rule in ipairs(rules) do
+        for _,target in ipairs(rule and rule.targets or {}) do
+            local group,name=target.group or '',target.preset
+            local data=group~='' and config.groups and config.groups[group] or nil
+            local presets=group=='' and config.presets or data and data.presets
+            local preset=presets and presets[name]
+            if name and name~='None' and preset then
+                targets[group]=name
+                if not (data and data.is_global) then
+                    -- Mutate this newly-created private output once; the old
+                    -- generic merge cloned the entire accumulated model per target.
+                    for part,values in pairs(preset) do
+                        local dst=output[part] or {materials={}};output[part]=dst
+                        if values.mesh_enabled~=nil then dst.mesh_enabled=values.mesh_enabled end
+                        dst.materials=dst.materials or {}
+                        for material,enabled in pairs(values.materials or {}) do dst.materials[material]=enabled end
+                    end
+                end
             end
         end
     end
     -- 全局组始终最后只锁隐藏，默认隐藏不会残留在普通基础层里。
-    for group, data in pairs(config.groups or {}) do
-        if data.is_global then
+    for _,global in ipairs(plan.globals) do
+        local group,data=global.name,global.data
+        do
             local name = targets[group] or base.selected[group] or data.default_preset
             local preset = data.presets and data.presets[name]
             for part, values in pairs(preset or {}) do
@@ -273,7 +317,8 @@ local function apply_transform_rules_impl(char_addr, context_id, config, charact
             end
         end
     end
-    local entry={signature = signature, output = output, targets = targets}
+    local entry={signature=signature,output=output,targets=targets,plan=plan,
+        base=base,revision=base.revision,ids={table.unpack(ids)}}
     last_state_cache[key] = entry
     base.composed=base.composed or {}
     base.composed_order=base.composed_order or {}

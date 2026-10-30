@@ -1,12 +1,12 @@
 local mod_name = "ArmorVariantManager"
-local version = "3.1.9"
+local version = "3.3.0"
 local author = "Moon、MK"
 
 local global_config_path = "ArmorVariantManager/GlobalSettings.json"
 local global_config = {
     language = "zh", -- 默认语言: zh (中文), en (英文)
     scan_interval = 0.5, -- 全量扫描间隔 (秒)
-    body_id_ttl = 1.0, -- Body ID 缓存有效期 (秒)，默认缩短以加速换装检测
+    body_id_ttl = 1.0, -- 旧版本配置兼容；3.3.0 按部件有效性与签名更新
     scanner_batch_size = 100, -- 每帧扫描的对象数量
     enable_image_quality = false,      -- 是否启用自定义渲染比例
     image_quality_rate = 1.0,          -- 渲染比例（1.0 = 100%）
@@ -43,6 +43,15 @@ local global_config = {
     scene_scan_batch = 24
 }
 
+-- Start core caches with this script lifetime, before any frame dispatch.
+if package and package.loaded then
+    for _,name in ipairs({'Utils','SceneObject','TransformManager','RulePlan','MeshBinding','RuntimeScheduler',
+        'Conditions.Condition_Weapon','Conditions.Condition_Scroll','Conditions.Condition_MonsterHP',
+        'Conditions.Condition_LongSword','Conditions.Condition_DualBlades','Conditions.Condition_SwitchAxe',
+        'Conditions.Condition_ChargeAxe','Conditions.Condition_GreatSwordLevel','Conditions.Condition_Hammer','Conditions.Condition_Bow'}) do
+        package.loaded['ArmorVariantManager_Core.'..name]=nil
+    end
+end
 local Localization = require("ArmorVariantManager_Core.Localization")
 local Utils = require("ArmorVariantManager_Core.Utils")
 local SceneObject = require("ArmorVariantManager_Core.SceneObject")
@@ -351,21 +360,7 @@ local config_restore_handled = {}
 
 -- 特殊内嵌式 CG 标志（用于临时绕过缓存）
 local g_is_special_cg = false
--- ============================================================================
---  特殊CG期间的应用节流：**按角色 + 按时间**
--- ----------------------------------------------------------------------------
---  - v3.1.2 修的问题：事件主角初次登场时是「无预设的初始状态」，要过几秒才正常。
---    原因是旧的节流用的是**一个全局调用计数器** special_cg_frame_counter：
---    所有 CG 角色、而且防具与武器**共用**它，只有「第 15 次调用」那一次才真的应用。
---    于是「这次应用落到哪个角色头上」基本是随机的 ——
---    单个角色要等到自己的调用正好排到第 15 次才拿到差分。
---    一场过场里如果有 3~4 个 CG 角色（每人防具+武器各一次调用 = 每轮 6~8 次调用），
---    就要好几秒才能轮到自己，而且先后顺序不可预测。
---
---    现在改成「按角色地址记录上次应用时刻」：节流只限制**同一个角色**的频率，
---    角色之间不再互相拖累。同时也顺手解决了「防具把武器的额度吃光」的问题。
--- ============================================================================
-local SPECIAL_CG_APPLY_INTERVAL = 0.08   -- 同一个 CG 角色最快每 0.08 秒应用一次
+-- CG 可选角色与队友都由 RuntimeScheduler 调度，应用函数内不再另设时间门槛。
 
 -- ========== 版本号缓存 ==========
 -- overrides_version[body_id]：这份「意图」被改动过几次。
@@ -557,9 +552,6 @@ local function get_weapon_attack_part_name_impl(player_obj, player_handle)
     if get_cached_weapon_parts then
         weapon_parts = get_cached_weapon_parts(player_obj, player_handle)
     end
-    if not weapon_parts then
-        weapon_parts = Utils.get_current_weapon_parts(player_handle or player_obj)
-    end
     if not weapon_parts then return nil end
 
     local weapon_type = Utils.get_current_weapon_type(player_handle or player_obj)
@@ -635,21 +627,18 @@ local PlayerDir = {
     refresh_interval = 0.5,   -- 目录最长重建间隔（秒）
     persist = 1.0,            -- 本地玩家短暂读不到时沿用上次结果的时间（秒）
     refresh_count = 0,
-    -- 主角 body_id 的短 TTL 缓存（省一个顶层局部变量槽位）
-    primary_body_id = { ttl = 0.25, key = nil, value = nil, time = 0 },
+    -- 面板主角 ID 记录；ttl=0 不延迟换装识别，底层使用帧内/部件签名缓存。
+    primary_body_id = { ttl = 0, key = nil, value = nil, time = 0 },
     -- 防具部件缓存的重试间隔（见 PlayerDir.parts）
-    parts_retry = 0.5,
+    parts_retry = 0.02,
 
     -- ========================================================================
     --  body_id 缓存（按角色地址）
     -- ------------------------------------------------------------------------
-    --  - 照搬荒野版本的 body_id_cache + body_id_ttl：
-    --    取一次 body_id 要遍历角色子物体（12 个部件 × 3 次托管调用 ≈ 36 次），
-    --    而联机时每个处理周期都要给**每个玩家**取一次。缓存 1 秒后，
-    --    这些遍历从「每轮 × 人数」降到「每秒 × 人数」。
-    --    TTL 直接用设置里的 body_id_ttl（默认 1.0 秒，可调）。
+    --  - 同一帧共用结果，跨帧检查有效部件签名和身体部件名。
+    --    未生成完整的模型只做短暂重试，不使用旧设置中的 1 秒 TTL。
     -- ========================================================================
-    body_id = { by_char = {}, default_ttl = 1.0 },
+    body_id = { by_char = {} },
 
     -- ========================================================================
     --  Mesh 组件缓存（按部件对象地址）
@@ -693,41 +682,24 @@ function PlayerDir.reset()
     PlayerDir.mesh.by_obj = {}
 end
 
--- body_id：带 TTL 缓存（见 PlayerDir.body_id 上的说明）
--- - TTL 到期时先用**部件签名**判断模型有没有换：
---   签名没变就只续期、不重算，于是那个「遍历 12 个子物体」的动作
---   从「每轮每人一次」降到「只有真的换装时才做一次」。
---
--- - v3.1.2 补的一个坑：只有真的读到「身体部件」（名字里有 body）才值得缓存。
---   get_character_body_id 在没有 body 子物体时会退化成「角色自己的对象名」
---   （例如 player03 / 过场角色的对象名），这代表**模型还没生成完**。
---   旧实现把这种结果也按 1 秒缓存，于是事件主角初次登场后会先拿着一个找不到
---   配置的假 id 卡住，要等缓存过期才重新识别 —— 体感就是「过几秒才出现预设」。
---   现在这种结果只缓存 0.1 秒，下一拍就会重算。
+-- body_id：帧内复用，部件签名或身体部件名变化时重新识别。
+-- 没有身体部件时返回的角色名只缓存 20 ms，避免模型生成期间反复遍历。
 function PlayerDir.body_id_of(character)
     if not safe_object_alive(character) then return nil end
     local addr = tostring(character)
     local now = os.clock()
-    local ttl = tonumber(global_config.body_id_ttl) or PlayerDir.body_id.default_ttl
-    if ttl < 0.1 then ttl = 0.1 end
-    local cached = PlayerDir.body_id.by_char[addr]
-    if cached then
-        local eff_ttl = cached.short and 0.1 or ttl
-        if (now - cached.time) < eff_ttl then
-            return cached.id
-        end
-    end
-    local parts = PlayerDir.parts(character)
-    -- 只对「真的读到了身体部件」的结果续期；退化成对象名的结果不续期（见上面的说明）
-    if cached and not cached.short and cached.id ~= nil
-        and parts and cached.sig == parts.sig then
-        cached.time = now            -- 模型没换 → 续期
-        return cached.id
-    end
+    local cached=PlayerDir.body_id.by_char[addr]
+    if cached and PlayerDir.epoch and cached.epoch==PlayerDir.epoch then return cached.id end
+    local parts=PlayerDir.parts(character)
+    local body=parts and parts[1]
+    local body_name=body and safe_object_name(body)
+    if cached and not cached.short and parts and cached.sig==parts.sig
+        and cached.body_name==body_name then cached.epoch=PlayerDir.epoch;return cached.id end
+    if cached and cached.short and now-cached.time<.02 then return cached.id end
     local id = get_character_body_id(character)
     local looks_like_body_part = id ~= nil and string.find(id, "body", 1, true) ~= nil
     PlayerDir.body_id.by_char[addr] = {
-        id = id, time = now, sig = parts and parts.sig or nil,
+        id = id, time = now, epoch=PlayerDir.epoch, sig = parts and parts.sig or nil, body_name=body_name,
         short = not looks_like_body_part
     }
     return id
@@ -825,7 +797,9 @@ function PlayerDir.scan_tick()
     local last = i + batch - 1
     if last > scan.count then last = scan.count end
     local get_component_go = method_cache.Component_get_GameObject
+    local batch_started=os.clock()
     while i <= last do
+        if i>scan.index and os.clock()-batch_started>=.0003 then break end
         -- SystemArray/get_elements 的元素在读取时才解包；场景切换后，
         -- scan.transforms[i] 本身就可能抛 sol_lua_push，并不只是在 call 时抛。
         -- 整个读取与调用一起保护；失效后丢弃旧快照，不能每帧卡在同一批。
@@ -1087,18 +1061,7 @@ local function draw_multiplayer_panel()
         global_config.enable_multiplayer = new_multi == true
         save_global_settings()
     end
-    local changed_tick, new_tick = imgui.slider_int(T("multiplayer_players_per_tick") .. "##mp_tick",
-        tonumber(global_config.multiplayer_players_per_tick) or 1, 0, 4)
-    if changed_tick and new_tick then
-        global_config.multiplayer_players_per_tick = new_tick
-        save_global_settings()
-    end
-    local changed_scan, new_scan = imgui.slider_float(T("multiplayer_weapon_scan_interval") .. "##mp_scan",
-        tonumber(global_config.multiplayer_weapon_scan_interval) or 2.0, 0.2, 10.0, "%.1f")
-    if changed_scan and new_scan then
-        global_config.multiplayer_weapon_scan_interval = new_scan
-        save_global_settings()
-    end
+    imgui.text(T("runtime_teammate_hint"))
     if global_config.enable_multiplayer == false then
         imgui.text_colored(T("multiplayer_local_only"), 0xFF80C0FF)
     else
@@ -1233,9 +1196,7 @@ get_primary_player = function()
 end
 
 -- 获取主角 ID（防具模式返回 body 子物体名，武器模式返回主要攻击部件名）
--- - 性能要点：面板每帧都会问「当前 body_id 是什么」，而算一次要遍历一次子物体。
---   这里按「对象地址 + 模式」缓存 0.25 秒：面板、自动查找、应用逻辑共用同一份结果。
---   （缓存挂成 PlayerDir 的字段是为了省一个顶层局部变量槽位。）
+-- 面板与应用路径共用底层帧内采样和部件缓存，不再等待额外的 0.25 秒。
 local function get_primary_body_id()
     local primary = get_primary_player()
     if not primary then return nil end
@@ -1249,7 +1210,7 @@ local function get_primary_body_id()
     if is_weapon_mode then
         value = get_weapon_attack_part_name(primary)
     else
-        -- - 走 body_id 的 TTL 缓存：面板每帧都会问，旧写法每次都遍历一次子物体
+        -- 与运行时共用当前帧的部件签名和模型 ID。
         value = PlayerDir.body_id_of(primary)
     end
     cache.key = key
@@ -1512,7 +1473,8 @@ end
 local part_cache = {}   -- key: 角色地址, value: { [0..4]=对象, sig=字符串, walked_at=时间 }
 
 function PlayerDir.parts_valid(entry)
-    if not entry then return false, false end
+    if not entry then return false,false end
+    if PlayerDir.epoch and entry.validated_epoch==PlayerDir.epoch then return entry.complete,true end
     local complete = true
     for i = 0, 4 do
         local obj = entry[i]
@@ -1522,6 +1484,7 @@ function PlayerDir.parts_valid(entry)
             return false, false -- 有部件已销毁 → 必须立刻丢弃，不能按缺件重试限频沿用
         end
     end
+    entry.validated_epoch,entry.complete=PlayerDir.epoch,complete
     return complete, true
 end
 
@@ -1694,10 +1657,17 @@ end
 -- ============================================================================
 --  - 同样写成一张表：主 chunk 的局部变量槽位接近 Lua 上限 200，表字段不占槽位。
 -- ============================================================================
-local Applied = { by_char = {}, parts_check_interval = 0.5,
-                  -- 特殊CG期间按角色记录「上次应用时刻」（见 SPECIAL_CG_APPLY_INTERVAL 的说明）
+local Applied = { by_char = {}, parts_check_interval = 0,
+                  -- 旧版状态结构保留；CG 调度统一由 RuntimeScheduler 负责。
                   cg_at = {}, cg_weapon_at = {} }
 
+Applied.binding=require('ArmorVariantManager_Core.MeshBinding')
+function Applied.bindings_alive(st,kind)
+    local bindings=st[kind..'_meshes']
+    if not bindings then return false end
+    for _,mesh in pairs(bindings) do if not safe_object_alive(mesh) then return false end end
+    return st[kind..'_complete']==true
+end
 function Applied.get(character)
     local addr = tostring(character)
     local st = Applied.by_char[addr]
@@ -1709,6 +1679,7 @@ function Applied.get(character)
 end
 
 function Applied.clear()
+    Applied.binding.reset()
     Applied.by_char = {}
     Applied.cg_at = {}
     Applied.cg_weapon_at = {}
@@ -1771,14 +1742,7 @@ local function apply_preset_to_character_impl(character, preset_data, ignore_con
         if not type_mesh then return end
     end
 
-    -- 特殊CG期间按「角色 + 时间」节流（见 SPECIAL_CG_APPLY_INTERVAL 的说明）
-    if g_is_special_cg then
-        local addr = tostring(character)
-        local now = os.clock()
-        local last = Applied.cg_at[addr]
-        if last and (now - last) < SPECIAL_CG_APPLY_INTERVAL then return end
-        Applied.cg_at[addr] = now
-    end
+
 
     -- 获取当前 body_id
     -- known_body_id：调用方（帧循环）刚刚已经算过一次，直接复用即可，
@@ -1799,7 +1763,8 @@ local function apply_preset_to_character_impl(character, preset_data, ignore_con
     local current_version = overrides_version[body_id] or 0
     local parts_changed = false
     if not g_is_special_cg and current_version ~= 0
-        and st.armor_body_id == body_id and st.armor_version == current_version then
+        and st.armor_body_id == body_id and st.armor_version == current_version
+        and st.armor_output == preset_data and Applied.bindings_alive(st,"armor") then
         -- - 快路径：版本号一致时先不碰任何托管对象。
         --   部件签名只用来发现「换装 / 模型重建」，没必要每个处理周期都复核一次；
         --   按 Applied.parts_check_interval 限频（默认 0.5 秒）即可。
@@ -1812,7 +1777,8 @@ local function apply_preset_to_character_impl(character, preset_data, ignore_con
         st.parts_checked_at = now
         parts_changed = Applied.sync_parts(character, st)
         if not parts_changed
-            and st.armor_body_id == body_id and st.armor_version == current_version then
+            and st.armor_body_id == body_id and st.armor_version == current_version
+        and st.armor_output == preset_data and Applied.bindings_alive(st,"armor") then
             Profiler.count("apply_character_skip_version")
             return
         end
@@ -1824,6 +1790,8 @@ local function apply_preset_to_character_impl(character, preset_data, ignore_con
         Profiler.count("apply_character_skip_parts_changed")
         return
     end
+    st.armor_meshes,st.armor_complete={},true
+    st.armor_output = preset_data
     st.armor_body_id = body_id
     st.armor_version = current_version
     st.parts_checked_at = os.clock()
@@ -1838,34 +1806,14 @@ local function apply_preset_to_character_impl(character, preset_data, ignore_con
                 local mesh_component = get_mesh_component_recursive(part_obj)
                 if mesh_component then
                     TransformManager.capture_mesh(body_id, tostring(i), mesh_component, part_data, SceneObject.call)
-                    if part_data.mesh_enabled ~= nil then
-                        local ok_cur, cur_en = pcall(function() return SceneObject.call(mesh_component, "get_Enabled") end)
-                        if not ok_cur or cur_en ~= part_data.mesh_enabled then
-                            SceneObject.call(mesh_component, "set_Enabled", part_data.mesh_enabled)
-                        end
-                    end
-                    if part_data.materials then
-                        local mat_count = SceneObject.call(mesh_component, "get_MaterialNum") or 0
-                        for j = 0, mat_count - 1 do
-                            local mat_name = SceneObject.call(mesh_component, "getMaterialName", j)
-                            if mat_name and (ignore_context or is_material_in_current_context(i, mat_name)) then
-                                local mat_enabled = part_data.materials[mat_name]
-                                if mat_enabled ~= nil then
-                                    -- 全局分组的隐藏永远优先
-                                    local want = mat_enabled
-                                    if want == true and is_globally_hidden(i, mat_name) then
-                                        want = false
-                                    end
-                                    local ok_cur, cur = pcall(function()
-                                        return SceneObject.call(mesh_component, "getMaterialsEnable", j)
-                                    end)
-                                    if not ok_cur or cur ~= want then
-                                        SceneObject.call(mesh_component, "setMaterialsEnable", j, want)
-                                    end
-                                end
-                            end
-                        end
-                    end
+                    st.armor_meshes[i]=mesh_component
+                    local applied=Applied.binding.apply(mesh_component,part_data,
+                        not ignore_context and function(name) return is_material_in_current_context(i,name) end or nil,
+                        preset_data~=st.desired_armor and
+                            function(name,enabled) return enabled and not is_globally_hidden(i,name) end or nil)
+                    if not applied then st.armor_complete=false end
+                else
+                    st.armor_complete=false
                 end
             end
         end
@@ -1893,14 +1841,7 @@ local function apply_preset_to_weapon_impl(weapon_parts, preset_data, ignore_con
     -- 使用传入的 body_id，不再调用 get_primary_body_id
     if not body_id then return end
 
-    -- 特殊CG期间按「角色 + 时间」节流（武器单独记一份，不再吃防具的额度）
-    if g_is_special_cg then
-        local addr = character and tostring(character) or "__primary__"
-        local now = os.clock()
-        local last = Applied.cg_weapon_at[addr]
-        if last and (now - last) < SPECIAL_CG_APPLY_INTERVAL then return end
-        Applied.cg_weapon_at[addr] = now
-    end
+
 
     local current_intent = active_overrides[body_id]
     if not current_intent then
@@ -1925,11 +1866,14 @@ local function apply_preset_to_weapon_impl(weapon_parts, preset_data, ignore_con
 
     local current_version = overrides_version[body_id] or 0
     if not g_is_special_cg and st and current_version ~= 0
-        and st.weapon_id == body_id and st.weapon_version == current_version then
+        and st.weapon_id == body_id and st.weapon_version == current_version
+        and st.weapon_output == preset_data and Applied.bindings_alive(st,"weapon") then
         Profiler.count("apply_weapon_skip_version")
         return
     end
     if st then
+        st.weapon_meshes,st.weapon_complete={},true
+        st.weapon_output = preset_data
         st.weapon_id = body_id
         st.weapon_version = current_version
     end
@@ -1942,29 +1886,12 @@ local function apply_preset_to_weapon_impl(weapon_parts, preset_data, ignore_con
                 local mesh_component = get_mesh_component_recursive(part_obj)
                 if mesh_component then
                     TransformManager.capture_mesh(body_id, tostring(i - 1), mesh_component, part_data, SceneObject.call)
-                    if part_data.mesh_enabled ~= nil then
-                        local ok_cur, cur_en = pcall(function() return SceneObject.call(mesh_component, "get_Enabled") end)
-                        if not ok_cur or cur_en ~= part_data.mesh_enabled then
-                            SceneObject.call(mesh_component, "set_Enabled", part_data.mesh_enabled)
-                        end
-                    end
-                    if part_data.materials then
-                        local mat_count = SceneObject.call(mesh_component, "get_MaterialNum") or 0
-                        for j = 0, mat_count - 1 do
-                            local mat_name = SceneObject.call(mesh_component, "getMaterialName", j)
-                            if mat_name and (ignore_context or is_material_in_current_context(i - 1, mat_name)) then
-                                local mat_enabled = part_data.materials[mat_name]
-                                if mat_enabled ~= nil then
-                                    local ok_cur, cur = pcall(function()
-                                        return SceneObject.call(mesh_component, "getMaterialsEnable", j)
-                                    end)
-                                    if not ok_cur or cur ~= mat_enabled then
-                                        SceneObject.call(mesh_component, "setMaterialsEnable", j, mat_enabled)
-                                    end
-                                end
-                            end
-                        end
-                    end
+                    if st then st.weapon_meshes[i]=mesh_component end
+                    local applied=Applied.binding.apply(mesh_component,part_data,
+                        not ignore_context and function(name) return is_material_in_current_context(i-1,name) end or nil)
+                    if st and not applied then st.weapon_complete=false end
+                elseif st then
+                    st.weapon_complete=false
                 end
             end
         end
@@ -1977,6 +1904,9 @@ apply_preset_to_weapon = function(weapon_parts, preset_data, ignore_context, bod
 end
 
 -- 创建分组（支持 is_global）
+-- Both group actions precede the save implementation. Bind the local now;
+-- otherwise Lua resolves these calls to a missing global after mutating masks.
+local save_current_config_to_file
 local function create_new_group(group_name, body_id, is_global)
     if not group_name or group_name == "" then return false end
     if not body_id then return false end
@@ -2119,7 +2049,7 @@ local function restore_config_from_backup(body_id)
 end
 
 -- 保存配置到文件（同时写备份）
-local function save_current_config_to_file(body_id)
+save_current_config_to_file = function(body_id)
     if not body_id then return end
     loaded_configs[body_id] = current_config
     local path = get_config_path(body_id)
@@ -2145,9 +2075,7 @@ local function save_current_config_to_file(body_id)
     active_group_presets[body_id] = nil
     
     -- 清除状态机缓存，强制下一帧重新应用最新的预设内容
-    if TransformManager.clear_cache then
-        TransformManager.clear_cache(nil,nil,true) -- 保留稀疏预设写入前的原值，保存规则也能回退
-    end
+    TransformManager.invalidate_config(body_id,current_config)
 
     -- 用户可能在面板里刚把「怪物血量」条件开关改掉，这里重新评估钩子门控
     refresh_monster_hp_gate()
@@ -3511,64 +3439,29 @@ if questManagerTypeDef then
                 local flow_state = sdk.to_int64(args[3])
                 current_flow_state = flow_state
 
-                -- 性能诊断：进出任务/据点时先把当前窗口落盘，避免最后一段数据丢失
-                if Profiler.enabled then Profiler.flush() end
+                -- Native hooks only invalidate. Rebuild on the next safe update.
+                PlayerDir.transition_pending=true
 
-                -- 场景切换时重置所有缓存（但不重置首次刷新标志）
-                Applied.clear()     -- 角色级「已应用」记账
-                PlayerDir.reset()        -- 玩家目录（场景换了，玩家对象全部作废）
-                invalidate_primary_body_id()
-                PlayerDir.scan_reset()   -- 场景换了，旧的玩家对象引用必须作废
-                part_cache = {}          -- 清空防具部件缓存
-                weapon_part_cache = {}   -- 清空武器部件缓存
-                overrides_version = {}   -- 清空版本号
-                if TransformManager.clear_cache then TransformManager.clear_cache() end
-                current_group_name = ""
-                active_overrides = {}
-                active_group_presets = {}
-                update_preset_names_list()
-                update_group_names_list()
-                -- 重置事件玩家状态
-                last_has_event_players = nil
-                cached_event_players = {}
-                cached_has_event_players = false
             end,
             function(retval) return retval end
         )
     end
 end
 
--- ========== 特殊CG刷新间隔与每帧处理玩家数量（可手动调节） ==========
--- - v3.1.2：这两个值都调高了 —— 事件主角初次登场要「过几秒」才正常，
---   除了节流口径的问题（见 SPECIAL_CG_APPLY_INTERVAL），处理节奏本身也偏慢：
---   旧值是「每 15 帧处理一批、每批 2 人」，一场过场里有 3~4 个角色时，
---   同一个角色要好几轮才轮到一次。
-local SPECIAL_CG_UPDATE_INTERVAL = 8       -- 特殊CG每N帧处理一次（原 15）
-local SPECIAL_CG_PLAYERS_PER_FRAME = 3     -- 每次处理几个角色（原 2）
-
--- ========== 正常游玩刷新间隔（可手动调节） ==========
-local NORMAL_UPDATE_INTERVAL = 10           -- 正常游玩每N帧处理一次，默认10帧
--- - v3.1.0：其他玩家用**更慢**的节奏（见帧循环里的说明）。
---   队友身上的差分变化不需要 14 次/秒，0.2 秒的延迟肉眼分辨不出来，
---   但开销直接降到 1/3。
-local MULTIPLAYER_UPDATE_INTERVAL = 30      -- 联机：其他玩家每N帧推进一次，默认30帧
+-- Normal local updates run every frame. Optional work is owned exclusively
+-- by RuntimeScheduler, with no nested frame/weapon gates.
 
 -- ========== 事件玩家缓存（每5帧刷新） ==========
 local cached_event_players = {}
 local cached_has_event_players = false
 
 -- ========== 每帧更新 ==========
-local last_frame_time = 0
-local frame_interval = 1/30
 local global_frame_counter = 0  -- 全局帧计数器，用于降频
 
 -- 事件玩家存在状态（用于检测变化以重置缓存）
 local last_has_event_players = nil
 -- 特殊CG玩家轮询索引
 local special_cg_next_index = 1
-
--- 首次刷新标志（启动后只执行一次）
-local first_apply_done = false
 
 -- 确保强制展开节点标志存在（如果尚未定义，则初始化）
 if force_open_presets_node == nil then
@@ -3607,28 +3500,31 @@ local function weapon_parts_alive(parts)
     return found_any
 end
 
+PlayerDir.weapon_misses={}
 local function get_cached_weapon_parts_impl(player_obj, player_handle)
-    if not player_obj then return nil end
-    if not safe_object_alive(player_obj) then return nil end
-    local player_addr = tostring(player_obj)
-    local cached = weapon_part_cache[player_addr]
-    if cached then
-        -- - 缓存里**任一**部件失效都要重查（旧实现只看第一个部件，
-        --   换武器时可能留下部分失效的列表）
-        if weapon_parts_alive(cached) then
+    if not player_obj or not safe_object_alive(player_obj) then return nil end
+    local addr=tostring(player_obj)
+    local weapon_type=Utils.get_current_weapon_type(player_handle or player_obj)
+    local cached=weapon_part_cache[addr]
+    if cached and cached.weapon_type==weapon_type then
+        if cached.validated_epoch==PlayerDir.epoch or weapon_parts_alive(cached) then
+            cached.validated_epoch=PlayerDir.epoch
             return cached
         end
-        weapon_part_cache[player_addr] = nil
     end
-    -- 缓存缺失或失效：重新递归查找
-    local weapon_parts = Utils.get_current_weapon_parts(player_handle or player_obj)
-    if weapon_parts_alive(weapon_parts) then
-        weapon_part_cache[player_addr] = weapon_parts
-    else
-        weapon_parts = nil
+    weapon_part_cache[addr]=nil
+    local miss=PlayerDir.weapon_misses[addr]
+    local now=os.clock()
+    if miss and miss.weapon_type==weapon_type and now<miss.retry_at then return nil end
+    local parts=Utils.get_current_weapon_parts(player_handle or player_obj)
+    if weapon_parts_alive(parts) then
+        parts.weapon_type,parts.validated_epoch=weapon_type,PlayerDir.epoch
+        weapon_part_cache[addr]=parts;PlayerDir.weapon_misses[addr]=nil
+        return parts
     end
-    return weapon_parts
+    PlayerDir.weapon_misses[addr]={weapon_type=weapon_type,retry_at=now+.02}
 end
+
 get_cached_weapon_parts = function(player_obj, player_handle)
     local t0 = Profiler.begin("get_cached_weapon_parts")
     local result = get_cached_weapon_parts_impl(player_obj, player_handle)
@@ -4207,7 +4103,9 @@ end
 --  - 统一挂在一张表上，理由同 PlayerDir：主 chunk 的局部变量槽位接近 Lua 上限 200。
 -- ============================================================================
 local MP = {
-    presence_ttl = 2.0,
+    scheduler = require('ArmorVariantManager_Core.RuntimeScheduler').new(),
+    cg_scheduler = require('ArmorVariantManager_Core.RuntimeScheduler').new(),
+    presence_ttl = 0.25,
     presence = {},      -- body_id -> { value = bool, time = number }
     scan_time = {},     -- 角色地址 -> 上次武器部件查找时刻
     next_index = 1,     -- 其他玩家轮询下标
@@ -4241,18 +4139,6 @@ function MP.has_config(body_id)
     return value
 end
 
--- 非本地玩家的武器部件查找限频（武器部件的递归查找偏贵）
-function MP.scan_allowed(player_obj, is_local)
-    if is_local then return true end
-    local interval = tonumber(global_config.multiplayer_weapon_scan_interval) or 2.0
-    local addr = tostring(player_obj)
-    local now = os.clock()
-    local last = MP.scan_time[addr]
-    if last and (now - last) < interval then return false end
-    MP.scan_time[addr] = now
-    return true
-end
-
 -- ============================================================================
 --  单轮处理一个玩家（防具 + 武器）—— CG 与非 CG 共用同一份实现
 -- ----------------------------------------------------------------------------
@@ -4272,7 +4158,9 @@ function MP.process(entry, cg_mode)
     if not (player_obj and safe_object_alive(player_obj)) then return end
     local player_handle = entry.player
     if player_handle and not safe_object_alive(player_handle) then return end
+    Utils.bind_actor(player_handle,player_obj)
     local is_local = entry.is_local == true
+    local actor = Applied.get(player_obj)
     -- 性能诊断分段名：本地玩家与其他玩家分开统计，
     -- 打开 debug_profile 后一眼就能看出掉帧到底是谁的开销。
     local phase_armor = is_local and "player_armor" or "other_armor"
@@ -4282,8 +4170,7 @@ function MP.process(entry, cg_mode)
     -- 防具
     -- ============================================================
     local t_armor = Profiler.begin(phase_armor)
-    -- - body_id 走 TTL 缓存（照搬荒野的 body_id_cache）：
-    --   否则每个处理周期都要为每个玩家遍历一遍子物体（≈36 次托管调用）。
+    -- 共用当帧模型识别结果；稳定部件只检查签名，不重走模型查找。
     local armor_id = PlayerDir.body_id_of(player_obj)
     if armor_id and (is_local or MP.has_config(armor_id)) then
         local armor_config = get_runtime_config(armor_id)
@@ -4298,7 +4185,9 @@ function MP.process(entry, cg_mode)
             local new_overrides, changed, activated_targets, all_targeted_groups =
                 TransformManager.apply_transform_rules(
                     char_addr, "armor_" .. armor_id, armor_config, player_obj,
-                    active_overrides[armor_id] or {}, merge_overrides, player_handle)
+                    actor.desired_armor or active_overrides[armor_id] or {}, merge_overrides, player_handle)
+            actor.desired_armor = new_overrides
+            if is_local then
             if not active_group_presets[armor_id] then active_group_presets[armor_id] = {} end
             if activated_targets then
                 for g_name, p_name in pairs(activated_targets) do
@@ -4322,6 +4211,7 @@ function MP.process(entry, cg_mode)
                 active_overrides[armor_id] = new_overrides
                 bump_overrides_version(armor_id)
             end
+            end
             apply_preset_to_character(player_obj, new_overrides, true, armor_id)
         else
             -- CG 角色 / 未启用变身规则：直接套用当前意图
@@ -4334,7 +4224,7 @@ function MP.process(entry, cg_mode)
     -- 武器
     -- ============================================================
     local t_weapon = Profiler.begin(phase_weapon)
-    if is_local or MP.scan_allowed(player_obj, false) then
+    do -- Cached bindings are cheap; weapon discovery no longer gates rule evaluation.
         local weapon_id = get_weapon_attack_part_name(player_obj, player_handle)
         if weapon_id and (is_local or MP.has_config(weapon_id)) then
             local weapon_config = get_runtime_config(weapon_id)
@@ -4348,7 +4238,9 @@ function MP.process(entry, cg_mode)
                     local new_overrides, changed, activated_targets, all_targeted_groups =
                         TransformManager.apply_transform_rules(
                             char_addr, "weapon_" .. weapon_id, weapon_config, player_obj,
-                            active_overrides[weapon_id] or {}, merge_overrides, player_handle)
+                            actor.desired_weapon or active_overrides[weapon_id] or {}, merge_overrides, player_handle)
+                    actor.desired_weapon = new_overrides
+                    if is_local then
                     if not active_group_presets[weapon_id] then active_group_presets[weapon_id] = {} end
                     if activated_targets then
                         for g_name, p_name in pairs(activated_targets) do
@@ -4372,6 +4264,7 @@ function MP.process(entry, cg_mode)
                         active_overrides[weapon_id] = new_overrides
                         bump_overrides_version(weapon_id)
                     end
+                    end
                     apply_preset_to_weapon(weapon_parts, new_overrides, true, weapon_id, player_obj)
                 else
                     if active_overrides[weapon_id] then
@@ -4387,20 +4280,49 @@ end
 -- 联机：其他玩家的轮询下标 + CG 事件玩家的 entry 复用表，都在 MP 表里
 -- （MP.next_index / MP.cg_buffer，见上面 MP 的定义）
 
+_G.__AVM_RUNTIME_SCHEDULER=MP.scheduler
+
 local function avm_frame_update()
     Profiler.enter_frame()
     local plugin_t0 = Profiler.begin("plugin_frame")
+
+    global_frame_counter=global_frame_counter+1
+    Utils.begin_frame(global_frame_counter)
+    PlayerDir.epoch=global_frame_counter
+    if global_frame_counter%120==0 then
+        for addr in pairs(Applied.by_char) do
+            local found=false
+            for _,e in ipairs(PlayerDir.entries) do if tostring(e.obj)==addr then found=true;break end end
+            if not found then
+                for _,obj in ipairs(cached_event_players) do if tostring(obj)==addr then found=true;break end end
+            end
+            if not found then
+                Applied.by_char[addr]=nil;part_cache[addr]=nil;weapon_part_cache[addr]=nil
+                PlayerDir.weapon_misses[addr]=nil;PlayerDir.body_id.by_char[addr]=nil
+                TransformManager.forget_actor(addr)
+            end
+        end
+    end
+    MP.scheduler:begin_frame(os.clock())
+    MP.cg_scheduler:begin_frame(os.clock())
+    if PlayerDir.transition_pending then
+        PlayerDir.transition_pending=false
+        Applied.clear();PlayerDir.reset();invalidate_primary_body_id()
+        part_cache={};weapon_part_cache={};PlayerDir.weapon_misses={}
+        overrides_version={};TransformManager.clear_cache(nil,nil,true)
+        current_group_name='';active_overrides={};active_group_presets={}
+        update_preset_names_list();update_group_names_list()
+        last_has_event_players=nil;cached_event_players={};cached_has_event_players=false
+        MP.scheduler=require('ArmorVariantManager_Core.RuntimeScheduler').new()
+        MP.cg_scheduler=require('ArmorVariantManager_Core.RuntimeScheduler').new()
+        _G.__AVM_RUNTIME_SCHEDULER=MP.scheduler
+        new_ui_config_body_id=nil
+    end
 
     -- 新版 UI 的每帧输入 / 开关处理（未启用时内部会立即返回）
     local t_ui_update = Profiler.begin("ui_update")
     variant_manager_ui:update()
     Profiler.finish("ui_update", t_ui_update)
-
-    -- 帧计数器递增
-    global_frame_counter = global_frame_counter + 1
-    if global_frame_counter > 1000000 then
-        global_frame_counter = 1
-    end
 
     -- ====================================================================
     -- 场景扫描（增量式，非阻塞）
@@ -4435,7 +4357,7 @@ local function avm_frame_update()
             weapon_part_cache = {}
             PlayerDir.scan_reset()
             overrides_version = {}
-            if TransformManager.clear_cache then TransformManager.clear_cache() end
+            if TransformManager.clear_cache then TransformManager.clear_cache(nil,nil,true) end
             current_group_name = ""
             active_overrides = {}
             active_group_presets = {}
@@ -4483,119 +4405,29 @@ local function avm_frame_update()
     end
 
     -- ====================================================================
-    -- 首次刷新（仅针对本地玩家，且只执行一次）
-    -- 模拟面板展开操作：调用 load_body_config 强制重新加载配置
-    -- 该操作不受降频影响，以确保启动时立即生效
-    -- ====================================================================
-    local local_player = get_primary_player()
-    if local_player and not first_apply_done then
-        local t_first_apply = Profiler.begin("first_apply")
-        local armor_id = get_character_body_id(local_player)
-        if armor_id then
-            -- 强制重新加载配置（从磁盘读取，模拟面板展开）
-            load_body_config(armor_id)
-            -- 应用当前 UI 选中的预设
-            local current_preset_name = preset_names_list[selected_preset_index]
-            if current_preset_name then
-                apply_preset(current_preset_name)
-            end
-            -- 强制触发一次规则评估，确保当前状态正确
-            local armor_config = get_runtime_config(armor_id)
-            if armor_config and armor_config.enable_transform then
-                local char_addr = tostring(local_player)
-                local player_handle = local_entry and local_entry.player or nil
-                local new_overrides, changed, activated_targets, all_targeted_groups = TransformManager.apply_transform_rules(
-                    char_addr, "armor_" .. armor_id, armor_config, local_player,
-                    active_overrides[armor_id] or {}, merge_overrides, player_handle
-                )
-                if not active_group_presets[armor_id] then active_group_presets[armor_id] = {} end
-                if activated_targets then
-                    for g_name, p_name in pairs(activated_targets) do
-                        active_group_presets[armor_id][g_name] = p_name
-                    end
-                end
-                if changed then
-                    active_overrides[armor_id] = new_overrides
-                    bump_overrides_version(armor_id)
-                    apply_preset_to_character(local_player, new_overrides, true)
-                else
-                    apply_preset_to_character(local_player, new_overrides, true)
-                end
-            end
-        end
-        first_apply_done = true
-        Profiler.finish("first_apply", t_first_apply)
-    end
-
-    -- ====================================================================
     -- CG 场景（有事件玩家）：降频 + 轮询处理
     --   过场里的角色不是 snow.player.Player，拿不到「他自己的」武器状态，
     --   所以沿用 v3.0.6 的轻量做法：跳过规则评估，直接套用当前意图。
     -- ====================================================================
+    local local_player=local_entry and local_entry.obj or get_primary_player()
     if has_event_players then
-        local t_cg_block = Profiler.begin("cg_block")
-        if global_frame_counter % SPECIAL_CG_UPDATE_INTERVAL == 0 then
-            local cg_count = #event_players
-            if cg_count > 0 then
-                for i = #MP.cg_buffer, 1, -1 do MP.cg_buffer[i] = nil end
-                for i = 1, cg_count do
-                    MP.cg_buffer[i] = { obj = event_players[i], is_local = false, is_event = true }
-                end
-                if special_cg_next_index > cg_count then special_cg_next_index = 1 end
-                local start_idx = special_cg_next_index
-                local end_idx = math.min(start_idx + SPECIAL_CG_PLAYERS_PER_FRAME - 1, cg_count)
-                for i = start_idx, end_idx do
-                    MP.process(MP.cg_buffer[i], true)
-                end
-                special_cg_next_index = end_idx + 1
-                if special_cg_next_index > cg_count then special_cg_next_index = 1 end
-            end
-        end
-        Profiler.finish("cg_block", t_cg_block)
-    elseif global_frame_counter % NORMAL_UPDATE_INTERVAL == 0 then
-        -- ================================================================
-        -- 正常游玩（非 CG）
-        -- ================================================================
-        local t_noncg_block = Profiler.begin("noncg_block")
-
-        -- 1) 本地玩家（主角）：每轮都处理，响应速度与单机完全一致
+        for i=#MP.cg_buffer,1,-1 do MP.cg_buffer[i]=nil end
+        for i,obj in ipairs(event_players) do MP.cg_buffer[i]={obj=obj,is_local=false,is_event=true} end
+        MP.cg_scheduler:run(MP.cg_buffer,function(entry) MP.process(entry,true) end,0,1)
+    else
+        -- Mandatory lane: one lightweight local sample every game frame.
+        local started=os.clock()
         if local_entry and safe_object_alive(local_entry.obj) then
-            MP.process(local_entry, false)
-            Profiler.count("players_processed_local")
+            MP.process(local_entry,false)
+            Profiler.count('players_processed_local')
         elseif local_player then
-            -- 玩家目录这一拍没给出本地玩家（读图 / 切场景）：用主角对象兜一下
-            MP.process({ obj = local_player, is_local = true }, false)
-            Profiler.count("players_processed_local_fallback")
+            MP.process({obj=local_player,is_local=true},false)
         end
-
-        -- 2) 其他玩家（联机队友）
-        -- ------------------------------------------------------------------
-        --  - 单独用一个**更慢**的节奏：队友身上的差分变化不需要 14 次/秒，
-        --    肉眼能分辨的延迟在 0.2 秒以上。这里用 MULTIPLAYER_UPDATE_INTERVAL
-        --    帧推进一次（默认 30 帧 ≈ 0.2 秒 @144fps），每次只处理预算内的 1 人。
-        --    于是「其他玩家」的总开销被压到本地玩家的 1/3 以下，
-        --    而且与具体人数无关（轮询保证每个人都会被轮到）。
-        -- ------------------------------------------------------------------
-        if global_config.enable_multiplayer ~= false and targets
-            and global_frame_counter % MULTIPLAYER_UPDATE_INTERVAL == 0 then
-            local others = PlayerDir.others
-            local other_count = #others
-            if other_count > 0 then
-                local budget = tonumber(global_config.multiplayer_players_per_tick) or 1
-                if budget < 0 then budget = 0 end
-                if budget > other_count then budget = other_count end
-                for _ = 1, budget do
-                    if MP.next_index > other_count then MP.next_index = 1 end
-                    local entry = others[MP.next_index]
-                    MP.next_index = MP.next_index + 1
-                    MP.process(entry, false)
-                    Profiler.count("players_processed_other")
-                end
-            else
-                MP.next_index = 1
-            end
+        local cost=os.clock()-started
+        if global_config.enable_multiplayer~=false then
+            MP.scheduler:run(PlayerDir.others,function(entry) MP.process(entry,false) end,
+                cost,tonumber(global_config.multiplayer_players_per_tick) or 1)
         end
-        Profiler.finish("noncg_block", t_noncg_block)
     end
 
     Profiler.finish("plugin_frame", plugin_t0)
@@ -5312,42 +5144,10 @@ end
                                 current_config.is_parallel = not current_config.is_parallel
                                 save_current_config_to_file(body_id)
                             end
-                            if not current_config.is_parallel then
-                                local c_type_idx = 1
-                                if current_config.transform_type == "weapon" then c_type_idx = 1
-                                elseif current_config.transform_type == "scroll" then c_type_idx = 2
-                                elseif current_config.transform_type == "monster_hp" then c_type_idx = 3
-                                elseif current_config.transform_type == "longsword" then c_type_idx = 4
-                                elseif current_config.transform_type == "dual_blades" then c_type_idx = 5
-                                elseif current_config.transform_type == "switch_axe" then c_type_idx = 6
-                                elseif current_config.transform_type == "charge_axe" then c_type_idx = 7
-                                elseif current_config.transform_type == "greatsword_level" then c_type_idx = 8
-                                elseif current_config.transform_type == "hammer" then c_type_idx = 9
-                                elseif current_config.transform_type == "bow" then c_type_idx = 10
-                                end
-                                local c_type_list = {
-                                    T("condition_weapon"), T("condition_scroll"), T("condition_monster_hp"),
-                                    T("condition_longsword"), T("condition_dual_blades"), T("condition_switch_axe"),
-                                    T("condition_charge_axe"), T("condition_greatsword_level"),
-                                    T("condition_hammer"), T("condition_bow")
-                                }
-                                local c_changed, c_val = imgui.combo(T("transform_condition_type"), c_type_idx, c_type_list)
-                                if c_changed then
-                                    if c_val == 1 then current_config.transform_type = "weapon"
-                                    elseif c_val == 2 then current_config.transform_type = "scroll"
-                                    elseif c_val == 3 then current_config.transform_type = "monster_hp"
-                                    elseif c_val == 4 then current_config.transform_type = "longsword"
-                                    elseif c_val == 5 then current_config.transform_type = "dual_blades"
-                                    elseif c_val == 6 then current_config.transform_type = "switch_axe"
-                                    elseif c_val == 7 then current_config.transform_type = "charge_axe"
-                                    elseif c_val == 8 then current_config.transform_type = "greatsword_level"
-                                    elseif c_val == 9 then current_config.transform_type = "hammer"
-                                    else current_config.transform_type = "bow" end
-                                    save_current_config_to_file(body_id)
-                                end
-
+                            -- Both modes edit the same rules without changing transform_type.
+                            local function draw_condition_rules(condition_type)
                                 -- 武器条件
-                                if current_config.transform_type == "weapon" then
+                                if condition_type == "weapon" then
                                     for i, rule in ipairs(current_config.weapon_transform_rules) do
                                         imgui.push_id("weapon_rule_" .. i)
                                         imgui.text(rule.state == "sheathed" and T("weapon_sheathed") or T("weapon_drawn"))
@@ -5397,7 +5197,7 @@ end
                                     end
 
                                 -- 红蓝书
-                                elseif current_config.transform_type == "scroll" then
+                                elseif condition_type == "scroll" then
                                     for i, rule in ipairs(current_config.scroll_transform_rules) do
                                         imgui.push_id("scroll_rule_" .. i)
                                         imgui.text(rule.state == "red" and T("scroll_red") or T("scroll_blue"))
@@ -5447,8 +5247,12 @@ end
                                     end
 
                                 -- 怪物血量
-                                elseif current_config.transform_type == "monster_hp" then
-                                    local curHP = TransformManager.get_current_raw_state(current_config, primary)
+                                elseif condition_type == "monster_hp" then
+                                    -- Query HP explicitly; the aggregate parallel config has no raw state.
+                                    local curHP = TransformManager.get_current_raw_state({
+                                        transform_type = "monster_hp",
+                                        monster_hp_transform_rules = current_config.monster_hp_transform_rules
+                                    }, primary)
                                     if curHP then
                                         imgui.text(string.format(T("monster_current_hp"), curHP))
                                     else
@@ -5523,7 +5327,7 @@ end
                                     end
 
                                 -- 太刀气刃等级
-                                elseif current_config.transform_type == "longsword" then
+                                elseif condition_type == "longsword" then
                                     for i, rule in ipairs(current_config.longsword_transform_rules) do
                                         imgui.push_id("longsword_rule_" .. i)
                                         local level_names = {
@@ -5579,7 +5383,7 @@ end
                                     end
 
                                 -- 双刀鬼人状态
-                                elseif current_config.transform_type == "dual_blades" then
+                                elseif condition_type == "dual_blades" then
                                     for i, rule in ipairs(current_config.dual_blades_transform_rules) do
                                         imgui.push_id("dual_blades_rule_" .. i)
                                         local state_names = {
@@ -5634,7 +5438,7 @@ end
                                     end
 
                                 -- 斩斧模式
-                                elseif current_config.transform_type == "switch_axe" then
+                                elseif condition_type == "switch_axe" then
                                     for i, rule in ipairs(current_config.switch_axe_transform_rules) do
                                         imgui.push_id("switch_axe_rule_" .. i)
                                         local state_names = {
@@ -5689,7 +5493,7 @@ end
                                     end
 
                                 -- 盾斧强化状态
-                                elseif current_config.transform_type == "charge_axe" then
+                                elseif condition_type == "charge_axe" then
                                     for i, rule in ipairs(current_config.charge_axe_transform_rules) do
                                         imgui.push_id("charge_axe_rule_" .. i)
                                         local state_names = {
@@ -5747,7 +5551,7 @@ end
                                     end
 
                                 -- 大剑蓄力等级
-                                elseif current_config.transform_type == "greatsword_level" then
+                                elseif condition_type == "greatsword_level" then
                                     for i, rule in ipairs(current_config.greatsword_level_transform_rules) do
                                         imgui.push_id("greatsword_level_rule_" .. i)
                                         local level_names = {
@@ -5803,7 +5607,7 @@ end
                                     end
 
                                 -- 大锤蓄力等级
-                                elseif current_config.transform_type == "hammer" then
+                                elseif condition_type == "hammer" then
                                     for i, rule in ipairs(current_config.hammer_transform_rules) do
                                         imgui.push_id("hammer_rule_" .. i)
                                         local level_names = {
@@ -5858,7 +5662,7 @@ end
                                     end
 
                                 -- 弓箭蓄力等级
-                                elseif current_config.transform_type == "bow" then
+                                elseif condition_type == "bow" then
                                     for i, rule in ipairs(current_config.bow_transform_rules) do
                                         imgui.push_id("bow_rule_" .. i)
                                         local level_names = {
@@ -5913,6 +5717,42 @@ end
                                         imgui.pop_id()
                                     end
                                 end
+                            end
+                            if not current_config.is_parallel then
+                                local c_type_idx = 1
+                                if current_config.transform_type == "weapon" then c_type_idx = 1
+                                elseif current_config.transform_type == "scroll" then c_type_idx = 2
+                                elseif current_config.transform_type == "monster_hp" then c_type_idx = 3
+                                elseif current_config.transform_type == "longsword" then c_type_idx = 4
+                                elseif current_config.transform_type == "dual_blades" then c_type_idx = 5
+                                elseif current_config.transform_type == "switch_axe" then c_type_idx = 6
+                                elseif current_config.transform_type == "charge_axe" then c_type_idx = 7
+                                elseif current_config.transform_type == "greatsword_level" then c_type_idx = 8
+                                elseif current_config.transform_type == "hammer" then c_type_idx = 9
+                                elseif current_config.transform_type == "bow" then c_type_idx = 10
+                                end
+                                local c_type_list = {
+                                    T("condition_weapon"), T("condition_scroll"), T("condition_monster_hp"),
+                                    T("condition_longsword"), T("condition_dual_blades"), T("condition_switch_axe"),
+                                    T("condition_charge_axe"), T("condition_greatsword_level"),
+                                    T("condition_hammer"), T("condition_bow")
+                                }
+                                local c_changed, c_val = imgui.combo(T("transform_condition_type"), c_type_idx, c_type_list)
+                                if c_changed then
+                                    if c_val == 1 then current_config.transform_type = "weapon"
+                                    elseif c_val == 2 then current_config.transform_type = "scroll"
+                                    elseif c_val == 3 then current_config.transform_type = "monster_hp"
+                                    elseif c_val == 4 then current_config.transform_type = "longsword"
+                                    elseif c_val == 5 then current_config.transform_type = "dual_blades"
+                                    elseif c_val == 6 then current_config.transform_type = "switch_axe"
+                                    elseif c_val == 7 then current_config.transform_type = "charge_axe"
+                                    elseif c_val == 8 then current_config.transform_type = "greatsword_level"
+                                    elseif c_val == 9 then current_config.transform_type = "hammer"
+                                    else current_config.transform_type = "bow" end
+                                    save_current_config_to_file(body_id)
+                                end
+
+                                draw_condition_rules(current_config.transform_type)
                             else
                                 -- 并行模式
                                 imgui.indent(10)
@@ -5941,6 +5781,13 @@ end
                                 draw_parallel_setting("bow", T("condition_bow"))
                                 imgui.unindent(10)
                                 if imgui.tree_node(T("parallel_rules_details")) then
+                                    for _, kind in ipairs({ "weapon", "scroll", "monster_hp", "longsword",
+                                        "dual_blades", "switch_axe", "charge_axe", "greatsword_level", "hammer", "bow" }) do
+                                        if imgui.tree_node(T("condition_" .. kind) .. "##parallel_rules_" .. kind) then
+                                            draw_condition_rules(kind)
+                                            imgui.tree_pop()
+                                        end
+                                    end
                                     imgui.tree_pop()
                                 end
                             end
@@ -6028,24 +5875,9 @@ end
                     draw_multiplayer_panel()
                     imgui.separator()
                     if imgui.tree_node(T("performance_settings")) then
-                        imgui.text(T("performance_desc"))
+                        imgui.text(T("runtime_architecture_hint"))
+                        imgui.text(T("runtime_teammate_hint"))
                         imgui.spacing()
-                        local changed_si, val_si = imgui.slider_float(T("scan_interval"), global_config.scan_interval, 0.1, 5.0)
-                        if changed_si then
-                            global_config.scan_interval = val_si
-                            save_global_settings()
-                        end
-                        local changed_ttl, val_ttl = imgui.slider_float(T("refresh_interval"), global_config.body_id_ttl, 0.1, 10.0)
-                        if changed_ttl then
-                            global_config.body_id_ttl = val_ttl
-                            save_global_settings()
-                        end
-                        local changed_bs, val_bs = imgui.slider_int(T("scanner_batch_size"), global_config.scanner_batch_size, 10, 1000)
-                        if changed_bs then
-                            global_config.scanner_batch_size = val_bs
-                            save_global_settings()
-                        end
-
                         imgui.separator()
                         imgui.text(T("image_quality") or "Image Quality")
                         local changed_iq_enable, new_iq_enable = imgui.checkbox(T("enable_image_quality") or "Enable Custom Image Quality", global_config.enable_image_quality)

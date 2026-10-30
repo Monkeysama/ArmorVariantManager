@@ -14,19 +14,26 @@ function BridgeRuntime.read_optional_json(path)
             present[path] = true
         end
     end
+    -- Older hosts have no fs.glob. Back off only until the first good
+    -- sample; a live stream must recover immediately from a missed read.
+    local now = os.clock()
+    if not present[path] and now < (retry[path] or 0) then return nil end
     local ok, value
     if fs and type(fs.read) == "function" and type(json.load_string) == "function" then
         -- A concurrent atomic replacement can briefly make an open fail. Treat
         -- that as no new snapshot; json.load_file would emit a parse-error log.
         local read_ok, text = pcall(fs.read, path)
         if not read_ok or type(text) ~= "string" or #text > 65536
-            or not text:match("^%s*{.*}%s*$") then return nil end
+            or not text:match("^%s*{.*}%s*$") then
+            if not present[path] then retry[path] = now + 0.1 end
+            return nil
+        end
         ok, value = pcall(json.load_string, text)
     else
         ok, value = pcall(function() return json.load_file(path) end)
     end
-    if ok and type(value) == "table" then return value end
-    present[path] = nil
+    if ok and type(value) == "table" then present[path] = true; return value end
+    if not present[path] then retry[path] = now + 0.1 end
 end
 BridgeRuntime.default_runtime_directory = "ArmorVariantManager/Runtime"
 BridgeRuntime.default_client_id = "ArmorVariantManager"
