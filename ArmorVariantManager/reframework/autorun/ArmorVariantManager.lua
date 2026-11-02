@@ -1,5 +1,5 @@
 local mod_name = "ArmorVariantManager"
-local version = "3.3.0"
+local version = "3.3.1"
 local author = "Moon、MK"
 
 local global_config_path = "ArmorVariantManager/GlobalSettings.json"
@@ -45,7 +45,7 @@ local global_config = {
 
 -- Start core caches with this script lifetime, before any frame dispatch.
 if package and package.loaded then
-    for _,name in ipairs({'Utils','SceneObject','TransformManager','RulePlan','MeshBinding','RuntimeScheduler',
+    for _,name in ipairs({'Localization','Utils','SceneObject','TransformManager','RulePlan','MeshBinding','RuntimeScheduler',
         'Conditions.Condition_Weapon','Conditions.Condition_Scroll','Conditions.Condition_MonsterHP',
         'Conditions.Condition_LongSword','Conditions.Condition_DualBlades','Conditions.Condition_SwitchAxe',
         'Conditions.Condition_ChargeAxe','Conditions.Condition_GreatSwordLevel','Conditions.Condition_Hammer','Conditions.Condition_Bow'}) do
@@ -55,6 +55,10 @@ end
 local Localization = require("ArmorVariantManager_Core.Localization")
 local Utils = require("ArmorVariantManager_Core.Utils")
 local SceneObject = require("ArmorVariantManager_Core.SceneObject")
+package.loaded['ArmorVariantManager_Core.DissolveTransition']=nil
+local DissolveTransition=require('ArmorVariantManager_Core.DissolveTransition').new({valid=SceneObject.is_alive})
+SceneObject.material_transition=DissolveTransition
+
 local TransformManager = require("ArmorVariantManager_Core.TransformManager")
 -- 自动查找预设的统一匹配内核（兼容「无分组的老预设」与「使用分组的新预设」）
 local PresetAutoFinder = require("ArmorVariantManager_Core.PresetAutoFinder")
@@ -3793,6 +3797,7 @@ end
 -- ============================================================================
 local variant_manager_ui = nil
 variant_manager_ui = VariantManagerUI.new({
+    dissolve_transition = DissolveTransition,
     config = global_config,
     translate = T,
     version = version,
@@ -4283,6 +4288,7 @@ end
 _G.__AVM_RUNTIME_SCHEDULER=MP.scheduler
 
 local function avm_frame_update()
+    DissolveTransition:tick()
     Profiler.enter_frame()
     local plugin_t0 = Profiler.begin("plugin_frame")
 
@@ -4306,6 +4312,7 @@ local function avm_frame_update()
     MP.scheduler:begin_frame(os.clock())
     MP.cg_scheduler:begin_frame(os.clock())
     if PlayerDir.transition_pending then
+        DissolveTransition:abandon()
         PlayerDir.transition_pending=false
         Applied.clear();PlayerDir.reset();invalidate_primary_body_id()
         part_cache={};weapon_part_cache={};PlayerDir.weapon_misses={}
@@ -4350,6 +4357,7 @@ local function avm_frame_update()
         Profiler.finish("event_players_poll", t_event)
         -- 检测事件玩家列表变化（进入或离开CG），重置所有缓存
         if has_event_players ~= last_has_event_players then
+            DissolveTransition:finish_all()
             Applied.clear()
             PlayerDir.reset()
             invalidate_primary_body_id()
@@ -4439,6 +4447,7 @@ end)
 
 -- 性能诊断：脚本被重置前先把最后一个窗口写出去
 re.on_script_reset(function()
+    DissolveTransition:finish_all()
     if Profiler.enabled then Profiler.flush() end
 end)
 
@@ -5875,11 +5884,8 @@ end
                     draw_multiplayer_panel()
                     imgui.separator()
                     if imgui.tree_node(T("performance_settings")) then
-                        imgui.text(T("runtime_architecture_hint"))
-                        imgui.text(T("runtime_teammate_hint"))
-                        imgui.spacing()
+                        DissolveTransition:draw_ui(T)
                         imgui.separator()
-                        imgui.text(T("image_quality") or "Image Quality")
                         local changed_iq_enable, new_iq_enable = imgui.checkbox(T("enable_image_quality") or "Enable Custom Image Quality", global_config.enable_image_quality)
                         if changed_iq_enable then
                             global_config.enable_image_quality = new_iq_enable

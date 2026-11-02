@@ -25,6 +25,15 @@ end
 
 function SceneObject.call(obj, method, ...)
     if not SceneObject.is_alive(obj) then return nil end
+
+    -- Route AVM reads to intended visibility while a native material stays on
+    -- for the fade. Includes cached MeshBinding writes and both UI backends.
+    local transition=SceneObject.material_transition
+    if method=='getMaterialsEnable' and transition and next(transition.active) then
+        return transition:get_material_enabled(obj,...)
+    elseif method=='setMaterialsEnable' and transition and transition.enabled then
+        return transition:set_material_enabled(obj,...)
+    end
     local ok, value = pcall(obj.call, obj, method, ...)
     if ok then return value end
     -- Only a destruction race is expected. Preserve unrelated errors for diagnosis.

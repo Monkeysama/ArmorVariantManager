@@ -335,6 +335,7 @@ function VariantManagerUI:ensure_d2d_backend()
         body_id_ttl = Slider.new(api, COLORS, self.fonts),
         scanner_batch_size = Slider.new(api, COLORS, self.fonts),
         image_quality_rate = Slider.new(api, COLORS, self.fonts),
+        dissolve_duration = Slider.new(api, COLORS, self.fonts),
         -- v3.1.0 联机
         multiplayer_tick = Slider.new(api, COLORS, self.fonts),
         multiplayer_scan = Slider.new(api, COLORS, self.fonts)
@@ -2446,13 +2447,26 @@ function VariantManagerUI:draw_settings_contents(x, y, w, h)
         inner_x, cursor_y, COLORS.text)
     cursor_y = cursor_y + 30
     local changed,value
-    cursor_y=self:draw_wrapped_text(self:T("runtime_architecture_hint"),inner_x,
-        cursor_y,inner_w,self.fonts.tiny,18,COLORS.muted)+8
-    cursor_y=self:draw_wrapped_text(self:T("runtime_teammate_hint"),inner_x,
-        cursor_y,inner_w,self.fonts.tiny,18,COLORS.muted)+14
-    Runtime.text(self.d2d, self.fonts.small, self:T("image_quality"),
-        inner_x, cursor_y, COLORS.text)
-    cursor_y = cursor_y + 30
+    local dissolve = self.deps.dissolve_transition
+    if dissolve then
+        if self.checkbox:draw(self:T("enable_dissolve"), inner_x, cursor_y,
+            inner_w, 28, dissolve.enabled) then
+            dissolve.enabled = not dissolve.enabled
+            if not dissolve.enabled then dissolve:finish_all() end
+            dissolve:save_settings()
+        end
+        cursor_y = cursor_y + 38
+        if dissolve.enabled then
+            changed, value = self.sliders.dissolve_duration:draw(self:T("dissolve_duration"),
+                dissolve.duration, inner_x, cursor_y, inner_w,
+                0.1, 2.0, 0.01, function(v) return string.format("%.2f s", v) end)
+            if changed then
+                dissolve.duration = value
+                dissolve:save_settings()
+            end
+            cursor_y = cursor_y + 42
+        end
+    end
     if self.checkbox:draw(self:T("enable_image_quality"), inner_x, cursor_y,
         inner_w, 28, config.enable_image_quality == true) then
         config.enable_image_quality = not config.enable_image_quality
