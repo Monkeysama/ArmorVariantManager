@@ -8,10 +8,18 @@ release
 # 规划、开发、进度和测试文档不加入允许项
 /docs/*
 
-build_release.py
 Debug/
 ArmorVariantManager/reframework/data/ArmorVariantManager/Runtime/
 ArmorVariantManager/reframework/plugins/source/ArmorVariantManagerUI/build/
 __pycache__/
 sync_main_release.py
-tests/
+# 只纳入可复现回归，其他本地诊断继续忽略
+/tests/*
+!/tests/run.py
+!/tests/support.lua
+!/tests/config_compatibility.lua
+!/tests/test_release.py
+!/tests/fixtures/
+!/tests/ground_clipping_targets_regression.lua
+!/tests/high_heel_height_regression.lua
+!/tests/scanner_ui_regression.lua
