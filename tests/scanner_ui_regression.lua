@@ -55,6 +55,8 @@ local env = setmetatable({
     }
 }, { __index = _G })
 env.TransformManager = { clear_last_state_cache = function() end }
+env.appearance = require("ArmorVariantManager_Core.Games.Wilds.Appearance").new({rules=env.TransformManager})
+env.appearance.state = env.actor_runtime
 local reset_start = assert(main_source:find("local function reset_actor_context()", 1, true))
 local reset_end = assert(main_source:find("\nactors = Actors.new", reset_start, true))
 env.on_reset = assert(load(main_source:sub(reset_start, reset_end - 1) .. "\nreturn reset_actor_context", "actual-reset", "t", env))()

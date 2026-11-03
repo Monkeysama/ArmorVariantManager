@@ -38,6 +38,10 @@ env.apply_transform_rules_for_character = function(_, char, base)
     last[char] = target
     return GamePresets.merge(base, config.groups.Lock.presets[target]), changed, { Lock = target }, { Lock = true }
 end
+env.appearance = require("ArmorVariantManager_Core.Games.Wilds.Appearance").new({})
+env.appearance.overrides, env.appearance.groups = env.active_overrides, env.active_group_presets
+env.appearance.state, env.appearance.height = env.actor_runtime, env.ground_clipping_presets
+env.appearance.transform = function(...) return env.apply_transform_rules_for_character(...) end
 local helpers = S.section(source, "-- 辅助函数：变身规则激活", "-- 辅助函数：获取当前分组的预设数据")
 local helper_name = "resolve_character_overrides"
 env[helper_name] = assert(load(helpers .. "\nreturn " .. helper_name, "actual-resolve", "t", env))()

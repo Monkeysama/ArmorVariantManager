@@ -29,6 +29,9 @@ local function environment(game, selected)
     }, {__index=_G})
     if game == "Wilds" then
         env.active_overrides.id.ground_clipping_fix={enabled=true, height_cm=9}
+        env.appearance = require("ArmorVariantManager_Core.Games.Wilds.Appearance").new({is_weapon_id=env.is_weapon_id})
+        env.appearance.overrides, env.appearance.groups = env.active_overrides, env.active_group_presets
+        env.appearance.height = env.ground_clipping_presets
     end
     env.get_current_preset_data=function(name)
         local owner=env.current_group_name == "" and env.current_config or env.current_config.groups[env.current_group_name]

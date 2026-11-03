@@ -256,6 +256,15 @@ local env = setmetatable({
     sdk = { is_managed_object = function() return true end },
     ground_clipping_fix = { settings_changed = function() end }
 }, { __index = _G })
+env.appearance = require("ArmorVariantManager_Core.Games.Wilds.Appearance").new({
+    load = function(id) return env.load_config_data(id) end,
+    rules = setmetatable({}, {__index=function(_, key) return env.TransformManager[key] end}),
+    can_transform = function(character) return env.can_use_transform(character) end,
+    game_object = function(...) return env.safe_get_game_object(...) end,
+    is_weapon_id = env.is_weapon_id,
+})
+env.appearance.overrides, env.appearance.groups = env.active_overrides, env.active_group_presets
+env.appearance.height = editor
 env.config_session = require("ArmorVariantManager_Core.Config.Session").new(
     require("ArmorVariantManager_Core.Games.Wilds.Config"), nil, {
         config_path = env.get_config_path, backup_path = env.get_backup_path,

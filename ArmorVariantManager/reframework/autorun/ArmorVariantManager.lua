@@ -65,10 +65,7 @@ local GroundClippingTargets = require("ArmorVariantManager_Core.GroundClippingTa
 local GamePresets = require("ArmorVariantManager_Core.Games.Wilds.Presets")
 local PresetGroups = require("ArmorVariantManager_Core.Presets.Groups")
 local PresetEditor = require("ArmorVariantManager_Core.Presets.Editor")
-local PresetSelection = require("ArmorVariantManager_Core.Presets.Selection")
-local PresetDefaults = require("ArmorVariantManager_Core.Presets.Defaults")
 local Processor = require("ArmorVariantManager_Core.Runtime.Processor")
-local RuntimeState = require("ArmorVariantManager_Core.Runtime.State")
 
 -- 获取本地化字符串
 local function T(key)
@@ -126,30 +123,30 @@ local last_body_id = nil
 local config_session = ConfigSession.new(GameConfig, TransformManager.refresh_config_rules)
 local loaded_configs = config_session.cache
 local temp_applied_presets = {} -- 记录当前临时应用的预设 (BodyID -> PresetName)
-local active_overrides = {} -- 记录共享手动基线，不保存角色条件结果 (BodyID -> { [part_index] = { mesh_enabled=..., materials={...} } })
--- 记录各分组当前选中的预设名 (BodyID -> { [""] = "主列表预设名", ["分组名"] = "预设名" })
--- 用于全局分组切换时全量重算，确保其他分组的当前预设也一起被应用
-local active_group_presets = {}
-local actor_runtime = RuntimeState.new()
-local ground_clipping_presets = GroundClippingFix.new_preset_state()
 local runtime_guard, variant_manager_ui
 
--- 只接受本轮PlayerManager提供的真实玩家；不以外观ID或猎人骨架猜测NPC身份。
+-- 只接受本轮 PlayerManager 提供的真实玩家。
 local function can_use_transform(character)
     return actors.can_transform(character)
 end
 
--- 先查配置摘要，无目标时连角色地址也不读取；六处入口保留玩家过滤及四返回值。
+local function is_weapon_id(id)
+    return id and (string.match(id, "^wp%d%d") ~= nil or string.match(id, "^it%d%d%d%d") ~= nil)
+end
+
+local appearance = require("ArmorVariantManager_Core.Games.Wilds.Appearance").new({
+    load = config_session.load,
+    rules = TransformManager,
+    can_transform = can_use_transform,
+    game_object = safe_get_game_object,
+    is_weapon_id = is_weapon_id,
+})
+local active_overrides, active_group_presets = appearance.overrides, appearance.groups
+local actor_runtime, ground_clipping_presets = appearance.state, appearance.height
+
+-- 保留既有调用入口和四返回值。
 local function apply_transform_rules_for_character(config, character, overrides, merge_fn)
-    if not TransformManager.has_configured_rules(config) or not can_use_transform(character) then
-        ground_clipping_presets.set_runtime(character, config, overrides and overrides.ground_clipping_fix)
-        return overrides, false, nil, nil
-    end
-    local game_object = safe_get_game_object(character, "transform_rules")
-    local char_addr = tostring(game_object or character)
-    local result, changed, targets, all_targets = TransformManager.apply_transform_rules(char_addr, config, character, overrides, merge_fn)
-    ground_clipping_presets.set_runtime(character, config, result and result.ground_clipping_fix)
-    return result, changed, targets, all_targets
+    return appearance.transform(config, character, overrides, merge_fn)
 end
 
 -- 当前 Body 的配置数据结构 (用于 UI 编辑):
@@ -296,8 +293,7 @@ local meshes = require("ArmorVariantManager_Core.Games.Wilds.Meshes").new(safe_g
 
 -- 场景变化只清运行状态，配置及手动预设选择保持不变。
 local function reset_actor_context()
-    actor_runtime:clear()
-    TransformManager.clear_last_state_cache()
+    appearance.reset()
     if variant_manager_ui then variant_manager_ui:invalidate_context() end
 end
 
@@ -311,10 +307,6 @@ local is_weapon_mode = false
 -- 仅用于防具/武器模式往返时恢复用户当前分组；普通换装仍按默认分组初始化。
 local mode_group_selection = {}
 local pending_mode_group_restore = false
-
-local function is_weapon_id(id)
-    return id and (string.match(id, "^wp%d%d") ~= nil or string.match(id, "^it%d%d%d%d") ~= nil)
-end
 
 -- 辅助函数：获取当前本地玩家 Body 的 ID (Name) - 兼容旧接口
 local function get_body_id()
@@ -566,37 +558,12 @@ end
 -- 辅助函数：应用一个 Body ID 的所有默认预设 (主列表 + 所有分组)
 -- 合并顺序：主列表 → 普通分组 → 全局分组（最后）
 local function apply_all_defaults(body_id)
-    local config = load_config_data(body_id)
-    if not config then return end
-    -- 彻底重置该 Body 的复合状态
-    active_overrides[body_id] = {}
-    ground_clipping_presets.reset(body_id)
-    active_overrides[body_id].ground_clipping_fix = GroundClippingFix.default_settings(config)
-    local selected = active_group_presets[body_id] or {}
-    active_group_presets[body_id] = selected
-    PresetDefaults.normal(config, GamePresets, active_overrides[body_id], selected)
-    PresetDefaults.globals(config, GamePresets, active_overrides[body_id], selected)
+    return appearance.defaults(body_id)
 end
 
 -- 辅助函数：变身规则激活结果仅属于当前角色及装备槽位。
 local function resolve_character_overrides(body_id, config, character, slot)
-    local context = actor_runtime:get(tostring(character), slot, body_id, config)
-    local first_apply = context.overrides == nil
-    local result, changed, targets, all_targets = apply_transform_rules_for_character(
-        config, character, active_overrides[body_id], merge_overrides
-    )
-    local selected, rebuild = PresetSelection.resolve_groups(config, active_group_presets[body_id], targets, all_targets)
-    if rebuild then
-        result = PresetSelection.compose(config, selected, targets, {
-            ground_clipping_fix = result.ground_clipping_fix or GroundClippingFix.default_settings(config)
-        }, GamePresets)
-    else
-        if result == active_overrides[body_id] then result = GamePresets.merge(result, {}) end
-        PresetSelection.merge_globals(config, selected, result, GamePresets)
-    end
-    context.groups, context.overrides = selected, result
-    ground_clipping_presets.set_runtime(character, config, result and result.ground_clipping_fix)
-    return result, changed or first_apply
+    return appearance.resolve(body_id, config, character, slot)
 end
 
 -- 辅助函数：获取当前分组的预设数据
@@ -617,19 +584,7 @@ local function apply_preset(preset_name)
     if not preset_data then return end
     local current_body_id = get_body_id()
     if current_body_id then
-        -- 全局分组会重建材质状态，先保留高度，未勾选的预设不能借重建清空其他分组的修正。
-        local previous_height = active_overrides[current_body_id] and active_overrides[current_body_id].ground_clipping_fix
-        local selected = active_group_presets[current_body_id] or {}
-        active_group_presets[current_body_id] = selected
-        active_overrides[current_body_id] = PresetSelection.apply(current_config, selected,
-            active_overrides[current_body_id], current_group_name, preset_name, GamePresets)
-        ground_clipping_presets.reset(current_body_id, current_group_name)
-
-        -- 仅勾选的预设覆盖高度；未勾选只切换材质，勾选的 0 cm 可主动归零。
-        if not is_weapon_id(current_body_id) then
-            active_overrides[current_body_id].ground_clipping_fix = GroundClippingFix.participating_settings(preset_data, current_config)
-                or previous_height or GroundClippingFix.default_settings(current_config)
-        end
+        appearance.select(current_body_id, current_config, current_group_name, preset_name)
         temp_applied_presets[current_body_id] = preset_name
     end
     local all_chars = get_all_characters()

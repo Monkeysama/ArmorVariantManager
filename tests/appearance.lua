@@ -2,6 +2,7 @@ package.path = "ArmorVariantManager/reframework/autorun/?.lua;" .. package.path
 local S = dofile("tests/support.lua")
 local prefix = "ArmorVariantManager_Core."
 local Defaults = require(prefix .. "Presets.Defaults")
+local Height = require(prefix .. "GroundClippingFix")
 local legacy = dofile("tests/fixtures/legacy/defaults.lua")
 local function preset(value) return {["0"] = {materials = {cloth = value}}} end
 
@@ -20,7 +21,7 @@ for _, game in ipairs({"Wilds", "Rise"}) do
                 bump_overrides_version=function() end,
                 Applied={invalidate_body=function() end},
                 ground_clipping_presets={reset=function() end},
-                GroundClippingFix={default_settings=function() return {enabled=false, height_cm=0} end},
+                GroundClippingFix=Height,
             }, {__index=_G})
             env.merge_preset_into_overrides=function(id, value) policy.merge_into(env.active_overrides[id], value) end
             env.merge_global_preset_into_overrides=function(id, value) policy.merge_global_into(env.active_overrides[id], value) end
@@ -32,11 +33,18 @@ for _, game in ipairs({"Wilds", "Rise"}) do
                 update_base_preset=function(_, _, group, name) base_selected[group]=name end,
             }
             legacy[game](env)("id")
-            local actual = game == "Wilds" and {ground_clipping_fix={enabled=false, height_cm=0}} or {}
+            local actual = game == "Wilds" and {ground_clipping_fix=Height.default_settings(config)} or {}
             local names = game == "Wilds" and {old="kept"} or {}
             Defaults.normal(config, policy, actual, names)
             if game == "Rise" then S.equal(actual, normal, "normal baseline before global lock") end
             Defaults.globals(config, policy, actual, names, policy.default_global)
+            if game == "Wilds" then
+                local app = require(prefix .. "Games.Wilds.Appearance").new({load=function() return config end})
+                app.groups.id = {old="kept"}
+                app.defaults("id")
+                S.equal(app.overrides.id, actual, "Wilds appearance default composition")
+                S.equal(app.groups.id, names, "Wilds appearance default selections")
+            end
             S.equal(actual, env.active_overrides.id, game .. " defaults")
             S.equal(names, env.active_group_presets.id, game .. " selections")
             if game == "Rise" then S.equal(names, base_selected, "rule baseline selections") end
@@ -44,6 +52,49 @@ for _, game in ipairs({"Wilds", "Rise"}) do
     end
 end
 print("PASS: both legacy default initializers, global fallback and selections")
+
+-- 运行正式入口的会话装配，确认别名、过滤与场景清理连接到同一状态所有者。
+do
+    local configured, eligible, addresses, evaluations, resets = false, false, 0, 0, 0
+    local cfg = {presets={Base=preset(true)}, default_preset="Base", groups={}}
+    local character = {}
+    local env = setmetatable({
+        config_session={load=function() return cfg end},
+        actors={can_transform=function() return eligible end},
+        safe_get_game_object=function(value) addresses=addresses+1; return value end,
+        TransformManager={
+            has_configured_rules=function() return configured end,
+            apply_transform_rules=function(_, _, _, base)
+                evaluations=evaluations+1
+                return base, false, nil, nil
+            end,
+            clear_last_state_cache=function() resets=resets+1 end,
+        },
+    }, {__index=_G})
+    local main = S.read("ArmorVariantManager/reframework/autorun/ArmorVariantManager.lua")
+    local body = S.section(main, "local runtime_guard, variant_manager_ui", "-- 当前 Body 的配置数据结构")
+    local app, overrides, groups, state, height, transform, weapon = assert(load(body .. [[
+return appearance, active_overrides, active_group_presets, actor_runtime, ground_clipping_presets,
+    apply_transform_rules_for_character, is_weapon_id
+]], "actual-appearance-wiring", "t", env))()
+    assert(app.overrides == overrides and app.groups == groups and app.state == state and app.height == height)
+    assert(weapon("wp03_custom") and weapon("it1234_custom") and not weapon("armor"))
+    app.defaults("armor")
+    local baseline = overrides.armor
+    transform(cfg, character, baseline, function() error("Unexpected merge") end)
+    configured=true
+    transform(cfg, character, baseline, function() error("Unexpected merge") end)
+    assert(addresses == 0 and evaluations == 0, "Empty conditions and preview actors must not read combat objects")
+    eligible=true
+    local result, changed = app.resolve("armor", cfg, character, "armor")
+    assert(result ~= baseline and changed and addresses == 1 and evaluations == 1)
+    assert(state:peek(tostring(character), "armor", "armor", cfg).overrides == result)
+    local selected = groups.armor
+    app.reset()
+    assert(resets == 1 and state:peek(tostring(character), "armor", "armor", cfg) == nil)
+    assert(overrides.armor == baseline and groups.armor == selected, "Scene reset preserves manual intent")
+end
+print("PASS: Wilds entry appearance wiring, actor eligibility and reset ownership")
 
 -- 执行真实崛起规则、共享处理器和角色状态；只替换引擎信号读取。
 local loaded, samples = {}, 0
