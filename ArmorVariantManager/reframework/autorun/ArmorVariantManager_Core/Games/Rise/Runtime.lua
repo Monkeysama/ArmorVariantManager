@@ -61,11 +61,32 @@ function Runtime.new(config, callbacks)
     end
 
     local function process(entry, is_event)
-        if not SceneObject.is_alive(entry.obj) then return end
-        if entry.player and not SceneObject.is_alive(entry.player) then return end
+        if not SceneObject.is_alive(entry.obj) then return false end
+        if entry.player and not SceneObject.is_alive(entry.player) then return false end
         Signals.bind_actor(entry.player, entry.obj)
         processed[entry.obj] = true
         callbacks.process(entry, is_event, runtime)
+        return true
+    end
+
+    -- 编辑后的即时应用复用正常角色入口，不推进调度器，也不越过切场景暂停。
+    function runtime.refresh(object)
+        if pending_reset then return false end
+        object = object or runtime.actors.local_player()
+        if not object then return false end
+        if has_events then
+            for _, actor in ipairs(events) do
+                if actor == object then return process({obj = actor, is_event = true}, true) end
+            end
+            return false
+        end
+        for _, entry in ipairs(runtime.actors.get().entries) do
+            if entry.obj == object then return process(entry, false) end
+        end
+        if object == runtime.actors.local_player() then
+            return process({obj = object, is_local = true}, false)
+        end
+        return false
     end
 
     -- 保留完整在场名单，不能把本帧未获多人预算的角色当作离场。
