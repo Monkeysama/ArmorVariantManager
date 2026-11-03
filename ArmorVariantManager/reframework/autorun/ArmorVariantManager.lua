@@ -1,3 +1,10 @@
+local game, game_error = require("ArmorVariantManager_Core.Game").detect(reframework:get_game_name())
+if not game then
+    log.error(game_error)
+    re.on_draw_ui(function() imgui.text_colored(game_error, 0xFF0000FF) end)
+    return
+end
+
 local mod_name = "ArmorVariantManager"
 -- 开发中遵守
 -- 版本号-开发状态-开发状态标识
@@ -9,15 +16,17 @@ local author = "MK,Moon,AZUSA,Ensicht"
 -- =============================================================================
 
 local global_settings = require("ArmorVariantManager_Core.Config.Global").new(
-    require("ArmorVariantManager_Core.Games.Wilds.Settings"))
+    (require(game.prefix .. "Settings")))
 local global_config = global_settings.value
 
 -- 本地化字典 (从外部模块加载)
-local Localization = require("ArmorVariantManager_Core.Localization")
-local TransformManager = require("ArmorVariantManager_Core.TransformManager")
+local Localization = require(game.wilds and "ArmorVariantManager_Core.Localization" or game.prefix .. "Localization")
+local TransformManager = require(game.prefix .. "Rules")
 local ConfigSession = require("ArmorVariantManager_Core.Config.Session")
-local GameConfig = require("ArmorVariantManager_Core.Games.Wilds.Config")
+local GameConfig = require(game.prefix .. "Config")
 -- REFramework 重载脚本时可能保留 Lua 模块缓存，新UI必须重新加载最新实现。
+local VariantManagerUI, GroundClippingFix, GroundClippingTargets
+if game.wilds then
 local refd2d_module_names = {
     "ArmorVariantManager_Core.PortraitCamera",
     "ArmorVariantManager_Core.PortraitModel",
@@ -48,10 +57,11 @@ if package and package.loaded then
         package.loaded[module_name] = nil
     end
 end
-local VariantManagerUI = require("ArmorVariantManager_Core.UI.VariantManagerUI")
-local GroundClippingFix = require("ArmorVariantManager_Core.GroundClippingFix")
-local GroundClippingTargets = require("ArmorVariantManager_Core.GroundClippingTargets")
-local GamePresets = require("ArmorVariantManager_Core.Games.Wilds.Presets")
+VariantManagerUI = require("ArmorVariantManager_Core.UI.VariantManagerUI")
+GroundClippingFix = require("ArmorVariantManager_Core.GroundClippingFix")
+GroundClippingTargets = require("ArmorVariantManager_Core.GroundClippingTargets")
+end
+local GamePresets = require(game.prefix .. "Presets")
 local PresetGroups = require("ArmorVariantManager_Core.Presets.Groups")
 local PresetEditor = require("ArmorVariantManager_Core.Presets.Editor")
 
@@ -70,6 +80,7 @@ end
 
 -- 保存全局配置，返回写盘结果供调用方使用。
 local function save_global_settings()
+    _G.__AVM_LANGUAGE = global_config.language
     return global_settings.save()
 end
 
@@ -87,17 +98,29 @@ local function reset_actor_context()
     if variant_manager_ui then variant_manager_ui:invalidate_context() end
 end
 
-local runtime = require("ArmorVariantManager_Core.Games.Wilds.Runtime").new(global_config, {
-    reset = reset_actor_context,
-})
+local runtime, application
+local config_session = ConfigSession.new(GameConfig, TransformManager.refresh_config_rules)
+if game.wilds then
+    runtime = require("ArmorVariantManager_Core.Games.Wilds.Runtime").new(global_config, {reset = reset_actor_context})
+else
+    application = require("ArmorVariantManager_Core.Games.Rise.Application").new(global_config, config_session)
+    runtime, appearance = application.runtime, application.appearance
+end
 local actors, runtime_guard = runtime.actors, runtime.guard
-local safe_get_game_object = runtime.scene_object.game_object
+local safe_get_game_object = game.wilds and runtime.scene_object.game_object
+
+-- 崛起目录区分玩家句柄和场景对象；武器、条件与部件读取使用对应玩家。
+local function get_player_handle(character)
+    if game.wilds then return nil end
+    for _, entry in ipairs(actors.get().entries) do
+        if entry.obj == character then return entry.player end
+    end
+end
 
 -- 状态变量
 local show_window = true
 local last_body_id = nil
 -- BODY_ID_CACHE_TTL 已移至全局配置 global_config.body_id_ttl
-local config_session = ConfigSession.new(GameConfig, TransformManager.refresh_config_rules)
 local loaded_configs = config_session.cache
 local temp_applied_presets = {} -- 记录当前临时应用的预设 (BodyID -> PresetName)
 
@@ -110,6 +133,7 @@ local function is_weapon_id(id)
     return id and (string.match(id, "^wp%d%d") ~= nil or string.match(id, "^it%d%d%d%d") ~= nil)
 end
 
+if game.wilds then
 appearance = require("ArmorVariantManager_Core.Games.Wilds.Appearance").new({
     load = config_session.load,
     rules = TransformManager,
@@ -117,8 +141,9 @@ appearance = require("ArmorVariantManager_Core.Games.Wilds.Appearance").new({
     game_object = safe_get_game_object,
     is_weapon_id = is_weapon_id,
 })
-local application = require("ArmorVariantManager_Core.Games.Wilds.Application").new(
+application = require("ArmorVariantManager_Core.Games.Wilds.Application").new(
     runtime, appearance, config_session, TransformManager, is_weapon_id)
+end
 local active_overrides, active_group_presets = appearance.overrides, appearance.groups
 local actor_runtime, ground_clipping_presets = appearance.state, appearance.height
 
@@ -192,9 +217,18 @@ end
 
 local equipment, meshes, materials = runtime.equipment, runtime.meshes, runtime.materials
 local get_character_body_id = equipment.body_id
-local get_character_weapon_id = equipment.weapon_id
+local function get_character_weapon_id(character)
+    if game.wilds then return equipment.weapon_id(character) end
+    local player = get_player_handle(character)
+    return equipment.weapon_id(character, player), equipment.weapons(character, player)
+end
 local capture_materials = runtime.capture
-local get_all_characters = actors.all
+local function get_all_characters()
+    if game.wilds then return actors.all() end
+    local list = {}
+    for _, entry in ipairs(actors.get().entries) do list[#list + 1] = entry.obj end
+    return list
+end
 local get_local_player_character = actors.local_player
 
 local is_weapon_mode = false
@@ -214,7 +248,7 @@ end
 -- 界面展示本地角色的条件结果；编辑基线仍按装备共享。
 local function get_effective_group_presets(body_id)
     local character = get_local_player_character()
-    local slot = is_weapon_id(body_id) and "weapon" or "armor"
+    local slot = (game.wilds and is_weapon_id(body_id) or not game.wilds and is_weapon_mode) and "weapon" or "armor"
     local context = character and actor_runtime:peek(tostring(character), slot, body_id, loaded_configs[body_id])
     return context and context.groups or active_group_presets[body_id] or {}
 end
@@ -329,8 +363,8 @@ end
 -- =============================================================================
 -- 辅助函数：递归收集 GameObject 及其所有子节点上的 Mesh 组件
 -- 改名后的 PFB 可能不再符合原版节点命名规则，因此 Mesh 必须按对象树实际内容查找。
-local get_mesh_component_recursive = meshes.first
-local get_character_part_meshes = meshes.part_meshes
+local get_mesh_component_recursive = meshes and meshes.first
+local get_character_part_meshes = meshes and meshes.part_meshes
 
 -- 辅助函数：检测材质被哪个分组占用（全局组不计入归属，只有普通组才独占材质）
 local function get_material_group_owner(part_index, mat_name)
@@ -350,7 +384,8 @@ local function switch_variant_mode(weapon_mode)
     last_body_id = nil
     current_group_name = ""
     pending_mode_group_restore = true
-    equipment.clear(weapon_mode and "weapon" or "armor")
+    if game.wilds then equipment.clear(weapon_mode and "weapon" or "armor")
+    else equipment.clear() end
 end
 
 -- 辅助函数：判断材质是否属于当前 UI 上下文 (主列表或当前分组)
@@ -411,9 +446,10 @@ end
 -- =============================================================================
 -- 分组管理核心函数
 -- 辅助函数：创建材质级新分组
+local save_current_config_to_file
 local function create_new_group(group_name, body_id, is_global)
     if not body_id then return false end
-    if not PresetGroups.create(current_config, group_name, pending_material_selections, is_global, true) then return false end
+    if not PresetGroups.create(current_config, group_name, pending_material_selections, is_global, game.wilds) then return false end
     pending_material_selections = {}
     is_selection_mode = false
     update_group_names_list()
@@ -439,7 +475,7 @@ end
 -- =============================================================================
 -- 辅助函数：仅加载配置数据，不更新 UI 状态
 local function load_config_data(body_id)
-    return config_session.load(body_id)
+    return application.load(body_id)
 end
 
 -- 辅助函数：返回合并后的新复合状态表（不修改原表）
@@ -450,7 +486,7 @@ end
 -- 辅助函数：应用一个 Body ID 的所有默认预设 (主列表 + 所有分组)
 -- 合并顺序：主列表 → 普通分组 → 全局分组（最后）
 local function apply_all_defaults(body_id)
-    return appearance.defaults(body_id)
+    return appearance.defaults(body_id, load_config_data(body_id))
 end
 
 -- 辅助函数：变身规则激活结果仅属于当前角色及装备槽位。
@@ -476,10 +512,9 @@ local function apply_preset(preset_name)
     if not preset_data then return end
     local current_body_id = get_body_id()
     if current_body_id then
-        appearance.select(current_body_id, current_config, current_group_name, preset_name)
+        application.select(current_body_id, current_config, current_group_name, preset_name)
         temp_applied_presets[current_body_id] = preset_name
     end
-    if current_body_id then application.refresh(current_body_id) end
 end
 
 -- 辅助函数：加载指定 Body ID 的配置 (用于 UI 和本地玩家)
@@ -506,7 +541,7 @@ local function load_body_config(body_id)
 end
 
 -- 辅助函数：保存配置到文件
-local function save_current_config_to_file(body_id, preserve_active_state)
+save_current_config_to_file = function(body_id, preserve_active_state)
     return application.save(body_id, current_config, preserve_active_state)
 end
 
@@ -558,6 +593,13 @@ end
 -- 将 backup/<id>.json 的内容写回主配置文件并刷新内存状态，
 -- 用于 mod 重装后一键还原玩家手动调整过的预设。
 local function restore_config_from_backup(body_id)
+    if not game.wilds then
+        if not application.restore(body_id) then return false end
+        current_config = application.load(body_id)
+        update_group_names_list()
+        update_preset_names_list()
+        return true
+    end
     if not config_session.restore(body_id) then return false end
     active_overrides[body_id] = nil
     active_group_presets[body_id] = nil
@@ -585,10 +627,16 @@ local function save_preset(preset_name, body_id)
         type_mesh = get_type("via.render.Mesh")
         if not type_mesh then return false end
     end
-    local new_preset_data = capture_materials(character, current_config, current_group_name,
-        active_overrides[body_id], is_weapon_id(body_id), is_material_in_current_context)
+    local new_preset_data
+    if game.wilds then
+        new_preset_data = capture_materials(character, current_config, current_group_name,
+            active_overrides[body_id], is_weapon_id(body_id), is_material_in_current_context)
+    else
+        new_preset_data = capture_materials(character, get_player_handle(character), current_config,
+            current_group_name, is_weapon_mode, is_material_in_current_context)
+    end
     -- 与当前分组的材质状态一起捕获高度草稿；武器预设不保存防具修复。
-    if not is_weapon_id(body_id) then
+    if game.wilds and not is_weapon_id(body_id) then
         local group = current_group_name == "" and current_config or current_config.groups[current_group_name]
         local selected = get_effective_group_presets(body_id)[current_group_name]
             or group and group.default_preset
@@ -604,7 +652,8 @@ end
 
 -- 辅助函数：自动查找匹配的预设
 local function find_auto_preset(target_body_id)
-    local data, message = runtime.find_preset(target_body_id, get_local_player_character())
+    local data, message = runtime.find_preset(target_body_id, get_local_player_character(),
+        get_player_handle(get_local_player_character()), is_weapon_mode)
     if not data then return false, message end
     local previous, previous_cache = current_config, loaded_configs[target_body_id]
     current_config = data
@@ -618,8 +667,10 @@ end
 
 -- 原生材质面板共用控件，由游戏适配提供对象访问与开关策略。
 local draw_material_panel = require("ArmorVariantManager_Core.UI.ImGui.Materials").new({
-    access = require("ArmorVariantManager_Core.Games.Wilds.MaterialView").new(),
-    translate = T, edit = appearance.edit,
+    access = require(game.prefix .. "MaterialView").new(),
+    translate = T, edit = function(id, part, material, enabled)
+        return appearance.edit(id, part, material, enabled, current_config)
+    end,
     owner = get_material_group_owner, global_groups = get_material_global_groups,
     in_context = is_material_in_current_context, hidden = is_globally_hidden,
     body_id = get_body_id, selected = get_effective_group_presets,
@@ -642,6 +693,9 @@ local draw_part_list = require("ArmorVariantManager_Core.UI.ImGui.Parts").new(
 -- 新UI
 -- 基于原生 UI Runtime 的差分管理器界面。
 -- 独立解析战斗、菜单与过场角色；各骨架按自己的防具读取预设，不依赖 MasterPlayer 存在。
+local show_debug_window = false
+local get_ground_clipping_settings, set_ground_clipping_settings
+if game.wilds then
 local collect_ground_clipping_targets = GroundClippingTargets.new({
     get_scene = function() return runtime_guard:get_scene() end,
     get_game_object = safe_get_game_object
@@ -665,7 +719,7 @@ local ground_clipping_fix = GroundClippingFix.new({
 })
 
 -- 新旧界面共用预设草稿，实时预览；新增或覆盖预设时才持久化到 JSON 和备份。
-local function get_ground_clipping_settings()
+get_ground_clipping_settings = function()
     local group = current_group_name == "" and current_config or current_config.groups and current_config.groups[current_group_name]
     local body_id = get_body_id()
     local selected = get_effective_group_presets(body_id)[current_group_name]
@@ -673,7 +727,7 @@ local function get_ground_clipping_settings()
     return ground_clipping_presets.get_editor(current_config, body_id, current_group_name, selected)
 end
 
-local function set_ground_clipping_settings(changes, body_id)
+set_ground_clipping_settings = function(changes, body_id)
     if is_weapon_mode or not body_id or body_id ~= last_body_id or body_id ~= get_body_id() then return false end
     local group = current_group_name == "" and current_config or current_config.groups and current_config.groups[current_group_name]
     local selected = get_effective_group_presets(body_id)[current_group_name]
@@ -1025,11 +1079,7 @@ if variant_manager_ui and not variant_manager_ui.update then
     setmetatable(variant_manager_ui, { __index = VariantManagerUI })
 end
 
--- Debug 状态
-local show_debug_window = false
-
--- =============================================================================
--- =============================================================================
+end -- 荒野预览与待替换的旧界面
 
 -- 辅助函数：在 UI 中绘制条件的目标列表（捕获外部的 body_id 和 current_config）
 local function draw_targets_ui(targets, rule_type, rule_idx)
@@ -1156,12 +1206,12 @@ runtime.install_hooks()
 local process_character = application.process
 
 local frame_callbacks = {
-    suspended = function(value) variant_manager_ui:set_suspended(value) end,
+    suspended = function(value) if variant_manager_ui then variant_manager_ui:set_suspended(value) end end,
     process = process_character,
     retain = function(seen) actor_runtime:retain(seen) end,
     update = function()
         -- D2D 新 UI 自己维护快捷键按下沿和弹窗状态。
-        variant_manager_ui:update()
+        if variant_manager_ui then variant_manager_ui:update() end
 
         -- 1. 维护本地玩家 UI 状态
         local local_body_id = get_body_id()
@@ -1219,20 +1269,26 @@ re.on_frame(function() runtime.tick(frame_callbacks) end)
 -- =============================================================================
 -- UI 绘制
 -- =============================================================================
-local draw_game_conditions = require("ArmorVariantManager_Core/Games/Wilds/ImGuiConditions").new({
+local draw_game_conditions = require(game.prefix .. "ImGuiConditions").new({
     translate = T,
     rules = TransformManager,
     save = save_current_config_to_file,
     draw_targets = draw_targets_ui,
+    set_enabled = application.set_enabled, refresh = application.refresh,
     can_transform = can_use_transform,
     game_object = safe_get_game_object,
 })
+
+local game_options
+if not game.wilds then
+    game_options = require(game.prefix .. "Options").new(global_config, runtime, T, save_global_settings)
+end
 
 -- UI 绘制回调
 re.on_draw_ui(function()
     -- D2D与旧ImGui回调都读取同一状态，不在这里重复轮询游戏菜单/加载状态。
     if imgui.tree_node(T("mod_name")) then
-        if runtime_guard.suspended then
+        if runtime.is_suspended() then
             imgui.text(T("runtime_paused"))
             imgui.tree_pop()
             return
@@ -1241,12 +1297,12 @@ re.on_draw_ui(function()
         imgui.separator()
 
         -- 新 UI 设置和旧 UI 隐藏逻辑由独立模块处理。
-        if variant_manager_ui:draw_settings() then
+        if variant_manager_ui and variant_manager_ui:draw_settings() then
             imgui.tree_pop()
             return
         end
 
-        if show_debug_window then
+        if game.wilds and show_debug_window then
             if imgui.tree_node("Debug Info") then
                 local all_chars = get_all_characters()
                 imgui.text("Detected Characters: " .. tostring(#all_chars))
@@ -1553,7 +1609,7 @@ re.on_draw_ui(function()
                             end
 
                             -- 陷地修复放在预设、分组及自动查找按钮和结果提示下方。
-                            if not is_weapon_mode then
+                            if game.wilds and not is_weapon_mode then
                                 imgui.separator()
                                 local settings = get_ground_clipping_settings()
                                 local changed, value = imgui.checkbox(T("heel_title"), settings.enabled)
@@ -1668,7 +1724,7 @@ re.on_draw_ui(function()
 
                     imgui.separator()
 
-                    draw_part_list(character, body_id, is_weapon_mode, active_overrides[body_id])
+                    draw_part_list(character, body_id, is_weapon_mode, active_overrides[body_id], get_player_handle(character))
 
                     imgui.separator()
 
@@ -1693,8 +1749,12 @@ re.on_draw_ui(function()
 
                     imgui.separator()
 
+                    if game_options then game_options.multiplayer() end
+
                     -- ========== 性能设置 ==========
                     if imgui.tree_node(T("performance_settings")) then
+                        if game_options then game_options.performance()
+                        else
                         imgui.text(T("performance_desc"))
                         imgui.spacing()
                         -- 1. 扫描间隔
@@ -1714,6 +1774,7 @@ re.on_draw_ui(function()
                         if changed_bs then
                             global_config.scanner_batch_size = val_bs
                             save_global_settings()
+                        end
                         end
                         imgui.tree_pop()
                     end

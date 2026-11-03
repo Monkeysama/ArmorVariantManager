@@ -16,6 +16,8 @@ sync_main_release.py
 # 只纳入可复现回归，其他本地诊断继续忽略
 /tests/*
 !/tests/run.py
+!/tests/entrypoint.lua
+!/tests/rise_options.lua
 !/tests/support.lua
 !/tests/config_compatibility.lua
 !/tests/config_store.lua

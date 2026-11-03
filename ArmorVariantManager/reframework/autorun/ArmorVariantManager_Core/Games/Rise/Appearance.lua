@@ -39,9 +39,9 @@ function Appearance.new(load_config)
     end
 
     -- 换用新草稿实例使各角色察觉编辑；规则结束后回到编辑后的基础值。
-    function app.edit(id, part, material, enabled)
+    function app.edit(id, part, material, enabled, config)
         if not id or part == nil then return false end
-        local config = load_config(id)
+        config = config or load_config(id)
         if not config then return false end
         if not app.overrides[id] then app.defaults(id, config) end
         local draft = Presets.merge(app.overrides[id] or {}, {})

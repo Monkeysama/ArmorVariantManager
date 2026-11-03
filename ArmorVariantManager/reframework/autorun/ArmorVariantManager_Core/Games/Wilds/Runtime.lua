@@ -20,6 +20,8 @@ function Runtime.new(config, callbacks)
     runtime.actors = Actors.new(config, runtime.scene_object, runtime.equipment, runtime.meshes, callbacks.reset)
     runtime.guard = runtime.actors.guard
 
+    function runtime.is_suspended() return runtime.guard.suspended end
+
     function runtime.install_hooks() runtime.guard:install_hooks() end
 
     -- 先检查场景和扫描，再更新界面选择，最后将各角色结果应用到对应对象。

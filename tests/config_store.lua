@@ -48,8 +48,8 @@ local session = Session.new(Schema, function() refreshes = refreshes + 1 end, {
     load = function(name) reads = reads + 1; return S.copy(disk[name]) end,
     save = function(name, value) disk[name] = S.copy(value); return true end
 })
-local env = setmetatable({ config_session = session }, { __index = _G })
-local loading = S.section(source, "local function load_config_data", "-- 辅助函数：将预设数据合并")
+local env = setmetatable({ config_session = session, application = {load=session.load} }, { __index = _G })
+local loading = S.section(source, "local function load_config_data", "-- 辅助函数：返回合并后的新复合状态表")
 local load_config = assert(load(loading .. "\nreturn load_config_data", "entry-config", "t", env))()
 disk[Store.config_path("armor")] = S.copy(original)
 disk[Store.backup_path("armor")] = S.copy(original)

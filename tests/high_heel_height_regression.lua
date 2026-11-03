@@ -1,3 +1,4 @@
+game = {wilds=true, prefix="ArmorVariantManager_Core.Games.Wilds."}
 -- 高跟鞋核心与 JSON 接入的离线回归，不需要启动游戏或操作桌面。
 package.path = "ArmorVariantManager/reframework/autorun/?.lua;" .. package.path
 local Height = require("ArmorVariantManager_Core.GroundClippingFix")
@@ -212,7 +213,7 @@ print("PASS: real Lua callback ordering, post-IK timing, paused status recovery,
 local handle = assert(io.open("ArmorVariantManager/reframework/autorun/ArmorVariantManager.lua", "r"))
 local source = handle:read("a"); handle:close()
 local function extract(name, following)
-    local first = assert(source:find("local function " .. name .. "(", 1, true))
+    local first = assert(source:find("local function " .. name .. "(", 1, true) or source:find(name .. " = function(", 1, true))
     local last = assert(source:find(following, first + 1, true))
     return source:sub(first, last - 1)
 end

@@ -121,12 +121,13 @@ assert(fixture(true,"rise",rank).message:find("已匹配: armor",1,true))
 
 -- 正式入口导入成功才刷新列表；主文件保存失败恢复当前配置及会话缓存。
 local main=S.read("ArmorVariantManager/reframework/autorun/ArmorVariantManager.lua")
-local wrapper=S.section(main,"local function find_auto_preset(","-- 辅助函数：安全地获取组件并控制可见性")
+local wrapper=S.section(main,"local function find_auto_preset(","local draw_material_panel =")
 for _,failure in ipairs({"none","find","save"}) do
     local previous,cache,candidate={old=true},{old_cache=true},{presets={},unknown=true}
     local events={}
     local env=setmetatable({current_config=previous,loaded_configs={armor=cache},
         get_local_player_character=function() return "actor" end,
+        get_player_handle=function() end,
         runtime={find_preset=function(id,actor)
             assert(id=="armor" and actor=="actor")
             return failure~="find" and candidate or nil,"lookup message"

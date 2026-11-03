@@ -58,7 +58,7 @@ env.TransformManager = { clear_last_state_cache = function() end }
 env.appearance = require("ArmorVariantManager_Core.Games.Wilds.Appearance").new({rules=env.TransformManager})
 env.appearance.state = env.actor_runtime
 local reset_start = assert(main_source:find("local function reset_actor_context()", 1, true))
-local reset_end = assert(main_source:find("\nlocal runtime = require", reset_start, true))
+local reset_end = assert(main_source:find("\nlocal runtime, application", reset_start, true))
 env.on_reset = assert(load(main_source:sub(reset_start, reset_end - 1) .. "\nreturn reset_actor_context", "actual-reset", "t", env))()
 local function object(fields)
     fields = fields or {}
@@ -133,6 +133,6 @@ assert(invalidations == 3)
 assert(equipment_clears == 3 and mesh_clears == 3, "Scene cleanup releases adapter-owned object caches")
 local ui_start = assert(main_source:find("re.on_draw_ui(function()", 1, true))
 local tree = assert(main_source:find('imgui.tree_node(T("mod_name"))', ui_start, true))
-local pause = assert(main_source:find("if runtime_guard.suspended then", ui_start, true))
+local pause = assert(main_source:find("if runtime.is_suspended() then", ui_start, true))
 assert(tree < pause, "Legacy UI entry remains present while suspended")
 print("PASS: isolated object/character failures, bounded burst, rescan interval, preserved UI/cache, scene changes, missing scene, loading, menus, fast-travel fade-in and legacy UI entry")

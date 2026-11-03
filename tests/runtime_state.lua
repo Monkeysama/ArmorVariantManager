@@ -1,3 +1,4 @@
+game = {wilds=true, prefix="ArmorVariantManager_Core.Games.Wilds."}
 package.path = "ArmorVariantManager/reframework/autorun/?.lua;" .. package.path
 local S = dofile("tests/support.lua")
 local source = S.read("ArmorVariantManager/reframework/autorun/ArmorVariantManager.lua")
@@ -214,7 +215,7 @@ assert(env.selected_preset_index == 2)
 print("PASS: shared game policies and actual UI context/group selection")
 
 local editor_selection
-local editor_source = S.section(source, "local function get_ground_clipping_settings()", "local function set_ground_clipping_settings")
+local editor_source = S.section(source, "get_ground_clipping_settings = function()", "set_ground_clipping_settings = function")
 env.ground_clipping_presets.get_editor = function(_, _, _, selected) editor_selection = selected end
 assert(load(editor_source .. "\nreturn get_ground_clipping_settings", "actual-height-editor", "t", env))()()
 assert(editor_selection == "Off", "Height editor follows displayed local preset")

@@ -197,5 +197,26 @@ Signals.forget_actor(local_obj)
 assert(Signals.sample_condition("test", condition, local_obj) == 2)
 Signals.clear()
 assert(Signals.sample_condition("test", condition, local_obj) == 3)
+-- UI 先接收暂停状态；正常帧必须扫描后更新 UI，切场景帧不执行更新。
+runtime = make()
+local ui_trace = {}
+local ui = {
+    suspended = function(value) ui_trace[#ui_trace + 1] = value and "paused" or "ready" end,
+    update = function()
+        assert(log[#log][1] == "scan")
+        assert(#calls == 0)
+        ui_trace[#ui_trace + 1] = "update"
+    end,
+}
+assert(not runtime.is_suspended())
+runtime.tick(ui)
+S.equal(ui_trace, {"ready", "update"}, "normal UI frame")
+assert(#calls > 0)
+local previous_calls = #calls
+runtime.request_reset()
+assert(runtime.is_suspended())
+runtime.tick(ui)
+S.equal(ui_trace, {"ready", "update", "paused"}, "scene UI frame")
+assert(#calls == previous_calls)
 os.clock = original_clock
 print("PASS: Rise scheduling, local priority, event actors, deferred scene cleanup and actor retirement")

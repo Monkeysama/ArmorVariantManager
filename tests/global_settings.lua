@@ -1,3 +1,4 @@
+game = {wilds=true, prefix="ArmorVariantManager_Core.Games.Wilds."}
 package.path = "ArmorVariantManager/reframework/autorun/?.lua;" .. package.path
 local S = dofile("tests/support.lua")
 local Global = require("ArmorVariantManager_Core.Config.Global")

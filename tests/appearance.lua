@@ -1,3 +1,4 @@
+game = {wilds=true, prefix="ArmorVariantManager_Core.Games.Wilds."}
 package.path = "ArmorVariantManager/reframework/autorun/?.lua;" .. package.path
 local S = dofile("tests/support.lua")
 local prefix = "ArmorVariantManager_Core."
@@ -59,6 +60,7 @@ do
     local cfg = {presets={Base=preset(true)}, default_preset="Base", groups={}}
     local character = {}
     local env = setmetatable({
+        runtime={equipment={},materials={}},
         config_session={load=function() return cfg end},
         actors={can_transform=function() return eligible end},
         safe_get_game_object=function(value) addresses=addresses+1; return value end,

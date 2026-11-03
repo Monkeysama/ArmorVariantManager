@@ -9,6 +9,8 @@ import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_TESTS = (
+    "tests/entrypoint.lua",
+    "tests/rise_options.lua",
     "tests/config_compatibility.lua",
     "tests/config_store.lua",
     "tests/config_session.lua",

@@ -62,7 +62,7 @@ print("PASS: per-game legacy fields/defaults/order, damage migration, unknown fi
 
 -- 新装备草稿不是已加载 JSON：不提前添加旧入口没有保存的字段。
 local source = S.read("ArmorVariantManager/reframework/autorun/ArmorVariantManager.lua")
-local load_body = S.section(source, "local function load_body_config(", "local function save_current_config_to_file(")
+local load_body = S.section(source, "local function load_body_config(", "save_current_config_to_file = function(")
 for _, game in ipairs({ "Wilds", "Rise" }) do
     local schema = require("ArmorVariantManager_Core.Games." .. game .. ".Config")
     local legacy_factory = dofile("tests/fixtures/legacy/" .. game:lower() .. "_config_draft.lua")

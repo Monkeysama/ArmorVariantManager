@@ -1,0 +1,145 @@
+package.path = "ArmorVariantManager/reframework/autorun/?.lua;" .. package.path
+local main = "ArmorVariantManager/reframework/autorun/ArmorVariantManager.lua"
+local Game = require("ArmorVariantManager_Core.Game")
+assert(Game.detect("MHWILDS").name == "Wilds")
+assert(Game.detect("MHRise").name == "Rise")
+assert(not Game.detect("re4"))
+
+local S = dofile("tests/support.lua")
+for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", true}, {"mhrise", true}}) do
+    local game, populated = scenario[1], scenario[2]
+    for name in pairs(package.loaded) do
+        if name:match("^ArmorVariantManager") then package.loaded[name] = nil end
+    end
+    local frames, draws, resets, errors, imports = {}, {}, {}, {}, {}
+    local action, writes, applied, captures = nil, {}, {}, 0
+    local object = {call=function(_, method) if method=="get_Name" then return "actor" end end}
+    local player = {}
+    local cfg = {presets={Show={["0"]={materials={cloth=true}}},Hide={["0"]={materials={cloth=false}}}},
+        preset_order={"Show","Hide"},default_preset="Show",groups={},extra={keep=true},enable_transform=false}
+    local data = {["ArmorVariantManager/armor.json"]=cfg,
+        ["ArmorVariantManager/GlobalSettings.json"]={language="en",auto_set_selected_preset_as_default=false}}
+    local native_require = require
+    _G.require = function(name)
+        imports[name] = true
+        if populated and name=="ArmorVariantManager_Core.Config.Store" then
+            return {config_path=function(id) return "ArmorVariantManager/"..id..".json" end,
+                backup_path=function(id) return "ArmorVariantManager/backup/"..id..".json" end,
+                load=function(path) return S.copy(data[path]) end,
+                save=function(path,value) data[path]=S.copy(value); writes[#writes+1]=path; return true end}
+        end
+        if populated and name:match("Games%.%w+%.Runtime$") then
+            return {new=function(_,callbacks)
+                local entry={obj=object,player=player,is_local=true,name="Hunter",index=1}
+                local runtime={
+                    actors={local_player=function() return object end,all=function() return {object} end,
+                        get=function() return {entries={entry},local_entry=entry} end,can_transform=function() return false end},
+                    equipment={body_id=function() return "armor" end,weapon_id=function() return nil end,
+                        weapons=function() return {} end,clear=function() end},
+                    meshes={first=function() end,part_meshes=function() return {} end},
+                    scene_object={game_object=function(o) return o end},
+                    guard={suspended=false,get_scene=function() end},
+                    materials={armor=function(_,result) applied[#applied+1]=S.copy(result) end,
+                        weapon=function() end,invalidate=function() end},
+                    transition={draw_ui=function() end},
+                    part_view=function() return {} end,
+                    capture=function(actor,...)
+                        assert(actor==object)
+                        local args={...}
+                        if game=="mhrise" then assert(args[1]==player and args[4]==false)
+                        else assert(args[2]=="" and args[4]==false) end
+                        captures=captures+1
+                        return {["0"]={materials={cloth=false}}}
+                    end,
+                    is_suspended=function() return false end,
+                }
+                function runtime.install_hooks() re.on_script_reset(callbacks.reset) end
+                function runtime.refresh() callbacks.process(entry,false,runtime); return true end
+                function runtime.tick(ui)
+                    ui.suspended(false); ui.update()
+                    if game=="mhrise" then callbacks.process(entry,false,runtime)
+                    else ui.retain({[tostring(object)]=ui.process(object)}) end
+                end
+                return runtime
+            end}
+        end
+        if name == "ArmorVariantManager_Core.UI.VariantManagerUI" then
+            return {new=function()
+                return {update=function() end, set_suspended=function() end,
+                    draw_settings=function() return false end, invalidate_context=function() end}
+            end}
+        end
+        return native_require(name)
+    end
+    _G.reframework = {get_game_name=function() return game end}
+    _G.sdk = {find_type_definition=function(name)
+            if name == "via.Component" or name == "via.GameObject" or name == "via.Scene" or name == "app.HunterCharacter" then return {get_method=function()
+                return {call=function(_,object) return object end}
+            end} end
+            return {get_runtime_type=function() return {} end, get_method=function() return {call=function() end} end,
+                get_field=function() return {get_type=function() return {get_method=function() return {} end} end} end}
+        end,
+        get_managed_singleton=function() return nil end, get_native_singleton=function() return nil end,
+        is_managed_object=function(object) return object ~= nil end, typeof=function(name) return name end,
+        hook=function() end}
+    _G.re = {on_frame=function(fn) frames[#frames+1]=fn end,
+        on_draw_ui=function(fn) draws[#draws+1]=fn end,
+        on_script_reset=function(fn) resets[#resets+1]=fn end,
+        on_application_entry=function() end, on_pre_application_entry=function() end}
+    _G.log = {info=function() end, warn=function() end, error=function(message) errors[#errors+1]=message end}
+    _G.json = {load_file=function() return nil end, dump_file=function() return true end}
+    _G.fs = {glob=function() return {} end}
+    _G.imgui = setmetatable({tree_node=function() return true end, checkbox=function(_,v) return false,v end,
+        text_colored=function(message) assert(not tostring(message):find("Error:"),message) end},
+        {__index=function() return function() end end})
+    if populated then
+        imgui.begin_table=function() return true end
+        imgui.combo=function(label,value)
+            if action=="select" and label=="##preset_selector" then action=nil; return true,2 end
+            return false,value
+        end
+        imgui.input_text=function(label,value)
+            if action=="save" and label=="##new_preset_name_input" then return true,"Captured" end
+            return false,value
+        end
+        imgui.button=function(label)
+            if action=="save" and label:find("##p_left",1,true) then action=nil; return true end
+            return false
+        end
+        imgui.slider_float=function(_,value) return false,value end
+        imgui.slider_int=imgui.slider_float
+    end
+    assert(loadfile(main))()
+    for i=1,6 do for _, fn in ipairs(frames) do fn() end end
+    for _, fn in ipairs(draws) do fn() end
+    if populated then
+        assert(applied[#applied]["0"].materials.cloth==true,"default applied from original JSON")
+        action="select"; draws[1]()
+        assert(action==nil and applied[#applied]["0"].materials.cloth==false,"native selection reaches application")
+        action="save"; draws[1]()
+        assert(action==nil and captures==1 and #writes>=1,"native save reaches game capture and shared store")
+        local saved=data["ArmorVariantManager/armor.json"]
+        assert(saved.presets.Captured["0"].materials.cloth==false and saved.extra.keep)
+        if game=="mhrise" then assert(saved.longsword_transform_rules and not saved.spirit_transform_rules)
+        else assert(saved.spirit_transform_rules and not saved.longsword_transform_rules) end
+    end
+    for _, fn in ipairs(resets) do fn() end
+    if game == "unknown" then
+        assert(#errors==1 and #frames==0 and #draws==1)
+        for name in pairs(imports) do assert(not name:find("Games%.")) end
+    else
+        assert(#errors==0,table.concat(errors,"\n"))
+        assert(#frames>0 and #draws==1)
+        local forbidden = game == "mhrise" and "Wilds" or "Rise"
+        for name in pairs(package.loaded) do
+            assert(not name:find("Games."..forbidden,1,true),name)
+        end
+        assert(imports["ArmorVariantManager_Core.Games."..(game=="mhrise" and "Rise" or "Wilds")..".ImGuiConditions"])
+        if game=="mhrise" then
+            assert(not imports["ArmorVariantManager_Core.UI.VariantManagerUI"])
+            assert(not package.loaded["ArmorVariantManager_Core.GroundClippingFix"])
+        end
+    end
+    _G.require = native_require
+end
+print("PASS: actual entry selects only its game, loads native UI, runs selection/save, empty-scene frames/reset and rejects unsupported games")

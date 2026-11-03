@@ -48,7 +48,7 @@ local function fixture(game, modern, options)
     -- 测试与真正网格服务一致的 Player_Face 排除条件。
     runtime.meshes.is_face=require(prefix.."Games.Wilds.Meshes").new(function() end,function() end).is_face
     local baseline={};for i=0,5 do baseline[tostring(i)]={index=i} end
-    local env=setmetatable({runtime=runtime,T=function(key) return key end,character={},primary={},body_id="armor",
+    local env=setmetatable({get_player_handle=function() end, runtime=runtime,T=function(key) return key end,character={},primary={},body_id="armor",
         is_weapon_mode=options.weapon,active_overrides={armor=baseline},
         get_character_weapon_id=runtime.equipment.weapon_id,get_cached_weapon_parts=runtime.equipment.weapons,
         get_character_part=runtime.meshes.part,get_cached_character_part=runtime.meshes.part,

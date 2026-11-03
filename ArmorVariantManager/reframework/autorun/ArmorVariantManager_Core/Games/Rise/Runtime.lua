@@ -106,8 +106,11 @@ function Runtime.new(config, callbacks)
     end
 
     -- 本地角色每帧处理；队友与过场演员各用独立的轮询通道。
-    function runtime.tick()
+    function runtime.is_suspended() return pending_reset end
+
+    function runtime.tick(ui)
         if pending_reset then
+            if ui then ui.suspended(true) end
             pending_reset = false
             clear("scene")
             events, has_events, last_has_events = {}, false, nil
@@ -119,6 +122,7 @@ function Runtime.new(config, callbacks)
         runtime.equipment.begin_frame(frame)
         runtime.transition:tick()
         runtime.actors.tick()
+        if ui then ui.suspended(false); ui.update() end
 
         if frame % 5 == 0 then
             local next_events = runtime.actors.events()
