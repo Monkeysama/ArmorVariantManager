@@ -20,6 +20,7 @@ DEFAULT_TESTS = (
     "tests/rise_materials.lua",
     "tests/rise_dissolve.lua",
     "tests/rise_runtime.lua",
+    "tests/appearance.lua",
     "tests/rules_compatibility.lua",
     "tests/high_heel_height_regression.lua",
     "tests/ground_clipping_targets_regression.lua",

@@ -28,6 +28,7 @@ sync_main_release.py
 !/tests/rise_materials.lua
 !/tests/rise_dissolve.lua
 !/tests/rise_runtime.lua
+!/tests/appearance.lua
 !/tests/rules_compatibility.lua
 !/tests/test_release.py
 !/tests/fixtures/

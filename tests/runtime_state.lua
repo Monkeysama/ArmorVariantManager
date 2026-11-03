@@ -41,6 +41,9 @@ end
 local helpers = S.section(source, "-- 辅助函数：变身规则激活", "-- 辅助函数：获取当前分组的预设数据")
 local helper_name = "resolve_character_overrides"
 env[helper_name] = assert(load(helpers .. "\nreturn " .. helper_name, "actual-resolve", "t", env))()
+env.Processor = require("ArmorVariantManager_Core.Runtime.Processor")
+local processor_source = S.section(source, "local process_character = Processor.new", "re.on_frame(function()")
+env.process_character = assert(load(processor_source .. "\nreturn process_character", "actual-processor", "t", env))()
 local body = S.section(source, "    -- 遍历所有角色并应用规则引擎", "\nend)\n-- =============================================================================\n-- UI 绘制")
 local frame = assert(load(body, "actual-frame", "t", env))
 frame(); frame()

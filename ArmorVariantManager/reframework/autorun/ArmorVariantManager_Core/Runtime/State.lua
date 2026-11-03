@@ -38,6 +38,19 @@ function State.new()
         actors = {}
     end
 
+    -- 分帧调度只收敛本次处理角色的槽位，不清掉尚未获得预算的队友。
+    function state:retain_actor(actor, seen)
+        local slots = actors[actor]
+        if not slots then return end
+        for slot in pairs(slots) do
+            if not seen[slot] then slots[slot] = nil end
+        end
+    end
+
+    function state:forget(actor)
+        actors[actor] = nil
+    end
+
     return state
 end
 

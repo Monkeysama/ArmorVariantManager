@@ -261,6 +261,7 @@ local set_source = extract("set_ground_clipping_settings", "\nvariant_manager_ui
 local set = assert(load(set_source .. "\nreturn set_ground_clipping_settings", "settings", "t", env))()
 local capture_source = extract("save_preset", "\nlocal function find_auto_preset")
 local capture = assert(load(capture_source .. "\nreturn save_preset", "capture", "t", env))()
+env.PresetDefaults = require("ArmorVariantManager_Core.Presets.Defaults")
 local defaults_source = extract("apply_all_defaults", "\n-- 辅助函数：变身规则激活")
 env.load_config_data = function() return env.current_config end
 local defaults = assert(load(defaults_source .. "\nreturn apply_all_defaults", "defaults", "t", env))()

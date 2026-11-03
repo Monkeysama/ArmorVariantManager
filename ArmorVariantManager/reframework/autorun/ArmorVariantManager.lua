@@ -65,6 +65,8 @@ local GroundClippingTargets = require("ArmorVariantManager_Core.GroundClippingTa
 local GamePresets = require("ArmorVariantManager_Core.Games.Wilds.Presets")
 local PresetGroups = require("ArmorVariantManager_Core.Presets.Groups")
 local PresetSelection = require("ArmorVariantManager_Core.Presets.Selection")
+local PresetDefaults = require("ArmorVariantManager_Core.Presets.Defaults")
+local Processor = require("ArmorVariantManager_Core.Runtime.Processor")
 local RuntimeState = require("ArmorVariantManager_Core.Runtime.State")
 
 -- 获取本地化字符串
@@ -668,51 +670,10 @@ local function apply_all_defaults(body_id)
     active_overrides[body_id] = {}
     ground_clipping_presets.reset(body_id)
     active_overrides[body_id].ground_clipping_fix = GroundClippingFix.default_settings(config)
-    -- 同步初始化 active_group_presets，使 is_globally_hidden 等函数能找到正确的预设
-    if not active_group_presets[body_id] then active_group_presets[body_id] = {} end
-    -- 1. 首先合并主列表默认预设
-    if config.default_preset and config.default_preset ~= "" and config.presets then
-        local def = config.presets[config.default_preset]
-        if def then
-            merge_preset_into_overrides(body_id, def)
-            -- 记录主列表当前预设（key 为空字符串）
-            if not active_group_presets[body_id][""] or active_group_presets[body_id][""] == "" then
-                active_group_presets[body_id][""] = config.default_preset
-            end
-        end
-    end
-    -- 2. 合并所有普通分组的默认预设
-    if config.groups then
-        for g_name, g_data in pairs(config.groups) do
-            if not g_data.is_global then
-                if g_data.default_preset and g_data.default_preset ~= "" and g_data.presets then
-                    local g_def = g_data.presets[g_data.default_preset]
-                    if g_def then
-                        merge_preset_into_overrides(body_id, g_def)
-                        if not active_group_presets[body_id][g_name] or active_group_presets[body_id][g_name] == "" then
-                            active_group_presets[body_id][g_name] = g_data.default_preset
-                        end
-                    end
-                end
-            end
-        end
-    end
-    -- 3. 最后合并所有全局分组的默认预设（只锁隐藏项，强制覆盖）
-    if config.groups then
-        for g_name, g_data in pairs(config.groups) do
-            if g_data.is_global then
-                if g_data.default_preset and g_data.default_preset ~= "" and g_data.presets then
-                    local g_def = g_data.presets[g_data.default_preset]
-                    if g_def then
-                        merge_global_preset_into_overrides(body_id, g_def)
-                        if not active_group_presets[body_id][g_name] or active_group_presets[body_id][g_name] == "" then
-                            active_group_presets[body_id][g_name] = g_data.default_preset
-                        end
-                    end
-                end
-            end
-        end
-    end
+    local selected = active_group_presets[body_id] or {}
+    active_group_presets[body_id] = selected
+    PresetDefaults.normal(config, GamePresets, active_overrides[body_id], selected)
+    PresetDefaults.globals(config, GamePresets, active_overrides[body_id], selected)
 end
 
 -- 辅助函数：变身规则激活结果仅属于当前角色及装备槽位。
@@ -2181,6 +2142,23 @@ end
 -- =============================================================================
 -- temp_applied_presets 已在文件头部定义
 runtime_guard:install_hooks()
+-- 运行时与界面共用同一配置、默认意图和角色规则入口。
+local process_character = Processor.new({
+    identify = function(character, slot)
+        if slot == "armor" then return get_character_body_id(character) end
+        return get_character_weapon_id(character)
+    end,
+    load = load_config_data,
+    initialize = function(id)
+        if not active_overrides[id] then apply_all_defaults(id) end
+    end,
+    resolve = resolve_character_overrides,
+    apply = function(character, slot, objects, result, changed)
+        if slot == "armor" then apply_preset_to_armor(character, result, true, changed)
+        else apply_preset_to_weapon(character, objects, result, true, changed) end
+    end,
+})
+
 re.on_frame(function()
     local suspended = runtime_guard:update()
     variant_manager_ui:set_suspended(suspended)
@@ -2263,28 +2241,7 @@ re.on_frame(function()
     local seen = {}
     for _, char in ipairs(all_chars) do
         if char and sdk.is_managed_object(char) then
-            local slots = {}
-            seen[tostring(char)] = slots
-            local char_body_id = get_character_body_id(char)
-            if char_body_id then
-                local config = load_config_data(char_body_id)
-                if config then
-                    if not active_overrides[char_body_id] then apply_all_defaults(char_body_id) end
-                    slots.armor = true
-                    local result, changed = resolve_character_overrides(char_body_id, config, char, "armor")
-                    apply_preset_to_armor(char, result, true, changed)
-                end
-            end
-            local char_weapon_id, w_objs = get_character_weapon_id(char)
-            if char_weapon_id and w_objs then
-                local config = load_config_data(char_weapon_id)
-                if config then
-                    if not active_overrides[char_weapon_id] then apply_all_defaults(char_weapon_id) end
-                    slots.weapon = true
-                    local result, changed = resolve_character_overrides(char_weapon_id, config, char, "weapon")
-                    apply_preset_to_weapon(char, w_objs, result, true, changed)
-                end
-            end
+            seen[tostring(char)] = process_character(char)
         end
     end
     actor_runtime:retain(seen)
