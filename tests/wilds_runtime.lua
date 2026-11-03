@@ -41,6 +41,11 @@ local function session(modern, scenario)
             assert(actual_meshes == meshes and actual_equipment == equipment)
             return capture
         end},
+        Store={load=function() end},
+        Finder={new=function(actual_meshes, actual_equipment, files)
+            assert(actual_meshes == meshes and actual_equipment == equipment and type(files.load) == "function")
+            return function() end
+        end},
         Actors={preview_names={preview=true}, new=function(config, objects, gear, parts, reset)
             assert(config.setting == 1 and objects == scene_object and gear == equipment and parts == meshes)
             reset_callback=reset
