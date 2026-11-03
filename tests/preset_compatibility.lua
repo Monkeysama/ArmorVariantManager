@@ -85,7 +85,7 @@ env.PresetGroups = Groups
 env.GamePresets = require("ArmorVariantManager_Core.Games.Wilds.Presets")
 local old = legacy_factories.Wilds(old_env)
 local current = {}
-for _, name in ipairs({ "create_new_group", "delete_group", "merge_preset_into_overrides", "merge_global_preset_into_overrides" }) do
+for _, name in ipairs({ "create_new_group", "delete_group" }) do
     local first = assert(source:find("local function " .. name .. "(", 1, true))
     local last = assert(source:find("\nend", first, true)) + 3
     current[name] = assert(load(source:sub(first, last) .. "\nreturn " .. name, name, "t", env))()
@@ -96,9 +96,6 @@ for _, args in ipairs({ { "", "armor" }, { "Overlay", false }, { "Overlay", "arm
 end
 env.current_group_name, old_env.current_group_name = "Overlay", "Overlay"
 assert(current.delete_group("Overlay", "armor") == old.delete_group("Overlay", "armor"))
-for _, name in ipairs({ "merge_preset_into_overrides", "merge_global_preset_into_overrides" }) do
-    current[name]("armor", preset); old[name]("armor", preset)
-end
 for _, key in ipairs({ "current_config", "active_overrides", "current_group_name", "pending_material_selections", "is_selection_mode", "selected_group_index", "calls" }) do
     S.equal(env[key], old_env[key], "Entry " .. key)
 end

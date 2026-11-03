@@ -14,6 +14,7 @@ DEFAULT_TESTS = (
     "tests/config_session.lua",
     "tests/preset_compatibility.lua",
     "tests/preset_editor.lua",
+    "tests/preset_selection.lua",
     "tests/runtime_state.lua",
     "tests/wilds_equipment.lua",
     "tests/wilds_actors.lua",

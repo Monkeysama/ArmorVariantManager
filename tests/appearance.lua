@@ -173,3 +173,51 @@ assert(not outputs[a].armor["0"].materials.cloth)
 session.stop()
 assert(app.state:peek(tostring(a), "armor", "armor", config) == nil)
 print("PASS: actual Rise Runtime consumes Appearance callbacks across scene/event/reset")
+
+-- 手动切换必须改变规则回滚基础，并触发同装备各角色的材质版本更新。
+config.presets.Manual=preset(true)
+config.presets.Manual["0"].materials.ribbon=false
+local unchanged=S.copy(config)
+assert(app.select("armor", config, "", "Manual"))
+pa.drawn=true; pb.drawn=false
+tick(a, pa, true); tick(b, pb, false)
+assert(not outputs[a].armor["0"].materials.cloth and outputs[b].armor["0"].materials.cloth)
+assert(not outputs[a].armor["0"].materials.ribbon and not outputs[b].armor["0"].materials.ribbon)
+assert(app.groups.armor[""] == "Manual" and app.groups.weapon[""] == "Base")
+pa.drawn=false; tick(a, pa, true)
+assert(outputs[a].armor["0"].materials.cloth and not outputs[a].armor["0"].materials.ribbon,
+    "Ending a rule returns to the new manual baseline")
+local version_before = versions[a].armor
+assert(app.select("armor", config, "", "Hide"))
+tick(a, pa, true); tick(b, pb, false)
+assert(not outputs[a].armor["0"].materials.cloth and not outputs[b].armor["0"].materials.cloth)
+assert(versions[a].armor > version_before, "Same combat signal must still observe a manual selection")
+S.equal(config, unchanged, "Manual selection leaves stored config unchanged")
+
+config.groups.Lock={is_global=true, default_preset="Hide", presets={Hide=preset(false), Show=preset(true)}}
+env.require(prefix .. "Games.Rise.Rules").invalidate_config("armor", config)
+assert(app.select("armor", config, "", "Manual"))
+tick(a, pa, true)
+assert(not outputs[a].armor["0"].materials.cloth, "Global hide remains higher priority than manual show")
+assert(app.select("armor", config, "Lock", "Show"))
+tick(a, pa, true)
+assert(outputs[a].armor["0"].materials.cloth, "Switching global group releases its old hide")
+assert(app.groups.armor[""] == "Manual" and app.groups.armor.Lock == "Show")
+
+config.enable_transform=false
+tick(a, pa, true); version_before=versions[a].armor
+assert(app.select("armor", config, "", "Hide"))
+tick(a, pa, true)
+assert(not outputs[a].armor["0"].materials.cloth and versions[a].armor > version_before,
+    "Without rules, selecting a preset must still invalidate cached material output")
+version_before=versions[a].armor
+tick(a, pa, true)
+assert(versions[a].armor == version_before, "Stable manual state retains the fast path")
+local selected_before, result_before = S.copy(app.groups.armor), app.overrides.armor
+assert(not app.select("armor", config, "Lock", "deleted"))
+assert(not app.select("unloaded", config, "deleted", "Base"))
+assert(app.overrides.armor == result_before and app.overrides.unloaded == nil)
+S.equal(app.groups.armor, selected_before, "Invalid selection leaves manual intent unchanged")
+assert(app.select("fresh", config, "", "Manual"))
+assert(app.groups.fresh[""] == "Manual", "Selection can initialize an unprocessed equipment config")
+print("PASS: Rise manual selections, rule rollback, global release, actor versions and invalid targets")

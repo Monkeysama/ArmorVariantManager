@@ -559,26 +559,9 @@ local function load_config_data(body_id)
     return config_session.load(body_id)
 end
 
--- 辅助函数：将预设数据合并到复合状态表中
-local function merge_preset_into_overrides(body_id, preset_data)
-    if not body_id or not preset_data then return end
-    if not active_overrides[body_id] then active_overrides[body_id] = {} end
-    GamePresets.merge_into(active_overrides[body_id], preset_data)
-end
-
 -- 辅助函数：返回合并后的新复合状态表（不修改原表）
 local function merge_overrides(base_data, add_data)
     return GamePresets.merge(base_data, add_data)
-end
-
--- Transform Rules Application Logic
--- 辅助函数：全局分组隐藏优先；显示项仅补齐未定义的下层状态。
--- 全局分组只操作材质级别，不锁定 mesh_enabled（避免整体隐藏整个部件）
--- 注意：全局隐藏项会强制覆盖已有的 true（确保最高优先级）
-local function merge_global_preset_into_overrides(body_id, preset_data)
-    if not body_id or not preset_data then return end
-    if not active_overrides[body_id] then active_overrides[body_id] = {} end
-    GamePresets.merge_global_into(active_overrides[body_id], preset_data)
 end
 
 -- 辅助函数：应用一个 Body ID 的所有默认预设 (主列表 + 所有分组)
@@ -637,71 +620,12 @@ local function apply_preset(preset_name)
     if current_body_id then
         -- 全局分组会重建材质状态，先保留高度，未勾选的预设不能借重建清空其他分组的修正。
         local previous_height = active_overrides[current_body_id] and active_overrides[current_body_id].ground_clipping_fix
-        -- 记录当前分组的选中预设（用于全局分组全量重算时恢复）
-        if not active_group_presets[current_body_id] then active_group_presets[current_body_id] = {} end
-        active_group_presets[current_body_id][current_group_name] = preset_name
+        local selected = active_group_presets[current_body_id] or {}
+        active_group_presets[current_body_id] = selected
+        active_overrides[current_body_id] = PresetSelection.apply(current_config, selected,
+            active_overrides[current_body_id], current_group_name, preset_name, GamePresets)
         ground_clipping_presets.reset(current_body_id, current_group_name)
 
-        -- 判断当前是否为全局分组
-        local is_current_global = (current_group_name ~= "" and current_config.groups
-            and current_config.groups[current_group_name]
-            and current_config.groups[current_group_name].is_global)
-
-        if is_current_global then
-            -- 全局分组预设切换：全量重算（不自动更新 default_preset，只有用户点"设为默认"才更新）
-            active_overrides[current_body_id] = {}
-            local saved = active_group_presets[current_body_id] or {}
-            -- 1. 主列表当前预设
-            local main_preset_name = saved[""]
-            if main_preset_name and main_preset_name ~= "" and current_config.presets and current_config.presets[main_preset_name] then
-                merge_preset_into_overrides(current_body_id, current_config.presets[main_preset_name])
-            elseif current_config.default_preset and current_config.default_preset ~= "" and current_config.presets then
-                local def = current_config.presets[current_config.default_preset]
-                if def then merge_preset_into_overrides(current_body_id, def) end
-            end
-            -- 2. 普通分组的当前预设
-            if current_config.groups then
-                for g_name, g_data in pairs(current_config.groups) do
-                    if not g_data.is_global then
-                        local gp_name = saved[g_name]
-                        if gp_name and gp_name ~= "" and g_data.presets and g_data.presets[gp_name] then
-                            merge_preset_into_overrides(current_body_id, g_data.presets[gp_name])
-                        elseif g_data.default_preset and g_data.default_preset ~= "" and g_data.presets then
-                            local g_def = g_data.presets[g_data.default_preset]
-                            if g_def then merge_preset_into_overrides(current_body_id, g_def) end
-                        end
-                    end
-                end
-            end
-            -- 3. 所有全局分组（只锁隐藏项），当前切换的全局组用新 preset_name
-            if current_config.groups then
-                for g_name, g_data in pairs(current_config.groups) do
-                    if g_data.is_global then
-                        local gp_name = (g_name == current_group_name) and preset_name or saved[g_name]
-                        if not gp_name or gp_name == "" then gp_name = g_data.default_preset end
-                        if gp_name and gp_name ~= "" and g_data.presets and g_data.presets[gp_name] then
-                            merge_global_preset_into_overrides(current_body_id, g_data.presets[gp_name])
-                        end
-                    end
-                end
-            end
-        else
-            -- 普通分组/主列表：增量合并当前预设数据，再叠加全局锁
-            merge_preset_into_overrides(current_body_id, preset_data)
-            if current_config.groups then
-                for g_name, g_data in pairs(current_config.groups) do
-                    if g_data.is_global and g_data.presets then
-                        -- 优先用用户当前选中的预设（active_group_presets），fallback 到默认预设
-                        local active_saved = active_group_presets[current_body_id] or {}
-                        local gp_name = active_saved[g_name]
-                        if not gp_name or gp_name == "" then gp_name = g_data.default_preset end
-                        if gp_name and gp_name ~= "" and g_data.presets[gp_name] then
-                            merge_global_preset_into_overrides(current_body_id, g_data.presets[gp_name])
-                        end
-                    end
-                end
-            end
-        end
         -- 仅勾选的预设覆盖高度；未勾选只切换材质，勾选的 0 cm 可主动归零。
         if not is_weapon_id(current_body_id) then
             active_overrides[current_body_id].ground_clipping_fix = GroundClippingFix.participating_settings(preset_data, current_config)

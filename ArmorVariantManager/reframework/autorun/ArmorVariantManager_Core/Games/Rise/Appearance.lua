@@ -23,6 +23,17 @@ function Appearance.new(load_config)
         end
     end
 
+    -- 更新手动意图与条件回滚基础；新结果实例让未启用规则的角色也刷新材质版本。
+    function app.select(id, config, group_name, preset_name)
+        local owner = group_name == "" and config or config.groups and config.groups[group_name]
+        if not (owner and owner.presets and owner.presets[preset_name]) then return false end
+        if not app.overrides[id] then app.defaults(id, config) end
+        app.overrides[id] = Selection.apply(config, app.groups[id], Presets.merge(app.overrides[id], {}),
+            group_name, preset_name, Presets)
+        Rules.update_base_preset(id, config, group_name, preset_name, Presets.merge)
+        return true
+    end
+
     local process = Processor.new({
         identify = function(actor, slot)
             local equipment, entry = actor.runtime.equipment, actor.entry

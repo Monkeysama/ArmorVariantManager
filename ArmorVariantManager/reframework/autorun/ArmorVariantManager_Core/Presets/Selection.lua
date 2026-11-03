@@ -54,4 +54,18 @@ function Selection.compose(config, selected, targets, result, policy)
     return Selection.merge_globals(config, selected, result, policy)
 end
 
+-- 手动切换普通组保留增量状态；切换全局组从已选预设重建，解除旧隐藏。
+function Selection.apply(config, selected, result, group_name, preset_name, policy)
+    local owner = group_name == "" and config or config.groups and config.groups[group_name]
+    local preset = owner and owner.presets and owner.presets[preset_name]
+    if not preset then return nil end
+    selected[group_name] = preset_name
+    if group_name ~= "" and owner.is_global then
+        return Selection.compose(config, selected, nil, {}, policy)
+    end
+    result = result or {}
+    policy.merge_into(result, preset)
+    return Selection.merge_globals(config, selected, result, policy)
+end
+
 return Selection

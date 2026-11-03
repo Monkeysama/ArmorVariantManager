@@ -241,6 +241,7 @@ local env = setmetatable({
     last_body_id = "armor_a", is_weapon_mode = false,
     get_body_id = function() return "armor_a" end,
     PresetEditor = require("ArmorVariantManager_Core.Presets.Editor"),
+    PresetSelection = require("ArmorVariantManager_Core.Presets.Selection"),
     GamePresets = require("ArmorVariantManager_Core.Games.Wilds.Presets"),
     deep_copy_table = clone, GroundClippingFix = Height, ground_clipping_presets = editor,
     current_group_name = "", type_mesh = true, temp_applied_presets = {},
@@ -275,9 +276,8 @@ env.PresetDefaults = require("ArmorVariantManager_Core.Presets.Defaults")
 local defaults_source = extract("apply_all_defaults", "\n-- 辅助函数：变身规则激活")
 env.load_config_data = function() return env.current_config end
 local defaults = assert(load(defaults_source .. "\nreturn apply_all_defaults", "defaults", "t", env))()
-local merges_source = extract("merge_preset_into_overrides", "\n-- 辅助函数：应用一个 Body ID")
-env.merge_preset_into_overrides, env.merge_overrides, env.merge_global_preset_into_overrides = assert(load(
-    merges_source .. "\nreturn merge_preset_into_overrides, merge_overrides, merge_global_preset_into_overrides", "merge", "t", env))()
+local merges_source = extract("merge_overrides", "\n-- 辅助函数：应用一个 Body ID")
+env.merge_overrides = assert(load(merges_source .. "\nreturn merge_overrides", "merge", "t", env))()
 local apply_source = extract("get_current_preset_data", "\n-- 辅助函数：加载指定 Body ID")
 local apply
 apply, env.get_current_preset_data = assert(load(apply_source .. "\nreturn apply_preset, get_current_preset_data", "apply", "t", env))()
