@@ -240,6 +240,7 @@ local env = setmetatable({
     end,
     last_body_id = "armor_a", is_weapon_mode = false,
     get_body_id = function() return "armor_a" end,
+    GamePresets = require("ArmorVariantManager_Core.Games.Wilds.Presets"),
     deep_copy_table = clone, GroundClippingFix = Height, ground_clipping_presets = editor,
     current_group_name = "", type_mesh = true, temp_applied_presets = {},
     get_local_player_character = function() return {} end,
