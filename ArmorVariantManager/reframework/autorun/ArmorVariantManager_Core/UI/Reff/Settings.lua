@@ -1,6 +1,6 @@
 local Settings = {}
 
--- 两款游戏共用的旧全局字段；游戏专属选项由对应模型补充。
+-- 两款游戏都有运行消费者的全局选项；专属设置由游戏模型补充。
 function Settings.sections(defaults)
     return {
         { id = "general", label = "d2d_settings_tab", scope = "global", fields = {
@@ -10,15 +10,6 @@ function Settings.sections(defaults)
             { id = "auto_set_selected_preset_as_default", label = "auto_set_selected_preset_as_default",
                 type = "boolean", default = defaults.auto_set_selected_preset_as_default },
         } },
-        { id = "performance", label = "d2d_settings_performance", description = "performance_desc",
-            scope = "global", fields = {
-                { id = "scan_interval", label = "scan_interval", type = "number", default = defaults.scan_interval,
-                    min = 0.1, max = 5, step = 0.1 },
-                { id = "body_id_ttl", label = "refresh_interval", type = "number", default = defaults.body_id_ttl,
-                    min = 0.1, max = 10, step = 0.1 },
-                { id = "scanner_batch_size", label = "scanner_batch_size", type = "number",
-                    default = defaults.scanner_batch_size, min = 10, max = 1000, step = 10, integer = true },
-            } },
     }
 end
 

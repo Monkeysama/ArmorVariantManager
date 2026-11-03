@@ -66,8 +66,13 @@ test("both game defaults, legacy fields and global permission", function()
             calls = calls + 1
         end)
         local snapshot = fields(settings.snapshot(nil))
-        assert(snapshot.scanner_batch_size.value == item[3])
-        assert(snapshot.scan_interval.value == 1.2 and snapshot.body_id_ttl.value == 3)
+        if item[1] == "Wilds" then
+            assert(snapshot.scanner_batch_size.value == item[3])
+            assert(snapshot.scan_interval.value == 1.2 and snapshot.body_id_ttl.value == 3)
+        else
+            assert(not snapshot.scan_interval and not snapshot.body_id_ttl and not snapshot.scanner_batch_size,
+                "Rise must not present unused Wilds scanner controls")
+        end
         assert(not snapshot.auto_set_selected_preset_as_default.value)
         assert(snapshot.language.options[1].value == "zh" and snapshot.language.options[2].value == "en")
         assert(not snapshot.new_ui_key and not snapshot.debug_profile and not snapshot.theme)
@@ -75,9 +80,25 @@ test("both game defaults, legacy fields and global permission", function()
         assert(calls == 1 and disk.writes == 1 and global.value.extension == extension)
         S.equal(disk.saved.extension, { enabled = true })
         assert(disk.saved.new_ui_key == 91)
+        assert(disk.saved.scan_interval == 1.2 and disk.saved.body_id_ttl == 3)
+        assert(disk.saved.scanner_batch_size == item[3], "hidden legacy fields survive saving")
         local ok = set(settings, "language", "zh-CN")
         assert(not ok and global.value.language == "en" and disk.writes == 1)
         assert(not set(settings, "new_ui_key", 40))
+    end
+end)
+
+test("Rise rejects unused scanner edits without changing legacy JSON", function()
+    local global, disk = session("Rise", { scan_interval = 1.7, body_id_ttl = 4, scanner_batch_size = 88 })
+    local settings = new(global, Rise.new({ config = global.value }))
+    local previous = S.copy(global.value)
+    for _, id in ipairs({ "scan_interval", "body_id_ttl", "scanner_batch_size" }) do
+        local ok, reason = set(settings, id, 2)
+        assert(not ok and reason == "设置项不存在" and disk.writes == 0)
+        S.equal(global.value, previous)
+    end
+    for _, section in ipairs(settings.snapshot().sections) do
+        assert(section.id ~= "performance", "no empty performance section in Rise")
     end
 end)
 

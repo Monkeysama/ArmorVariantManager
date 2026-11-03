@@ -10,7 +10,6 @@ export function settingsFor(game: 'Wilds' | 'Rise'): Settings {
   const scanning: SettingField[] = [number('scan_interval', english ? 'Scan Interval (seconds)' : '扫描间隔（秒）', .3, .1, 5, .1), number('body_id_ttl', english ? 'Refresh Interval (seconds)' : '装备标识缓存（秒）', 2, .1, 10, .1), number('scanner_batch_size', english ? 'Scanner Batch Size' : '每批扫描数量', 100, 10, 1000, 10)];
   return { sections: [
     { id: 'general', label: english ? 'General' : '通用', scope: 'global', fields: shared },
-    { id: 'performance', label: english ? 'Performance' : '装备扫描', scope: 'global', fields: scanning },
     ...(game === 'Rise' ? [
       { id: 'multiplayer', label: 'Multiplayer', scope: 'global' as const, fields: [{ id: 'enable_multiplayer', label: 'Enable multiplayer', type: 'boolean' as const, value: true }] },
       { id: 'transitions', label: 'Dissolve transitions', scope: 'global' as const, fields: [
@@ -19,7 +18,7 @@ export function settingsFor(game: 'Wilds' | 'Rise'): Settings {
       { id: 'graphics', label: 'Image quality', scope: 'global' as const, fields: [
         { id: 'enable_image_quality', label: 'Override image quality', type: 'boolean' as const, value: false }, number('image_quality_rate', 'Image quality multiplier', 1, .1, 4, .05),
       ] },
-    ] : [{ id: 'preview', label: '预览相机', scope: 'global' as const, fields: [
+    ] : [{ id: 'performance', label: '装备扫描', scope: 'global' as const, fields: scanning }, { id: 'preview', label: '预览相机', scope: 'global' as const, fields: [
       { id: 'portrait_enabled', label: '启用预览相机', type: 'boolean' as const, value: false },
       number('portrait_camera.distance', '相机距离', 3, 1, 6, .01), number('portrait_camera.horizontal', '水平偏移', 0, -1.5, 1.5, .01), number('portrait_camera.vertical', '垂直偏移', 0, -1.5, 1.5, .01), number('portrait_camera.light_intensity', '光照强度', 1, 0, 2, .01),
       { id: 'portrait_camera.refresh_fps', label: '预览刷新率', type: 'select' as const, value: 30, options: [{ value: 30, label: '30 FPS' }, { value: 60, label: '60 FPS' }, { value: 0, label: '全速' }] },

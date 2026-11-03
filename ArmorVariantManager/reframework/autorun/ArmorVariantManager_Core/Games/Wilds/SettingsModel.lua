@@ -4,8 +4,17 @@ local PortraitCamera = require("ArmorVariantManager_Core.PortraitCamera")
 local Model = {}
 
 function Model.new(deps)
-    local config = deps.config
-    local model = { sections = Settings.sections(Defaults.new()) }
+    local config, defaults = deps.config, Defaults.new()
+    local model = { sections = Settings.sections(defaults) }
+    model.sections[#model.sections + 1] = { id = "performance", label = "d2d_settings_performance",
+        description = "performance_desc", scope = "global", fields = {
+            { id = "scan_interval", label = "scan_interval", type = "number", default = defaults.scan_interval,
+                min = 0.1, max = 5, step = 0.1 },
+            { id = "body_id_ttl", label = "refresh_interval", type = "number", default = defaults.body_id_ttl,
+                min = 0.1, max = 10, step = 0.1 },
+            { id = "scanner_batch_size", label = "scanner_batch_size", type = "number",
+                default = defaults.scanner_batch_size, min = 10, max = 1000, step = 10, integer = true },
+        } }
     local function preview()
         return deps.get_portrait_preview and deps.get_portrait_preview()
     end

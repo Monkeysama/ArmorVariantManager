@@ -195,13 +195,20 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
                 for _,item in ipairs(section.fields) do if item.id==id then return item end end
             end
         end
-        assert(field("language").value=="en" and field("scan_interval").value==0.5)
+        assert(field("language").value=="en")
         if game=="mhwilds" then
+            assert(field("scan_interval").value==0.5)
             assert(injected_preview and not field("portrait_enabled").disabled,
                 "settings use the application service even when the legacy UI exposes no preview field")
+            current=dispatch({kind="setting",id="scan_interval",value=-2,bodyId="old"})
+            assert(field("scan_interval",current).value==0.1,"global setting ignores equipment identity")
+        else
+            assert(not field("scan_interval") and not field("body_id_ttl") and not field("scanner_batch_size"))
+            local invalid, reason=pcall(send,"setting",{id="scan_interval",value=2})
+            assert(not invalid and reason:find("设置项不存在",1,true))
+            current=dispatch({kind="setting",id="enable_multiplayer",value=false,bodyId="old"})
+            assert(not field("enable_multiplayer",current).value,"global setting ignores equipment identity")
         end
-        current=dispatch({kind="setting",id="scan_interval",value=-2,bodyId="old"})
-        assert(field("scan_interval",current).value==0.1,"global setting ignores equipment identity")
         assert(data["ArmorVariantManager/GlobalSettings.json"].extra.keep,"global unknown fields retained")
         write_failed=true
         local settings_ok,settings_reason=pcall(send,"setting",{id="language",value="zh"})
@@ -341,8 +348,13 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
         send("mode",{weapon=true})
         assert(snapshot().bodyId=="","mode transition never pairs old config with new equipment")
         assert(not snapshot().backupPending and #documentation().sections==3,"empty equipment can read help without stale warning")
-        current=dispatch({kind="setting",id="body_id_ttl",value=2})
-        assert(current.bodyId=="" and field("body_id_ttl",current).value==2,"empty equipment retains global settings")
+        if game=="mhwilds" then
+            current=dispatch({kind="setting",id="body_id_ttl",value=2})
+            assert(current.bodyId=="" and field("body_id_ttl",current).value==2,"empty equipment retains global settings")
+        else
+            current=dispatch({kind="setting",id="enable_multiplayer",value=true})
+            assert(current.bodyId=="" and field("enable_multiplayer",current).value,"empty equipment retains global settings")
+        end
         if game=="mhwilds" then
             assert(field("ground_clipping_height_cm",current).disabled)
             assert(not pcall(dispatch,{kind="setting",id="ground_clipping_height_cm",value=5,bodyId="armor"}))

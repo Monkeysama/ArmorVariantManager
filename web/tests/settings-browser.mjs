@@ -79,7 +79,35 @@ try {
   await mkdir(new URL('../test-results/', import.meta.url), { recursive: true });
   await until(`document.querySelector('.footer-tabs') && !document.querySelector('.connection-state')`);
 
-  if (process.argv.includes('--reset-only')) {
+  if (process.argv.includes('--game-settings-only')) {
+    await click('.footer-tabs button', '设置');
+    const scanning = ['scan_interval', 'body_id_ttl', 'scanner_batch_size'];
+    assert.deepEqual(await evaluate(`Array.from(document.querySelectorAll('.settings-section[aria-label="装备扫描"] [data-setting]'), field => field.dataset.setting)`), scanning);
+    for (const [id, value] of [['scan_interval', .7], ['body_id_ttl', 1.5], ['scanner_batch_size', 120]]) {
+      await input('setting-' + id, value, true);
+      assert.deepEqual(await lastCall(), { kind: 'setting', id, value, bodyId: 'ch03_001_0000' });
+    }
+    await screenshot('settings-wilds-scanning');
+    await click('#fixture-controls button', 'English / Rise');
+    await until(`!!document.querySelector('[data-setting="enable_multiplayer"]')`);
+    assert.deepEqual(await evaluate(`Array.from(document.querySelectorAll('.settings-page .settings-section h3'), heading => heading.textContent.trim())`), ['Interface theme', 'General', 'Multiplayer', 'Dissolve transitions', 'Image quality']);
+    for (const id of scanning) assert.equal(await evaluate(`document.querySelector('[data-setting="${id}"]') === null`), true);
+    await select('Language', '简体中文');
+    assert.deepEqual(await lastCall(), { kind: 'setting', id: 'language', value: 'zh', bodyId: 'ch03_001_0000' });
+    await select('Language', 'English');
+    assert.equal((await lastCall()).value, 'en');
+    for (const [id, value] of [['enable_multiplayer', false], ['dissolve_enabled', false], ['enable_image_quality', true]]) {
+      await click(`[data-setting="${id}"] .el-checkbox`);
+      assert.deepEqual(await lastCall(), { kind: 'setting', id, value, bodyId: 'ch03_001_0000' });
+    }
+    for (const [id, value] of [['dissolve_duration', .45], ['image_quality_rate', 1.25]]) {
+      await input('setting-' + id, value, true);
+      assert.deepEqual(await lastCall(), { kind: 'setting', id, value, bodyId: 'ch03_001_0000' });
+    }
+    await screenshot('settings-rise-supported');
+    assert.deepEqual(errors, []);
+    console.log('Game settings fixture passed: Rise has no scanning fields or performance section; language, multiplayer, dissolve and image quality remain editable; Wilds retains all three working scanning fields.');
+  } else if (process.argv.includes('--reset-only')) {
     await click('.footer-tabs button', '设置');
     await checkCameraReset();
     await screenshot('settings-ice-cyan');
