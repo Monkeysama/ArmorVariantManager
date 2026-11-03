@@ -42,6 +42,10 @@ local function session(modern, scenario)
             return capture
         end},
         Store={load=function() end},
+        PartView={new=function(runtime)
+            assert(runtime.equipment==equipment and runtime.meshes==meshes and runtime.scene_object==scene_object)
+            return function() end
+        end},
         Finder={new=function(actual_meshes, actual_equipment, files)
             assert(actual_meshes == meshes and actual_equipment == equipment and type(files.load) == "function")
             return function() end

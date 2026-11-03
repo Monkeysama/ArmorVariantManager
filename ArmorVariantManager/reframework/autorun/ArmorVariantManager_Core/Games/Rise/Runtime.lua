@@ -14,6 +14,7 @@ function Runtime.new(config, callbacks)
     local runtime = { actors = Actors.new(config), equipment = Equipment.new() }
     runtime.materials = Materials.new(runtime.equipment, Rules.capture_mesh)
     runtime.capture = require("ArmorVariantManager_Core.Games.Rise.Capture").new(runtime.equipment)
+    runtime.part_view = require("ArmorVariantManager_Core.Games.Rise.PartView").new(runtime)
     runtime.find_preset = require("ArmorVariantManager_Core.Games.Rise.Finder").new(
         runtime.equipment, {fs = fs, load = require("ArmorVariantManager_Core.Config.Store").load})
     runtime.transition = Dissolve.new({valid = SceneObject.is_alive})

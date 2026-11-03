@@ -20,6 +20,7 @@ DEFAULT_TESTS = (
     "tests/visibility.lua",
     "tests/condition_ui.lua",
     "tests/material_ui.lua",
+    "tests/parts_ui.lua",
     "tests/runtime_state.lua",
     "tests/wilds_equipment.lua",
     "tests/wilds_actors.lua",

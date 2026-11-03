@@ -216,6 +216,7 @@ function Meshes.new(safe_get_game_object, get_type)
 
     return {
         part = get_character_part,
+        is_face = is_player_face_object,
         part_meshes = get_character_part_meshes,
         first = get_mesh_component_recursive,
         all = get_all_character_meshes,

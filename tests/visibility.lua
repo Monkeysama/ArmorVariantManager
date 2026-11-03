@@ -46,7 +46,7 @@ local function fixture(action, modern, selection)
     _G.sdk, _G.imgui = env.sdk, env.imgui
     local draw, callbacks
     if modern then
-        draw=assert(load(S.section(source, "local draw_material_panel =", "-- =============================================================================\n-- 新UI")
+        draw=assert(load(S.section(source, "local draw_material_panel =", "local draw_part_list =")
             .. "\nreturn draw_mesh_toggle", "native-visibility", "t", env))()
         callbacks=assert(load(S.section(source, "local visibility_editor =", "variant_manager_ui =")
             .. "\nreturn {" .. S.section(source, "    set_mesh_enabled =", "    is_material_in_context =") .. "}",

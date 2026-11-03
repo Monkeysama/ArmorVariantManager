@@ -14,6 +14,7 @@ function Runtime.new(config, callbacks)
     runtime.meshes = Meshes.new(game_object, function(name) return sdk.find_type_definition(name) end)
     runtime.materials = Materials.new(runtime.meshes, game_object)
     runtime.capture = Capture.new(runtime.meshes, runtime.equipment)
+    runtime.part_view = require("ArmorVariantManager_Core.Games.Wilds.PartView").new(runtime)
     runtime.find_preset = require("ArmorVariantManager_Core.Games.Wilds.Finder").new(
         runtime.meshes, runtime.equipment, {fs = fs, load = require("ArmorVariantManager_Core.Config.Store").load})
     runtime.actors = Actors.new(config, runtime.scene_object, runtime.equipment, runtime.meshes, callbacks.reset)
