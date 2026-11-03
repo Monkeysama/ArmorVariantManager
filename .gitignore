@@ -25,6 +25,8 @@ sync_main_release.py
 !/tests/wilds_actors.lua
 !/tests/rise_equipment.lua
 !/tests/rise_actors.lua
+!/tests/rise_materials.lua
+!/tests/rise_dissolve.lua
 !/tests/rules_compatibility.lua
 !/tests/test_release.py
 !/tests/fixtures/
