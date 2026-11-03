@@ -365,7 +365,7 @@ local function height_fixture()
     return f
 end
 
-test("Wilds height draft exposes two equipment-scoped fields and live status", function()
+test("Wilds height draft exposes equipment-scoped controls and live status", function()
     local f=height_fixture()
     local context={id="armor",weapon=false,suspended=false}
     assert(f.model.handles("ground_clipping_enabled") and f.model.handles("ground_clipping_height_cm"))
@@ -376,7 +376,8 @@ test("Wilds height draft exposes two equipment-scoped fields and live status", f
     assert(section.label == "tr:heel_title" and section.description == "tr:heel_description")
     S.equal(section.fields,{{id="ground_clipping_enabled",label="tr:heel_enable",type="boolean",value=true,disabled=false},
         {id="ground_clipping_height_cm",label="tr:heel_height",type="number",value=-2.5,
-            min=-10,max=50,step=0.5,disabled=false}})
+            min=-10,max=50,step=0.1,disabled=false},
+        {id="ground_clipping_reset",label="tr:heel_reset_short",type="action",disabled=false}})
     f.value={enabled=false,height_cm=0}
     f.status={key="heel_error",error="target transform unavailable"}
     local updated=f.model.snapshot(context)
@@ -384,6 +385,26 @@ test("Wilds height draft exposes two equipment-scoped fields and live status", f
     assert(updated.description == "tr:heel_error: target transform unavailable\ntr:heel_description")
     assert(section.fields[1].value == true and section.fields[2].value == -2.5)
     assert(f.reads == 2 and f.status_reads == 2 and #f.writes == 0 and f.persisted == 0)
+end)
+
+test("Wilds height reset enables a zero draft in one call and retains failure guards", function()
+    local f=height_fixture()
+    assert(f.model.handles("ground_clipping_reset"))
+    local context={id="armor",weapon=false,suspended=false}
+    f.value={enabled=false,height_cm=15}
+    assert(f.model.action({id="ground_clipping_reset",bodyId="armor"},context))
+    S.equal(f.writes,{{patch={enabled=true,height_cm=0},bodyId="armor"}})
+    S.equal(f.value,{enabled=true,height_cm=0})
+    assert(f.persisted == 0)
+    f.set_ok=false; f.set_reason="height target unavailable"
+    local ok,reason=f.model.action({id="ground_clipping_reset",bodyId="armor"},context)
+    assert(ok == false and reason == f.set_reason)
+    local count=#f.writes
+    for _, invalid in ipairs({{weapon=false,suspended=false},{id="armor",weapon=true,suspended=false},
+        {id="armor",weapon=false,suspended=true},{id="other",weapon=false,suspended=false}}) do
+        assert(f.model.action({id="ground_clipping_reset",bodyId="armor"},invalid) == false)
+    end
+    assert(#f.writes == count and f.persisted == 0)
 end)
 
 test("Wilds height availability follows actor, equipment mode and suspension", function()

@@ -3,7 +3,8 @@ import type { Snapshot } from './types';
 
 const zh = {
   title: '差分管理器', armor: '防具', weapon: '武器', groups: '分组', presets: '预设', parts: '部件材质', settings: '设置', help: '帮助',
-  groupName: '分组名称', newGroup: '新分组', global: '全局组', create: '创建分组', delete: '删除', presetName: '预设名称', save: '保存预设',
+  groupName: '分组名称', newGroup: '新增分组', global: '全局组', create: '创建分组', delete: '删除', presetName: '预设名称', save: '保存预设',
+  heightDraft: '调整后，新增或覆盖预设保存。', heightHelp: '高度控制说明',
   setDefault: '设为默认', find: '自动查找预设', main: '主预设', active: '已应用', default: '默认', none: '暂无预设',
   sort: '排序', finishSort: '完成排序', moveUp: '上移', moveDown: '下移',
   search: '搜索材质', all: '全选', clear: '全不选', showAll: '全部显示', hideAll: '全部隐藏', mesh: '网格', locked: '网格已锁定',
@@ -29,6 +30,7 @@ type Key = keyof typeof zh;
 const en: Record<Key, string> = {
   title: 'Armor Variant Manager', armor: 'Armor', weapon: 'Weapon', groups: 'Groups', presets: 'Presets', parts: 'Parts & materials', settings: 'Settings', help: 'Help',
   groupName: 'Group name', newGroup: 'New group', global: 'Global group', create: 'Create group', delete: 'Delete', presetName: 'Preset name', save: 'Save preset',
+  heightDraft: 'Create or overwrite a preset to save these changes.', heightHelp: 'About height control',
   setDefault: 'Set default', find: 'Find presets', main: 'Main presets', active: 'Active', default: 'Default', none: 'No presets yet',
   sort: 'Sort', finishSort: 'Done', moveUp: 'Move up', moveDown: 'Move down',
   search: 'Search materials', all: 'Select all', clear: 'Clear selection', showAll: 'Show all', hideAll: 'Hide all', mesh: 'Mesh', locked: 'Mesh locked',

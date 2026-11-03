@@ -19,6 +19,13 @@ const group = computed(() => props.snapshot.groups.find(item => item.name === pr
 const selected = computed(() => props.snapshot.presets.find(item => item.name === props.snapshot.selectedPreset));
 const selectionCount = computed(() => Object.values(props.snapshot.pending).reduce((total, part) => total + Object.values(part).filter(Boolean).length, 0));
 watch([() => props.snapshot.bodyId, () => props.snapshot.group], () => { confirmation.value = null; });
+watch([() => props.snapshot.game, () => props.snapshot.bodyId, () => props.snapshot.weapon, () => props.snapshot.selectionMode], () => {
+  groupName.value = ''; global.value = false;
+});
+
+async function startGroup() {
+  if (await props.perform({ kind: 'selection', enabled: true })) confirmation.value = null;
+}
 
 async function chooseGroup(name: string) {
   if (await props.perform({ kind: 'group', name })) presetName.value = '';
@@ -59,12 +66,17 @@ async function remove() {
       </div>
     </div>
     <div class="pane-actions">
-      <ElCheckbox :model-value="snapshot.selectionMode" :disabled="disabled" @change="(value: boolean | string | number) => perform({ kind: 'selection', enabled: !!value })">{{ t('selection') }}</ElCheckbox>
-      <p v-if="snapshot.selectionMode" class="field-note">{{ t('selected') }} {{ selectionCount }} · {{ t('selectionHelp') }}</p>
-      <label for="group-name" class="field-label">{{ t('groupName') }}</label>
-      <ElInput id="group-name" v-model="groupName" :placeholder="t('newGroup')" :disabled="disabled" @keyup.enter="create" />
-      <ElCheckbox v-model="global" :disabled="disabled">{{ t('global') }}</ElCheckbox>
-      <ElButton :disabled="disabled || !groupName.trim()" @click="create">{{ t('create') }}</ElButton>
+      <ElButton v-if="!snapshot.selectionMode" class="new-group-button" :disabled="disabled" @click="startGroup">{{ t('newGroup') }}</ElButton>
+      <template v-else>
+        <p class="field-note">{{ t('selected') }} {{ selectionCount }} · {{ t('selectionHelp') }}</p>
+        <label for="group-name" class="field-label">{{ t('groupName') }}</label>
+        <ElInput id="group-name" v-model="groupName" :disabled="disabled" @keyup.enter="create" />
+        <ElCheckbox v-model="global" class="global-group-toggle" :disabled="disabled">{{ t('global') }}</ElCheckbox>
+        <div class="button-pair">
+          <ElButton class="create-group-button" :disabled="disabled || !groupName.trim()" @click="create">{{ t('create') }}</ElButton>
+          <ElButton class="cancel-group-button" :disabled="disabled" @click="perform({ kind: 'selection', enabled: false })">{{ t('cancel') }}</ElButton>
+        </div>
+      </template>
       <ElButton class="quiet-danger" :disabled="disabled || snapshot.group === ''" @click="confirmation = { kind: 'delete-group', name: snapshot.group }">{{ t('delete') }}{{ ' · ' + (group?.label ?? '') }}</ElButton>
       <div v-if="confirmation?.kind === 'delete-group'" class="delete-confirm" role="alert">
         <p>{{ t('confirmDelete') }}「{{ confirmation.name }}」？</p>

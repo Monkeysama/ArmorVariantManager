@@ -6,7 +6,7 @@ import type { Perform, Snapshot } from './types';
 import type { Translate } from './i18n';
 
 const props = defineProps<{ snapshot: Snapshot; busy: boolean; perform: Perform; t: Translate }>();
-const sections = computed(() => (props.snapshot.settings?.sections ?? []).map(section => {
+const sections = computed(() => (props.snapshot.settings?.sections ?? []).filter(section => section.id !== 'ground_clipping').map(section => {
   const reason = section.fields[0]?.reason;
   return { ...section, sharedReason: reason && section.fields.every(field => field.disabled && field.reason === reason) ? reason : undefined };
 }));

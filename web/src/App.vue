@@ -35,6 +35,7 @@ async function dismissBackup() {
         </div>
         <div class="game-identity"><span>{{ snapshot?.game === 'Wilds' ? (english ? 'WILDS' : '荒野') : snapshot?.game === 'Rise' ? (english ? 'RISE' : '崛起') : 'REFF' }}</span><span class="version">{{ snapshot?.version }}</span></div>
       </header>
+      <div class="avm-content">
       <div v-if="error" class="error-banner" role="alert"><span>{{ error }}</span><ElButton v-if="!snapshot" :disabled="loading" @click="connect">{{ t('retry') }}</ElButton><button v-else class="dismiss-error" aria-label="关闭 / Dismiss" @click="error = ''">×</button></div>
       <div v-if="!snapshot" class="connection-state"><span v-if="loading" class="connection-dot"></span>{{ loading ? t('loading') : t('wait') }}</div>
       <template v-else>
@@ -55,6 +56,7 @@ async function dismissBackup() {
         <SettingsPane v-show="tab === 'settings'" :snapshot="snapshot" :busy="busy" :perform="perform" :t="t" />
         <HelpPane v-show="tab === 'help'" :documentation="documentation" :loading="documentationLoading" :error="documentationError" :t="t" @retry="retryDocumentation" />
       </template>
+      </div>
       <footer class="avm-footer">
         <template v-if="tab === 'parts' && !backupWarning">
           <ElButton v-if="!restoreConfirmation" class="restore-button" :disabled="disabled" @click="restoreConfirmation = true">{{ t('restore') }}</ElButton>

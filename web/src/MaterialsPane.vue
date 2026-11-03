@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, shallowRef } from 'vue';
 import { ElButton, ElCheckbox, ElInput } from '@reff/ui';
+import SettingControl from './SettingControl.vue';
 import type { Action, Material, Perform, Snapshot } from './types';
 import type { Translate } from './i18n';
 
@@ -12,6 +13,7 @@ const disabled = computed(() => props.busy || !props.snapshot.bodyId || !part.va
 const materials = computed(() => part.value?.materials.filter(item => item.name.toLowerCase().includes(query.value.trim().toLowerCase())) ?? []);
 const visibleCount = computed(() => part.value?.materials.filter(item => item.enabled && !item.hidden).length ?? 0);
 const selectedCount = computed(() => Object.values(props.snapshot.pending[String(part.value?.index)] ?? {}).filter(Boolean).length);
+const height = computed(() => props.snapshot.weapon ? undefined : props.snapshot.settings?.sections.find(section => section.id === 'ground_clipping'));
 function checked(material: Material) {
   return props.snapshot.selectionMode ? !!props.snapshot.pending[String(part.value?.index)]?.[material.name] : material.enabled;
 }
@@ -63,5 +65,15 @@ function partId(label: string) { return /\s+\[([^\]]+)\]$/.exec(label)?.[1]; }
       </div>
     </div>
     <p v-else class="empty-note">{{ t('noParts') }}</p>
+    <section v-if="height" class="height-pane" :aria-label="height.label">
+      <div class="height-controls">
+        <SettingControl v-for="field in height.fields" :key="snapshot.bodyId + ':' + snapshot.group + ':' + snapshot.selectedPreset + ':' + field.id"
+          :field="field.type === 'boolean' ? { ...field, label: height.label } : field"
+          :disabled="busy || !snapshot.bodyId || !!field.disabled"
+          :save="value => perform({ kind: 'setting', id: field.id, ...(value !== undefined ? { value } : {}) })" :t="t" />
+      </div>
+      <p class="height-draft-note">{{ t('heightDraft') }}</p>
+      <details v-if="height.description" class="height-help"><summary>{{ t('heightHelp') }}</summary><p>{{ height.description }}</p></details>
+    </section>
   </section>
 </template>

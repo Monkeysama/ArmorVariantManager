@@ -72,6 +72,7 @@ export function useAvm(helpOpen: Readonly<Ref<boolean>>) {
     error.value = '';
     try {
       await client.ready();
+      await client.call('ui.layout.set', { padding: 0 });
       ready = true;
       await refresh();
     } catch (reason) { error.value = reason instanceof Error ? reason.message : String(reason); }

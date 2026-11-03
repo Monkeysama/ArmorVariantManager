@@ -147,7 +147,7 @@ try {
   await screenshot('sorting-ice-cyan');
 
   await click('.footer-tabs button', '设置');
-  assert.equal(await evaluate(`document.querySelectorAll('.settings-page .settings-section').length`), 5);
+  assert.equal(await evaluate(`document.querySelectorAll('.settings-page .settings-section').length`), 4);
   await screenshot('settings-ice-cyan');
   await checkCameraReset();
   // Polling preserves numeric drafts, including failed saves and a retry.
@@ -173,14 +173,17 @@ try {
   assert.equal((await lastCall()).value, true);
   await select('预览刷新率', '全速');
   assert.equal((await lastCall()).value, 0);
+  assert.equal(await evaluate(`document.querySelector('.settings-page [data-setting="ground_clipping_height_cm"]')`), null);
+  await click('.footer-tabs button', '部件材质');
   await input('setting-ground_clipping_height_cm', 12.5, true);
   assert.equal((await lastCall()).bodyId, 'ch03_001_0000');
-  assert.match(await evaluate(`document.querySelector('.settings-section[aria-label="高度修正"]').textContent`), /预设草稿/);
+  assert.match(await evaluate(`document.querySelector('.height-pane').textContent`), /预设草稿/);
 
   // All global settings remain usable without a character; equipment does not.
   await click('#fixture-controls button', 'No character');
   await until(`document.querySelector('.equipment-id').textContent === '—'`);
   assert.equal(await evaluate(`document.getElementById('setting-ground_clipping_height_cm').disabled`), true);
+  await click('.footer-tabs button', '设置');
   assert.equal(await evaluate(`document.getElementById('setting-scan_interval').disabled`), false);
   await input('setting-body_id_ttl', 1.5, true);
   assert.equal((await lastCall()).bodyId, '');

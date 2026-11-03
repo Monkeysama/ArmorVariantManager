@@ -68,6 +68,10 @@ const initial: Snapshot = {
   })), theme: 'custom', language: 'zh-CN', selectionMode: false, pending: {}, conditions: wildsConditions(), settings: settingsFor('Wilds'),
 };
 let state = structuredClone(initial);
+if (new URLSearchParams(location.search).has('workspace')) {
+  state.presets.push(...Array.from({ length: 40 }, (_, index) => ({ name: `预设 ${index + 1}`, active: false, default: false })));
+  state.parts[1].materials.push(...Array.from({ length: 70 }, (_, index) => ({ name: `body_detail_${index}`, enabled: true, hidden: false, groups: [] })));
+}
 const layoutFixture = new URLSearchParams(location.search).has('layout');
 if (layoutFixture) {
   state.bodyId = 'ch03_037_0012'; state.backupPending = true;
@@ -90,6 +94,7 @@ let active = 0;
 let peak = 0;
 let polls = 0;
 const calls: Record<string, unknown>[] = [];
+const layouts: Record<string, unknown>[] = [];
 const documents: { game: Snapshot['game']; language: string }[] = [];
 const imports: { bodyId: string; weapon: boolean }[] = [];
 const importFiles: ImportFile[] = [
@@ -98,7 +103,7 @@ const importFiles: ImportFile[] = [
   { path: 'ArmorVariantManager/wp00_0000.json', name: 'wp00_0000.json' },
 ];
 let status: HTMLOutputElement | undefined;
-function renderStatus() { if (status) status.textContent = JSON.stringify({ polls, peak, calls, documents, imports }); }
+function renderStatus() { if (status) status.textContent = JSON.stringify({ polls, peak, calls, documents, imports, layouts }); }
 const wait = (delay = 120) => new Promise(resolve => setTimeout(resolve, delay));
 function applyCondition(request: ConditionAction) {
   const conditions = state.conditions!;
@@ -131,6 +136,7 @@ function applyCondition(request: ConditionAction) {
 }
 (window as Window & { reffNativeCall?: (method: string, params: Record<string, unknown>) => Promise<unknown> }).reffNativeCall = async (method, params) => {
   if (method === 'ui.status') return { ready: true, epoch: 1 };
+  if (method === 'ui.layout.set') { layouts.push(params); renderStatus(); return { padding: 0, override: 0, defaultPadding: 24 }; }
   if (!['monkeysama.avm.snapshot', 'monkeysama.avm.action', 'monkeysama.avm.documentation', 'monkeysama.avm.imports'].includes(method)) throw new Error(`Fixture: unknown method ${method}`);
   active += 1; peak = Math.max(active, peak);
   try {
@@ -170,6 +176,9 @@ function applyCondition(request: ConditionAction) {
       if (field.id === 'portrait_camera.reset') {
         const defaults = { distance: 2.8, horizontal: 0, vertical: 0, light_intensity: 1, refresh_fps: 30 };
         for (const [key, value] of Object.entries(defaults)) section.fields.find(item => item.id === 'portrait_camera.' + key)!.value = value;
+      } else if (field.id === 'ground_clipping_reset') {
+        section.fields.find(item => item.id === 'ground_clipping_enabled')!.value = true;
+        section.fields.find(item => item.id === 'ground_clipping_height_cm')!.value = 0;
       } else field.value = params.value as typeof field.value;
       if (field.id === 'language') state.language = field.value === 'en' ? 'en-US' : 'zh-CN';
     } else if (kind === 'reorder-group' || kind === 'reorder-preset') {
@@ -188,8 +197,12 @@ function applyCondition(request: ConditionAction) {
     } else if (kind === 'default') state.presets.forEach(item => { item.default = item.name === params.name; });
     else if (kind === 'delete-preset') { state.presets = state.presets.filter(item => item.name !== params.name); state.selectedPreset = ''; }
     else if (kind === 'delete-group') { state.groups = state.groups.filter(item => item.name !== params.name); state.group = ''; }
-    else if (kind === 'create-group') { state.groups.push({ name: String(params.name), label: String(params.name), global: !!params.global }); state.group = String(params.name); state.selectionMode = false; }
-    else if (kind === 'selection') state.selectionMode = !!params.enabled;
+    else if (kind === 'create-group') {
+      if (!state.selectionMode) throw new Error('请先进入选择分组材质模式');
+      if (state.game === 'Wilds' && !Object.values(state.pending).some(part => Object.values(part).some(Boolean))) throw new Error('请选择材质');
+      state.groups.push({ name: String(params.name), label: String(params.name), global: !!params.global }); state.group = String(params.name); state.selectionMode = false; state.pending = {};
+    }
+    else if (kind === 'selection') { state.selectionMode = !!params.enabled; if (!state.selectionMode) state.pending = {}; }
     else if (kind === 'select-material') { const part = String(params.part); state.pending[part] ??= {}; state.pending[part][String(params.name)] = !!params.enabled; }
     else if (kind === 'mesh') { const part = state.parts.find(item => item.index === params.part); if (part) part.enabled = !!params.enabled; }
     else if (kind === 'material') { const material = state.parts.find(item => item.index === params.part)?.materials.find(item => item.name === params.name); if (material) material.enabled = !!params.enabled; }
