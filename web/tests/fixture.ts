@@ -83,6 +83,16 @@ if (layoutFixture) {
     materials: index === 1 ? ['SB_panty', 'SB_panty_MT', '身体内衬_透明与金属混合材质\nBody_lining_translucent_and_metallic_surface', 'VeryLongMaterialNameWithoutSeparators_ForEquipmentBodyInnerLining_037_0012'].map((name, material) => ({ name, enabled: material !== 1, hidden: false, groups: ['内裤'] })) : [],
   }));
 }
+if (new URLSearchParams(location.search).has('unloaded')) {
+  state.bodyId = ''; state.groups = []; state.group = ''; state.presets = []; state.selectedPreset = ''; state.parts = [];
+  state.backupPending = true;
+  const section = state.settings!.sections.find(section => section.id === 'ground_clipping')!;
+  section.fields.forEach(field => { field.disabled = true; field.reason = '请切换到防具差分，待检测到 Body ID 后配置陷地修复。'; });
+}
+if (new URLSearchParams(location.search).has('height-unavailable')) {
+  const section = state.settings!.sections.find(section => section.id === 'ground_clipping')!;
+  section.fields.forEach(field => { field.disabled = true; field.reason = '场景切换中，暂时无法调整高度。'; });
+}
 let failNext = false;
 let failNextDocumentation = false;
 let slowNextDocumentation = false;

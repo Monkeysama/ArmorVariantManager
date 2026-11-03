@@ -58,6 +58,7 @@ try {
   await until(`document.querySelector('.footer-tabs') && !document.querySelector('.connection-state')`);
   assert.equal((await status()).documents.length, 0);
   assert.equal(await evaluate(`!!document.querySelector('.backup-warning')`), false);
+  assert.equal(await evaluate(`!!document.querySelector('.restore-button, .restore-confirm')`), false);
 
   await click('#fixture-controls button', 'Backup pending');
   await until(`!!document.querySelector('.backup-warning')`);
@@ -78,6 +79,7 @@ try {
   await click('.backup-warning button', '忽略');
   assert.deepEqual(await lastCall(), { kind: 'dismiss-backup', bodyId: 'ch03_001_0000' });
   assert.equal(await evaluate(`!!document.querySelector('.backup-warning')`), false);
+  assert.equal(await evaluate(`!!document.querySelector('.restore-button, .restore-confirm')`), false);
   await click('#fixture-controls button', 'Backup pending');
   await until(`!!document.querySelector('.backup-warning')`);
   await click('.backup-warning button', '恢复备份');
@@ -87,6 +89,7 @@ try {
   await click('.backup-warning button', '恢复备份');
   assert.deepEqual(await lastCall(), { kind: 'restore', bodyId: 'ch03_001_0000' });
   assert.equal(await evaluate(`!!document.querySelector('.backup-warning')`), false);
+  assert.equal(await evaluate(`!!document.querySelector('.restore-button, .restore-confirm')`), false);
 
   await click('#fixture-controls button', 'Backup pending');
   await until(`!!document.querySelector('.backup-warning')`);
@@ -97,6 +100,9 @@ try {
   await click('#fixture-controls button', 'No character');
   await until(`document.querySelector('.equipment-id').textContent === '—'`);
   assert.equal(await evaluate(`!!document.querySelector('.backup-warning')`), false);
+  assert.equal(await evaluate(`!!document.querySelector('.restore-button, .restore-confirm')`), false);
+  assert.equal(await evaluate(`document.querySelector('.equipment-loading').getAttribute('role')`), 'status');
+  assert.match(await evaluate(`document.querySelector('.equipment-loading').textContent`), /防具/);
 
   // Help is independent of character state. Error recovery is local to this panel.
   await click('#fixture-controls button', 'Fail next help');
@@ -135,6 +141,13 @@ try {
   assert.equal(await evaluate(`document.querySelector('.help-tabs button').textContent`), 'How to Configure');
   assert.equal((await status()).peak, 1);
   await screenshot('help-wilds-english');
+  await click('#fixture-controls button', 'No character');
+  await until(`document.querySelector('.equipment-id').textContent === '—'`);
+  assert.equal(await evaluate(`!!document.querySelector('.backup-warning, .restore-button, .restore-confirm')`), false);
+  assert.equal(await evaluate(`document.querySelector('.equipment-loading').getAttribute('role')`), 'status');
+  assert.match(await evaluate(`document.querySelector('.equipment-loading').textContent`), /weapon/i);
+  await click('#fixture-controls button', 'Restore character');
+  await until(`!document.querySelector('.equipment-loading')`);
   count = (await status()).documents.length;
   await click('#fixture-controls button', 'Rise only');
   await until(`document.querySelector('.game-identity').textContent.includes('RISE')`);

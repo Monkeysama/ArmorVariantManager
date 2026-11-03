@@ -39,7 +39,7 @@ async function dismissBackup() {
       <div v-if="error" class="error-banner" role="alert"><span>{{ error }}</span><ElButton v-if="!snapshot" :disabled="loading" @click="connect">{{ t('retry') }}</ElButton><button v-else class="dismiss-error" aria-label="关闭 / Dismiss" @click="error = ''">×</button></div>
       <div v-if="!snapshot" class="connection-state"><span v-if="loading" class="connection-dot"></span>{{ loading ? t('loading') : t('wait') }}</div>
       <template v-else>
-        <div v-if="!snapshot.bodyId" class="state-banner">{{ t('wait') }}</div>
+        <div v-if="!snapshot.bodyId" class="state-banner equipment-loading" role="status">{{ t(snapshot.weapon ? 'weaponLoading' : 'armorLoading') }}</div>
         <div v-if="backupWarning" class="backup-warning state-banner" role="status">
           <p>{{ t('backupChanged') }}</p>
           <div v-if="!restoreConfirmation" class="button-pair backup-actions"><ElButton :disabled="disabled" @click="restoreConfirmation = true">{{ t('restore') }}</ElButton><ElButton :disabled="disabled" @click="dismissBackup">{{ t('ignore') }}</ElButton></div>
@@ -58,13 +58,6 @@ async function dismissBackup() {
       </template>
       </div>
       <footer class="avm-footer">
-        <template v-if="tab === 'parts' && !backupWarning">
-          <ElButton v-if="!restoreConfirmation" class="restore-button" :disabled="disabled" @click="restoreConfirmation = true">{{ t('restore') }}</ElButton>
-          <div v-else class="delete-confirm restore-confirm" role="alert">
-            <p>{{ t('confirmRestore') }}</p>
-            <div class="button-pair"><ElButton :disabled="busy" @click="restoreConfirmation = false">{{ t('cancel') }}</ElButton><ElButton :disabled="disabled" @click="restore">{{ t('restore') }}</ElButton></div>
-          </div>
-        </template>
         <div class="status" role="status"><span v-if="busy" class="active-dot"></span>{{ busy ? t('saving') : notice || (snapshot?.suspended ? t('suspended') : '') }}</div>
         <nav class="footer-tabs" :aria-label="t('title')">
           <button v-for="item in (['parts', 'conditions', 'settings', 'help'] as const)" :key="item" :aria-current="tab === item ? 'page' : undefined" @click="tab = item">{{ t(item) }}</button>

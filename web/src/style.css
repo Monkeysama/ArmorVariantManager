@@ -120,6 +120,7 @@ body { background: transparent; }
 .height-tooltip.el-popper { max-width: min(28em, calc(100vw - 24px)); padding: 10px 12px; color: var(--avm-ink); background: var(--avm-panel); border-color: var(--avm-line); font: inherit; }
 .height-tooltip p { margin: 0; white-space: pre-line; }
 .height-tooltip.el-popper .el-popper__arrow::before { background: var(--avm-panel); border-color: var(--avm-line); }
+.height-unavailable { margin: 0; color: var(--avm-muted); overflow-wrap: anywhere; }
 .part-equipment { margin-bottom: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mesh-line { display: flex; align-items: center; justify-content: space-between; gap: 6px; min-height: 28px; margin-bottom: 4px; }
 .mesh-line .count { text-align: right; }
@@ -171,18 +172,25 @@ body { background: transparent; }
 .settings-section { border-top: 1px solid var(--avm-line); padding-top: 12px; margin-top: 18px; }
 .settings-section h3 { font-size: inherit; font-weight: 500; margin: 0 0 10px; }
 .theme-settings { border: 0; padding: 0; margin: 0; }
-.settings-fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px 16px; }
+.settings-fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); column-gap: 16px; }
+.settings-fields > .setting-control { display: grid; grid-template-rows: subgrid; grid-row: span 4; row-gap: 0; padding-bottom: 12px; }
+.settings-fields > .setting-control > :is(.condition-number, .condition-select) { display: grid; grid-template-rows: subgrid; grid-row: 1 / span 3; row-gap: 0; }
+.settings-fields .field-label { grid-row: 1; margin: 0 0 5px; }
+.settings-fields .number-input-line { grid-row: 2; align-items: center; }
+.settings-fields .field-error { grid-row: 3; margin-top: 4px; }
+.settings-fields > .setting-control > :is(.setting-toggle-line, .el-button) { grid-row: 2; align-self: center; }
+.settings-fields > .setting-control > .el-button { justify-self: start; }
+.settings-fields > .setting-control > .setting-note { grid-row: 4; }
 .setting-control { min-width: 0; }
-.setting-toggle-line { display: flex; align-items: center; gap: 8px; min-height: 32px; }
+.setting-toggle-line { display: flex; align-items: center; gap: 8px; min-height: var(--avm-control-height); }
 .setting-toggle-line > .el-checkbox { flex: 1; }
-.setting-toggle-line .el-checkbox { min-width: 0; height: auto; padding: 3px 0; align-items: flex-start; }
-.setting-toggle-line .el-checkbox__input { margin-top: 3px; }
+.setting-toggle-line .el-checkbox { min-width: 0; height: auto; padding: 3px 0; align-items: center; }
 .setting-toggle-line .el-checkbox__label { white-space: normal; line-height: 1.5; }
 .setting-toggle-line > .el-button { flex: 0 0 auto; }
 .information .setting-note, .information .settings-section-description { color: var(--avm-muted); font-size: var(--reff-font-size-xs, 12px); margin: 7px 0 0; line-height: 1.6; }
 .information .settings-section-description { margin: -6px 0 17px; }
 .setting-reason { display: block; color: var(--avm-accent); }
-.error-banner, .state-banner { margin: 12px 22px 0; padding: 10px 12px; border-left: 2px solid var(--avm-accent); background: var(--avm-panel); }
+.error-banner, .state-banner { flex-shrink: 0; margin: 12px 22px 0; padding: 10px 12px; border-left: 2px solid var(--avm-accent); background: var(--avm-panel); }
 .error-banner { display: flex; align-items: center; gap: 12px; border-color: #e9a7a0; color: #f3c2bd; overflow-wrap: anywhere; }
 .error-banner > span { flex: 1; }
 .dismiss-error { background: transparent; border: 0; color: inherit; padding: 3px 5px; font-size: 20px !important; }
@@ -261,7 +269,7 @@ body { background: transparent; }
   .materials-pane { grid-column: 1 / -1; border-top: 1px solid var(--avm-line); padding: 10px 4px 0; }
   .avm-footer { padding: 6px 12px; gap: 6px; }
   .information { padding: 16px 14px 24px; }
-  .settings-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  .settings-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 12px; }
   .conditions-workspace { grid-template-columns: minmax(165px, 1fr) minmax(0, 2fr); gap: 14px; padding: 8px 10px 14px; }
   .conditions-sidebar { padding-right: 10px; }
   .condition-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }

@@ -110,6 +110,11 @@ try {
   await screenshot('workspace-wilds-fixed');
   await click('.footer-tabs button', '设置');
   assert.equal(await evaluate(`!!document.querySelector('.settings-page [data-setting="ground_clipping_height_cm"]')`), false, 'Height must not be duplicated in settings');
+  const settingCenters = await evaluate(`(() => {
+    const center = id => { const field = document.querySelector('[data-setting="' + id + '"]'), control = field.querySelector('.number-input-line, .el-select, .setting-toggle-line'); const r = control.getBoundingClientRect(); return (r.top + r.bottom) / 2; };
+    return [[center('language'), center('auto_set_selected_preset_as_default')], [center('portrait_enabled'), center('portrait_camera.distance'), center('portrait_camera.horizontal')]];
+  })()`);
+  assert(settingCenters.every(row => Math.max(...row) - Math.min(...row) < 1), 'Mixed controls must align with input centers, not their labels');
   await fixedChrome();
   await click('.footer-tabs button', '帮助');
   await until(`document.querySelector('.help-content h2')`);
@@ -132,9 +137,19 @@ try {
   await click('#fixture-controls button', 'No character');
   await until(`document.querySelector('.equipment-id').textContent === '—'`);
   assert.equal(await evaluate(`document.querySelector('.new-group-button').disabled`), true);
+  assert.match(await evaluate(`document.querySelector('.equipment-loading[role="status"]').textContent`), /armor.*load/i);
+  assert.equal(await evaluate(`!!document.querySelector('.materials-layout, .height-pane, .restore-button, .restore-confirm')`), false, 'Stale parts, height controls and restore entry must stay hidden without equipment');
   assert.equal((await evaluate(`JSON.parse(document.querySelector('#fixture-controls output').textContent).peak`)), 1);
+  await cdp('Page.navigate', { url: 'http://127.0.0.1:5178/tests/fixture.html?unloaded' });
+  await until(`location.search === '?unloaded' && !!document.querySelector('.equipment-loading')`);
+  assert.equal(await evaluate(`!!document.querySelector('.height-pane, .backup-warning')`), false, 'Unloaded snapshot must not offer height or stale pending backup controls');
+  assert(await evaluate(`document.querySelector('.equipment-loading').getBoundingClientRect().height >= 32`), 'Loading status must not collapse inside the flex workspace');
+  await cdp('Page.navigate', { url: 'http://127.0.0.1:5178/tests/fixture.html?height-unavailable' });
+  await until(`!!document.querySelector('.height-unavailable')`);
+  assert.equal(await evaluate(`document.querySelector('.height-pane').querySelectorAll('[data-setting]').length`), 0);
+  assert.equal(await evaluate(`document.querySelectorAll('.height-unavailable[role="status"]').length`), 1, 'Shared unavailable reason must appear once instead of squeezing three disabled controls');
   assert.deepEqual(errors, []);
-  console.log('PASS: padding zero, fixed chrome, original height location/reset, group create/cancel/failure/global and Rise contracts');
+  console.log('PASS: fixed workspace, height lifecycle, aligned settings, group create/cancel/failure/global and Rise contracts');
 } finally {
   await cdp('Page.close').catch(() => {}); socket.close();
 }

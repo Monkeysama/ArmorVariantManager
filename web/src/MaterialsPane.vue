@@ -13,7 +13,12 @@ const disabled = computed(() => props.busy || !props.snapshot.bodyId || !part.va
 const materials = computed(() => part.value?.materials.filter(item => item.name.toLowerCase().includes(query.value.trim().toLowerCase())) ?? []);
 const visibleCount = computed(() => part.value?.materials.filter(item => item.enabled && !item.hidden).length ?? 0);
 const selectedCount = computed(() => Object.values(props.snapshot.pending[String(part.value?.index)] ?? {}).filter(Boolean).length);
-const height = computed(() => props.snapshot.weapon ? undefined : props.snapshot.settings?.sections.find(section => section.id === 'ground_clipping'));
+const height = computed(() => !props.snapshot.bodyId || props.snapshot.weapon ? undefined : props.snapshot.settings?.sections.find(section => section.id === 'ground_clipping'));
+const heightUnavailableReason = computed(() => {
+  const fields = height.value?.fields ?? [];
+  const reason = fields[0]?.reason;
+  return reason && fields.every(field => field.disabled && field.reason === reason) ? reason : undefined;
+});
 function checked(material: Material) {
   return props.snapshot.selectionMode ? !!props.snapshot.pending[String(part.value?.index)]?.[material.name] : material.enabled;
 }
@@ -34,7 +39,7 @@ function partId(label: string) { return /\s+\[([^\]]+)\]$/.exec(label)?.[1]; }
 <template>
   <section class="pane materials-pane" :aria-label="t('parts')">
     <div class="pane-heading"><h2>{{ snapshot.weapon ? t('weapon') : t('armor') }} · {{ t('parts') }}</h2><span class="count">{{ snapshot.parts.length }}</span></div>
-    <div v-if="part" class="materials-layout">
+    <div v-if="snapshot.bodyId && part" class="materials-layout">
       <nav class="part-list" :aria-label="t('parts')">
         <button v-for="item in snapshot.parts" :key="item.index" class="part-row" :class="{ unavailable: !item.available }" :aria-label="item.label" :title="item.label" :aria-pressed="part.index === item.index" @click="selectedIndex = item.index"><span class="part-name">{{ partName(item.label) }}</span><span class="part-count">{{ item.materials.length }}</span></button>
       </nav>
@@ -66,7 +71,8 @@ function partId(label: string) { return /\s+\[([^\]]+)\]$/.exec(label)?.[1]; }
     </div>
     <p v-else class="empty-note">{{ t('noParts') }}</p>
     <section v-if="height" class="height-pane" :aria-label="height.label">
-      <div class="height-controls">
+      <p v-if="heightUnavailableReason" class="setting-note height-unavailable" role="status">{{ heightUnavailableReason }}</p>
+      <div v-else class="height-controls">
         <SettingControl v-for="field in height.fields" :key="snapshot.bodyId + ':' + snapshot.group + ':' + snapshot.selectedPreset + ':' + field.id"
           :field="field.type === 'boolean' ? { ...field, label: height.label } : field"
           :disabled="busy || !snapshot.bodyId || !!field.disabled"
