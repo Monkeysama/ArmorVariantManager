@@ -1,0 +1,90 @@
+<script setup lang="ts">
+import { computed, shallowRef, watch } from 'vue';
+import { ElButton, ElCheckbox, ElInput } from '@reff/ui';
+import type { Perform, Snapshot } from './types';
+import type { Translate } from './i18n';
+
+const props = defineProps<{ snapshot: Snapshot; busy: boolean; perform: Perform; t: Translate }>();
+const emit = defineEmits<{ notice: [message: string] }>();
+const groupName = shallowRef('');
+const global = shallowRef(false);
+const presetName = shallowRef(props.snapshot.selectedPreset);
+const confirmation = shallowRef<{ kind: 'delete-group' | 'delete-preset'; name: string } | null>(null);
+const disabled = computed(() => props.busy || !props.snapshot.bodyId);
+const group = computed(() => props.snapshot.groups.find(item => item.name === props.snapshot.group));
+const selected = computed(() => props.snapshot.presets.find(item => item.name === props.snapshot.selectedPreset));
+const selectionCount = computed(() => Object.values(props.snapshot.pending).reduce((total, part) => total + Object.values(part).filter(Boolean).length, 0));
+watch([() => props.snapshot.bodyId, () => props.snapshot.group], () => { confirmation.value = null; });
+
+async function chooseGroup(name: string) {
+  if (await props.perform({ kind: 'group', name })) presetName.value = '';
+}
+async function choosePreset(name: string) {
+  if (await props.perform({ kind: 'preset', name })) presetName.value = name;
+}
+async function create() {
+  const name = groupName.value.trim();
+  if (name && await props.perform({ kind: 'create-group', name, global: global.value })) {
+    groupName.value = ''; emit('notice', `${props.t('created')} · ${name}`);
+  }
+}
+async function save() {
+  const name = presetName.value.trim();
+  if (name && await props.perform({ kind: 'save', name })) emit('notice', `${props.t('saved')} · ${name}`);
+}
+async function remove() {
+  const target = confirmation.value;
+  if (target && await props.perform(target)) {
+    confirmation.value = null;
+    if (target.kind === 'delete-preset') presetName.value = '';
+  }
+}
+</script>
+
+<template>
+  <section class="pane groups-pane" :aria-label="t('groups')">
+    <div class="pane-heading"><h2>{{ t('groups') }}</h2><span class="count">{{ snapshot.groups.length }}</span></div>
+    <div class="catalog-list">
+      <button v-for="item in snapshot.groups" :key="item.name" class="catalog-row" :aria-pressed="snapshot.group === item.name" :disabled="disabled" @click="chooseGroup(item.name)">
+        <span class="row-name">{{ item.label }}</span><span v-if="item.global" class="row-tag">{{ t('global') }}</span><span class="row-arrow" aria-hidden="true">›</span>
+      </button>
+    </div>
+    <div class="pane-actions">
+      <ElCheckbox :model-value="snapshot.selectionMode" :disabled="disabled" @change="(value: boolean | string | number) => perform({ kind: 'selection', enabled: !!value })">{{ t('selection') }}</ElCheckbox>
+      <p v-if="snapshot.selectionMode" class="field-note">{{ t('selected') }} {{ selectionCount }} · {{ t('selectionHelp') }}</p>
+      <label for="group-name" class="field-label">{{ t('groupName') }}</label>
+      <ElInput id="group-name" v-model="groupName" :placeholder="t('newGroup')" :disabled="disabled" @keyup.enter="create" />
+      <ElCheckbox v-model="global" :disabled="disabled">{{ t('global') }}</ElCheckbox>
+      <ElButton :disabled="disabled || !groupName.trim()" @click="create">{{ t('create') }}</ElButton>
+      <ElButton class="quiet-danger" :disabled="disabled || snapshot.group === ''" @click="confirmation = { kind: 'delete-group', name: snapshot.group }">{{ t('delete') }}{{ ' · ' + (group?.label ?? '') }}</ElButton>
+      <div v-if="confirmation?.kind === 'delete-group'" class="delete-confirm" role="alert">
+        <p>{{ t('confirmDelete') }}「{{ confirmation.name }}」？</p>
+        <div class="button-pair"><ElButton @click="confirmation = null">{{ t('cancel') }}</ElButton><ElButton :disabled="disabled" @click="remove">{{ t('confirm') }}</ElButton></div>
+      </div>
+    </div>
+  </section>
+  <section class="pane presets-pane" :aria-label="t('presets')">
+    <div class="pane-heading"><h2>{{ t('presets') }}</h2><span class="count">{{ snapshot.presets.length }}</span></div>
+    <div class="group-caption">{{ group?.label ?? t('main') }}</div>
+    <div class="catalog-list">
+      <button v-for="item in snapshot.presets" :key="item.name" class="catalog-row preset-row" :aria-pressed="snapshot.selectedPreset === item.name" :disabled="disabled" @click="choosePreset(item.name)">
+        <span class="row-name">{{ item.name }}</span><span v-if="item.default" class="default-star" :title="t('default')" :aria-label="t('default')">★</span><span v-if="item.active" class="active-dot" :title="t('active')" :aria-label="t('active')"></span>
+      </button>
+      <p v-if="!snapshot.presets.length" class="empty-note">{{ t('none') }}</p>
+    </div>
+    <form class="pane-actions" @submit.prevent="save">
+      <label for="preset-name" class="field-label">{{ t('presetName') }}</label>
+      <ElInput id="preset-name" v-model="presetName" :disabled="disabled" />
+      <ElButton type="primary" native-type="submit" :disabled="disabled || !presetName.trim()">{{ t('save') }}</ElButton>
+      <div class="button-pair">
+        <ElButton :disabled="disabled || !selected" @click="confirmation = { kind: 'delete-preset', name: snapshot.selectedPreset }">{{ t('delete') }}</ElButton>
+        <ElButton :disabled="disabled || !selected" @click="perform({ kind: 'default', name: snapshot.selectedPreset })">{{ t('setDefault') }}</ElButton>
+      </div>
+      <div v-if="confirmation?.kind === 'delete-preset'" class="delete-confirm" role="alert">
+        <p>{{ t('confirmDelete') }}「{{ confirmation.name }}」？</p>
+        <div class="button-pair"><ElButton @click="confirmation = null">{{ t('cancel') }}</ElButton><ElButton :disabled="disabled" @click="remove">{{ t('confirm') }}</ElButton></div>
+      </div>
+      <ElButton :disabled="disabled" @click="perform({ kind: 'find' })">{{ t('find') }}</ElButton>
+    </form>
+  </section>
+</template>

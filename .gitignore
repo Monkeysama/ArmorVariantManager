@@ -17,6 +17,7 @@ sync_main_release.py
 /tests/*
 !/tests/run.py
 !/tests/entrypoint.lua
+!/tests/reff_bridge.lua
 !/tests/rise_options.lua
 !/tests/support.lua
 !/tests/config_compatibility.lua

@@ -1,5 +1,6 @@
 """python -m unittest discover -s tests -p test_release.py"""
 from pathlib import Path
+import json
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -8,6 +9,26 @@ import build_release as release
 
 
 class ReleaseTests(unittest.TestCase):
+    def test_reff_page_and_assets_are_packaged(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "monkeysama.avm"
+            (source / "ui/assets").mkdir(parents=True)
+            (source / "manifest.json").write_text(json.dumps({"ui":{"entry":"ui/index.html"}}))
+            (source / "ui/index.html").write_text('<script src="./assets/page.js"></script>')
+            (source / "ui/assets/page.js").write_text("export {}")
+            (source / "ui/REFF-LICENSE.txt").write_text("MIT License\nCopyright (c) 2026 MK\n")
+            (root / "node_modules").mkdir()
+            with patch.object(release, "REFF_PLUGIN", source):
+                release.copy_reff_plugin(root / "out")
+                release.verify_reff_plugin(root / "out")
+                target = root / "out/reframework/reff/plugins/monkeysama.avm"
+                self.assertFalse((target / "node_modules").exists())
+                self.assertEqual((target / "ui/REFF-LICENSE.txt").read_text(), "MIT License\nCopyright (c) 2026 MK\n")
+                (target / "ui/assets/page.js").unlink()
+                with self.assertRaisesRegex(RuntimeError, "incomplete"):
+                    release.verify_reff_plugin(root / "out")
+
     def test_comments_preserve_runtime_text(self):
         source = 'local name = "-- not a comment" -- comment\nreturn [=[first\n\nlast]=]\n'
         stripped = release.strip_lua_comments(source)

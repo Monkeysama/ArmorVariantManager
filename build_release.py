@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import shutil
 import sys
@@ -19,6 +20,7 @@ AUTORUN_SOURCE = SOURCE_REFRAMEWORK / "autorun"
 UI_DLL = SOURCE_REFRAMEWORK / "plugins" / "ArmorVariantManager_UI.dll"
 PORTRAIT_ASSETS = PROJECT / "natives" / "STM" / "ArmorVariantManager" / "Portrait"
 PORTRAIT_FILES = ("portrait_camera.pfb.18", "portrait_resources.user.3", "portrait.rtex.6")
+REFF_PLUGIN = SOURCE_REFRAMEWORK / "reff" / "plugins" / "monkeysama.avm"
 def long_bracket_end(text: str, start: int) -> tuple[str, int] | None:
     if start >= len(text) or text[start] != "[":
         return None
@@ -128,11 +130,32 @@ def assert_no_duplicate_scripts() -> None:
 
 
 def ensure_inputs() -> None:
-    required = [AUTORUN_SOURCE, UI_DLL, *(PORTRAIT_ASSETS / name for name in PORTRAIT_FILES)]
+    required = [AUTORUN_SOURCE, UI_DLL, *(PORTRAIT_ASSETS / name for name in PORTRAIT_FILES),
+                REFF_PLUGIN / "manifest.json", REFF_PLUGIN / "ui" / "dist" / "index.html",
+                REFF_PLUGIN / "ui" / "dist" / "REFF-LICENSE.txt"]
     missing = [str(path) for path in required if not path.exists()]
     if missing:
         raise RuntimeError("Missing release inputs:\n" + "\n".join(missing))
     assert_no_duplicate_scripts()
+
+
+def copy_reff_plugin(destination: Path) -> None:
+    """只复制插件清单与已构建页面，不打包 REFF 本体或 Web 开发依赖。"""
+    target = destination / "reframework" / "reff" / "plugins" / REFF_PLUGIN.name
+    target.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(REFF_PLUGIN / "manifest.json", target / "manifest.json")
+    shutil.copytree(REFF_PLUGIN / "ui", target / "ui")
+
+
+def verify_reff_plugin(release_directory: Path) -> None:
+    target = release_directory / "reframework" / "reff" / "plugins" / REFF_PLUGIN.name
+    manifest = json.loads((target / "manifest.json").read_text(encoding="utf-8"))
+    if not (target / manifest["ui"]["entry"]).is_file():
+        raise RuntimeError("Release verification failed: REFF page entry is missing")
+    expected = {path.relative_to(REFF_PLUGIN) for path in REFF_PLUGIN.rglob("*") if path.is_file()}
+    actual = {path.relative_to(target) for path in target.rglob("*") if path.is_file()}
+    if actual != expected:
+        raise RuntimeError("Release verification failed: REFF plugin files are incomplete")
 
 
 def copy_stripped_lua_files(destination_autorun: Path) -> int:
@@ -149,6 +172,7 @@ def copy_stripped_lua_files(destination_autorun: Path) -> int:
 
 
 def verify_release(release_directory: Path) -> None:
+    verify_reff_plugin(release_directory)
     expected_dll = release_directory / "reframework" / "plugins" / UI_DLL.name
     if not expected_dll.is_file():
         raise RuntimeError("Release verification failed: required DLL is missing")
@@ -199,6 +223,7 @@ def main() -> int:
     asset_directory.mkdir(parents=True, exist_ok=True)
     for name in PORTRAIT_FILES:
         shutil.copy2(PORTRAIT_ASSETS / name, asset_directory / name)
+    copy_reff_plugin(staging_directory)
     verify_release(staging_directory)
 
     if release_directory.exists():

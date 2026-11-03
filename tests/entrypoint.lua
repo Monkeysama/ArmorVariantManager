@@ -13,7 +13,22 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
     end
     local frames, draws, resets, errors, imports = {}, {}, {}, {}, {}
     local action, writes, applied, captures = nil, {}, {}, 0
-    local object = {call=function(_, method) if method=="get_Name" then return "actor" end end}
+    local handlers, unregistered, write_failed
+    local enabled, visible = true, true
+    local td = {get_method=function() return nil end}
+    local mesh = {get_type_definition=function() return td end}
+    function mesh:call(method, offset, value)
+        if method=="get_Enabled" then return enabled end
+        if method=="set_Enabled" then enabled=offset end
+        if method=="get_MaterialNum" then return 1 end
+        if method=="getMaterialName" then return "cloth" end
+        if method=="getMaterialsEnable" then return visible end
+        if method=="setMaterialsEnable" then visible=value end
+    end
+    local object = {get_type_definition=function() return td end,call=function(_,method)
+        if method=="get_Name" then return "actor" end
+        if method=="getComponent(System.Type)" then return mesh end
+    end}
     local player = {}
     local cfg = {presets={Show={["0"]={materials={cloth=true}}},Hide={["0"]={materials={cloth=false}}}},
         preset_order={"Show","Hide"},default_preset="Show",groups={},extra={keep=true},enable_transform=false}
@@ -22,11 +37,21 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
     local native_require = require
     _G.require = function(name)
         imports[name] = true
+        if name=="reff.sdk" then
+            return {register=function(id, value)
+                assert(id=="monkeysama.avm")
+                handlers=value.methods
+                return {unregister=function() unregistered=true end}
+            end}
+        end
         if populated and name=="ArmorVariantManager_Core.Config.Store" then
             return {config_path=function(id) return "ArmorVariantManager/"..id..".json" end,
                 backup_path=function(id) return "ArmorVariantManager/backup/"..id..".json" end,
                 load=function(path) return S.copy(data[path]) end,
-                save=function(path,value) data[path]=S.copy(value); writes[#writes+1]=path; return true end}
+                save=function(path,value)
+                    if write_failed then return false end
+                    data[path]=S.copy(value); writes[#writes+1]=path; return true
+                end}
         end
         if populated and name:match("Games%.%w+%.Runtime$") then
             return {new=function(_,callbacks)
@@ -36,13 +61,13 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
                         get=function() return {entries={entry},local_entry=entry} end,can_transform=function() return false end},
                     equipment={body_id=function() return "armor" end,weapon_id=function() return nil end,
                         weapons=function() return {} end,clear=function() end},
-                    meshes={first=function() end,part_meshes=function() return {} end},
+                    meshes={first=function() return mesh end,part_meshes=function() return {mesh} end},
                     scene_object={game_object=function(o) return o end},
                     guard={suspended=false,get_scene=function() end},
                     materials={armor=function(_,result) applied[#applied+1]=S.copy(result) end,
                         weapon=function() end,invalidate=function() end},
                     transition={draw_ui=function() end},
-                    part_view=function() return {} end,
+                    part_view=function() return {{index=0,label="Body",object=object}} end,
                     capture=function(actor,...)
                         assert(actor==object)
                         local args={...}
@@ -71,6 +96,7 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
         end
         return native_require(name)
     end
+    _G.reff_native = populated and {} or nil
     _G.reframework = {get_game_name=function() return game end}
     _G.sdk = {find_type_definition=function(name)
             if name == "via.Component" or name == "via.GameObject" or name == "via.Scene" or name == "app.HunterCharacter" then return {get_method=function()
@@ -123,6 +149,43 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
         if game=="mhrise" then assert(saved.longsword_transform_rules and not saved.spirit_transform_rules)
         else assert(saved.spirit_transform_rules and not saved.longsword_transform_rules) end
     end
+    if populated then
+        assert(handlers,"REFF handler registered for each game")
+        local snapshot=handlers["monkeysama.avm.snapshot"]
+        local dispatch=handlers["monkeysama.avm.action"]
+        local current=snapshot()
+        assert(current.game==(game=="mhrise" and "Rise" or "Wilds") and current.bodyId=="armor")
+        assert(current.theme=="custom" and current.parts[1].materials[1].name=="cloth")
+        local function send(kind,args)
+            args=args or {}; args.kind=kind; args.bodyId="armor"
+            return dispatch(args)
+        end
+        current=send("material",{part=0,name="cloth",enabled=false})
+        assert(not visible and current.parts[1].materials[1].enabled==false)
+        assert(not pcall(send,"material",{part=0,name="absent",enabled=true}))
+        assert(not pcall(dispatch,{kind="save",name="stale",bodyId="old"}))
+        current=send("theme",{value="reff"})
+        assert(current.theme=="reff" and data["ArmorVariantManager/GlobalSettings.json"].reff_theme=="reff")
+        write_failed=true
+        assert(not pcall(send,"theme",{value="custom"}) and snapshot().theme=="reff")
+        write_failed=false
+        send("selection",{enabled=true})
+        send("select-material",{part=0,name="cloth",enabled=true})
+        write_failed=true
+        assert(not pcall(send,"create-group",{name="Cape",global=false}))
+        assert(snapshot().selectionMode and #snapshot().groups==1 and snapshot().pending["0"].cloth)
+        write_failed=false
+        current=send("create-group",{name="Cape",global=false})
+        assert(current.group=="Cape" and #current.groups==2 and not current.selectionMode)
+        write_failed=true
+        assert(not pcall(send,"delete-group",{name="Cape"}))
+        assert(snapshot().group=="Cape" and #snapshot().groups==2)
+        write_failed=false
+        current=send("delete-group",{name="Cape"})
+        assert(current.group=="" and #current.groups==1)
+        send("mode",{weapon=true})
+        assert(snapshot().bodyId=="","mode transition never pairs old config with new equipment")
+    else assert(not handlers,"native core still starts without REFF") end
     for _, fn in ipairs(resets) do fn() end
     if game == "unknown" then
         assert(#errors==1 and #frames==0 and #draws==1)
@@ -140,6 +203,7 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
             assert(not package.loaded["ArmorVariantManager_Core.GroundClippingFix"])
         end
     end
+    if populated then assert(unregistered,"reset unregisters REFF methods") end
     _G.require = native_require
 end
 print("PASS: actual entry selects only its game, loads native UI, runs selection/save, empty-scene frames/reset and rejects unsupported games")

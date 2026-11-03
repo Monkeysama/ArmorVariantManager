@@ -83,6 +83,8 @@ local file = assert(io.open("ArmorVariantManager/reframework/autorun/ArmorVarian
 local source = file:read("a"); file:close()
 local env, old_env = environment(config), environment(config)
 env.PresetGroups = Groups
+env.deep_copy_table = S.copy
+env.TransformManager = {}
 env.GamePresets = require("ArmorVariantManager_Core.Games.Wilds.Presets")
 local old = legacy_factories.Wilds(old_env)
 local current = {}
@@ -97,7 +99,7 @@ for _, args in ipairs({ { "", "armor" }, { "Overlay", false }, { "Overlay", "arm
 end
 env.current_group_name, old_env.current_group_name = "Overlay", "Overlay"
 assert(current.delete_group("Overlay", "armor") == old.delete_group("Overlay", "armor"))
-for _, key in ipairs({ "current_config", "active_overrides", "current_group_name", "pending_material_selections", "is_selection_mode", "selected_group_index", "calls" }) do
+for _, key in ipairs({ "current_config", "active_overrides", "current_group_name", "pending_material_selections", "is_selection_mode", "selected_group_index" }) do
     S.equal(env[key], old_env[key], "Entry " .. key)
 end
 S.equal(Groups.global_names({ groups = { Z = { is_global = true, mask = { ["1"] = { Cape = true } } },

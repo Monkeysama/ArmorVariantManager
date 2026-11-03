@@ -1,0 +1,279 @@
+package.path = "ArmorVariantManager/reframework/autorun/?.lua;" .. package.path
+local S = dofile("tests/support.lua")
+local prefix = "ArmorVariantManager_Core.UI.Reff."
+local Controller = require(prefix .. "Controller")
+local Parts = require(prefix .. "Parts")
+local bridge_path = "ArmorVariantManager/reframework/autorun/ArmorVariantManager_Core/UI/Reff/Bridge.lua"
+local failures, passed = {}, 0
+
+local function test(name, run)
+    local ok, reason = pcall(run)
+    if ok then passed=passed+1 else failures[#failures+1]=name .. ": " .. tostring(reason) end
+end
+
+local function rejects(run, reason)
+    local ok, error_message = pcall(run)
+    assert(not ok and tostring(error_message):find(reason, 1, true), tostring(error_message))
+end
+
+-- 检查 JSON 的值、键和数组形状，并排除不会携带字段的空引擎对象。
+local function serializable(value, forbidden, seen, path)
+    path = path or "snapshot"
+    local kind = type(value)
+    if kind == "string" or kind == "boolean" then return end
+    if kind == "number" then
+        assert(value == value and math.abs(value) < math.huge, path .. ": non-finite number")
+        return
+    end
+    assert(kind == "table", path .. ": " .. kind)
+    assert(not forbidden[value], path .. ": engine/context object leaked")
+    assert(getmetatable(value) == nil, path .. ": metatable leaked")
+    seen = seen or {}
+    assert(not seen[value], path .. ": cycle")
+    seen[value] = true
+    local strings, numbers, last = 0, 0, 0
+    for key, item in pairs(value) do
+        if type(key) == "string" then strings=strings+1 else
+            assert(type(key) == "number" and key >= 1 and key % 1 == 0, path .. ": invalid key")
+            numbers=numbers+1; last=math.max(last,key)
+        end
+        serializable(item, forbidden, seen, path .. "." .. tostring(key))
+    end
+    assert(strings == 0 or numbers == 0, path .. ": mixed object/array")
+    assert(numbers == last, path .. ": sparse array")
+    seen[value] = nil
+end
+
+local function controller_fixture(game)
+    local context = {id="armor", weapon=false, suspended=false, group="", selected="Base", selecting=false,
+        group_names={"Local","Global"}, preset_names={"Base","Other"},
+        config={default_preset="Base",groups={Local={is_global=false,default_preset="LocalBase"},
+            Global={is_global=true}}}, pending={[7]={cloth=true,metal=false}}, character={}, player={},
+        baseline={}, internal=function() end}
+    local state = {context=context,theme="custom",operations={},parts_calls=0,theme_writes=0,mode_writes=0}
+    local deps = {game=game,version="test",context=function() return state.context end,
+        theme=function() return state.theme end,language=function() return "en" end,
+        main_label=function() return "Main" end,
+        set_theme=function(value) state.theme=value;state.theme_writes=state.theme_writes+1;return true end,
+        set_mode=function(value) state.context.weapon=value;state.mode_writes=state.mode_writes+1 end,
+        parts=function(received)
+            assert(received == state.context and received.id)
+            state.parts_calls=state.parts_calls+1
+            return {{index=7,label="Part",available=true,enabled=true,materials={}}}
+        end,operations=state.operations}
+    state.controller=Controller.new(deps)
+    state.deps=deps
+    state.forbidden={[context]=true,[context.character]=true,[context.player]=true,[context.baseline]=true,
+        [context.config]=true,[context.pending]=true,[context.pending[7]]=true}
+    return state
+end
+
+for _, game in ipairs({"Wilds","Rise"}) do
+    test(game .. " serializable detached snapshot", function()
+        local f=controller_fixture(game)
+        local snapshot=f.controller.snapshot()
+        serializable(snapshot,f.forbidden)
+        assert(snapshot.game == game and snapshot.bodyId == "armor" and snapshot.selectedPreset == "Base")
+        S.equal(snapshot.groups,{{name="",label="Main",global=false},{name="Local",label="Local",global=false},
+            {name="Global",label="Global",global=true}})
+        S.equal(snapshot.presets,{{name="Base",default=true,active=true},{name="Other",default=false,active=false}})
+        S.equal(snapshot.pending,{["7"]={cloth=true,metal=false}})
+        snapshot.pending["7"].cloth=false
+        assert(f.context.pending[7].cloth == true,"snapshot edits changed pending selections")
+        f.context.pending[7].metal=true
+        assert(snapshot.pending["7"].metal == false,"pending selections changed an old snapshot")
+        f.context.group="Local";f.context.selected="LocalBase";f.context.preset_names={"LocalBase"}
+        local grouped=f.controller.snapshot()
+        assert(grouped.group == "Local" and grouped.presets[1].default and grouped.presets[1].active)
+    end)
+
+    test(game .. " empty scene and non-equipment actions", function()
+        local f=controller_fixture(game)
+        f.context.id=nil;f.context.config=nil;f.context.pending=nil
+        f.deps.parts=function() error("empty scene queried parts") end
+        setmetatable(f.operations,{__index=function() error("non-equipment action queried operations") end})
+        local empty=f.controller.snapshot()
+        serializable(empty,f.forbidden)
+        assert(empty.bodyId == "" and #empty.groups == 0 and #empty.presets == 0 and #empty.parts == 0)
+        S.equal(empty.pending,{})
+        assert(f.controller.action({kind="theme",value="reff"}).theme == "reff")
+        assert(f.controller.action({kind="mode",weapon=true}).weapon == true)
+        assert(f.theme_writes == 1 and f.mode_writes == 1 and f.parts_calls == 0)
+        rejects(function() f.controller.action({kind="theme",value="unknown"}) end,"主题选项无效")
+        rejects(function() f.controller.action({kind="mode",weapon="true"}) end,"装备模式无效")
+    end)
+
+    test(game .. " stale equipment and hover are rejected before dispatch", function()
+        local f=controller_fixture(game)
+        local dispatched=0
+        for _, kind in ipairs({"select","hover"}) do
+            f.operations[kind]=function() dispatched=dispatched+1;return true end
+            rejects(function() f.controller.action({kind=kind,bodyId="old-armor"}) end,"装备已变化")
+            f.context.suspended=true
+            rejects(function() f.controller.action({kind=kind,bodyId="armor"}) end,"角色不可用或正在切换装备")
+            f.context.suspended=false;f.context.id=nil
+            rejects(function() f.controller.action({kind=kind,bodyId="armor"}) end,"角色不可用或正在切换装备")
+            f.context.id="armor"
+        end
+        assert(dispatched == 0)
+        f.controller.action({kind="select",bodyId="armor"})
+        assert(dispatched == 1)
+    end)
+
+    test(game .. " operation failure reasons reach the caller", function()
+        local f=controller_fixture(game)
+        local request={kind="save",bodyId="armor",name="Captured"}
+        f.operations.save=function(received,context)
+            assert(received == request and context == f.context)
+            return false,"磁盘写入失败: access denied"
+        end
+        rejects(function() f.controller.action(request) end,"磁盘写入失败: access denied")
+        f.operations.save=function() error("网格已失效") end
+        rejects(function() f.controller.action(request) end,"网格已失效")
+        f.operations.save=function() return false end
+        rejects(function() f.controller.action(request) end,"操作未保存，请重试")
+        f.deps.set_theme=function() return false end
+        rejects(function() f.controller.action({kind="theme",value="reff"}) end,"主题保存失败")
+    end)
+end
+
+local function parts_fixture(game, weapon)
+    local mesh={enabled=false,names={"cloth","cloth","global","outside"},values={true,false,false,true}}
+    local valid={mesh=mesh};local missing={};local invalid={invalid=true,mesh=mesh}
+    local rows={{index="7",label="Sparse weapon",object=valid},
+        {index=0,label="Rebuilding",object=missing},{index=2,label="Departed",object=invalid},
+        {text="Not equipped"}}
+    local context={character={},player={},weapon=weapon,baseline={},selecting=false}
+    local translate=function(key) return key end
+    local access={weapon_mesh_locked=game == "Rise",valid=function(object) return not object.invalid end,
+        mesh=function(object) assert(not object.invalid);return object.mesh end,
+        call=function(object,method,index)
+            assert(object == mesh,"unexpected component")
+            if method == "get_Enabled" then return object.enabled end
+            if method == "get_MaterialNum" then return #object.names end
+            if method == "getMaterialName" then return object.names[index+1] end
+            if method == "getMaterialsEnable" then return object.values[index+1] end
+            error("unexpected mesh operation: " .. method)
+        end}
+    local parts=Parts.new({access=access,translate=translate,
+        collect=function(character,player,is_weapon,baseline,tr)
+            assert(character == context.character and player == context.player and is_weapon == context.weapon
+                and baseline == context.baseline and tr == translate)
+            return rows
+        end,
+        contains=function(index,name) assert(index == 7);return name ~= "outside" end,
+        hidden=function(index,name) assert(index == 7);return name == "global" end,
+        global_names=function(index,name) assert(index == 7);return name == "global" and {"Hide"} or {} end})
+    local forbidden={[mesh]=true,[valid]=true,[missing]=true,[invalid]=true,[context.character]=true,
+        [context.player]=true,[context.baseline]=true,[rows]=true}
+    return {parts=parts,context=context,rows=rows,mesh=mesh,valid=valid,forbidden=forbidden}
+end
+
+for _, game in ipairs({"Wilds","Rise"}) do
+    for _, weapon in ipairs({false,true}) do
+        local name=game .. (weapon and " weapon" or " armor")
+        test(name .. " materials are filtered, deduplicated and value-only", function()
+            local f=parts_fixture(game,weapon)
+            local snapshot=f.parts.snapshot(f.context)
+            serializable(snapshot,f.forbidden)
+            assert(snapshot[1].index == 7 and snapshot[1].available)
+            assert(snapshot[1].meshLocked == (game == "Rise" and weapon))
+            assert(snapshot[1].enabled == (game == "Rise" and weapon))
+            S.equal(snapshot[1].materials,{{name="cloth",enabled=true,hidden=false,groups={}},
+                {name="global",enabled=false,hidden=true,groups={"Hide"}}})
+            f.context.selecting=true
+            local selection=f.parts.snapshot(f.context)
+            assert(#selection[1].materials == 3 and selection[1].materials[3].name == "outside")
+        end)
+
+        test(name .. " manual material intent takes priority over rendered visibility", function()
+            local f=parts_fixture(game,weapon)
+            f.context.selecting=true
+            f.context.baseline["7"]={materials={cloth=false,global=true}}
+            local snapshot=f.parts.snapshot(f.context)
+            S.equal(snapshot[1].materials,{{name="cloth",enabled=false,hidden=false,groups={}},
+                {name="global",enabled=true,hidden=true,groups={"Hide"}},
+                {name="outside",enabled=true,hidden=false,groups={}}})
+            f.context.baseline["7"].materials.global=nil
+            local fallback=f.parts.snapshot(f.context)
+            assert(fallback[1].materials[1].enabled == false,"manual false fell back to rendered true")
+            assert(fallback[1].materials[2].enabled == false and fallback[1].materials[2].hidden,
+                "missing intent did not fall back to rendered false")
+            assert(fallback[1].materials[3].enabled == true,"missing intent did not fall back to rendered true")
+        end)
+
+        test(name .. " missing components stay unavailable and sparse find stays fresh", function()
+            local f=parts_fixture(game,weapon)
+            local snapshot=f.parts.snapshot(f.context)
+            assert(#snapshot == 4 and snapshot[2].index == 0 and snapshot[3].index == 2 and snapshot[4].index == -4)
+            for index=2,4 do
+                assert(snapshot[index].available == false,"missing/invalid mesh reported available at row " .. index)
+                assert(snapshot[index].enabled == false and #snapshot[index].materials == 0)
+            end
+            local mesh,row=f.parts.find(f.context,7)
+            assert(mesh == f.mesh and row == f.rows[1])
+            assert(f.parts.find(f.context,0) == nil and f.parts.find(f.context,2) == nil and f.parts.find(f.context,6) == nil)
+            local replacement={}
+            f.valid.mesh=replacement
+            assert(f.parts.find(f.context,7) == replacement,"find retained an obsolete mesh")
+        end)
+    end
+end
+
+local function bridge_fixture(native, sdk_loader)
+    local resets,errors={},{}
+    local env=setmetatable({reff_native=native,require=sdk_loader,
+        log={error=function(message) errors[#errors+1]=message end},
+        re={on_script_reset=function(callback) resets[#resets+1]=callback end}}, {__index=_G})
+    env._G=env
+    return assert(loadfile(bridge_path,"t",env))(),resets,errors
+end
+
+test("missing REFF native never loads SDK or registers hooks", function()
+    local bridge,resets,errors=bridge_fixture(nil,function() error("SDK must not be loaded") end)
+    assert(bridge.register({}) == nil and #resets == 0 and #errors == 0)
+end)
+
+test("missing REFF SDK reports its cause without blocking native UI", function()
+    local bridge,resets,errors=bridge_fixture({},function(name)
+        assert(name == "reff.sdk");error("module 'reff.sdk' not found")
+    end)
+    assert(bridge.register({}) == nil and #resets == 0 and #errors == 1)
+    assert(errors[1]:find("module 'reff.sdk' not found",1,true))
+end)
+
+test("failed SDK registration reports its cause without blocking native UI", function()
+    local bridge,resets,errors=bridge_fixture({},function(name)
+        assert(name == "reff.sdk")
+        return {register=function() error("REFF plugin registration rejected") end}
+    end)
+    assert(bridge.register({}) == nil and #resets == 0 and #errors == 1)
+    assert(errors[1]:find("REFF plugin registration rejected",1,true))
+end)
+
+test("isolated SDK registers controller methods and unregisters on reset", function()
+    local f=controller_fixture("Rise")
+    local registered,unregistered=0,0
+    local handle={unregister=function() unregistered=unregistered+1 end}
+    local bridge,resets,errors=bridge_fixture({},function(name)
+        assert(name == "reff.sdk")
+        return {register=function(id,definition)
+            assert(id == "monkeysama.avm")
+            S.equal(definition.events,{})
+            local methods=definition.methods
+            assert(methods["monkeysama.avm.snapshot"] == f.controller.snapshot)
+            assert(methods["monkeysama.avm.action"] == f.controller.action)
+            local count=0;for _ in pairs(methods) do count=count+1 end;assert(count == 2)
+            serializable(methods["monkeysama.avm.snapshot"](),f.forbidden)
+            assert(methods["monkeysama.avm.action"]({kind="theme",value="reff"}).theme == "reff")
+            registered=registered+1
+            return handle
+        end}
+    end)
+    assert(bridge.register(f.controller) == handle and registered == 1 and #errors == 0 and #resets == 1)
+    resets[1]()
+    assert(unregistered == 1)
+end)
+
+assert(#failures == 0, table.concat(failures,"\n"))
+print("PASS: REFF controller, part snapshots and isolated SDK lifecycle (" .. passed .. " checks)")

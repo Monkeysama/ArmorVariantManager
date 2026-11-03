@@ -449,24 +449,37 @@ end
 local save_current_config_to_file
 local function create_new_group(group_name, body_id, is_global)
     if not body_id then return false end
+    local previous = deep_copy_table(current_config)
     if not PresetGroups.create(current_config, group_name, pending_material_selections, is_global, game.wilds) then return false end
+    if save_current_config_to_file(body_id) == false then
+        for key in pairs(current_config) do current_config[key] = nil end
+        for key, value in pairs(previous) do current_config[key] = value end
+        if TransformManager.refresh_config_rules then TransformManager.refresh_config_rules(current_config) end
+        return false
+    end
     pending_material_selections = {}
     is_selection_mode = false
     update_group_names_list()
-    save_current_config_to_file(body_id)
     return true
 end
 
 -- 辅助函数：删除材质级分组并归还控制权
 local function delete_group(group_name, body_id)
-    if not body_id or not PresetGroups.delete(current_config, group_name) then return false end
+    if not body_id then return false end
+    local previous = deep_copy_table(current_config)
+    if not PresetGroups.delete(current_config, group_name) then return false end
+    if save_current_config_to_file(body_id) == false then
+        for key in pairs(current_config) do current_config[key] = nil end
+        for key, value in pairs(previous) do current_config[key] = value end
+        if TransformManager.refresh_config_rules then TransformManager.refresh_config_rules(current_config) end
+        return false
+    end
     if current_group_name == group_name then
         current_group_name = ""
         selected_group_index = 1
         update_preset_names_list()
     end
     update_group_names_list()
-    save_current_config_to_file(body_id)
     return true
 end
 
@@ -1195,6 +1208,130 @@ local function draw_targets_ui(targets, rule_type, rule_idx)
         end
         imgui.pop_id()
     end
+end
+
+-- REFF 与原生面板共用选择状态，桥接仅暴露可序列化快照。
+do
+    local access = require(game.prefix .. "MaterialView").new()
+    local reff_parts = require("ArmorVariantManager_Core.UI.Reff.Parts").new({
+        collect=runtime.part_view, access=access, translate=T, contains=is_material_in_current_context,
+        hidden=is_globally_hidden, global_names=get_material_global_groups,
+    })
+    local function context()
+        local id = get_body_id()
+        local suspended = runtime.is_suspended() or id ~= last_body_id
+        if suspended then id = nil end
+        local character = get_local_player_character()
+        return {id=id,config=current_config,character=character,player=get_player_handle(character),
+            weapon=is_weapon_mode,suspended=suspended,group=current_group_name,group_names=group_names_list,
+            preset_names=preset_names_list,selected=preset_names_list[selected_preset_index],
+            selecting=is_selection_mode,pending=pending_material_selections,baseline=id and active_overrides[id]}
+    end
+    local function select_group(name)
+        if name ~= "" and not current_config.groups[name] then return false end
+        current_group_name, selected_group_index = name, 1
+        for index, value in ipairs(group_names_list) do
+            if value == name then selected_group_index = index+1; break end
+        end
+        update_preset_names_list()
+        return true
+    end
+    local editor = require("ArmorVariantManager_Core.Runtime.Visibility").new({
+        edit=function(id,part,material,enabled) return appearance.edit(id,part,material,enabled,current_config) end,
+        valid=access.valid,call=access.call,hidden=is_globally_hidden,
+    })
+    local function edit(request, current, material)
+        if type(request.part) ~= "number" or type(request.enabled) ~= "boolean" then return false, "显隐参数无效" end
+        local mesh = reff_parts.find(current,request.part)
+        if not mesh then return false, "部件已不可用" end
+        if material then
+            if type(request.name) ~= "string" or not is_material_in_current_context(request.part,request.name) then
+                return false, "材质不属于当前分组"
+            end
+            local found = false
+            for index=0,access.call(mesh,"get_MaterialNum")-1 do
+                if access.call(mesh,"getMaterialName",index) == request.name then found = true; break end
+            end
+            if not found then return false, "材质已不可用" end
+        elseif current.weapon and access.weapon_mesh_locked then return false, "此游戏的武器网格保持启用" end
+        local targets = {mesh}
+        if game.wilds and not current.weapon then
+            targets = get_character_part_meshes(current.character,request.part,current.baseline and current.baseline[tostring(request.part)])
+        end
+        if material then return editor.material(current.id,request.part,targets,request.name,request.enabled) end
+        return editor.mesh(current.id,request.part,targets,request.enabled)
+    end
+    local function preset_name(request)
+        return type(request.name) == "string" and request.name ~= "" and request.name
+    end
+    local controller = require("ArmorVariantManager_Core.UI.Reff.Controller").new({
+        game=game.name,version=version,context=context,parts=reff_parts.snapshot,
+        main_label=function() return T("main_list") end,
+        language=function() return global_config.language end,
+        theme=function() return global_config.reff_theme == "reff" and "reff" or "custom" end,
+        set_theme=function(value)
+            local previous = global_config.reff_theme
+            global_config.reff_theme = value
+            if not save_global_settings() then global_config.reff_theme = previous; return false end
+            return true
+        end,
+        set_mode=switch_variant_mode,
+        operations={
+            group=function(request) return type(request.name) == "string" and select_group(request.name) end,
+            preset=function(request,current)
+                if not preset_name(request) or not get_current_preset_data(request.name) then return false, "预设已不存在" end
+                if global_config.auto_set_selected_preset_as_default and not set_preset_as_default(request.name,current.id) then return false end
+                apply_preset(request.name)
+                for index,name in ipairs(preset_names_list) do if name == request.name then selected_preset_index=index; break end end
+                return true
+            end,
+            save=function(request,current) return preset_name(request) and save_preset(request.name,current.id) end,
+            ["delete-preset"]=function(request,current) return preset_name(request) and delete_preset(request.name,current.id) end,
+            default=function(request,current) return preset_name(request) and set_preset_as_default(request.name,current.id) end,
+            mesh=function(request,current) return edit(request,current,false) end,
+            material=function(request,current) return edit(request,current,true) end,
+            selection=function(request)
+                if type(request.enabled) ~= "boolean" then return false end
+                is_selection_mode = request.enabled
+                if not request.enabled then pending_material_selections = {} end
+                return true
+            end,
+            ["select-material"]=function(request,current)
+                if not current.selecting or type(request.enabled) ~= "boolean" then return false end
+                local mesh = reff_parts.find(current,request.part)
+                if not mesh then return false end
+                for index=0,access.call(mesh,"get_MaterialNum")-1 do
+                    if access.call(mesh,"getMaterialName",index) == request.name then
+                        local part = tostring(request.part)
+                        pending_material_selections[part] = pending_material_selections[part] or {}
+                        pending_material_selections[part][request.name] = request.enabled or nil
+                        return true
+                    end
+                end
+                return false
+            end,
+            ["create-group"]=function(request,current)
+                if not preset_name(request) or not current.selecting then return false end
+                if not request.global then
+                    for part,names in pairs(pending_material_selections) do
+                        for name,selected in pairs(names) do
+                            if selected and get_material_group_owner(part,name) then return false, "普通分组不能重复占用材质" end
+                        end
+                    end
+                end
+                if not create_new_group(request.name,current.id,request.global == true) then return false end
+                return select_group(request.name)
+            end,
+            ["delete-group"]=function(request,current) return preset_name(request) and delete_group(request.name,current.id) end,
+            find=function(_,current)
+                local saved,reason = find_auto_preset(current.id)
+                if saved then update_group_names_list(); update_preset_names_list() end
+                return saved,reason
+            end,
+            restore=function(_,current) return restore_config_from_backup(current.id) end,
+        },
+    })
+    require("ArmorVariantManager_Core.UI.Reff.Bridge").register(controller)
 end
 
 -- =============================================================================

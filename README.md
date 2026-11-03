@@ -1,6 +1,6 @@
-# 怪物猎人：荒野 - 差分管理器 (Armor Variant Manager)
+# 怪物猎人：荒野 / 崛起 - 差分管理器 (Armor Variant Manager)
 
-这是一个基于 REFramework 开发的《怪物猎人：荒野》(Monster Hunter Wilds) Lua 脚本，它的核心目的是将多个差分合进一个 MOD 里的工具，可以在游戏内一键切换对应的外观差分，并且只占一套装备的位置。
+基于 REFramework 的装备差分管理工具，支持《怪物猎人：荒野》和《怪物猎人：崛起》。将多个外观差分合进一个 MOD，在游戏内切换网格、材质和预设，只占用一套装备的位置。
 
 ---
 
@@ -9,13 +9,22 @@
 ### 1. 安装本模组
 
 - 下载本模组压缩包。
-- 将压缩包内的 `reframework` 文件夹直接解压到游戏根目录（即 `MonsterHunterWilds.exe` 所在的目录）。
+- 将压缩包内的运行文件解压到对应游戏根目录（`MonsterHunterWilds.exe` 或 `MonsterHunterRise.exe` 所在的目录）。
 - 最终路径结构应为：`游戏目录/reframework/autorun/ArmorVariantManager.lua`。
 
 ### 2. 使用
 
-- 在游戏中按Home键打开差分管理器面板。
-- 左侧面板选择分组，右侧面板选择想要的预设即可。
+- 通过下方 REFF 界面或 REFramework 原生菜单打开差分管理器。
+- 选择分组和预设即可切换外观；调整材质显隐后，保存为预设。
+
+### REFF 界面
+
+- 另行安装 [REFF](https://github.com/Monkeysama/REFF)，使用其支持的 D3D12 模式。差分管理器发布包中的 `reframework/reff/plugins/monkeysama.avm` 也需完整保留。
+- 按 REFF 的打开快捷键（默认 **F8**），在插件列表选择 **差分管理器**。分组、预设和部件/材质保持原弹窗的操作顺序。
+- 在页面底部打开 **设置**，主题可选 **自有主题**（默认冰青配色）或 **跟随 REFF**；后者沿用 REFF 的配色。两种主题都遵循 REFF 字号与缩放设置。
+- 当前网页提供预设、分组、显隐、自动查找与备份恢复；变身条件及游戏专属设置继续使用 REF 原生菜单。
+- 原生菜单入口保持不变：在 REFramework 的 **Script Generated UI** 中展开差分管理器。没有安装 REFF 也能使用该入口；荒野原 Home 弹窗暂时保留。
+- 原有 JSON 无需转换，仍从当前游戏的 `reframework/data/ArmorVariantManager` 读取和保存。
 <!-- - 在游戏中按 **Insert** 键打开 REFramework 菜单。
 - 找到 **Script Generated UI** 栏目，点击展开 **装备差分管理器**。
 - 点击**预设管理**，右侧为分组列表，左侧为该分组的预设，在右侧选择你想要调整的分组，在左侧选择你想要的预设，点击**设为默认**即可将选中的预设永久保存。 -->
