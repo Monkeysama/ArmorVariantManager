@@ -581,19 +581,19 @@ local function delete_preset(preset_name, body_id)
     return saved
 end
 
-local function reorder_presets(names, body_id)
+local function reorder_presets(names, body_id, preserve_state)
     if not body_id or not current_config then return false end
     local saved, reason = PresetEditor.reorder(current_config, current_group_name, names, function(preserve)
-        return save_current_config_to_file(body_id, preserve)
+        return save_current_config_to_file(body_id, preserve_state or preserve)
     end)
     update_preset_names_list()
     return saved, reason
 end
 
-local function reorder_groups(names, body_id)
+local function reorder_groups(names, body_id, preserve_state)
     if not body_id or not current_config then return false end
     local saved, reason = PresetEditor.reorder_groups(current_config, names, function(preserve)
-        return save_current_config_to_file(body_id, preserve)
+        return save_current_config_to_file(body_id, preserve_state or preserve)
     end)
     update_group_names_list()
     return saved, reason
@@ -1344,26 +1344,43 @@ do
     local function preset_name(request)
         return type(request.name) == "string" and request.name ~= "" and request.name
     end
-    -- 按当前界面序列移动一格，未列出的旧字段不参与排序写入。
+    -- 拖动只移动一项并原子保存；固定分组仍完整保留在旧 group_order 中。
     local function reorder(request, current, groups)
-        if not preset_name(request) or (request.offset ~= -1 and request.offset ~= 1) then
+        local direct = request.target ~= nil
+        if not preset_name(request) or (direct and (type(request.target) ~= "string" or type(request.after) ~= "boolean")
+            or not direct and request.offset ~= -1 and request.offset ~= 1) then
             return false, "排序参数无效"
         end
-        local names, index = {}, nil
-        for position, name in ipairs(groups and current.group_names or current.preset_names) do
-            names[position] = name
-            if name == request.name then index = position end
+        if direct and (request.group ~= current.group or request.weapon ~= current.weapon) then
+            return false, "装备或分组已变化，请重新操作"
+        end
+        local names, fixed, index, target = {}, {}, nil, nil
+        for _, name in ipairs(groups and current.group_names or current.preset_names) do
+            if direct and groups and current.config.groups[name].is_global then fixed[#fixed+1] = name
+            else
+                names[#names+1] = name
+                if name == request.name then index = #names end
+                if name == request.target then target = #names end
+            end
         end
         if not index then return false, "排序项目已不存在" end
-        local destination = index + request.offset
+        if direct and not target then return false, "排序目标已不存在或不可移动" end
+        local destination = direct and (target + (request.after and 1 or 0) - (index < target and 1 or 0)) or index + request.offset
+        if direct and request.target == request.name then return true end
         if destination < 1 or destination > #names then return false, "项目已在列表边界" end
-        names[index], names[destination] = names[destination], names[index]
+        if destination == index then return true end
+        table.remove(names,index)
+        table.insert(names,destination,request.name)
+        local saved, reason
         if groups then
-            local saved, reason = reorder_groups(names, current.id)
-            if saved then select_group(current.group) end
-            return saved, reason
+            for _, name in ipairs(names) do fixed[#fixed+1] = name end
+            saved, reason = reorder_groups(fixed, current.id, true)
+            select_group(current.group)
+        else saved, reason = reorder_presets(names, current.id, true) end
+        for position, name in ipairs(preset_names_list) do
+            if name == current.selected then selected_preset_index = position; break end
         end
-        return reorder_presets(names, current.id)
+        return saved, reason
     end
     local Conditions = require("ArmorVariantManager_Core.UI.Reff.Conditions")
     local condition_model = require(game.prefix .. "ConditionModel")

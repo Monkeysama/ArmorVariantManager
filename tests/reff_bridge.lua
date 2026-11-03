@@ -75,8 +75,8 @@ for _, game in ipairs({"Wilds","Rise"}) do
         local snapshot=f.controller.snapshot()
         serializable(snapshot,f.forbidden)
         assert(snapshot.game == game and snapshot.bodyId == "armor" and snapshot.selectedPreset == "Base")
-        S.equal(snapshot.groups,{{name="",label="Main",global=false},{name="Local",label="Local",global=false},
-            {name="Global",label="Global",global=true}})
+        S.equal(snapshot.groups,{{name="",label="Main",global=false},{name="Global",label="Global",global=true},
+            {name="Local",label="Local",global=false}})
         S.equal(snapshot.presets,{{name="Base",default=true,active=true},{name="Other",default=false,active=false}})
         S.equal(snapshot.pending,{["7"]={cloth=true,metal=false}})
         snapshot.pending["7"].cloth=false

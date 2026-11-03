@@ -83,7 +83,7 @@ async function deleteNode(index: number) {
         <div v-if="rule" :key="definition.id + '-' + rule.index + '-' + ruleRevision" class="condition-rule">
           <div v-if="fields.length" class="condition-fields">
             <template v-for="field in fields" :key="field.key">
-              <ConditionNumber v-if="field.kind === 'number'" :id="'rule-' + definition.id + '-' + rule.index + '-' + field.key" :value="Number(fieldValue(field))" :label="field.label" :min="field.min" :max="field.max" :disabled="busy" :save="value => action('rule_set', { field: field.key, value })" :t="t" />
+              <ConditionNumber v-if="field.kind === 'number'" :id="'rule-' + definition.id + '-' + rule.index + '-' + field.key" :value="Number(fieldValue(field))" :label="field.label" :min="field.min" :max="field.max" :step="field.step" :slider-max="field.sliderMax" :disabled="busy" :save="value => action('rule_set', { field: field.key, value })" :t="t" />
               <ConditionSelect v-else :value="fieldValue(field)" :label="field.label" :options="field.options ?? []" :disabled="busy" :save="value => action('rule_set', { field: field.key, value })" :t="t" />
             </template>
           </div>
@@ -91,7 +91,7 @@ async function deleteNode(index: number) {
             <div class="condition-section-heading"><h3>{{ t('chainNodes') }}</h3><ElButton :disabled="busy" @click="action('chain_add')">{{ t('addNode') }}</ElButton></div>
             <section v-for="node in rule.chain_nodes" :key="node.index + '-' + (nodeKeys[node.index] ?? 0)" class="chain-node" :aria-label="t('chainNode') + ' ' + node.index">
               <div class="chain-node-heading"><h4>{{ t('chainNode') }} {{ node.index }}</h4><ElButton class="quiet-danger" :disabled="busy" @click="deleteNode(node.index)">{{ t('removeNode') }}</ElButton></div>
-              <ConditionNumber :id="'chain-' + definition.id + '-' + rule.index + '-' + node.index" :value="node.duration" :label="t('nodeDuration')" :min="0" :disabled="busy" :save="value => action('chain_set', { node: node.index, field: 'duration', value })" :t="t" />
+              <ConditionNumber :id="'chain-' + definition.id + '-' + rule.index + '-' + node.index" :value="node.duration" :label="t('nodeDuration')" :min="0" :slider-max="60" :step="0.1" :disabled="busy" :save="value => action('chain_set', { node: node.index, field: 'duration', value })" :t="t" />
               <ConditionTargets :targets="node.targets" :groups="conditions.targets" :condition="definition.id" :rule="rule.index" :node="node.index" :disabled="busy" :perform="perform" :t="t" />
             </section>
             <p v-if="!rule.chain_nodes?.length" class="empty-note">{{ t('noNodes') }}</p>

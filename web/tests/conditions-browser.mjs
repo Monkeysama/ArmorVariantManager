@@ -125,6 +125,23 @@ try {
   await click('.condition-list-row:nth-child(3) .el-checkbox');
   assert.equal((await lastCall()).field, 'enabled'); assert.equal((await lastCall()).condition, 'damage');
   assert.equal(await evaluate(`!!document.getElementById('rule-damage-1-loop_count')`), false);
+  // Slider release writes once; the adjacent precise input keeps values beyond the quick range.
+  const beforeSlider = (await calls()).length;
+  await evaluate(`document.querySelector('.condition-fields [role="slider"][aria-label="持续时间（秒）"]').focus()`);
+  await cdp('Input.dispatchKeyEvent', { type: 'keyDown', key: 'ArrowRight', code: 'ArrowRight', windowsVirtualKeyCode: 39 });
+  await cdp('Input.dispatchKeyEvent', { type: 'keyUp', key: 'ArrowRight', code: 'ArrowRight', windowsVirtualKeyCode: 39 });
+  await settled();
+  assert.equal((await calls()).length, beforeSlider + 1);
+  assert.equal((await lastCall()).field, 'duration'); assert.equal((await lastCall()).value, 5.1);
+  await input('rule-damage-1-duration', 125.25, true);
+  assert.equal((await lastCall()).value, 125.25);
+  assert.equal(await evaluate(`document.getElementById('rule-damage-1-duration').value`), '125.25');
+  await input('rule-damage-1-duration', 5, true);
+  await click('#fixture-controls button', 'REFF violet / 140%');
+  await until(`parseFloat(getComputedStyle(document.querySelector('.avm')).fontSize) > 19`);
+  const controlHeights = await evaluate(`[...document.querySelectorAll('.condition-fields .el-select__wrapper, .condition-fields .el-input__wrapper')].map(el => el.getBoundingClientRect().height)`);
+  assert.ok(controlHeights.length >= 3 && Math.max(...controlHeights) - Math.min(...controlHeights) < .5, 'Scaled selects and precise inputs must have equal heights');
+  await click('#fixture-controls button', 'REFF amber');
   await select('动作模式', '循环');
   assert.equal((await lastCall()).value, 2);
   await input('rule-damage-1-loop_inactive_time', 2.5, true);

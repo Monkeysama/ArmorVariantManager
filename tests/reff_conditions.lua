@@ -304,6 +304,13 @@ test("Wilds hit modes and chain nodes cover original fields without normalizatio
     local row = row_for(f.api.snapshot(f.context), "damage")
     assert(#row.fields == 6 and #row.rules == 1 and row.rules[1].duration == 5)
     assert(row.rules[1].chain_loop_count == 1 and row.rules[1].chain_nodes[1].duration == 1)
+    for _, field in ipairs(row.fields) do
+        if field.kind == "number" then
+            assert(field.min == 0 and field.max == nil)
+            local count = field.key == "loop_count" or field.key == "chain_loop_count"
+            assert(field.step == (count and 1 or 0.1) and field.sliderMax == (count and 100 or 60))
+        end
+    end
     S.equal(f.config, before)
     f.act("rule_set", { condition = "damage", rule = 1, field = "mode", value = 2 })
     local rule = f.config.damage_transform_rules[1]; rule.extra = { retained = true }
@@ -312,6 +319,10 @@ test("Wilds hit modes and chain nodes cover original fields without normalizatio
         f.act("rule_set", { condition = "damage", rule = 1, field = field, value = value })
         assert(rule[field] == value)
     end
+    -- 滑动快调范围不缩窄旧配置和精确输入的存储契约。
+    f.act("rule_set", { condition = "damage", rule = 1, field = "duration", value = 125.25 })
+    f.act("rule_set", { condition = "damage", rule = 1, field = "loop_count", value = 250 })
+    assert(rule.duration == 125.25 and rule.loop_count == 250)
     f.act("rule_set", { condition = "damage", rule = 1, field = "mode", value = 3 })
     f.act("chain_add", { condition = "damage", rule = 1 })
     local node = rule.chain_nodes[2]; node.extra = "retained"

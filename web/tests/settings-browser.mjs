@@ -49,6 +49,33 @@ async function select(label, option) {
 async function calls() { return evaluate(`JSON.parse(document.querySelector('#fixture-controls output').textContent).calls`); }
 async function lastCall() { const list = await calls(); return list[list.length - 1]; }
 async function names(pane) { return evaluate(`Array.from(document.querySelectorAll('.${pane} .row-name'), el => el.textContent.trim())`); }
+async function startDrag(pane, source) {
+  return evaluate(`(() => {
+    const button = [...document.querySelectorAll('.${pane} .catalog-row')].find(el => el.querySelector('.row-name').textContent.trim() === ${JSON.stringify(source)});
+    if (!button) throw new Error('Drag source not found');
+    window.catalogDragTransfer = new DataTransfer();
+    return button.dispatchEvent(new DragEvent('dragstart', { bubbles: true, cancelable: true, dataTransfer: window.catalogDragTransfer }));
+  })()`);
+}
+async function drop(pane, source, target, after) {
+  const accepted = await evaluate(`(() => {
+    const rows = [...document.querySelectorAll('.${pane} .sortable-row')];
+    const row = rows.find(el => el.querySelector('.row-name').textContent.trim() === ${JSON.stringify(target)});
+    const rect = row.getBoundingClientRect(), dataTransfer = window.catalogDragTransfer;
+    const options = { bubbles: true, cancelable: true, dataTransfer, clientY: rect.top + rect.height * ${after ? .75 : .25} };
+    const accepted = !row.dispatchEvent(new DragEvent('dragover', options));
+    row.dispatchEvent(new DragEvent('drop', options));
+    rows.find(el => el.querySelector('.row-name').textContent.trim() === ${JSON.stringify(source)})?.querySelector('.catalog-row').dispatchEvent(new DragEvent('dragend', { bubbles: true, dataTransfer }));
+    delete window.catalogDragTransfer;
+    return accepted;
+  })()`);
+  await settled();
+  return accepted;
+}
+async function drag(pane, source, target, after) {
+  await startDrag(pane, source);
+  return drop(pane, source, target, after);
+}
 async function screenshot(name) {
   await evaluate(`document.activeElement?.blur(); window.scrollTo(0,0)`);
   await cdp('Input.dispatchMouseEvent', { type: 'mousePressed', x: 1, y: 1, button: 'left', clickCount: 1 });
@@ -128,22 +155,42 @@ try {
     console.log('Camera action fixture passed: reset sends no value, failure keeps all camera fields, successful retry refreshes defaults, disabled capability; inspected shared-reason rendering and translated 140% narrow layout.');
   } else {
 
-  // Sorting is explicit and bounded; a failed write does not move either list.
-  await click('.groups-pane .sort-toggle', '排序');
-  assert.equal(await evaluate(`document.querySelector('.groups-pane .sortable-row:first-child .sort-actions') === null`), true);
-  assert.equal(await evaluate(`document.querySelector('.groups-pane .sortable-row:nth-child(2) .move-button').disabled`), true);
-  await click('.groups-pane [aria-label="下移 · 上身"]');
-  assert.deepEqual(await names('groups-pane'), ['主预设', '腰部装饰', '上身', '全局隐藏']);
-  assert.deepEqual(await lastCall(), { kind: 'reorder-group', name: '上身', offset: 1, bodyId: 'ch03_001_0000' });
+  // Direct dragging never moves the main/global region or changes the active selection.
+  assert.equal(await evaluate(`document.querySelector('.sort-toggle') === null`), true);
+  assert.deepEqual(await names('groups-pane'), ['主预设', '全局隐藏', '上身', '腰部装饰']);
+  assert.deepEqual(await evaluate(`Array.from(document.querySelectorAll('.groups-pane .catalog-row'), el => el.draggable)`), [false, false, true, true]);
+  let beforeSorting = (await calls()).length;
+  assert.equal(await startDrag('groups-pane', '全局隐藏'), false);
+  assert.equal(await drop('groups-pane', '全局隐藏', '上身', true), false);
+  assert.equal(await drag('groups-pane', '上身', '主预设', true), false);
+  assert.equal(await drag('groups-pane', '上身', '全局隐藏', true), false);
+  assert.equal((await calls()).length, beforeSorting);
+  assert.equal(await drag('groups-pane', '上身', '腰部装饰', true), true);
+  assert.deepEqual(await names('groups-pane'), ['主预设', '全局隐藏', '腰部装饰', '上身']);
+  assert.deepEqual(await lastCall(), { kind: 'reorder-group', name: '上身', target: '腰部装饰', after: true, group: '上身', weapon: false, bodyId: 'ch03_001_0000' });
+  assert.equal(await evaluate(`document.querySelector('.groups-pane .catalog-row[aria-pressed="true"] .row-name').textContent`), '上身');
   await click('#fixture-controls button', 'Fail next action');
-  await click('.groups-pane [aria-label="上移 · 全局隐藏"]');
-  assert.deepEqual(await names('groups-pane'), ['主预设', '腰部装饰', '上身', '全局隐藏']);
+  await drag('groups-pane', '上身', '腰部装饰', false);
+  assert.deepEqual(await names('groups-pane'), ['主预设', '全局隐藏', '腰部装饰', '上身']);
   assert.match(await evaluate(`document.querySelector('.error-banner').textContent`), /保存失败/);
-  await click('.presets-pane .sort-toggle', '排序');
-  await click('.presets-pane [aria-label="上移 · 无外套"]');
+  await drag('presets-pane', '无外套', '完整上装', false);
   assert.deepEqual(await names('presets-pane'), ['无外套', '完整上装', '内衬']);
   assert.equal((await lastCall()).kind, 'reorder-preset');
   assert.equal(await evaluate(`document.querySelector('.presets-pane .catalog-row[aria-pressed="true"] .row-name').textContent`), '无外套');
+  await click('#fixture-controls button', 'Fail next action');
+  await drag('presets-pane', '无外套', '内衬', true);
+  assert.deepEqual(await names('presets-pane'), ['无外套', '完整上装', '内衬']);
+  await evaluate(`document.querySelector('.presets-pane .catalog-row').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', altKey: true, bubbles: true, cancelable: true }))`);
+  await settled();
+  assert.deepEqual(await names('presets-pane'), ['完整上装', '无外套', '内衬']);
+  beforeSorting = (await calls()).length;
+  await startDrag('groups-pane', '上身');
+  await click('#fixture-controls button', 'Other equipment');
+  await until(`document.querySelector('.equipment-id').textContent === 'ch03_002_0000'`);
+  assert.equal(await drop('groups-pane', '上身', '腰部装饰', false), false);
+  assert.equal((await calls()).length, beforeSorting);
+  await click('#fixture-controls button', 'Restore character');
+  await until(`document.querySelector('.equipment-id').textContent === 'ch03_001_0000'`);
   await screenshot('sorting-ice-cyan');
 
   await click('.footer-tabs button', '设置');

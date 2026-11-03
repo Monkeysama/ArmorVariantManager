@@ -24,8 +24,8 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
     function mesh:call(method, offset, value)
         if method=="get_Enabled" then return enabled end
         if method=="set_Enabled" then enabled=offset end
-        if method=="get_MaterialNum" then return 1 end
-        if method=="getMaterialName" then return "cloth" end
+        if method=="get_MaterialNum" then return 2 end
+        if method=="getMaterialName" then return offset==0 and "cloth" or "metal" end
         if method=="getMaterialsEnable" then return visible end
         if method=="setMaterialsEnable" then visible=value end
     end
@@ -229,21 +229,38 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
         assert(_G.__AVM_LANGUAGE=="zh")
         assert(documentation().sections[1].title=="如何配置","help reads the current language instead of a startup copy")
         send("setting",{id="language",value="en"})
+        local sorting_selected=snapshot().selectedPreset
+        local sorting_applied=#applied
         current=send("reorder-preset",{name="Captured",offset=-1})
         S.equal(names(current.presets),{"Show","Captured","Hide"})
         S.equal(data["ArmorVariantManager/armor.json"].preset_order,{"Show","Captured","Hide"})
+        assert(current.selectedPreset==sorting_selected and #applied==sorting_applied,"sorting preserves selection and appearance")
+        local sorting_writes=#writes
+        current=send("reorder-preset",{name="Hide",target="Show",after=false,group="",weapon=false})
+        S.equal(names(current.presets),{"Hide","Show","Captured"})
+        local sorting_saves=0
+        for index=sorting_writes+1,#writes do
+            if writes[index]=="ArmorVariantManager/armor.json" then sorting_saves=sorting_saves+1 end
+        end
+        assert(sorting_saves==1 and current.selectedPreset==sorting_selected,"drag moves multiple positions with one save")
+        current=send("reorder-preset",{name="Hide",target="Captured",after=true,group="",weapon=false})
         local before_order=S.copy(data["ArmorVariantManager/armor.json"].preset_order)
         write_failed=true
         local sorted,sort_reason=pcall(send,"reorder-preset",{name="Captured",offset=-1})
         assert(not sorted and sort_reason:find("disk full",1,true))
         S.equal(names(snapshot().presets),before_order)
         S.equal(data["ArmorVariantManager/armor.json"].preset_order,before_order)
+        assert(snapshot().selectedPreset==sorting_selected and #applied==sorting_applied,"failed sorting retains selection and appearance")
         write_failed=false
         local before_writes=#writes
         assert(not pcall(send,"reorder-preset",{name="Show",offset=-1}))
         assert(not pcall(send,"reorder-preset",{name="Missing",offset=1}))
         assert(not pcall(send,"reorder-preset",{name="Hide",offset=0}))
         assert(not pcall(dispatch,{kind="reorder-preset",name="Hide",offset=-1,bodyId="old"}))
+        assert(not pcall(send,"reorder-preset",{name="Hide",target="Show",after=false,group="Cape",weapon=false}))
+        assert(not pcall(send,"reorder-preset",{name="Hide",target="Show",after=false,group="",weapon=true}))
+        assert(not pcall(send,"reorder-preset",{name="Hide",target="Missing",after=false,group="",weapon=false}))
+        assert(not pcall(dispatch,{kind="reorder-preset",name="Hide",target="Show",after=false,group="",weapon=false,bodyId="old"}))
         assert(#writes==before_writes,"invalid or stale sorting must not write")
         current=send("reorder-preset",{name="Captured",offset=1})
         current=send("material",{part=0,name="cloth",enabled=false})
@@ -299,22 +316,47 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
         send("selection",{enabled=true})
         send("select-material",{part=0,name="cloth",enabled=true})
         send("create-group",{name="Layer",global=true})
+        send("selection",{enabled=true})
+        send("select-material",{part=0,name="metal",enabled=true})
+        send("create-group",{name="Trim",global=false})
+        send("selection",{enabled=true})
+        send("select-material",{part=0,name="cloth",enabled=true})
+        send("create-group",{name="Overlay",global=true})
         send("group",{name="Cape"})
+        S.equal(names(snapshot().groups),{"","Layer","Overlay","Cape","Trim"})
         current=send("reorder-group",{name="Cape",offset=1})
-        S.equal(names(current.groups),{"","Layer","Cape"})
+        S.equal(names(current.groups),{"","Layer","Overlay","Cape","Trim"})
+        S.equal(data["ArmorVariantManager/armor.json"].group_order,{"Layer","Cape","Trim","Overlay"})
+        current=send("reorder-group",{name="Layer",offset=1})
+        S.equal(data["ArmorVariantManager/armor.json"].group_order,{"Cape","Layer","Trim","Overlay"})
+        assert(current.group=="Cape","legacy offsets retain global-group sorting and the current selection")
+        current=send("reorder-group",{name="Cape",target="Trim",after=true,group="Cape",weapon=false})
+        S.equal(names(current.groups),{"","Layer","Overlay","Trim","Cape"})
         assert(current.group=="Cape","sorting retains current group context")
-        S.equal(data["ArmorVariantManager/armor.json"].group_order,{"Layer","Cape"})
+        S.equal(data["ArmorVariantManager/armor.json"].group_order,{"Layer","Overlay","Trim","Cape"})
+        local before_group_order=S.copy(data["ArmorVariantManager/armor.json"].group_order)
         write_failed=true
-        sorted,sort_reason=pcall(send,"reorder-group",{name="Cape",offset=-1})
+        sorted,sort_reason=pcall(send,"reorder-group",{name="Cape",target="Trim",after=false,group="Cape",weapon=false})
         assert(not sorted and sort_reason:find("disk full",1,true))
-        S.equal(names(snapshot().groups),{"","Layer","Cape"})
+        S.equal(names(snapshot().groups),{"","Layer","Overlay","Trim","Cape"})
+        S.equal(data["ArmorVariantManager/armor.json"].group_order,before_group_order)
         assert(snapshot().group=="Cape")
         write_failed=false
+        current=send("reorder-group",{name="Cape",target="Trim",after=false,group="Cape",weapon=false})
+        S.equal(names(current.groups),{"","Layer","Overlay","Cape","Trim"})
+        S.equal(data["ArmorVariantManager/armor.json"].group_order,{"Layer","Overlay","Cape","Trim"})
+        assert(data["ArmorVariantManager/armor.json"].groups.Layer and data["ArmorVariantManager/armor.json"].groups.Overlay,
+            "normal sorting retains every global group")
         before_writes=#writes
         assert(not pcall(send,"reorder-group",{name="",offset=1}))
         assert(not pcall(send,"reorder-group",{name="Layer",offset=-1}))
-        assert(#writes==before_writes,"main group and boundaries cannot be reordered")
+        assert(not pcall(send,"reorder-group",{name="Cape",target="",after=true,group="Cape",weapon=false}))
+        assert(not pcall(send,"reorder-group",{name="Cape",target="Layer",after=true,group="Cape",weapon=false}))
+        assert(not pcall(send,"reorder-group",{name="Layer",target="Trim",after=true,group="Cape",weapon=false}))
+        assert(#writes==before_writes,"main group, legacy boundaries and fixed-group drops cannot reorder")
         send("delete-group",{name="Layer"})
+        send("delete-group",{name="Overlay"})
+        send("delete-group",{name="Trim"})
         send("group",{name="Cape"})
         write_failed=true
         assert(not pcall(send,"delete-group",{name="Cape"}))

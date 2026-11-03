@@ -14,17 +14,17 @@ function fixed(id: string, label: string, key: string, values: (string | number)
 }
 function threshold(id: string, label: string, min: number): ConditionDefinition {
   return { id, label, enabled: true, priority: 1, canAdd: true, canRemove: true,
-    fields: [{ key: 'threshold', label: id === 'hp' ? 'HP（%）' : 'Monster HP (%)', kind: 'number', min, max: 100, default: 50 }],
+    fields: [{ key: 'threshold', label: id === 'hp' ? 'HP（%）' : 'Monster HP (%)', kind: 'number', min, max: 100, step: 1, default: 50 }],
     rules: [{ index: 1, label, threshold: 50, targets: [{ index: 1, group: '上身', preset: '无外套' }] }, { index: 2, label, threshold: 25, targets: [] }] };
 }
 function wildsConditions(): Conditions {
   const damageFields: ConditionField[] = [
     { key: 'mode', label: '动作模式', kind: 'select', default: 1, options: [{ value: 1, label: '普通' }, { value: 2, label: '循环' }, { value: 3, label: '链式' }] },
-    { key: 'condition_delay', label: '条件延迟（秒）', kind: 'number', min: 0, default: 0 },
-    { key: 'duration', label: '持续时间（秒）', kind: 'number', min: 0, default: 5, modes: [1, 2] },
-    { key: 'loop_inactive_time', label: '循环间隔（秒）', kind: 'number', min: 0, default: 0, modes: [2] },
-    { key: 'loop_count', label: '循环次数（0 为无限）', kind: 'number', min: 0, default: 0, modes: [2] },
-    { key: 'chain_loop_count', label: '链式循环次数（0 为无限）', kind: 'number', min: 0, default: 1, modes: [3] },
+    { key: 'condition_delay', label: '条件延迟（秒）', kind: 'number', min: 0, step: .1, sliderMax: 60, default: 0 },
+    { key: 'duration', label: '持续时间（秒）', kind: 'number', min: 0, step: .1, sliderMax: 60, default: 5, modes: [1, 2] },
+    { key: 'loop_inactive_time', label: '循环间隔（秒）', kind: 'number', min: 0, step: .1, sliderMax: 60, default: 0, modes: [2] },
+    { key: 'loop_count', label: '循环次数（0 为无限）', kind: 'number', min: 0, step: 1, sliderMax: 100, default: 0, modes: [2] },
+    { key: 'chain_loop_count', label: '链式循环次数（0 为无限）', kind: 'number', min: 0, step: 1, sliderMax: 100, default: 1, modes: [3] },
   ];
   return { enabled: true, canEnable: false, parallel: false, selected: 'hp', canTestHp: true, canTestDamage: true, targets: structuredClone(targetGroups), definitions: [
     { ...threshold('hp', '血量', 1), stateLabel: '76.0%' },
@@ -182,11 +182,16 @@ function applyCondition(request: ConditionAction) {
       } else field.value = params.value as typeof field.value;
       if (field.id === 'language') state.language = field.value === 'en' ? 'en-US' : 'zh-CN';
     } else if (kind === 'reorder-group' || kind === 'reorder-preset') {
-      const items = kind === 'reorder-group' ? state.groups.filter(item => item.name !== '') : state.presets;
-      const index = items.findIndex(item => item.name === params.name), target = index + Number(params.offset);
-      if (index < 0 || target < 0 || target >= items.length) throw new Error('无法移动该项');
-      [items[index], items[target]] = [items[target], items[index]];
-      if (kind === 'reorder-group') state.groups = [state.groups.find(item => item.name === '')!, ...(items as Snapshot['groups'])];
+      const direct = params.target !== undefined;
+      const items: Array<Snapshot['groups'][number] | Snapshot['presets'][number]> = kind === 'reorder-group'
+        ? state.groups.filter(item => item.name !== '' && (!direct || !item.global)) : state.presets;
+      const index = items.findIndex(item => item.name === params.name);
+      if (direct && (params.group !== state.group || params.weapon !== state.weapon)) throw new Error('装备或分组已变化');
+      const target = direct ? items.findIndex(item => item.name === params.target) : index + Number(params.offset);
+      const destination = direct ? target + (params.after ? 1 : 0) - (index < target ? 1 : 0) : target;
+      if (index < 0 || target < 0 || target >= items.length || destination < 0 || destination >= items.length) throw new Error('无法移动该项');
+      if (params.target !== params.name) items.splice(destination, 0, items.splice(index, 1)[0]);
+      if (kind === 'reorder-group') state.groups = [state.groups.find(item => item.name === '')!, ...(direct ? state.groups.filter(item => item.global) : []), ...(items as Snapshot['groups'])];
     }
     else if (kind === 'mode') { state.weapon = !!params.weapon; state.bodyId = state.weapon ? 'wp00_000_0000' : initial.bodyId; }
     else if (kind === 'group') { state.group = String(params.name); state.selectedPreset = ''; }

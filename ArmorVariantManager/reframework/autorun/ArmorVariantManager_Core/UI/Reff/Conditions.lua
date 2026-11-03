@@ -97,7 +97,7 @@ function Conditions.new(deps)
             if deps.state then row.stateLabel, row.warning = deps.state(context, definition.id) end
             for _, field in ipairs(definition.fields) do
                 local item = { key = field.key, label = T(field.label), kind = field.kind,
-                    min = field.min, max = field.max, default = field.default }
+                    min = field.min, max = field.max, step = field.step, sliderMax = field.slider_max, default = field.default }
                 if field.options then
                     item.options = {}
                     for _, option in ipairs(field.options) do

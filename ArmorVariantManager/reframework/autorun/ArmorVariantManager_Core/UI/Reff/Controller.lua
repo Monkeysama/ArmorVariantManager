@@ -15,9 +15,13 @@ function Controller.new(deps)
         if not context.id then return snapshot end
         snapshot.backupPending = deps.backup_pending and deps.backup_pending(context.id) == true or false
         snapshot.groups[1] = {name="", label=deps.main_label(), global=false}
-        for _, name in ipairs(context.group_names) do
-            local group = context.config.groups[name]
-            if group then snapshot.groups[#snapshot.groups+1] = {name=name,label=name,global=group.is_global == true} end
+        for _, global in ipairs({true,false}) do
+            for _, name in ipairs(context.group_names) do
+                local group = context.config.groups[name]
+                if group and (group.is_global == true) == global then
+                    snapshot.groups[#snapshot.groups+1] = {name=name,label=name,global=global}
+                end
+            end
         end
         local group = context.group == "" and context.config or context.config.groups[context.group]
         for _, name in ipairs(context.preset_names) do

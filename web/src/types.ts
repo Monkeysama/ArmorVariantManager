@@ -8,7 +8,7 @@ export interface ConditionRule {
 }
 export interface ConditionField {
   key: string; label: string; kind: 'number' | 'select'; default: number | string;
-  min?: number; max?: number; modes?: number[]; options?: { value: number | string; label: string }[];
+  min?: number; max?: number; step?: number; sliderMax?: number; modes?: number[]; options?: { value: number | string; label: string }[];
 }
 export interface ConditionDefinition {
   id: string; label: string; enabled: boolean; priority: number; fields: ConditionField[];
@@ -56,6 +56,7 @@ export type Action =
   | { kind: 'theme'; value: 'custom' | 'reff' }
   | { kind: 'setting'; id: string; value?: SettingValue }
   | { kind: 'reorder-preset' | 'reorder-group'; name: string; offset: -1 | 1 }
+  | { kind: 'reorder-preset' | 'reorder-group'; name: string; target: string; after: boolean; group: string; weapon: boolean }
   | { kind: 'group' | 'preset' | 'save' | 'delete-preset' | 'default' | 'delete-group'; name: string }
   | { kind: 'create-group'; name: string; global: boolean }
   | { kind: 'mesh'; part: number; enabled: boolean }
