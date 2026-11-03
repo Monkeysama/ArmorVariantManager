@@ -110,11 +110,19 @@ load_global_settings()
 -- =============================================================================
 
 local type_mesh = nil
-local SceneObject = require("ArmorVariantManager_Core.Games.Wilds.SceneObject")
-local Actors = require("ArmorVariantManager_Core.Games.Wilds.Actors")
-local scene_object = SceneObject.new()
-local safe_get_game_object = scene_object.game_object
-local actors
+local appearance, variant_manager_ui
+
+-- 场景变化只清运行状态，配置及手动预设选择保持不变。
+local function reset_actor_context()
+    appearance.reset()
+    if variant_manager_ui then variant_manager_ui:invalidate_context() end
+end
+
+local runtime = require("ArmorVariantManager_Core.Games.Wilds.Runtime").new(global_config, {
+    reset = reset_actor_context,
+})
+local actors, runtime_guard = runtime.actors, runtime.guard
+local safe_get_game_object = runtime.scene_object.game_object
 
 -- 状态变量
 local show_window = true
@@ -123,7 +131,6 @@ local last_body_id = nil
 local config_session = ConfigSession.new(GameConfig, TransformManager.refresh_config_rules)
 local loaded_configs = config_session.cache
 local temp_applied_presets = {} -- 记录当前临时应用的预设 (BodyID -> PresetName)
-local runtime_guard, variant_manager_ui
 
 -- 只接受本轮 PlayerManager 提供的真实玩家。
 local function can_use_transform(character)
@@ -134,7 +141,7 @@ local function is_weapon_id(id)
     return id and (string.match(id, "^wp%d%d") ~= nil or string.match(id, "^it%d%d%d%d") ~= nil)
 end
 
-local appearance = require("ArmorVariantManager_Core.Games.Wilds.Appearance").new({
+appearance = require("ArmorVariantManager_Core.Games.Wilds.Appearance").new({
     load = config_session.load,
     rules = TransformManager,
     can_transform = can_use_transform,
@@ -285,22 +292,10 @@ local function deep_copy_table(orig)
     return copy
 end
 
-local equipment = require("ArmorVariantManager_Core.Games.Wilds.Equipment").new(
-    safe_get_game_object, global_config, Actors.preview_names)
+local equipment, meshes, materials = runtime.equipment, runtime.meshes, runtime.materials
 local get_character_body_id = equipment.body_id
 local get_character_weapon_id = equipment.weapon_id
-local meshes = require("ArmorVariantManager_Core.Games.Wilds.Meshes").new(safe_get_game_object, get_type)
-local capture_materials = require("ArmorVariantManager_Core.Games.Wilds.Capture").new(meshes, equipment)
-
--- 场景变化只清运行状态，配置及手动预设选择保持不变。
-local function reset_actor_context()
-    appearance.reset()
-    if variant_manager_ui then variant_manager_ui:invalidate_context() end
-end
-
-actors = Actors.new(global_config, scene_object, equipment, meshes, reset_actor_context)
-runtime_guard = actors.guard
-local tick_scanner = actors.tick
+local capture_materials = runtime.capture
 local get_all_characters = actors.all
 local get_local_player_character = actors.local_player
 
@@ -500,7 +495,6 @@ end
 -- =============================================================================
 -- 仅在准备重新开启 Mesh 时读取原生隐藏状态。非猎人对象沿用原行为；
 -- 猎人被原生隐藏且正在帐篷/临时换装时，不用预设强行显示。
-local materials = require("ArmorVariantManager_Core.Games.Wilds.Materials").new(meshes, safe_get_game_object)
 
 -- 旧调用入口保留；角色完整结果不受当前 UI 分组筛选影响。
 local function apply_preset_to_armor(character, preset_data, ignore_context, force_apply)
@@ -1711,7 +1705,7 @@ end
 -- 每一帧执行
 -- =============================================================================
 -- temp_applied_presets 已在文件头部定义
-runtime_guard:install_hooks()
+runtime.install_hooks()
 -- 运行时与界面共用同一配置、默认意图和角色规则入口。
 local process_character = Processor.new({
     identify = function(character, slot)
@@ -1729,93 +1723,67 @@ local process_character = Processor.new({
     end,
 })
 
-re.on_frame(function()
-    local suspended = runtime_guard:update()
-    variant_manager_ui:set_suspended(suspended)
-    if suspended then return end
-    -- 0.1 执行分帧扫描器
-    if not tick_scanner() then variant_manager_ui:set_suspended(true); return end
+local frame_callbacks = {
+    suspended = function(value) variant_manager_ui:set_suspended(value) end,
+    process = process_character,
+    retain = function(seen) actor_runtime:retain(seen) end,
+    update = function()
+        -- D2D 新 UI 自己维护快捷键按下沿和弹窗状态。
+        variant_manager_ui:update()
 
-    -- D2D 新 UI 自己维护快捷键按下沿和弹窗状态。
-    variant_manager_ui:update()
-
-    -- 1. 维护本地玩家 UI 状态
-    local local_body_id = get_body_id()
-    if local_body_id then
-        if local_body_id ~= last_body_id then
-            last_body_id = local_body_id
-            -- 切换装备后分组属于新的 Body，必须回到默认分组，避免沿用上一件装备的分组名称。
-            current_group_name = ""
-            local restoring_mode_group = pending_mode_group_restore == true
-            if not restoring_mode_group then
-                -- 真实换装回到旧装备时只读取 JSON 默认预设，不恢复上次临时选择或手动覆盖。
-                active_group_presets[local_body_id] = nil
-                active_overrides[local_body_id] = nil
-                temp_applied_presets[local_body_id] = nil
-            end
-            -- 如果该 body_id 已有 active_overrides（说明之前已加载过），只更新 UI 不重置状态
-            if active_overrides[local_body_id] then
-                -- 仅更新 UI 配置和列表
-                local data = load_config_data(local_body_id)
-                if data then
-                    current_config = data
-                    update_group_names_list()
-                    update_preset_names_list()
+        -- 1. 维护本地玩家 UI 状态
+        local local_body_id = get_body_id()
+        if local_body_id then
+            if local_body_id ~= last_body_id then
+                last_body_id = local_body_id
+                -- 切换装备后分组属于新的 Body，必须回到默认分组，避免沿用上一件装备的分组名称。
+                current_group_name = ""
+                local restoring_mode_group = pending_mode_group_restore == true
+                if not restoring_mode_group then
+                    -- 真实换装回到旧装备时只读取 JSON 默认预设，不恢复上次临时选择或手动覆盖。
+                    active_group_presets[local_body_id] = nil
+                    active_overrides[local_body_id] = nil
+                    temp_applied_presets[local_body_id] = nil
+                end
+                -- 如果该 body_id 已有 active_overrides（说明之前已加载过），只更新 UI 不重置状态
+                if active_overrides[local_body_id] then
+                    -- 仅更新 UI 配置和列表
+                    local data = load_config_data(local_body_id)
+                    if data then
+                        current_config = data
+                        update_group_names_list()
+                        update_preset_names_list()
+                    else
+                        -- 手动开关会留下 active_overrides，但没有 JSON 时必须清空上一件装备的预设 UI。
+                        load_body_config(local_body_id)
+                    end
                 else
-                    -- 手动开关会留下 active_overrides，但没有 JSON 时必须清空上一件装备的预设 UI。
+                    -- 全新加载：重置状态并应用默认预设
+                    temp_applied_presets[local_body_id] = nil
                     load_body_config(local_body_id)
                 end
-            else
-                -- 全新加载：重置状态并应用默认预设
-                temp_applied_presets[local_body_id] = nil
-                load_body_config(local_body_id)
-            end
-            -- 仅模式切换后恢复同一配置 ID 的分组；新装备没有记录时仍使用默认分组。
-            if restoring_mode_group then
-                pending_mode_group_restore = false
-                local saved_group = mode_group_selection[local_body_id]
-                if saved_group and saved_group ~= "" and current_config.groups
-                    and current_config.groups[saved_group] then
-                    current_group_name = saved_group
-                    for index, group_name in ipairs(group_names_list) do
-                        if group_name == saved_group then
-                            selected_group_index = index + 1
-                            break
+                -- 仅模式切换后恢复同一配置 ID 的分组；新装备没有记录时仍使用默认分组。
+                if restoring_mode_group then
+                    pending_mode_group_restore = false
+                    local saved_group = mode_group_selection[local_body_id]
+                    if saved_group and saved_group ~= "" and current_config.groups
+                        and current_config.groups[saved_group] then
+                        current_group_name = saved_group
+                        for index, group_name in ipairs(group_names_list) do
+                            if group_name == saved_group then
+                                selected_group_index = index + 1
+                                break
+                            end
                         end
+                        update_preset_names_list()
                     end
-                    update_preset_names_list()
                 end
             end
         end
-    end
-    -- 当 local_body_id 为 nil 时不重置 last_body_id，避免模型短暂重建期间丢失状态
-
-    -- 遍历所有角色并应用规则引擎
-    -- 2. 遍历所有玩家并应用配置
-    local all_chars = get_all_characters()
-    -- 本地玩家是每帧预设应用的直接目标；角色扫描在模型重建或菜单场景中可能暂时漏掉它，
-    -- 因此补入 MasterPlayer 角色，保证自定义 Body ID 也能持续应用预设状态。
-    local local_char_for_frame = get_local_player_character()
-    if local_char_for_frame and sdk.is_managed_object(local_char_for_frame) then
-        local local_seen = false
-        for _, listed_char in ipairs(all_chars) do
-            if listed_char == local_char_for_frame then
-                local_seen = true
-                break
-            end
-        end
-        if not local_seen then
-            table.insert(all_chars, local_char_for_frame)
-        end
-    end
-    local seen = {}
-    for _, char in ipairs(all_chars) do
-        if char and sdk.is_managed_object(char) then
-            seen[tostring(char)] = process_character(char)
-        end
-    end
-    actor_runtime:retain(seen)
-end)
+        -- 当 local_body_id 为 nil 时不重置 last_body_id，避免模型短暂重建期间丢失状态
+    end,
+}
+re.on_frame(function() runtime.tick(frame_callbacks) end)
 -- =============================================================================
 -- UI 绘制
 -- =============================================================================

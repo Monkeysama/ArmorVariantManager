@@ -48,8 +48,17 @@ env[helper_name] = assert(load(helpers .. "\nreturn " .. helper_name, "actual-re
 env.Processor = require("ArmorVariantManager_Core.Runtime.Processor")
 local processor_source = S.section(source, "local process_character = Processor.new", "re.on_frame(function()")
 env.process_character = assert(load(processor_source .. "\nreturn process_character", "actual-processor", "t", env))()
-local body = S.section(source, "    -- 遍历所有角色并应用规则引擎", "\nend)\n-- =============================================================================\n-- UI 绘制")
-local frame = assert(load(body, "actual-frame", "t", env))
+local runtime_source = S.read("ArmorVariantManager/reframework/autorun/ArmorVariantManager_Core/Games/Wilds/Runtime.lua")
+local body = S.section(runtime_source, "    function runtime.tick(frame)", "    return runtime")
+env.runtime = {
+    guard = { update = function() return false end },
+    actors = { tick = function() return true end, all = env.get_all_characters,
+        local_player = env.get_local_player_character },
+}
+local tick = assert(load(body .. "\nreturn runtime.tick", "actual-frame", "t", env))()
+local callbacks = { suspended = function() end, update = function() end,
+    process = env.process_character, retain = function(seen) env.actor_runtime:retain(seen) end }
+local function frame() tick(callbacks) end
 frame(); frame()
 assert(outputs[a]["0"].materials.cloth == false, "Actor A must retain its global hide when actor B shares the armor")
 assert(outputs[b]["0"].materials.cloth == true, "Actor B must retain its own global show")
