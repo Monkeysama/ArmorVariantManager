@@ -13,6 +13,7 @@ local Runtime = {}
 function Runtime.new(config, callbacks)
     local runtime = { actors = Actors.new(config), equipment = Equipment.new() }
     runtime.materials = Materials.new(runtime.equipment, Rules.capture_mesh)
+    runtime.capture = require("ArmorVariantManager_Core.Games.Rise.Capture").new(runtime.equipment)
     runtime.transition = Dissolve.new({valid = SceneObject.is_alive})
     SceneObject.material_transition = runtime.transition
     runtime.scheduler, runtime.cg_scheduler = Scheduler.new(), Scheduler.new()

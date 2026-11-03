@@ -256,6 +256,10 @@ local env = setmetatable({
     sdk = { is_managed_object = function() return true end },
     ground_clipping_fix = { settings_changed = function() end }
 }, { __index = _G })
+env.capture_materials = require("ArmorVariantManager_Core.Games.Wilds.Capture").new({
+    part_meshes = function(...) return env.get_character_part_meshes(...) end,
+    first = function(...) return env.get_mesh_component_recursive(...) end,
+}, {weapon_id = function(...) return env.get_character_weapon_id(...) end})
 env.appearance = require("ArmorVariantManager_Core.Games.Wilds.Appearance").new({
     load = function(id) return env.load_config_data(id) end,
     rules = setmetatable({}, {__index=function(_, key) return env.TransformManager[key] end}),
