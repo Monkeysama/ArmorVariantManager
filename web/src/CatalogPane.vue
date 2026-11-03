@@ -90,7 +90,7 @@ async function remove() {
     <div class="catalog-list">
       <div v-for="(item, index) in snapshot.presets" :key="item.name" class="sortable-row">
       <button class="catalog-row preset-row" :aria-pressed="snapshot.selectedPreset === item.name" :disabled="disabled" @click="choosePreset(item.name)">
-        <span class="row-name" :title="item.name">{{ item.name }}</span><span v-if="item.default" class="default-star" :title="t('default')" :aria-label="t('default')">★</span><span v-if="item.active" class="active-dot" :title="t('active')" :aria-label="t('active')"></span>
+        <span class="row-name" :title="item.name">{{ item.name }}</span><svg v-if="item.default" class="default-star" viewBox="0 0 16 16" :aria-label="t('default')" role="img"><title>{{ t('default') }}</title><path d="m8 1.5 1.9 4 4.4.6-3.2 3.1.8 4.4L8 11.5l-3.9 2.1.8-4.4-3.2-3.1 4.4-.6Z" /></svg><span v-if="item.active" class="active-dot" :title="t('active')" :aria-label="t('active')"></span>
       </button>
       <div v-if="sortPresets" class="sort-actions">
         <button v-for="offset in ([-1, 1] as const)" :key="offset" class="move-button" :aria-label="t(offset === -1 ? 'moveUp' : 'moveDown') + ' · ' + item.name" :title="t(offset === -1 ? 'moveUp' : 'moveDown')" :disabled="disabled || (offset === -1 ? index === 0 : index === snapshot.presets.length - 1)" @click="perform({ kind: 'reorder-preset', name: item.name, offset })"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path :d="offset === -1 ? 'M4 10 8 6l4 4' : 'm4 6 4 4 4-4'" /></svg></button>
@@ -100,8 +100,10 @@ async function remove() {
     </div>
     <form class="pane-actions" @submit.prevent="save">
       <label for="preset-name" class="field-label">{{ t('presetName') }}</label>
-      <ElInput id="preset-name" v-model="presetName" :disabled="disabled" />
-      <ElButton type="primary" native-type="submit" :disabled="disabled || !presetName.trim()">{{ t('save') }}</ElButton>
+      <div class="preset-save-line">
+        <ElInput id="preset-name" v-model="presetName" :disabled="disabled" />
+        <ElButton type="primary" native-type="submit" :disabled="disabled || !presetName.trim()">{{ t('save') }}</ElButton>
+      </div>
       <div class="button-pair">
         <ElButton :disabled="disabled || !selected" @click="confirmation = { kind: 'delete-preset', name: snapshot.selectedPreset }">{{ t('delete') }}</ElButton>
         <ElButton :disabled="disabled || !selected" @click="perform({ kind: 'default', name: snapshot.selectedPreset })">{{ t('setDefault') }}</ElButton>

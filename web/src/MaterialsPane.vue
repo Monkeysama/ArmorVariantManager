@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, shallowRef } from 'vue';
-import { ElButton, ElCheckbox, ElInput } from '@reff/ui';
+import { ElButton, ElCheckbox, ElInput, ElTooltip } from '@reff/ui';
 import SettingControl from './SettingControl.vue';
 import type { Action, Material, Perform, Snapshot } from './types';
 import type { Translate } from './i18n';
@@ -71,9 +71,11 @@ function partId(label: string) { return /\s+\[([^\]]+)\]$/.exec(label)?.[1]; }
           :field="field.type === 'boolean' ? { ...field, label: height.label } : field"
           :disabled="busy || !snapshot.bodyId || !!field.disabled"
           :save="value => perform({ kind: 'setting', id: field.id, ...(value !== undefined ? { value } : {}) })" :t="t" />
+        <ElTooltip :trigger="['hover', 'focus']" placement="top-end" :teleported="false" :show-after="250" popper-class="height-tooltip">
+          <template #content><p>{{ height.description || t('heightDraft') }}</p></template>
+          <button class="height-help-button" type="button" :aria-label="t('heightHelp')"><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><circle cx="10" cy="10" r="7.25" /><path d="M10 9v5M10 6v.5" /></svg></button>
+        </ElTooltip>
       </div>
-      <p class="height-draft-note">{{ t('heightDraft') }}</p>
-      <details v-if="height.description" class="height-help"><summary>{{ t('heightHelp') }}</summary><p>{{ height.description }}</p></details>
     </section>
   </section>
 </template>
