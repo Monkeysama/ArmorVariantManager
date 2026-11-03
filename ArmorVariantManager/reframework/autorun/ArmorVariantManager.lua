@@ -65,6 +65,8 @@ local GroundClippingFix = require("ArmorVariantManager_Core.GroundClippingFix")
 local GroundClippingTargets = require("ArmorVariantManager_Core.GroundClippingTargets")
 local GamePresets = require("ArmorVariantManager_Core.Games.Wilds.Presets")
 local PresetGroups = require("ArmorVariantManager_Core.Presets.Groups")
+local PresetSelection = require("ArmorVariantManager_Core.Presets.Selection")
+local RuntimeState = require("ArmorVariantManager_Core.Runtime.State")
 
 -- 获取本地化字符串
 local function T(key)
@@ -204,10 +206,11 @@ local body_id_cache = {} -- Key: Character Address, Value: { id: string, last_ch
 -- BODY_ID_CACHE_TTL 已移至全局配置 global_config.body_id_ttl
 local loaded_configs = {} -- 缓存所有 Body ID 的配置 { [body_id] = config_table }
 local temp_applied_presets = {} -- 记录当前临时应用的预设 (BodyID -> PresetName)
-local active_overrides = {} -- 记录当前生效的配置状态 (BodyID -> { [part_index] = { mesh_enabled=..., materials={...} } })
+local active_overrides = {} -- 记录共享手动基线，不保存角色条件结果 (BodyID -> { [part_index] = { mesh_enabled=..., materials={...} } })
 -- 记录各分组当前选中的预设名 (BodyID -> { [""] = "主列表预设名", ["分组名"] = "预设名" })
 -- 用于全局分组切换时全量重算，确保其他分组的当前预设也一起被应用
 local active_group_presets = {}
+local actor_runtime = RuntimeState.new()
 local ground_clipping_presets = GroundClippingFix.new_preset_state()
 local transform_player_characters = {}
 local runtime_guard, variant_manager_ui
@@ -639,6 +642,7 @@ local function flush_scene_reset(reset_dead_marks)
     last_valid_local_player = nil
     last_valid_local_player_time = 0
     transform_player_characters = {}
+    actor_runtime:clear()
     -- 换场景后旧的"已销毁"标记不再适用，清空以免误伤新场景复用的地址。
     if reset_dead_marks ~= false then clear_dead_object_marks() end
     if TransformManager and TransformManager.clear_last_state_cache then
@@ -966,6 +970,14 @@ local function get_body_id()
     return get_character_body_id(get_local_player_character())
 end
 
+-- 界面展示本地角色的条件结果；编辑基线仍按装备共享。
+local function get_effective_group_presets(body_id)
+    local character = get_local_player_character()
+    local slot = is_weapon_id(body_id) and "weapon" or "armor"
+    local context = character and actor_runtime:peek(tostring(character), slot, body_id, loaded_configs[body_id])
+    return context and context.groups or active_group_presets[body_id] or {}
+end
+
 local get_config_path = ConfigStore.config_path
 local get_backup_path = ConfigStore.backup_path
 
@@ -1059,13 +1071,13 @@ local function update_preset_names_list()
             table.sort(preset_names_list)
         end
     end
-    -- 2. 自动选中当前分组的活跃预设（优先用 active_group_presets，fallback 到默认预设）
+    -- 2. 自动选中本地角色当前分组的活跃预设，未建立状态时回退默认预设
     local current_body_id = get_body_id and get_body_id() or nil
     local active_preset_name = ""
-    if current_body_id and active_group_presets[current_body_id] then
-        active_preset_name = active_group_presets[current_body_id][current_group_name] or ""
+    if current_body_id then
+        active_preset_name = get_effective_group_presets(current_body_id)[current_group_name] or ""
     end
-    -- 如果 active_group_presets 中没有记录，fallback 到默认预设
+    -- 如果当前角色没有选择记录，回退默认预设
     if active_preset_name == "" then
         if current_group_name == "" then
             active_preset_name = current_config.default_preset or ""
@@ -1374,7 +1386,7 @@ local function is_globally_hidden(part_index, mat_name)
     if not current_config.groups then return false end
     local s_idx = tostring(part_index)
     local body_id = get_body_id()
-    local active_saved = (body_id and active_group_presets[body_id]) or {}
+    local active_saved = body_id and get_effective_group_presets(body_id) or {}
     for g_name, g_data in pairs(current_config.groups) do
         if g_data.is_global and g_data.mask and g_data.mask[s_idx]
             and g_data.mask[s_idx][mat_name] == true then
@@ -1463,8 +1475,8 @@ local function apply_preset_to_armor(character, preset_data, ignore_context, for
                                 if mat_enabled == false then
                                     if cur_mat ~= false then mesh_component:call("setMaterialsEnable", j, false) end
                                 elseif mat_enabled == true then
-                                    -- 全局隐藏锁：即使意图是显示，被全局分组锁定的材质强制隐藏
-                                    if is_globally_hidden(i, mat_name) then
+                                    -- 角色合成结果已含全局锁；仅 UI 局部编辑读取本地选择
+                                    if not ignore_context and is_globally_hidden(i, mat_name) then
                                         if cur_mat ~= false then mesh_component:call("setMaterialsEnable", j, false) end
                                     else
                                         if cur_mat ~= true then mesh_component:call("setMaterialsEnable", j, true) end
@@ -1688,65 +1700,25 @@ local function apply_all_defaults(body_id)
     end
 end
 
--- 辅助函数：变身规则激活全局分组时的全量重算
--- 合并顺序与 apply_all_defaults 一致（主列表 → 普通分组 → 全局分组），
--- 但使用 active_group_presets 中记录的当前预设（而非默认预设），
--- 并将变身规则激活的非全局分组 targets 也合并进来。
--- 参数 activated_targets: 变身规则激活的 group→preset 映射
-local function rebuild_overrides_for_transform(body_id, config, activated_targets)
-    if not body_id or not config then return end
-    local height = active_overrides[body_id] and active_overrides[body_id].ground_clipping_fix
-    active_overrides[body_id] = { ground_clipping_fix = height or GroundClippingFix.default_settings(config) }
-    local saved = active_group_presets[body_id] or {}
-    -- 1. 主列表当前预设
-    local main_preset_name = saved[""]
-    if main_preset_name and main_preset_name ~= "" and config.presets and config.presets[main_preset_name] then
-        merge_preset_into_overrides(body_id, config.presets[main_preset_name])
-    elseif config.default_preset and config.default_preset ~= "" and config.presets then
-        local def = config.presets[config.default_preset]
-        if def then merge_preset_into_overrides(body_id, def) end
+-- 辅助函数：变身规则激活结果仅属于当前角色及装备槽位。
+local function resolve_character_overrides(body_id, config, character, slot)
+    local context = actor_runtime:get(tostring(character), slot, body_id, config)
+    local first_apply = context.overrides == nil
+    local result, changed, targets, all_targets = apply_transform_rules_for_character(
+        config, character, active_overrides[body_id], merge_overrides
+    )
+    local selected, rebuild = PresetSelection.resolve_groups(config, active_group_presets[body_id], targets, all_targets)
+    if rebuild then
+        result = PresetSelection.compose(config, selected, targets, {
+            ground_clipping_fix = result.ground_clipping_fix or GroundClippingFix.default_settings(config)
+        }, GamePresets)
+    else
+        if result == active_overrides[body_id] then result = GamePresets.merge(result, {}) end
+        PresetSelection.merge_globals(config, selected, result, GamePresets)
     end
-    -- 2. 普通分组的当前预设
-    if config.groups then
-        for g_name, g_data in pairs(config.groups) do
-            if not g_data.is_global then
-                local gp_name = saved[g_name]
-                if gp_name and gp_name ~= "" and g_data.presets and g_data.presets[gp_name] then
-                    merge_preset_into_overrides(body_id, g_data.presets[gp_name])
-                elseif g_data.default_preset and g_data.default_preset ~= "" and g_data.presets then
-                    local g_def = g_data.presets[g_data.default_preset]
-                    if g_def then merge_preset_into_overrides(body_id, g_def) end
-                end
-            end
-        end
-    end
-    -- 3. 合并变身规则激活的非全局分组 targets（覆盖步骤2的对应分组预设）
-    if activated_targets and config.groups then
-        for g_name, p_name in pairs(activated_targets) do
-            if g_name ~= "" and config.groups[g_name] and not config.groups[g_name].is_global then
-                if p_name and p_name ~= "" and config.groups[g_name].presets and config.groups[g_name].presets[p_name] then
-                    merge_preset_into_overrides(body_id, config.groups[g_name].presets[p_name])
-                end
-            elseif g_name == "" then
-                -- 变身规则激活了主列表预设
-                if p_name and p_name ~= "" and config.presets and config.presets[p_name] then
-                    merge_preset_into_overrides(body_id, config.presets[p_name])
-                end
-            end
-        end
-    end
-    -- 4. 所有全局分组（只锁隐藏项），使用 activated_targets 中的预设（如果有）
-    if config.groups then
-        for g_name, g_data in pairs(config.groups) do
-            if g_data.is_global then
-                local gp_name = (activated_targets and activated_targets[g_name]) or saved[g_name]
-                if not gp_name or gp_name == "" then gp_name = g_data.default_preset end
-                if gp_name and gp_name ~= "" and g_data.presets and g_data.presets[gp_name] then
-                    merge_global_preset_into_overrides(body_id, g_data.presets[gp_name])
-                end
-            end
-        end
-    end
+    context.groups, context.overrides = selected, result
+    ground_clipping_presets.set_runtime(character, config, result and result.ground_clipping_fix)
+    return result, changed or first_apply
 end
 
 -- 辅助函数：获取当前分组的预设数据
@@ -1862,34 +1834,15 @@ local function apply_preset(preset_name)
             local char_weapon_id, w_objs = get_character_weapon_id(char)
             if char_weapon_id and char_weapon_id == current_body_id then
                 local config = load_config_data(char_weapon_id)
-                local new_overrides, _ = apply_transform_rules_for_character(
-                    config, char, active_overrides[current_body_id], merge_overrides
-                )
+                local new_overrides = resolve_character_overrides(char_weapon_id, config, char, "weapon")
                 apply_preset_to_weapon(char, w_objs, new_overrides, true, true)
             end
         else
             local char_body_id = get_character_body_id(char)
             if char_body_id and char_body_id == current_body_id then
                 local config = load_config_data(char_body_id)
-                local new_overrides, _, activated_targets = apply_transform_rules_for_character(
-                    config, char, active_overrides[current_body_id], merge_overrides
-                )
-                -- 检查变身规则是否激活了全局分组
-                local has_global_target = false
-                if activated_targets and config and config.groups then
-                    for g_name, _ in pairs(activated_targets) do
-                        if g_name ~= "" and config.groups[g_name] and config.groups[g_name].is_global then
-                            has_global_target = true
-                            break
-                        end
-                    end
-                end
-                if has_global_target then
-                    rebuild_overrides_for_transform(char_body_id, config, activated_targets)
-                    apply_preset_to_armor(char, active_overrides[char_body_id], true, true)
-                else
-                    apply_preset_to_armor(char, new_overrides, true, true)
-                end
+                local new_overrides = resolve_character_overrides(char_body_id, config, char, "armor")
+                apply_preset_to_armor(char, new_overrides, true, true)
             end
         end
     end
@@ -2203,7 +2156,7 @@ local function save_preset(preset_name, body_id)
     -- 与当前分组的材质状态一起捕获高度草稿；武器预设不保存防具修复。
     if not is_weapon_id(body_id) then
         local group = current_group_name == "" and current_config or current_config.groups[current_group_name]
-        local selected = active_group_presets[body_id] and active_group_presets[body_id][current_group_name]
+        local selected = get_effective_group_presets(body_id)[current_group_name]
             or group and group.default_preset
         new_preset_data.ground_clipping_fix = ground_clipping_presets.get_editor(
             current_config, body_id, current_group_name, selected)
@@ -2551,7 +2504,7 @@ local function draw_mesh_toggle(game_object, label, body_id, part_index)
                                     end
                                     if #global_groups > 0 then
                                         local bid_hint = get_body_id()
-                                        local ag_saved = (bid_hint and active_group_presets[bid_hint]) or {}
+                                        local ag_saved = (bid_hint and get_effective_group_presets(bid_hint)) or {}
                                         for _, gname in ipairs(global_groups) do
                                             local g_data = current_config.groups and current_config.groups[gname]
                                             local pname = ag_saved[gname]
@@ -2598,7 +2551,7 @@ local function draw_mesh_toggle(game_object, label, body_id, part_index)
                                     end
                                     if #global_groups > 0 then
                                         local bid_hint2 = get_body_id()
-                                        local ag_saved2 = (bid_hint2 and active_group_presets[bid_hint2]) or {}
+                                        local ag_saved2 = (bid_hint2 and get_effective_group_presets(bid_hint2)) or {}
                                         for _, gname in ipairs(global_groups) do
                                             local g_data = current_config.groups and current_config.groups[gname]
                                             local pname2 = ag_saved2[gname]
@@ -2659,7 +2612,7 @@ local ground_clipping_fix = GroundClippingFix.new({
 local function get_ground_clipping_settings()
     local group = current_group_name == "" and current_config or current_config.groups and current_config.groups[current_group_name]
     local body_id = get_body_id()
-    local selected = body_id and active_group_presets[body_id] and active_group_presets[body_id][current_group_name]
+    local selected = get_effective_group_presets(body_id)[current_group_name]
         or group and group.default_preset
     return ground_clipping_presets.get_editor(current_config, body_id, current_group_name, selected)
 end
@@ -2667,7 +2620,7 @@ end
 local function set_ground_clipping_settings(changes, body_id)
     if is_weapon_mode or not body_id or body_id ~= last_body_id or body_id ~= get_body_id() then return false end
     local group = current_group_name == "" and current_config or current_config.groups and current_config.groups[current_group_name]
-    local selected = active_group_presets[body_id] and active_group_presets[body_id][current_group_name]
+    local selected = get_effective_group_presets(body_id)[current_group_name]
         or group and group.default_preset
     local settings = ground_clipping_presets.edit(current_config, body_id, current_group_name, selected, changes)
     if not active_overrides[body_id] then active_overrides[body_id] = {} end
@@ -2692,8 +2645,7 @@ variant_manager_ui = VariantManagerUI.new({
     get_context = function()
         local body_id = get_body_id()
         -- 初次打开新 UI 时主动对齐当前实际应用预设；活跃状态尚未建立时回退当前分组默认预设。
-        local active_preset_name = body_id and active_group_presets[body_id]
-            and active_group_presets[body_id][current_group_name] or ""
+        local active_preset_name = get_effective_group_presets(body_id)[current_group_name] or ""
         if not active_preset_name or active_preset_name == "" then
             if current_group_name == "" then
                 active_preset_name = current_config.default_preset or ""
@@ -2780,8 +2732,7 @@ variant_manager_ui = VariantManagerUI.new({
         variant_manager_ui.material_offset = 0
         update_preset_names_list()
         local body_id = get_body_id()
-        local active_preset = body_id and active_group_presets[body_id]
-            and active_group_presets[body_id][current_group_name]
+        local active_preset = get_effective_group_presets(body_id)[current_group_name]
         if active_preset and active_preset ~= "" then
             for index, preset_name in ipairs(preset_names_list) do
                 if preset_name == active_preset then
@@ -3294,122 +3245,34 @@ re.on_frame(function()
             table.insert(all_chars, local_char_for_frame)
         end
     end
+    local seen = {}
     for _, char in ipairs(all_chars) do
-        -- 处理防具
-        local char_body_id = get_character_body_id(char)
-        if char_body_id then
-            local config = load_config_data(char_body_id)
-            if config then
-                if not active_overrides[char_body_id] then
-                    apply_all_defaults(char_body_id)
-                    local new_overrides, _, activated_targets, all_targeted_groups = apply_transform_rules_for_character(
-                        config, char, active_overrides[char_body_id], merge_overrides
-                    )
-                    -- 同步变身规则激活的分组预设到 active_group_presets
-                    -- 只对变身规则中实际涉及的全局分组做回退，未配置规则的全局分组保持用户手动选择
-                    if not active_group_presets[char_body_id] then active_group_presets[char_body_id] = {} end
-                    local has_global_target = false
-                    if config.groups then
-                        for g_name, g_data in pairs(config.groups) do
-                            if g_data.is_global then
-                                if activated_targets and activated_targets[g_name] then
-                                    active_group_presets[char_body_id][g_name] = activated_targets[g_name]
-                                    has_global_target = true
-                                elseif all_targeted_groups and all_targeted_groups[g_name] then
-                                    -- 该全局分组被变身规则覆盖，但当前无规则激活，回退为默认预设
-                                    active_group_presets[char_body_id][g_name] = g_data.default_preset or ""
-                                    has_global_target = true
-                                end
-                                -- 未被任何变身规则 target 的全局分组：保持 active_group_presets 不变
-                            end
-                        end
-                    end
-                    if has_global_target then
-                        -- 全局分组被变身规则激活：全量重算，确保正确的合并顺序
-                        rebuild_overrides_for_transform(char_body_id, config, activated_targets)
-                        apply_preset_to_armor(char, active_overrides[char_body_id], true, true)
-                    else
-                        apply_preset_to_armor(char, new_overrides, true, true)
-                    end
-                end
-                if active_overrides[char_body_id] then
-                    if char and sdk.is_managed_object(char) then
-                        local final_overrides = active_overrides[char_body_id]
-                        local new_overrides, changed, activated_targets, all_targeted_groups = apply_transform_rules_for_character(
-                            config, char, final_overrides, merge_overrides
-                        )
-                        -- 同步变身规则激活的分组预设到 active_group_presets
-                        -- 只对变身规则中实际涉及的全局分组做回退，未配置规则的全局分组保持用户手动选择
-                        if not active_group_presets[char_body_id] then active_group_presets[char_body_id] = {} end
-                        -- 检测 activated_targets 中是否有全局分组
-                        local has_global_target = false
-                        if config.groups then
-                            for g_name, g_data in pairs(config.groups) do
-                                if g_data.is_global then
-                                    if activated_targets and activated_targets[g_name] then
-                                        active_group_presets[char_body_id][g_name] = activated_targets[g_name]
-                                        has_global_target = true
-                                    elseif all_targeted_groups and all_targeted_groups[g_name] then
-                                        -- 该全局分组被变身规则覆盖，但当前无规则激活，回退为默认预设
-                                        active_group_presets[char_body_id][g_name] = g_data.default_preset or ""
-                                        has_global_target = true
-                                    end
-                                    -- 未被任何变身规则 target 的全局分组：保持 active_group_presets 不变
-                                end
-                            end
-                        end
-                        
-                        if changed then
-                            if has_global_target then
-                                -- 全局分组被变身规则激活：全量重算 active_overrides，
-                                -- 确保全局分组只锁隐藏、不覆盖非全局分组的隐藏状态
-                                rebuild_overrides_for_transform(char_body_id, config, activated_targets)
-                                apply_preset_to_armor(char, active_overrides[char_body_id], true, true)
-                            else
-                                apply_preset_to_armor(char, new_overrides, true, true)
-                            end
-                        else
-                            if has_global_target then
-                                apply_preset_to_armor(char, active_overrides[char_body_id], true, false)
-                            else
-                                apply_preset_to_armor(char, new_overrides, true, false)
-                            end
-                        end
-                    end
+        if char and sdk.is_managed_object(char) then
+            local slots = {}
+            seen[tostring(char)] = slots
+            local char_body_id = get_character_body_id(char)
+            if char_body_id then
+                local config = load_config_data(char_body_id)
+                if config then
+                    if not active_overrides[char_body_id] then apply_all_defaults(char_body_id) end
+                    slots.armor = true
+                    local result, changed = resolve_character_overrides(char_body_id, config, char, "armor")
+                    apply_preset_to_armor(char, result, true, changed)
                 end
             end
-        end
-
-        -- 处理武器
-        local char_weapon_id, w_objs = get_character_weapon_id(char)
-        if char_weapon_id and w_objs then
-            local config = load_config_data(char_weapon_id)
-            -- 只有成功加载到 config 才进行后续处理，避免新武器暂无配置时报错
-            if config then
-                if not active_overrides[char_weapon_id] then
-                    apply_all_defaults(char_weapon_id)
-                    local new_overrides, _ = apply_transform_rules_for_character(
-                        config, char, active_overrides[char_weapon_id], merge_overrides
-                    )
-                    apply_preset_to_weapon(char, w_objs, new_overrides, true, true)
-                end
-                if active_overrides[char_weapon_id] then
-                    if char and sdk.is_managed_object(char) then
-                        local final_overrides = active_overrides[char_weapon_id]
-                        local new_overrides, changed = apply_transform_rules_for_character(
-                            config, char, final_overrides, merge_overrides
-                        )
-                        
-                        if changed then
-                            apply_preset_to_weapon(char, w_objs, new_overrides, true, true)
-                        else
-                            apply_preset_to_weapon(char, w_objs, new_overrides, true, false)
-                        end
-                    end
+            local char_weapon_id, w_objs = get_character_weapon_id(char)
+            if char_weapon_id and w_objs then
+                local config = load_config_data(char_weapon_id)
+                if config then
+                    if not active_overrides[char_weapon_id] then apply_all_defaults(char_weapon_id) end
+                    slots.weapon = true
+                    local result, changed = resolve_character_overrides(char_weapon_id, config, char, "weapon")
+                    apply_preset_to_weapon(char, w_objs, result, true, changed)
                 end
             end
         end
     end
+    actor_runtime:retain(seen)
 end)
 -- =============================================================================
 -- UI 绘制

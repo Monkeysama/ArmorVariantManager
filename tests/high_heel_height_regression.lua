@@ -254,6 +254,7 @@ local env = setmetatable({
     sdk = { is_managed_object = function() return true end },
     ground_clipping_fix = { settings_changed = function() end }
 }, { __index = _G })
+env.get_effective_group_presets = function(id) return env.active_group_presets[id] or {} end
 local save_source = extract("save_current_config_to_file", "\n-- 将指定预设写为")
 env.save_current_config_to_file = assert(load(save_source .. "\nreturn save_current_config_to_file", "save", "t", env))()
 local set_source = extract("set_ground_clipping_settings", "\nvariant_manager_ui =")

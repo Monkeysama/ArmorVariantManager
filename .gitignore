@@ -20,6 +20,7 @@ sync_main_release.py
 !/tests/config_compatibility.lua
 !/tests/config_store.lua
 !/tests/preset_compatibility.lua
+!/tests/runtime_state.lua
 !/tests/test_release.py
 !/tests/fixtures/
 !/tests/ground_clipping_targets_regression.lua

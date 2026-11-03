@@ -23,6 +23,7 @@ local guard_module = assert(loadfile("ArmorVariantManager/reframework/autorun/Ar
 local preserved = { keep = true }
 local env = setmetatable({
     scanner = { state = "IDLE", force_rescan = true, last_scan_time = 0 },
+    actor_runtime = require("ArmorVariantManager_Core.Runtime.State").new(),
     RuntimeGuard = guard_module, sdk = sdk_mock, os = { clock = function() return now end },
     global_config = { scanner_batch_size = 200, scan_interval = 0.5 },
     character_cache = preserved, body_id_cache = {}, weapon_id_cache = {},
@@ -70,6 +71,8 @@ local function batch(items)
     env.scanner.scene_key, env.scanner.generation = scene_key, env.runtime_guard.generation
 end
 local good = object()
+local runtime_config = {}
+env.actor_runtime:get("old-scene-actor", "armor", "armor", runtime_config).overrides = {}
 batch({ object({ dead = true }), object({ bad_name = true }), object({ bad_component = true }),
     object({ valid = false }), object({ bad_cache = true }), good })
 assert(tick() and not env.runtime_guard.suspended)
@@ -95,6 +98,7 @@ assert(not tick() and env.runtime_guard.suspended)
 assert(transform_reads == old_reads and invalidations == 0, "Changed scene never reads old snapshot; cleanup stays deferred")
 assert(not env.runtime_guard:update())
 assert(invalidations == 1 and env.character_cache ~= preserved)
+assert(env.actor_runtime:peek("old-scene-actor", "armor", "armor", runtime_config) == nil, "Scene cleanup releases actor results")
 assert(env.active_overrides.keep and env.active_group_presets.keep and env.current_config.keep, "Scene cleanup preserves JSON and preset selections")
 assert(tick())
 batch({ good }); old_reads = transform_reads; scene_key = ""
