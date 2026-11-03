@@ -389,7 +389,7 @@ local condition_names = { "HP", "Damage", "Weapon", "LongSword", "DualBlades", "
     "InsectGlaive", "ChargeBlade", "GreatSwordType", "GreatSwordLevel", "BowLevel", "HammerLevel" }
 local original_conditions, trigger = {}, { hp = true, weapon = true }
 for _, name in ipairs(condition_names) do
-    local path = "ArmorVariantManager_Core.Conditions.Condition_" .. name
+    local path = "ArmorVariantManager_Core.Games.Wilds.Conditions.Condition_" .. name
     original_conditions[path] = package.loaded[path]
     local mode = name == "HP" and "hp" or "weapon"
     package.loaded[path] = { evaluate = function(config)
@@ -399,7 +399,7 @@ for _, name in ipairs(condition_names) do
 end
 local engine = dofile("ArmorVariantManager/reframework/autorun/ArmorVariantManager_Core/TransformManager.lua")
 for _, name in ipairs(condition_names) do
-    local path = "ArmorVariantManager_Core.Conditions.Condition_" .. name
+    local path = "ArmorVariantManager_Core.Games.Wilds.Conditions.Condition_" .. name
     package.loaded[path] = original_conditions[path]
 end
 env.TransformManager = engine

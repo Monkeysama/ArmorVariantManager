@@ -13,6 +13,7 @@ DEFAULT_TESTS = (
     "tests/config_store.lua",
     "tests/preset_compatibility.lua",
     "tests/runtime_state.lua",
+    "tests/rules_compatibility.lua",
     "tests/high_heel_height_regression.lua",
     "tests/ground_clipping_targets_regression.lua",
     "tests/scanner_ui_regression.lua",
