@@ -50,17 +50,19 @@ async function calls() { return evaluate(`JSON.parse(document.querySelector('#fi
 async function lastCall() { const list = await calls(); return list[list.length - 1]; }
 async function names(pane) { return evaluate(`Array.from(document.querySelectorAll('.${pane} .row-name'), el => el.textContent.trim())`); }
 let dragPosition;
-async function rowPoint(pane, name, after = false) {
+async function rowPoint(pane, name, after = false, handle = false) {
   return evaluate(`(() => {
     const button = [...document.querySelectorAll('.${pane} .catalog-row')].find(el => el.querySelector('.row-name').textContent.trim() === ${JSON.stringify(name)});
     if (!button) throw new Error('Sort row not found: ' + ${JSON.stringify(name)});
     button.scrollIntoView({ block: 'nearest' });
+    const handle = ${handle} && button.querySelector('.drag-handle');
+    if (handle) { const rect = handle.getBoundingClientRect(); return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }; }
     const rect = button.getBoundingClientRect();
     return { x: rect.left + Math.min(48, rect.width / 2), y: rect.top + rect.height * ${after ? .75 : .25} };
   })()`);
 }
 async function startDrag(pane, source) {
-  dragPosition = await rowPoint(pane, source);
+  dragPosition = await rowPoint(pane, source, false, true);
   await cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', ...dragPosition, buttons: 0 });
   await cdp('Input.dispatchMouseEvent', { type: 'mousePressed', ...dragPosition, button: 'left', buttons: 1, clickCount: 1 });
   return evaluate(`!!document.querySelector('.${pane} .catalog-row[data-sortable="true"]:active')`);
@@ -166,6 +168,9 @@ try {
   assert.deepEqual(await names('groups-pane'), ['主预设', '全局隐藏', '上身', '腰部装饰']);
   assert.deepEqual(await evaluate(`Array.from(document.querySelectorAll('.groups-pane .catalog-row'), el => el.draggable)`), [false, false, false, false]);
   assert.deepEqual(await evaluate(`Array.from(document.querySelectorAll('.groups-pane .catalog-row'), el => el.dataset.sortable)`), ['false', 'false', 'true', 'true']);
+  assert.equal(await evaluate(`document.querySelector('.groups-pane .row-arrow, .presets-pane .row-arrow, .default-star') === null`), true);
+  assert.equal(await evaluate(`document.querySelector('.presets-pane .tag-default').textContent.trim()`), '默认');
+  assert.equal(await evaluate(`Array.from(document.querySelectorAll('.catalog-row .drag-handle')).every(handle => handle === handle.parentElement.lastElementChild)`), true);
   let beforeSorting = (await calls()).length;
   assert.equal(await startDrag('groups-pane', '全局隐藏'), false);
   assert.equal(await drop('groups-pane', '全局隐藏', '上身', true), false);

@@ -1295,7 +1295,7 @@ do
     local access = require(game.prefix .. "MaterialView").new()
     local reff_parts = require("ArmorVariantManager_Core.UI.Reff.Parts").new({
         collect=runtime.part_view, access=access, translate=T, contains=is_material_in_current_context,
-        hidden=is_globally_hidden, global_names=get_material_global_groups,
+        hidden=is_globally_hidden, global_names=get_material_global_groups, owner=get_material_group_owner,
     })
     local function context()
         local id = get_body_id()

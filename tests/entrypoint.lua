@@ -173,6 +173,7 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
         local current=snapshot()
         assert(current.game==(game=="mhrise" and "Rise" or "Wilds") and current.bodyId=="armor")
         assert(current.theme=="custom" and current.parts[1].materials[1].name=="cloth")
+        assert(current.parts[1].materials[1].editable and current.parts[1].materials[1].owner==nil)
         local function send(kind,args)
             args=args or {}; args.kind=kind; args.bodyId="armor"
             return dispatch(args)
@@ -322,6 +323,18 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
         send("selection",{enabled=true})
         send("select-material",{part=0,name="cloth",enabled=true})
         send("create-group",{name="Overlay",global=true})
+        current=send("group",{name=""})
+        S.equal(names(current.parts[1].materials),{"cloth","metal"})
+        local owned=current.parts[1].materials[1]
+        assert(owned.owner=="Cape" and not owned.editable,"main lists group-owned materials without editing them")
+        S.equal(owned.groups,{"Layer","Overlay"})
+        assert(current.parts[1].materials[2].owner=="Trim" and not current.parts[1].materials[2].editable)
+        local material_applied=#applied
+        local edited,edit_reason=pcall(send,"material",{part=0,name="cloth",enabled=true})
+        assert(not edited and edit_reason:find("材质不属于当前分组",1,true) and #applied==material_applied)
+        current=send("group",{name="Layer"})
+        assert(#current.parts[1].materials==1 and current.parts[1].materials[1].owner=="Cape"
+            and current.parts[1].materials[1].editable,"global mask edits remain available for overlapping owners")
         send("group",{name="Cape"})
         S.equal(names(snapshot().groups),{"","Layer","Overlay","Cape","Trim"})
         current=send("reorder-group",{name="Cape",offset=1})

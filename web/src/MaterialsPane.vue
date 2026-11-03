@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, shallowRef } from 'vue';
-import { ElButton, ElCheckbox, ElInput, ElTooltip } from '@reff/ui';
+import { ElButton, ElCheckbox, ElInput, ElTag, ElTooltip } from '@reff/ui';
 import SettingControl from './SettingControl.vue';
 import type { Action, Material, Perform, Snapshot } from './types';
 import type { Translate } from './i18n';
@@ -22,13 +22,16 @@ const heightUnavailableReason = computed(() => {
 function checked(material: Material) {
   return props.snapshot.selectionMode ? !!props.snapshot.pending[String(part.value?.index)]?.[material.name] : material.enabled;
 }
+function editable(material: Material) {
+  return props.snapshot.selectionMode || (material.editable !== false && !material.hidden);
+}
 function toggle(material: Material, enabled: boolean) {
   if (part.value) void props.perform({ kind: props.snapshot.selectionMode ? 'select-material' : 'material', part: part.value.index, name: material.name, enabled });
 }
 function bulk(enabled: boolean) {
   if (!part.value) return;
   const index = part.value.index;
-  const actions: Action[] = materials.value.filter(item => props.snapshot.selectionMode || !item.hidden).filter(item => checked(item) !== enabled).map(item => ({ kind: props.snapshot.selectionMode ? 'select-material' : 'material', part: index, name: item.name, enabled }));
+  const actions: Action[] = materials.value.filter(editable).filter(item => checked(item) !== enabled).map(item => ({ kind: props.snapshot.selectionMode ? 'select-material' : 'material', part: index, name: item.name, enabled }));
   if (actions.length) void props.perform(actions);
 }
 function groupLabel(name: string) { return props.snapshot.groups.find(item => item.name === name)?.label ?? name; }
@@ -57,10 +60,11 @@ function partId(label: string) { return /\s+\[([^\]]+)\]$/.exec(label)?.[1]; }
         </div>
         <div class="material-list">
           <div v-for="material in materials" :key="material.name" class="material-row" :class="{ 'globally-hidden': material.hidden && !snapshot.selectionMode }">
-            <ElCheckbox :model-value="checked(material)" :disabled="disabled || (material.hidden && !snapshot.selectionMode)" @change="(value: boolean | string | number) => toggle(material, !!value)"><span class="material-name" :title="material.name">{{ material.name }}</span></ElCheckbox>
-            <div v-if="material.hidden || material.groups.length" class="material-meta">
+            <ElCheckbox :model-value="checked(material)" :disabled="disabled || !editable(material)" @change="(value: boolean | string | number) => toggle(material, !!value)"><span class="material-name" :title="material.name">{{ material.name }}</span></ElCheckbox>
+            <div v-if="material.hidden || material.owner || material.groups.length" class="material-meta">
               <span v-if="material.hidden" class="hidden-label">{{ t('hidden') }}</span>
-              <span v-if="material.groups.length" :title="t('member')">{{ material.groups.map(groupLabel).join(' · ') }}</span>
+              <ElTag v-if="material.owner" class="avm-tag tag-owner" size="small" :title="t('member') + ' · ' + groupLabel(material.owner)">{{ groupLabel(material.owner) }}</ElTag>
+              <ElTag v-for="name in material.groups" :key="name" class="avm-tag tag-global" size="small" :title="t('global') + ' · ' + groupLabel(name)">{{ groupLabel(name) }}</ElTag>
             </div>
           </div>
           <p v-if="!part.available" class="empty-note">{{ t('unavailable') }}</p>

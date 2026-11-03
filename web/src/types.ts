@@ -1,4 +1,4 @@
-export interface Material { name: string; enabled: boolean; hidden: boolean; groups: string[] }
+export interface Material { name: string; enabled: boolean; hidden: boolean; groups: string[]; owner?: string; editable?: boolean }
 export interface Part { index: number; label: string; available: boolean; enabled: boolean; meshLocked: boolean; materials: Material[] }
 export interface ConditionTarget { index: number; group: string; preset: string }
 export interface ConditionNode { index: number; duration: number; targets: ConditionTarget[] }

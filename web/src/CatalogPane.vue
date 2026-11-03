@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, shallowRef, watch } from 'vue';
-import { ElButton, ElCheckbox, ElInput } from '@reff/ui';
+import { ElButton, ElCheckbox, ElInput, ElTag } from '@reff/ui';
 import ImportPresetPane from './ImportPresetPane.vue';
 import type { Imports, Perform, Snapshot } from './types';
 import type { Translate } from './i18n';
@@ -86,8 +86,8 @@ async function remove() {
         :draggable="false" :data-sortable="sortable('group', item.name)" :aria-keyshortcuts="item.name && !item.global ? 'Alt+ArrowUp Alt+ArrowDown' : undefined"
         @pointerdown="beginDrag($event, 'group', item.name)"
         @keydown="moveWithKey($event, 'group', item.name)" @click="acceptClick($event) && chooseGroup(item.name)">
+        <span class="row-name" :title="item.label">{{ item.label }}</span><span v-if="item.global" class="row-tag">{{ t('global') }}</span>
         <svg v-if="item.name && !item.global" class="drag-handle" viewBox="0 0 16 16" :aria-label="t('sort')" role="img"><path d="M5 3h1m4 0h1M5 8h1m4 0h1M5 13h1m4 0h1" /></svg>
-        <span class="row-name" :title="item.label">{{ item.label }}</span><span v-if="item.global" class="row-tag">{{ t('global') }}</span><span class="row-arrow" aria-hidden="true">›</span>
       </button>
       </div>
     </div>
@@ -120,8 +120,10 @@ async function remove() {
         :draggable="false" :data-sortable="sortable('preset', item.name)" aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
         @pointerdown="beginDrag($event, 'preset', item.name)"
         @keydown="moveWithKey($event, 'preset', item.name)" @click="acceptClick($event) && choosePreset(item.name)">
+        <span class="row-name" :title="item.name">{{ item.name }}</span>
+        <ElTag v-if="item.default" class="avm-tag tag-default" size="small">{{ t('default') }}</ElTag>
+        <span v-if="item.active" class="active-dot" :title="t('active')" :aria-label="t('active')"></span>
         <svg class="drag-handle" viewBox="0 0 16 16" :aria-label="t('sort')" role="img"><path d="M5 3h1m4 0h1M5 8h1m4 0h1M5 13h1m4 0h1" /></svg>
-        <span class="row-name" :title="item.name">{{ item.name }}</span><svg v-if="item.default" class="default-star" viewBox="0 0 16 16" :aria-label="t('default')" role="img"><title>{{ t('default') }}</title><path d="m8 1.5 1.9 4 4.4.6-3.2 3.1.8 4.4L8 11.5l-3.9 2.1.8-4.4-3.2-3.1 4.4-.6Z" /></svg><span v-if="item.active" class="active-dot" :title="t('active')" :aria-label="t('active')"></span>
       </button>
       </div>
       <p v-if="!snapshot.presets.length" class="empty-note">{{ t('none') }}</p>

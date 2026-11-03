@@ -18,6 +18,13 @@ test('preserves nonempty arrays and surfaces a nonempty object in an array field
   assert.throws(() => normalizeSnapshot({ ...value, parts: { wrong: true } }), /parts must be an array/);
 });
 
+test('preserves material ownership and read-only state without requiring new fields from older bridges', () => {
+  const materials = [{ name: 'owned', enabled: true, hidden: false, owner: '上身', editable: false, groups: ['全局隐藏'] },
+    { name: 'legacy', enabled: false, hidden: false, groups: [] }];
+  const result = normalizeSnapshot({ groups: [], presets: [], parts: [{ index: 1, materials }] });
+  assert.deepEqual(result.parts[0].materials, materials);
+});
+
 test('normalizes import lists and preserves display names, backup markers and exact action paths', () => {
   const snapshot = { groups: [], presets: [], parts: [] };
   assert.equal(normalizeSnapshot(snapshot).canImport, false);

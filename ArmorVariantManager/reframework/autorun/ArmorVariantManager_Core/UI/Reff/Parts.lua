@@ -29,12 +29,14 @@ function Parts.new(deps)
                 local seen = {}
                 for offset=0, deps.access.call(mesh,"get_MaterialNum")-1 do
                     local name = deps.access.call(mesh,"getMaterialName",offset)
-                    if name and not seen[name] and (context.selecting or deps.contains(index,name)) then
+                    local in_context = name and deps.contains(index,name) == true
+                    -- 主列表展示全部材质；被普通组占用的条目仍由所属组编辑。
+                    if name and not seen[name] and (context.selecting or context.group == "" or in_context) then
                         seen[name] = true
                         local enabled = intents[name]
                         if enabled == nil then enabled = deps.access.call(mesh,"getMaterialsEnable",offset) end
                         result.materials[#result.materials+1] = {name=name,
-                            enabled=enabled == true,
+                            enabled=enabled == true,editable=in_context,owner=deps.owner(index,name),
                             hidden=deps.hidden(index,name) == true,groups=deps.global_names(index,name)}
                     end
                 end

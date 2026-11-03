@@ -486,7 +486,7 @@ local function parts_fixture(game, weapon)
     local rows={{index="7",label="Sparse weapon",object=valid},
         {index=0,label="Rebuilding",object=missing},{index=2,label="Departed",object=invalid},
         {text="Not equipped"}}
-    local context={character={},player={},weapon=weapon,baseline={},selecting=false}
+    local context={character={},player={},weapon=weapon,baseline={},selecting=false,group="Current"}
     local translate=function(key) return key end
     local access={weapon_mesh_locked=game == "Rise",valid=function(object) return not object.invalid end,
         mesh=function(object) assert(not object.invalid);return object.mesh end,
@@ -504,7 +504,11 @@ local function parts_fixture(game, weapon)
                 and baseline == context.baseline and tr == translate)
             return rows
         end,
-        contains=function(index,name) assert(index == 7);return name ~= "outside" end,
+        contains=function(index,name)
+            assert(index == 7)
+            return context.group == "Hide" and name == "global" or context.group ~= "Hide" and name ~= "outside"
+        end,
+        owner=function(index,name) assert(index == 7);return name == "outside" and "Other" or nil end,
         hidden=function(index,name) assert(index == 7);return name == "global" end,
         global_names=function(index,name) assert(index == 7);return name == "global" and {"Hide"} or {} end})
     local forbidden={[mesh]=true,[valid]=true,[missing]=true,[invalid]=true,[context.character]=true,
@@ -522,11 +526,26 @@ for _, game in ipairs({"Wilds","Rise"}) do
             assert(snapshot[1].index == 7 and snapshot[1].available)
             assert(snapshot[1].meshLocked == (game == "Rise" and weapon))
             assert(snapshot[1].enabled == (game == "Rise" and weapon))
-            S.equal(snapshot[1].materials,{{name="cloth",enabled=true,hidden=false,groups={}},
-                {name="global",enabled=false,hidden=true,groups={"Hide"}}})
+            S.equal(snapshot[1].materials,{{name="cloth",enabled=true,editable=true,hidden=false,groups={}},
+                {name="global",enabled=false,editable=true,hidden=true,groups={"Hide"}}})
             f.context.selecting=true
             local selection=f.parts.snapshot(f.context)
             assert(#selection[1].materials == 3 and selection[1].materials[3].name == "outside")
+        end)
+
+        test(name .. " main group shows every material with ownership but keeps foreign materials read-only", function()
+            local f=parts_fixture(game,weapon)
+            f.context.group=""
+            local snapshot=f.parts.snapshot(f.context)
+            serializable(snapshot,f.forbidden)
+            S.equal(snapshot[1].materials,{{name="cloth",enabled=true,editable=true,hidden=false,groups={}},
+                {name="global",enabled=false,editable=true,hidden=true,groups={"Hide"}},
+                {name="outside",enabled=true,editable=false,owner="Other",hidden=false,groups={}}})
+            f.context.group="Current"
+            assert(#f.parts.snapshot(f.context)[1].materials == 2,"ordinary group leaked foreign materials")
+            f.context.group="Hide"
+            local global=f.parts.snapshot(f.context)[1].materials
+            assert(#global == 1 and global[1].name == "global","global group ignored its material mask")
         end)
 
         test(name .. " manual material intent takes priority over rendered visibility", function()
@@ -534,9 +553,9 @@ for _, game in ipairs({"Wilds","Rise"}) do
             f.context.selecting=true
             f.context.baseline["7"]={materials={cloth=false,global=true}}
             local snapshot=f.parts.snapshot(f.context)
-            S.equal(snapshot[1].materials,{{name="cloth",enabled=false,hidden=false,groups={}},
-                {name="global",enabled=true,hidden=true,groups={"Hide"}},
-                {name="outside",enabled=true,hidden=false,groups={}}})
+            S.equal(snapshot[1].materials,{{name="cloth",enabled=false,editable=true,hidden=false,groups={}},
+                {name="global",enabled=true,editable=true,hidden=true,groups={"Hide"}},
+                {name="outside",enabled=true,editable=false,owner="Other",hidden=false,groups={}}})
             f.context.baseline["7"].materials.global=nil
             local fallback=f.parts.snapshot(f.context)
             assert(fallback[1].materials[1].enabled == false,"manual false fell back to rendered true")
