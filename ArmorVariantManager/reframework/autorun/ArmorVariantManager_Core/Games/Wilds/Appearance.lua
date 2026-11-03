@@ -1,5 +1,6 @@
 local Defaults = require("ArmorVariantManager_Core.Presets.Defaults")
 local Selection = require("ArmorVariantManager_Core.Presets.Selection")
+local Visibility = require("ArmorVariantManager_Core.Presets.Visibility")
 local State = require("ArmorVariantManager_Core.Runtime.State")
 local Presets = require("ArmorVariantManager_Core.Games.Wilds.Presets")
 local Height = require("ArmorVariantManager_Core.GroundClippingFix")
@@ -65,6 +66,14 @@ function Appearance.new(deps)
             app.overrides[id].ground_clipping_fix = Height.participating_settings(data, config)
                 or previous_height or Height.default_settings(config)
         end
+        return true
+    end
+
+    -- 材质和网格开关只修改草稿，保存仍由预设编辑入口负责。
+    function app.edit(id, part, material, enabled)
+        if not id or part == nil then return false end
+        app.overrides[id] = app.overrides[id] or {}
+        Visibility.set(app.overrides[id], part, material, enabled)
         return true
     end
 

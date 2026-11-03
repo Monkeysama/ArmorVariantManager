@@ -281,7 +281,7 @@ env.config_restore_handled = env.config_session.handled
 env.get_effective_group_presets = function(id) return env.active_group_presets[id] or {} end
 local save_source = extract("save_current_config_to_file", "\n-- 将指定预设写为")
 env.save_current_config_to_file = assert(load(save_source .. "\nreturn save_current_config_to_file", "save", "t", env))()
-local set_source = extract("set_ground_clipping_settings", "\nvariant_manager_ui =")
+local set_source = extract("set_ground_clipping_settings", "\nlocal visibility_editor =")
 local set = assert(load(set_source .. "\nreturn set_ground_clipping_settings", "settings", "t", env))()
 local capture_source = extract("save_preset", "\nlocal function find_auto_preset")
 local capture = assert(load(capture_source .. "\nreturn save_preset", "capture", "t", env))()

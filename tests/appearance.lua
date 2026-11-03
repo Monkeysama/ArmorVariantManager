@@ -272,3 +272,43 @@ S.equal(app.groups.armor, selected_before, "Invalid selection leaves manual inte
 assert(app.select("fresh", config, "", "Manual"))
 assert(app.groups.fresh[""] == "Manual", "Selection can initialize an unprocessed equipment config")
 print("PASS: Rise manual selections, rule rollback, global release, actor versions and invalid targets")
+
+-- 显隐草稿与角色结果隔离，关闭条件时也不能绕过全局隐藏。
+config.enable_transform=true
+assert(app.select("armor", config, "", "Manual"))
+assert(app.select("armor", config, "Lock", "Show"))
+local stored=S.copy(config)
+local old_draft=app.overrides.armor
+assert(app.edit("armor",0,"cloth",false))
+assert(app.edit("armor",0,nil,false))
+assert(old_draft["0"].materials.cloth, "Published old draft remains unchanged")
+pa.drawn=true; pb.drawn=false
+tick(a,pa,true); tick(b,pb,false)
+assert(not outputs[a].armor["0"].materials.cloth and not outputs[b].armor["0"].materials.cloth)
+assert(not outputs[b].armor["0"].mesh_enabled)
+pa.drawn=false; tick(a,pa,true)
+assert(not outputs[a].armor["0"].materials.cloth and not outputs[a].armor["0"].mesh_enabled,
+    "Ending rules restores edited material and mesh baseline")
+S.equal(config,stored,"Visibility edits do not save presets")
+config.enable_transform=false
+assert(app.select("armor",config,"Lock","Hide"))
+assert(app.edit("armor",0,"cloth",true))
+assert(app.overrides.armor["0"].materials.cloth, "Hidden rendering must retain requested show intent")
+tick(a,pa,true); tick(b,pb,false)
+assert(not outputs[a].armor["0"].materials.cloth and not outputs[b].armor["0"].materials.cloth)
+version_before=versions[a].armor
+assert(app.edit("armor",0,nil,true))
+tick(a,pa,true)
+assert(outputs[a].armor["0"].mesh_enabled and versions[a].armor > version_before)
+version_before=versions[a].armor
+tick(a,pa,true)
+assert(versions[a].armor == version_before, "Stable edited output retains material fast path")
+assert(app.select("armor",config,"Lock","Show"))
+tick(a,pa,true)
+assert(outputs[a].armor["0"].materials.cloth, "Selection clears old edited lock output")
+assert(not app.edit("missing",0,nil,true) and app.overrides.missing == nil)
+configs.fresh=config
+app.overrides.fresh=nil
+assert(app.edit("fresh",0,"ribbon",true))
+assert(app.groups.fresh[""] == "Base" and app.overrides.fresh["0"].materials.ribbon)
+print("PASS: Rise visibility edits update rollback, isolated outputs, global locks and stable versions")

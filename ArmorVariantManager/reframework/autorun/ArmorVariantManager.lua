@@ -983,10 +983,7 @@ local function draw_mesh_toggle(game_object, label, body_id, part_index)
                 mesh_component:call("set_Enabled", new_value)
                 -- 更新 active_overrides
                 if body_id and part_index then
-                    local s_idx = tostring(part_index)
-                    if not active_overrides[body_id] then active_overrides[body_id] = {} end
-                    if not active_overrides[body_id][s_idx] then active_overrides[body_id][s_idx] = { materials = {} } end
-                    active_overrides[body_id][s_idx].mesh_enabled = new_value
+                    appearance.edit(body_id, part_index, nil, new_value)
                 end
             end
 
@@ -1050,10 +1047,7 @@ local function draw_mesh_toggle(game_object, label, body_id, part_index)
                                 end
                                 mesh_component:call("setMaterialsEnable", k, render_val)
                                 if body_id then
-                                    if not active_overrides[body_id] then active_overrides[body_id] = {} end
-                                    if not active_overrides[body_id][s_idx] then active_overrides[body_id][s_idx] = { materials = {} } end
-                                    if not active_overrides[body_id][s_idx].materials then active_overrides[body_id][s_idx].materials = {} end
-                                    active_overrides[body_id][s_idx].materials[mn] = target_val  -- 存意图值
+                                    appearance.edit(body_id, part_index, mn, target_val)
                                 end
                             end
                         end
@@ -1083,10 +1077,7 @@ local function draw_mesh_toggle(game_object, label, body_id, part_index)
                                 end
                                 mesh_component:call("setMaterialsEnable", k, render_val)
                                 if body_id then
-                                    if not active_overrides[body_id] then active_overrides[body_id] = {} end
-                                    if not active_overrides[body_id][s_idx] then active_overrides[body_id][s_idx] = { materials = {} } end
-                                    if not active_overrides[body_id][s_idx].materials then active_overrides[body_id][s_idx].materials = {} end
-                                    active_overrides[body_id][s_idx].materials[mn] = nv  -- 存意图值
+                                    appearance.edit(body_id, part_index, mn, nv)
                                 end
                             end
                         end
@@ -1163,10 +1154,7 @@ local function draw_mesh_toggle(game_object, label, body_id, part_index)
                                     if mat_changed then
                                         -- 记录用户意图值到 active_overrides（全局锁不影响存储的意图）
                                         if body_id and part_index then
-                                            if not active_overrides[body_id] then active_overrides[body_id] = {} end
-                                            if not active_overrides[body_id][s_idx] then active_overrides[body_id][s_idx] = { materials = {} } end
-                                            if not active_overrides[body_id][s_idx].materials then active_overrides[body_id][s_idx].materials = {} end
-                                            active_overrides[body_id][s_idx].materials[mat_name] = mat_new_val
+                                            appearance.edit(body_id, part_index, mat_name, mat_new_val)
                                         end
                                         -- 实际渲染时应用全局锁：被全局隐藏的材质始终保持隐藏
                                         local render_val
@@ -1257,6 +1245,13 @@ local function set_ground_clipping_settings(changes, body_id)
     ground_clipping_fix.settings_changed()
     return true
 end
+
+local visibility_editor = require("ArmorVariantManager_Core.Runtime.Visibility").new({
+    edit = appearance.edit,
+    valid = sdk.is_managed_object,
+    call = function(mesh, method, ...) return mesh:call(method, ...) end,
+    hidden = is_globally_hidden,
+})
 
 variant_manager_ui = VariantManagerUI.new({
     is_suspended = function() return runtime_guard.suspended end,
@@ -1553,46 +1548,8 @@ variant_manager_ui = VariantManagerUI.new({
         return active_overrides[body_id] and active_overrides[body_id][tostring(part_index)]
     end,
 
-    -- 切换 Mesh 显示状态，并写回旧 UI 共用的 active_overrides。
-    set_mesh_enabled = function(body_id, part_index, meshes, enabled)
-        if not body_id then return end
-        if not active_overrides[body_id] then active_overrides[body_id] = {} end
-        local key = tostring(part_index)
-        if not active_overrides[body_id][key] then
-            active_overrides[body_id][key] = { materials = {} }
-        elseif not active_overrides[body_id][key].materials then
-            active_overrides[body_id][key].materials = {}
-        end
-        active_overrides[body_id][key].mesh_enabled = enabled
-        for _, mesh in ipairs(meshes or {}) do
-            if sdk.is_managed_object(mesh) then mesh:call("set_Enabled", enabled) end
-        end
-    end,
-
-    -- 切换材质显示状态，并遵守全局隐藏分组的优先级。
-    set_material_enabled = function(body_id, part_index, meshes, material_name, enabled)
-        if not body_id then return end
-        if not active_overrides[body_id] then active_overrides[body_id] = {} end
-        local key = tostring(part_index)
-        if not active_overrides[body_id][key] then
-            active_overrides[body_id][key] = { materials = {} }
-        elseif not active_overrides[body_id][key].materials then
-            active_overrides[body_id][key].materials = {}
-        end
-        active_overrides[body_id][key].materials[material_name] = enabled
-        local render_enabled = enabled
-        if enabled and is_globally_hidden(part_index, material_name) then render_enabled = false end
-        for _, mesh in ipairs(meshes or {}) do
-            if sdk.is_managed_object(mesh) then
-                local count = mesh:call("get_MaterialNum") or 0
-                for i = 0, count - 1 do
-                    if mesh:call("getMaterialName", i) == material_name then
-                        mesh:call("setMaterialsEnable", i, render_enabled)
-                    end
-                end
-            end
-        end
-    end,
+    set_mesh_enabled = visibility_editor.mesh,
+    set_material_enabled = visibility_editor.material,
 
     is_material_in_context = is_material_in_current_context,
 

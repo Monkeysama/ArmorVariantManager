@@ -2,6 +2,7 @@ local Defaults = require("ArmorVariantManager_Core.Presets.Defaults")
 local Processor = require("ArmorVariantManager_Core.Runtime.Processor")
 local State = require("ArmorVariantManager_Core.Runtime.State")
 local Selection = require("ArmorVariantManager_Core.Presets.Selection")
+local Visibility = require("ArmorVariantManager_Core.Presets.Visibility")
 local Presets = require("ArmorVariantManager_Core.Games.Rise.Presets")
 local Rules = require("ArmorVariantManager_Core.Games.Rise.Rules")
 local Appearance = {}
@@ -9,8 +10,10 @@ local Appearance = {}
 -- 共享表只存手动意图；规则结果保存在角色/槽位上下文中。
 function Appearance.new(load_config)
     local app = {overrides = {}, groups = {}, state = State.new()}
+    local edited_outputs = {}
 
     function app.defaults(id, config)
+        edited_outputs[id] = nil
         local selected = {}
         local normal = Defaults.normal(config, Presets, {}, selected)
         normal = Rules.set_model_base(id, normal, selected)
@@ -31,6 +34,23 @@ function Appearance.new(load_config)
         app.overrides[id] = Selection.apply(config, app.groups[id], Presets.merge(app.overrides[id], {}),
             group_name, preset_name, Presets)
         Rules.update_base_preset(id, config, group_name, preset_name, Presets.merge)
+        edited_outputs[id] = nil
+        return true
+    end
+
+    -- 换用新草稿实例使各角色察觉编辑；规则结束后回到编辑后的基础值。
+    function app.edit(id, part, material, enabled)
+        if not id or part == nil then return false end
+        local config = load_config(id)
+        if not config then return false end
+        if not app.overrides[id] then app.defaults(id, config) end
+        local draft = Presets.merge(app.overrides[id] or {}, {})
+        Visibility.set(draft, part, material, enabled)
+        app.overrides[id] = draft
+        Rules.edit_base_field(id, part, material, enabled)
+        local result = Presets.merge(draft, {})
+        Selection.merge_globals(config, app.groups[id], result, Presets)
+        edited_outputs[id] = result
         return true
     end
 
@@ -55,7 +75,7 @@ function Appearance.new(load_config)
         resolve = function(id, config, actor, slot)
             local entry = actor.entry
             local context = app.state:get(tostring(entry.obj), slot, id, config)
-            local result, targets, targeted, rule_changed = app.overrides[id]
+            local result, targets, targeted, rule_changed = edited_outputs[id] or app.overrides[id]
             -- 菜单回退对象没有玩家句柄，不能借本地猎人信号触发条件。
             if config.enable_transform and not actor.is_event and entry.player then
                 result, rule_changed, targets, targeted = Rules.apply_transform_rules(tostring(entry.obj),
