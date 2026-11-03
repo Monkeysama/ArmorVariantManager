@@ -5,6 +5,7 @@ local source = file:read("a"); file:close()
 local first = assert(source:find("local function flush_scene_reset(", 1, true))
 local last = assert(source:find("\nlocal function get_all_characters()", first, true))
 local now, invalidations, transform_reads = 10, 0, 0
+local equipment_clears, mesh_clears = 0, 0
 local loading, menu, scene_key = false, false, "scene-a"
 local loading_method = { call = function() return loading end }
 local quest_parts = { call = function() return menu end }
@@ -26,8 +27,9 @@ local env = setmetatable({
     actor_runtime = require("ArmorVariantManager_Core.Runtime.State").new(),
     RuntimeGuard = guard_module, sdk = sdk_mock, os = { clock = function() return now end },
     global_config = { scanner_batch_size = 200, scan_interval = 0.5 },
-    character_cache = preserved, body_id_cache = {}, weapon_id_cache = {},
-    character_mesh_cache = {}, applied_parts_cache = {}, applied_weapon_cache = {},
+    character_cache = preserved,
+    equipment = { clear = function() equipment_clears = equipment_clears + 1 end, prune = function() end },
+    meshes = { clear = function() mesh_clears = mesh_clears + 1 end },
     active_overrides = { keep = true }, active_group_presets = { keep = true }, current_config = { keep = true },
     preview_character_names = {}, clear_dead_object_marks = function() end,
     variant_manager_ui = { invalidate_context = function() invalidations = invalidations + 1 end },
@@ -119,6 +121,7 @@ env.runtime_guard:begin_transition(true); assert(env.runtime_guard:update())
 env.runtime_guard:mark_load_end(false); assert(env.runtime_guard:update(), "Fast travel waits for fade-in")
 env.runtime_guard:mark_load_end(true); assert(not env.runtime_guard:update())
 assert(invalidations == 3)
+assert(equipment_clears == 3 and mesh_clears == 3, "Scene cleanup releases adapter-owned object caches")
 local ui_start = assert(source:find("re.on_draw_ui(function()", 1, true))
 local tree = assert(source:find('imgui.tree_node(T("mod_name"))', ui_start, true))
 local pause = assert(source:find("if runtime_guard.suspended then", ui_start, true))

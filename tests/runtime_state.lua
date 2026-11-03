@@ -139,6 +139,8 @@ local render_env = setmetatable({
     is_globally_hidden = function() return true end,
     is_material_in_current_context = function() return true end,
 }, { __index = _G })
+render_env.materials = assert(loadfile("ArmorVariantManager/reframework/autorun/ArmorVariantManager_Core/Games/Wilds/Materials.lua", "t", render_env))()
+    .new({ part_meshes = render_env.get_character_part_meshes }, render_env.safe_get_game_object)
 local render_source = S.section(source, "local function apply_preset_to_armor", "-- 辅助函数：应用指定预设到指定角色的武器")
 local render = assert(load(render_source .. "\nreturn apply_preset_to_armor", "actual-render", "t", render_env))()
 render(b, config.presets.Base, true, true)
