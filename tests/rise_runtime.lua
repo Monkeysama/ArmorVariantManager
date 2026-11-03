@@ -32,6 +32,8 @@ end
 
 local prefix = "ArmorVariantManager_Core.Games.Rise."
 local log, directory, event_objects, fallback, reset_hook, pre_hook, post_hook
+local event_pre_hook, event_post_hook, event_hook_failure, debug_messages
+local false_pointer = {}
 local function record(name, object) log[#log + 1] = {name, object} end
 local SceneObject = {is_alive = function(object) return object and not object.dead end}
 package.loaded[prefix .. "SceneObject"] = SceneObject
@@ -69,12 +71,25 @@ package.loaded[prefix .. "DissolveTransition"] = {new = function(deps)
 end}
 sdk = {
     find_type_definition = function(name)
-        assert(name == "snow.QuestManager")
-        return {get_method = function(_, method) assert(method == "onChangedGameStatus"); return "flow" end}
+        if name == "snow.QuestManager" then
+            return {get_method = function(_, method) assert(method == "onChangedGameStatus"); return "flow" end}
+        end
+        assert(name == "snow.eventcut.EventPlayerLoader")
+        return {get_method = function(_, method)
+            assert(method == "<reqStandby>g__set_equip_index|88_0(snow.player.PlayerRequestEquipsData.EquipPack, System.Int32, System.Boolean, snow.eventcut.EventPlayerLoader.<>c__DisplayClass88_0)")
+            return "event_equipment"
+        end}
     end,
-    hook = function(method, before, after) assert(method == "flow"); pre_hook, post_hook = before, after end,
+    hook = function(method, before, after)
+        if method == "flow" then pre_hook, post_hook = before, after; return end
+        assert(method == "event_equipment")
+        if event_hook_failure then error("event hook unavailable") end
+        event_pre_hook, event_post_hook = before, after
+    end,
+    to_ptr = function(value) assert(value == false); return false_pointer end,
 }
 re = {on_script_reset = function(callback) reset_hook = callback end}
+_G.log = {debug = function(message) debug_messages[#debug_messages + 1] = message end}
 local Signals = require(prefix .. "Signals")
 local Runtime = require(prefix .. "Runtime")
 local local_obj, remote_a, remote_b, remote_c = {}, {}, {}, {}
@@ -87,6 +102,8 @@ local function count(object, first)
 end
 local function make(config)
     now, log, calls, forgotten, resets, foreground_cost = 0, {}, {}, {}, {}, 0
+    reset_hook, pre_hook, post_hook, event_pre_hook, event_post_hook = nil, nil, nil, nil, nil
+    debug_messages = {}
     directory = {local_entry={obj=local_obj, player=local_player, is_local=true},
         others={{obj=remote_a, player=player_a}, {obj=remote_b}, {obj=remote_c}}}
     directory.entries = {directory.local_entry, table.unpack(directory.others)}
@@ -140,6 +157,17 @@ advance(runtime, 1)
 assert(calls[#calls - 1].obj == local_obj or calls[#calls].obj == local_obj)
 assert(resets[#resets] == "event")
 
+-- 过场装备钩子保留旧目标与参数语义，不改变任务状态或返回值。
+runtime = make()
+runtime.install_hooks()
+assert(event_pre_hook and event_post_hook, "event equipment hook missing")
+local args = {1, 2, 3, true, 5}
+event_pre_hook(args)
+assert(args[1] == 1 and args[2] == 2 and args[3] == 3 and args[4] == false_pointer and args[5] == 5)
+local result = {}
+assert(event_post_hook(result) == result)
+assert(not runtime.is_suspended() and #log == 0)
+
 -- 场景钩子只置脏；下一拍先放弃动画，不触碰旧网格，也不执行更新回调。
 runtime = make()
 runtime.install_hooks()
@@ -165,6 +193,20 @@ pre_hook({})
 log = {}
 reset_hook()
 assert(log[1][1] == "dissolve.abandon", "reset during scene change must not finish old materials")
+
+-- 可选过场钩子失败只记原日志，任务状态钩子与脚本清理仍可使用。
+runtime = make()
+event_hook_failure = true
+runtime.install_hooks()
+event_hook_failure = false
+S.equal(debug_messages, {"[ArmorVariantManager] Failed to hook EventPlayerLoader"})
+assert(pre_hook and post_hook and reset_hook and not event_pre_hook)
+pre_hook({})
+assert(runtime.is_suspended() and post_hook(123) == 123)
+runtime.tick()
+assert(resets[#resets] == "scene")
+reset_hook()
+assert(resets[#resets] == "script" and SceneObject.material_transition == nil)
 
 -- 离场按完整名册清理；有效本地宽限对象仍保留，死亡玩家不得传给业务层。
 runtime = make()
@@ -219,4 +261,4 @@ runtime.tick(ui)
 S.equal(ui_trace, {"ready", "update", "paused"}, "scene UI frame")
 assert(#calls == previous_calls)
 os.clock = original_clock
-print("PASS: Rise scheduling, local priority, event actors, deferred scene cleanup and actor retirement")
+print("PASS: Rise scheduling, event equipment hook, deferred scene cleanup and actor retirement")

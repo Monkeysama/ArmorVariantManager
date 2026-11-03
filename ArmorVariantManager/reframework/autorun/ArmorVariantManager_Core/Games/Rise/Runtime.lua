@@ -38,7 +38,7 @@ function Runtime.new(config, callbacks)
         callbacks.reset(reason)
     end
 
-    -- 原生钩子只置标志，所有清理延后至 Lua 帧入口。
+    -- 任务状态钩子只置标志，所有清理延后至 Lua 帧入口。
     function runtime.request_reset() pending_reset = true end
 
     -- 与旧入口相同的任务状态事件；钩子中不访问或释放场景对象。
@@ -47,6 +47,15 @@ function Runtime.new(config, callbacks)
         local method = definition and definition:get_method("onChangedGameStatus")
         if method then
             sdk.hook(method, runtime.request_reset, function(value) return value end)
+        end
+        -- 过场保持装备可见；目标不可用时沿用旧入口的可选失败边界。
+        if not pcall(function()
+            local loader = sdk.find_type_definition("snow.eventcut.EventPlayerLoader")
+            local equip = loader:get_method("<reqStandby>g__set_equip_index|88_0(snow.player.PlayerRequestEquipsData.EquipPack, System.Int32, System.Boolean, snow.eventcut.EventPlayerLoader.<>c__DisplayClass88_0)")
+            sdk.hook(equip, function(args) args[4] = sdk.to_ptr(false) end,
+                function(value) return value end)
+        end) then
+            log.debug("[ArmorVariantManager] Failed to hook EventPlayerLoader")
         end
         re.on_script_reset(runtime.stop)
     end
