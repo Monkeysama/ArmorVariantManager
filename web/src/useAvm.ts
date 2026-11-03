@@ -1,10 +1,10 @@
-import { onBeforeUnmount, onMounted, shallowRef } from 'vue';
+import { computed, onBeforeUnmount, onMounted, shallowRef, watch, type Ref } from 'vue';
 import { REFF_UI_VERSION } from '@reff/ui';
 import { createEmbeddedTransport, createReffClient, installInputFocusReporter } from '@reff-sdk/index';
-import type { Perform, Snapshot } from './types';
-import { normalizeSnapshot } from './snapshot';
+import type { Documentation, Perform, Snapshot } from './types';
+import { normalizeDocumentation, normalizeSnapshot } from './snapshot';
 
-export function useAvm() {
+export function useAvm(helpOpen: Readonly<Ref<boolean>>) {
   const client = createReffClient(createEmbeddedTransport());
   const stopInput = installInputFocusReporter(client);
   const snapshot = shallowRef<Snapshot | null>(null);
@@ -12,19 +12,51 @@ export function useAvm() {
   const loading = shallowRef(true);
   const error = shallowRef('');
   const notice = shallowRef('');
+  const documentation = shallowRef<Documentation | null>(null);
+  const documentationLoading = shallowRef(false);
+  const documentationError = shallowRef('');
+  const documentationKey = computed(() => snapshot.value ? `${snapshot.value.game}:${snapshot.value.language}` : '');
+  const documentationCache = new Map<string, Documentation>();
   let disposed = false;
   let ready = false;
   let read: Promise<void> | undefined;
+  let documentationRead: Promise<void> | undefined;
   let timer: number | undefined;
 
   function refresh() {
-    if (disposed || busy.value || read || document.hidden || !ready) return;
+    if (disposed || busy.value || read || documentationRead || document.hidden || !ready) return;
     read = client.call<Snapshot>('monkeysama.avm.snapshot').then(value => {
       if (!disposed) snapshot.value = normalizeSnapshot(value);
     }).catch(reason => { if (!disposed) error.value = reason instanceof Error ? reason.message : String(reason); })
       .finally(() => { read = undefined; loading.value = false; });
     return read;
   }
+  function loadDocumentation(retry = false) {
+    if (retry) documentationError.value = '';
+    if (disposed || !ready || !helpOpen.value || !documentationKey.value || documentation.value || documentationError.value || busy.value || documentationRead) return;
+    documentationLoading.value = true;
+    documentationRead = (async () => {
+      await read;
+      const key = documentationKey.value;
+      try {
+        const value = normalizeDocumentation(await client.call<Documentation>('monkeysama.avm.documentation'));
+        if (disposed) return;
+        documentationCache.set(key, value);
+        if (documentationKey.value === key) documentation.value = value;
+      } catch (reason) {
+        if (!disposed && documentationKey.value === key) documentationError.value = reason instanceof Error ? reason.message : String(reason);
+      }
+    })().finally(() => {
+      documentationRead = undefined;
+      documentationLoading.value = false;
+      loadDocumentation();
+    });
+  }
+  watch([helpOpen, documentationKey], () => {
+    documentation.value = documentationCache.get(documentationKey.value) ?? null;
+    documentationError.value = '';
+    loadDocumentation();
+  });
   async function connect() {
     loading.value = true;
     error.value = '';
@@ -35,7 +67,7 @@ export function useAvm() {
     } catch (reason) { error.value = reason instanceof Error ? reason.message : String(reason); }
     finally { loading.value = false; }
   }
-  // Reads and writes share one lane: an older poll can never overwrite an action result.
+  // Polls, documentation reads and writes share one lane; older reads cannot overwrite action results.
   const perform: Perform = async actions => {
     if (busy.value || !ready || disposed) return false;
     const bodyId = snapshot.value?.bodyId ?? '';
@@ -43,6 +75,7 @@ export function useAvm() {
     notice.value = '';
     try {
       await read;
+      await documentationRead;
       for (const action of Array.isArray(actions) ? actions : [actions]) {
         const params = action.kind === 'mode' || action.kind === 'theme' ? action : { ...action, bodyId };
         const value = await client.call<Snapshot>('monkeysama.avm.action', params);
@@ -54,7 +87,7 @@ export function useAvm() {
     } catch (reason) {
       if (!disposed) error.value = reason instanceof Error ? reason.message : String(reason);
       return false;
-    } finally { busy.value = false; }
+    } finally { busy.value = false; loadDocumentation(); }
   };
   const visible = () => { if (!document.hidden) void refresh(); };
   onMounted(() => {
@@ -69,5 +102,5 @@ export function useAvm() {
     document.removeEventListener('visibilitychange', visible);
     stopInput(); client.dispose();
   });
-  return { snapshot, busy, loading, error, notice, perform, connect };
+  return { snapshot, busy, loading, error, notice, perform, connect, documentation, documentationLoading, documentationError, retryDocumentation: () => loadDocumentation(true) };
 }

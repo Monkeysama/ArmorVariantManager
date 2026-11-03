@@ -13,7 +13,7 @@ for _, game in ipairs({ "Wilds", "Rise" }) do
         config_path = Store.config_path, backup_path = Store.backup_path,
         load = function(path) reads = reads + 1; return S.copy(disk[path]) end,
         save = function(path, data)
-            if fail then return false end
+            if fail then return false, "disk full" end
             writes[#writes + 1] = path
             disk[path] = S.copy(data)
             return true
@@ -35,7 +35,8 @@ for _, game in ipairs({ "Wilds", "Rise" }) do
     assert(#writes == 1 and writes[1] == main and session.pending("armor"))
 
     fail = true
-    assert(not session.restore("armor") and session.pending("armor"))
+    local restored,reason=session.restore("armor")
+    assert(not restored and reason=="disk full" and session.pending("armor"))
     assert(session.cache.armor == loaded and session.handled.armor == nil)
     assert(not session.save("armor", loaded))
     assert(#writes == 1)
@@ -55,7 +56,8 @@ for _, game in ipairs({ "Wilds", "Rise" }) do
     local restore_source = S.section(source, "local function restore_config_from_backup", "-- 辅助函数：捕获当前状态为新预设")
     local restore = assert(load(restore_source .. "\nreturn restore_config_from_backup", "restore", "t", env))()
     fail = true
-    assert(not restore("armor") and env.active_overrides.armor.old and updated == 0)
+    restored,reason=restore("armor")
+    assert(not restored and reason=="disk full" and env.active_overrides.armor.old and updated == 0)
     fail = false
     assert(restore("armor"))
     S.equal(disk[main], player, "Restore writes original backup, not normalized defaults")
@@ -85,7 +87,10 @@ for _, game in ipairs({ "Wilds", "Rise" }) do
     assert(session.restore("missing"))
     S.equal(session.load("missing"), Normalize.apply(S.copy(player), schema))
     assert(not session.pending("missing"))
-    assert(not session.restore("no_backup") and not session.restore(nil))
+    restored,reason=session.restore("no_backup")
+    assert(not restored and reason=="没有可用的备份")
+    restored,reason=session.restore(nil)
+    assert(not restored and reason=="装备不可用")
     assert(session.load(nil) == nil and session.save(nil, loaded) == nil)
 end
 print("PASS: dual-game sessions, unresolved backup protection, restore failure/success, actual entry side effects and dismiss/restart")

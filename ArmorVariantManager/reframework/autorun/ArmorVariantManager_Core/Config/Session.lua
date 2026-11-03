@@ -77,20 +77,21 @@ function Session.new(schema, on_loaded, store)
 
     -- 只恢复文件与配置缓存，调用方在成功后重建外观并刷新界面。
     function session.restore(id)
-        if not id then return false end
+        if not id then return false, "装备不可用" end
         local backup = store.load(store.backup_path(id))
         if not backup then
             if log and log.warn then
                 log.warn(string.format("[ArmorVariantManager] 没有可用的备份，无法还原: %s", tostring(id)))
             end
-            return false
+            return false, "没有可用的备份"
         end
         local path = store.config_path(id)
-        if not store.save(path, backup) then
+        local saved, reason = store.save(path, backup)
+        if not saved then
             if log and log.error then
                 log.error(string.format("[ArmorVariantManager] 还原备份失败，主配置未能写回: %s", tostring(path)))
             end
-            return false
+            return false, reason or "主配置未能写回"
         end
         session.dismiss(id)
         session.cache[id] = nil

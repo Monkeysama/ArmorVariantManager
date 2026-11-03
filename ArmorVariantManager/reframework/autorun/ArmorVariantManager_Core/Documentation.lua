@@ -53,15 +53,16 @@ return {
                 title = "7. 预设文件",
                 paragraphs = {
                     "保存的预设会在 reframework\\data\\ArmorVariantManager 文件夹内。",
-                    "装备以当前身体（Body）部位为准，以当前身体部位 ID 命名，例如 ch03_060_0002.json。",
-                    "武器直接记录当前武器 ID，例如 it0300_0020。"
+                    "防具与武器均以当前界面显示的装备 ID 为准，两款游戏的 ID 格式不同。荒野防具以身体（Body）部位 ID 命名，例如 ch03_060_0002.json。",
+                    "武器直接记录当前武器 ID，荒野示例为 it0300_0020。"
                 }
             },
             {
                 title = "8. 陷地修正（陷地修复）",
+                game = "Wilds",
                 paragraphs = {
-                    "用于高跟鞋穿脱等外观切换时的高度修正。新界面在防具部件面板底部启用，旧界面位于预设管理内部；默认关闭，高度范围为 -10～50 cm。",
-                    "调整后实时预览，新增或覆盖当前分组预设时保存勾选状态与高度。只有勾选的预设参与高度控制，未勾选保留当前高度；以最后应用的勾选预设为准。归零需使用勾选且为 0 cm 的预设，归零按钮也会勾选并设为 0 cm。默认加载和变身规则跳过未勾选预设，变身条件结束仍回退手动基线。",
+                    "用于荒野高跟鞋穿脱等外观切换时的高度修正。REFF 界面位于设置 → 陷地修复，REF 原生界面位于预设管理内；默认关闭，高度范围为 -10～50 cm。",
+                    "高度调整属于当前防具分组的预设草稿，调整后实时预览，新增或覆盖当前分组预设时保存勾选状态与高度。只有勾选的预设参与高度控制，未勾选保留当前高度；以最后应用的勾选预设为准。归零需使用勾选且为 0 cm 的预设；REF 原生界面的归零按钮会勾选并设为 0 cm。默认加载和变身规则跳过未勾选预设，变身条件结束仍回退手动基线。",
                     "适用于本机显示的玩家、菜单与存档等预览及过场玩家模型，按各自防具读取预设，人物与所属武器一起抬升。加载切场及骑乘鹭鹰龙时暂停。",
                     "仅修正本机显示的骨架高度，不改变物理坐标、碰撞或其他玩家客户端。兼容旧 JSON，未配置的旧预设默认关闭。"
                 }
@@ -120,15 +121,16 @@ return {
                     title = "7. Preset Files",
                     paragraphs = {
                         "Presets are saved in the reframework\\data\\ArmorVariantManager folder.",
-                        "Armor files use the current Body part ID as the file name, for example ch03_060_0002.json.",
-                        "Weapon files use the current Weapon ID, for example it0300_0020."
+                        "Use the equipment ID shown in the current UI for armor and weapons; ID formats differ between the two games. Wilds armor files use the Body part ID, for example ch03_060_0002.json.",
+                        "Weapon files use the current Weapon ID; a Wilds example is it0300_0020."
                     }
                 },
                 {
                     title = "8. Ground Clipping Fix",
+                    game = "Wilds",
                     paragraphs = {
-                        "Adjusts visual height when switching appearances such as wearing or removing high heels. Enable it at the bottom of the armor parts panel, or inside Preset Management in the legacy UI. Disabled by default; range: -10 to 50 cm.",
-                        "Changes preview immediately; create or overwrite a group preset to save. Only checked presets control height, and the last checked preset applied wins. Unchecked presets keep the current height. Use a checked 0 cm preset to reset; Reset also checks the option and sets 0 cm. Default loading and transformation rules skip unchecked presets; ending a condition still restores the manual baseline.",
+                        "Adjusts visual height in Wilds when switching appearances such as wearing or removing high heels. In REFF, open Settings > Ground Clipping Fix; in the native REF UI, open Preset Management. Disabled by default; range: -10 to 50 cm.",
+                        "Height adjustments are part of the current armor group's preset draft. Changes preview immediately; create or overwrite a group preset to save. Only checked presets control height, and the last checked preset applied wins. Unchecked presets keep the current height. Use a checked 0 cm preset to reset; the Reset button in the native REF UI checks the option and sets 0 cm. Default loading and transformation rules skip unchecked presets; ending a condition still restores the manual baseline.",
                         "Applies to players rendered on this computer, menu and save previews, and player cutscene actors, using each model's armor presets. The character and attached weapons rise together. Paused during loading, scene transitions and Seikret riding.",
                         "Only changes the skeleton's local visual appearance, without changing physics, collision or other players' clients. Existing JSON files remain compatible; old presets without height settings default to disabled."
                     }
@@ -142,8 +144,8 @@ return {
             {
                 title = "使用",
                 paragraphs = {
-                    "选择分组，再选择想要调整的预设，点击设为默认即可将选中的预设永久保存。",
-                    "当前版本默认启用自动保存，不再需要手动保存，你也可以关掉它。"
+                    "选择分组，再选择预设即可应用；点击设为默认，可指定下次加载该装备时使用的预设。",
+                    "默认启用“自动将选中预设设为默认”，可在设置中关闭。材质显隐修改属于草稿，仍需点击保存为新预设或覆盖预设，才会保存到预设文件。"
                 }
             },
             {
@@ -162,7 +164,8 @@ return {
             {
                 title = "掉帧/卡顿",
                 paragraphs = {
-                    "经测试对帧数的影响不到 2 FPS，如需要调整，可在性能设置里将选项往右拉。"
+                    "荒野可在设置 → 性能中增大扫描间隔和刷新间隔，或减小分帧扫描步频，以降低扫描开销；代价是换装后识别与加载预设会更慢。",
+                    "崛起若只需管理自己，可在设置 → 联机（多人）关闭“为其他玩家应用差分”，减少其他玩家处理。逐项调整，并在相同场景比较卡顿与响应速度。"
                 }
             }
         },
@@ -172,8 +175,8 @@ return {
                 {
                     title = "Using Presets",
                     paragraphs = {
-                        "Select a group, then select the preset you want to use. Click Set as Default to save the selected preset permanently.",
-                        "Auto-save is enabled by default in the current version, so manual saving is not required. You can disable it if needed."
+                        "Select a group, then select a preset to apply it. Click Set as Default to choose the preset used the next time this equipment loads.",
+                        "The Automatically set selected preset as default option is enabled by default and can be disabled in Settings. Material visibility edits are drafts; click Save as New Preset or Overwrite Preset to save them to the preset file."
                     }
                 },
                 {
@@ -192,7 +195,8 @@ return {
                 {
                     title = "Frame Drops/Stuttering",
                     paragraphs = {
-                        "Testing shows that the performance impact is less than 2 FPS. If adjustment is needed, move the options to the right in Performance settings."
+                        "In Wilds, open Settings > Performance and increase Scan Interval and Refresh Interval, or reduce Scanner Batch Size to lower scanning overhead. Equipment changes will take longer to detect and load.",
+                        "In Rise, if you only need to manage your own character, disable Apply variants to other players in Settings > Multiplayer to reduce other-player processing. Adjust one option at a time and compare stuttering and responsiveness in the same scene."
                     }
                 }
             }

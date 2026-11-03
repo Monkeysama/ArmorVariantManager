@@ -11,6 +11,7 @@ function Bridge.register(controller)
     local registered, handle = pcall(sdk.register, "monkeysama.avm", {methods={
         ["monkeysama.avm.snapshot"]=controller.snapshot,
         ["monkeysama.avm.action"]=controller.action,
+        ["monkeysama.avm.documentation"]=controller.documentation,
     },events={}}, reff_native)
     if not registered then
         log.error("[ArmorVariantManager] REFF 注册失败: " .. tostring(handle))

@@ -13,6 +13,7 @@ DEFAULT_TESTS = (
     "tests/reff_bridge.lua",
     "tests/reff_conditions.lua",
     "tests/reff_settings.lua",
+    "tests/reff_help.lua",
     "tests/wilds_hp.lua",
     "tests/portrait_service.lua",
     "tests/portrait_preview_regression.lua",

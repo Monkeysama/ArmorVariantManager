@@ -1,11 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeSnapshot } from '../src/snapshot.ts';
+import { normalizeDocumentation, normalizeSnapshot } from '../src/snapshot.ts';
 
 test('normalizes the REFramework empty-table shapes at the snapshot boundary', () => {
   for (const empty of [null, {}]) {
     const result = normalizeSnapshot({ groups: empty, presets: empty, parts: empty, pending: null });
-    assert.deepEqual(result, { groups: [], presets: [], parts: [], pending: {}, conditions: null });
+    assert.deepEqual(result, { groups: [], presets: [], parts: [], pending: {}, conditions: null, backupPending: false });
     const nested = normalizeSnapshot({ groups: [], presets: [], parts: [{ index: 1, materials: [{ name: 'body', groups: empty }] }, { index: 2, materials: empty }], pending: { 1: null } });
     assert.deepEqual(nested.parts[0].materials[0].groups, []);
     assert.deepEqual(nested.parts[1].materials, []);
@@ -14,8 +14,27 @@ test('normalizes the REFramework empty-table shapes at the snapshot boundary', (
 });
 test('preserves nonempty arrays and surfaces a nonempty object in an array field', () => {
   const value = { groups: [{ name: 'a', global: true }], presets: [{ name: 'one', default: true }], parts: [{ index: 2, materials: [{ name: 'x', enabled: false, groups: ['a'] }] }], pending: { 2: { x: true } } };
-  assert.deepEqual(normalizeSnapshot(value), { ...value, conditions: null });
+  assert.deepEqual(normalizeSnapshot(value), { ...value, conditions: null, backupPending: false });
   assert.throws(() => normalizeSnapshot({ ...value, parts: { wrong: true } }), /parts must be an array/);
+});
+
+test('preserves the backup warning and defaults older snapshots to no warning', () => {
+  const value = { groups: [], presets: [], parts: [] };
+  assert.equal(normalizeSnapshot(value).backupPending, false);
+  assert.equal(normalizeSnapshot({ ...value, backupPending: true }).backupPending, true);
+  assert.equal(normalizeSnapshot({ ...value, backupPending: false }).backupPending, false);
+});
+
+test('normalizes Lua documentation arrays and preserves plain text, stable ids and ordering', () => {
+  for (const empty of [null, {}]) {
+    assert.deepEqual(normalizeDocumentation({ sections: empty }), { sections: [] });
+    assert.deepEqual(normalizeDocumentation({ sections: [{ id: 'configure', title: '如何配置', entries: empty }] }), { sections: [{ id: 'configure', title: '如何配置', entries: [] }] });
+    assert.deepEqual(normalizeDocumentation({ sections: [{ id: 'usage', title: '使用说明', entries: [{ title: '分组', paragraphs: empty }] }] }).sections[0].entries[0].paragraphs, []);
+  }
+  const value = { sections: [{ id: 'configure', title: '如何配置', entries: [{ title: '普通组', paragraphs: ['保留 <literal> & 普通文本。', 'line one\nline two'] }] }, { id: 'usage', title: '使用说明', entries: [] }, { id: 'changelog', title: '更新日志', entries: [] }] };
+  assert.deepEqual(normalizeDocumentation(value), value);
+  assert.throws(() => normalizeDocumentation({ sections: { wrong: true } }), /documentation.sections must be an array/);
+  assert.throws(() => normalizeDocumentation({ sections: [{ entries: [{ paragraphs: { wrong: true } }] }] }), /documentation.paragraphs must be an array/);
 });
 
 test('normalizes empty condition tables without changing rule fields or target references', () => {

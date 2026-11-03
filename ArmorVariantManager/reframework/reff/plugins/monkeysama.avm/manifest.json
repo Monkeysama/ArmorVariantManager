@@ -8,7 +8,7 @@
   "reffApi": ">=1.0.0 <2.0.0",
   "games": ["MHWILDS", "MHRISE"],
   "ui": { "kind": "page", "mode": "isolated-page", "entry": "ui/dist/index.html" },
-  "methods": ["monkeysama.avm.snapshot", "monkeysama.avm.action"],
+  "methods": ["monkeysama.avm.snapshot", "monkeysama.avm.action", "monkeysama.avm.documentation"],
   "events": [],
   "fallback": "none"
 }

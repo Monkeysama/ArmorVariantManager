@@ -1,4 +1,4 @@
-import type { ConditionDefinition, ConditionField, ConditionNode, ConditionRule, Conditions, ConditionTarget, Material, Part, SettingField, Settings, SettingsSection, Snapshot } from './types';
+import type { ConditionDefinition, ConditionField, ConditionNode, ConditionRule, Conditions, ConditionTarget, Documentation, DocumentationEntry, DocumentationSection, Material, Part, SettingField, Settings, SettingsSection, Snapshot } from './types';
 
 function list<T>(value: unknown, field: string): T[] {
   if (Array.isArray(value)) return value;
@@ -9,6 +9,7 @@ function list<T>(value: unknown, field: string): T[] {
 export function normalizeSnapshot(value: Snapshot): Snapshot {
   return {
     ...value,
+    backupPending: value.backupPending ?? false,
     conditions: value.conditions ? normalizeConditions(value.conditions) : null,
     ...(value.settings !== undefined ? { settings: normalizeSettings(value.settings) } : {}),
     groups: list(value.groups, 'groups'),
@@ -19,6 +20,15 @@ export function normalizeSnapshot(value: Snapshot): Snapshot {
     })),
     pending: Object.fromEntries(Object.entries(value.pending ?? {}).map(([part, materials]) => [part, materials ?? {}])),
   };
+}
+
+export function normalizeDocumentation(value: Documentation): Documentation {
+  return { sections: list<DocumentationSection>(value.sections, 'documentation.sections').map(section => ({
+    ...section,
+    entries: list<DocumentationEntry>(section.entries, 'documentation.entries').map(entry => ({
+      ...entry, paragraphs: list<string>(entry.paragraphs, 'documentation.paragraphs'),
+    })),
+  })) };
 }
 
 function normalizeSettings(value: Settings): Settings {

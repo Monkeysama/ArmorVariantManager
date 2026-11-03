@@ -12,6 +12,7 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
         if name:match("^ArmorVariantManager") then package.loaded[name] = nil end
     end
     local frames, draws, resets, errors, imports = {}, {}, {}, {}, {}
+    local expected_errors = 0
     local action, writes, applied, captures = nil, {}, {}, 0
     local injected_preview
     local handlers, unregistered, write_failed, write_failed_path
@@ -35,6 +36,9 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
         preset_order={"Show","Hide"},default_preset="Show",groups={},extra={keep=true},enable_transform=false}
     local data = {["ArmorVariantManager/armor.json"]=cfg,
         ["ArmorVariantManager/GlobalSettings.json"]={language="en",auto_set_selected_preset_as_default=false,extra={keep=true}}}
+    local player_backup = S.copy(cfg)
+    player_backup.backup_only = {keep=true}
+    data["ArmorVariantManager/backup/armor.json"] = S.copy(player_backup)
     local native_require = require
     _G.require = function(name)
         imports[name] = true
@@ -155,6 +159,7 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
         assert(handlers,"REFF handler registered for each game")
         local snapshot=handlers["monkeysama.avm.snapshot"]
         local dispatch=handlers["monkeysama.avm.action"]
+        local documentation=handlers["monkeysama.avm.documentation"]
         local current=snapshot()
         assert(current.game==(game=="mhrise" and "Rise" or "Wilds") and current.bodyId=="armor")
         assert(current.theme=="custom" and current.parts[1].materials[1].name=="cloth")
@@ -162,6 +167,24 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
             args=args or {}; args.kind=kind; args.bodyId="armor"
             return dispatch(args)
         end
+        assert(current.backupPending and not current.documentation,"backup warning is live; long help is not polled")
+        local help=documentation()
+        assert(#help.sections==3 and help.sections[1].id=="configure" and help.sections[1].title=="How to Configure")
+        assert(#help.sections[3].entries==22,"complete historical help is available on demand")
+        local protected_backup=S.copy(data["ArmorVariantManager/backup/armor.json"])
+        local restore_writes=#writes
+        write_failed=true
+        local restored,restore_reason=pcall(send,"restore")
+        assert(not restored and restore_reason:find("disk full",1,true),"restore preserves the actual storage error")
+        expected_errors=expected_errors+1
+        assert(#errors==expected_errors and errors[#errors]:find("还原备份失败",1,true))
+        assert(snapshot().backupPending and snapshot().selectedPreset==current.selectedPreset and #writes==restore_writes)
+        assert(not pcall(dispatch,{kind="dismiss-backup",bodyId="old"}))
+        assert(snapshot().backupPending,"stale dismiss cannot clear another equipment warning")
+        current=send("dismiss-backup")
+        assert(not current.backupPending and #writes==restore_writes,"dismiss is session-only even when writes fail")
+        S.equal(data["ArmorVariantManager/backup/armor.json"],protected_backup)
+        write_failed=false
         local function names(items)
             local result={}
             for index,item in ipairs(items) do result[index]=item.name end
@@ -187,6 +210,7 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
         write_failed=false
         assert(send("setting",{id="language",value="zh"}).language=="zh")
         assert(_G.__AVM_LANGUAGE=="zh")
+        assert(documentation().sections[1].title=="如何配置","help reads the current language instead of a startup copy")
         send("setting",{id="language",value="en"})
         current=send("reorder-preset",{name="Captured",offset=-1})
         S.equal(names(current.presets),{"Show","Captured","Hide"})
@@ -308,8 +332,15 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
             local height=data["ArmorVariantManager/armor.json"].presets.HeightZero.ground_clipping_fix
             assert(height.enabled and height.height_cm==0,"preset capture persists checked zero height")
         else assert(not field("ground_clipping_height_cm"),"Rise does not expose Wilds height") end
+        -- 忽略后保存会更新备份，手动恢复使用此刻的磁盘备份。
+        local latest_backup=S.copy(data["ArmorVariantManager/backup/armor.json"])
+        current=send("restore")
+        assert(not current.backupPending and #current.groups==1)
+        S.equal(names(current.presets),latest_backup.preset_order)
+        S.equal(data["ArmorVariantManager/armor.json"],latest_backup,"restore writes the current backup and retains unknown fields")
         send("mode",{weapon=true})
         assert(snapshot().bodyId=="","mode transition never pairs old config with new equipment")
+        assert(not snapshot().backupPending and #documentation().sections==3,"empty equipment can read help without stale warning")
         current=dispatch({kind="setting",id="body_id_ttl",value=2})
         assert(current.bodyId=="" and field("body_id_ttl",current).value==2,"empty equipment retains global settings")
         if game=="mhwilds" then
@@ -322,7 +353,7 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
         assert(#errors==1 and #frames==0 and #draws==1)
         for name in pairs(imports) do assert(not name:find("Games%.")) end
     else
-        assert(#errors==0,table.concat(errors,"\n"))
+        assert(#errors==expected_errors,table.concat(errors,"\n"))
         assert(#frames>0 and #draws==1)
         local forbidden = game == "mhrise" and "Wilds" or "Rise"
         for name in pairs(package.loaded) do
@@ -337,4 +368,4 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
     if populated then assert(unregistered,"reset unregisters REFF methods") end
     _G.require = native_require
 end
-print("PASS: actual dual-game entry, conditions/settings/sorting, partial-save retry, height drafts and stale/empty-scene/reset guards")
+print("PASS: actual dual-game entry, conditions/settings/sorting, backup warning/dismiss/restore, on-demand help and stale/empty-scene/reset guards")

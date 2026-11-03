@@ -9,10 +9,11 @@ function Controller.new(deps)
             game=deps.game, version=deps.version, bodyId=context.id or "", weapon=context.weapon,
             suspended=context.suspended, groups={}, group=context.group or "", presets={},
             selectedPreset=context.selected or "", parts={}, theme=deps.theme(), language=deps.language(),
-            selectionMode=context.selecting, pending={},
+            selectionMode=context.selecting, pending={}, backupPending=false,
         }
         if deps.settings then snapshot.settings = deps.settings.snapshot(context) end
         if not context.id then return snapshot end
+        snapshot.backupPending = deps.backup_pending and deps.backup_pending(context.id) == true or false
         snapshot.groups[1] = {name="", label=deps.main_label(), global=false}
         for _, name in ipairs(context.group_names) do
             local group = context.config.groups[name]
@@ -32,6 +33,11 @@ function Controller.new(deps)
             snapshot.pending[tostring(part)] = copy
         end
         return snapshot
+    end
+
+    -- 长文档按需读取，不随每秒装备快照重复传输。
+    function controller.documentation()
+        return deps.documentation and deps.documentation() or {sections={}}
     end
 
     -- 换装和场景切换后的旧网页请求不能修改新装备。

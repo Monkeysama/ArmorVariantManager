@@ -73,7 +73,8 @@ function Application.new(settings, session)
     end
 
     function app.restore(id)
-        if not session.restore(id) then return false end
+        local restored, reason = session.restore(id)
+        if not restored then return false, reason end
         local config = app.load(id)
         if not config then return false end
         app.appearance.defaults(id, config)

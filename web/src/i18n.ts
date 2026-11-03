@@ -10,13 +10,9 @@ const zh = {
   unavailable: '当前装备无此部件', noMaterials: '此部件没有材质', noMatches: '没有匹配的材质', hidden: '全局隐藏', member: '所属分组',
   selection: '选择分组材质', selecting: '正在选择分组材质', selectionHelp: '勾选材质后创建分组；此模式不改变显隐。',
   selected: '已选', wait: '等待角色与装备', loading: '正在连接 REFF…', saving: '正在应用…', retry: '重试连接',
-  restore: '恢复备份', confirmRestore: '从备份恢复当前装备配置？', theme: '界面主题', custom: '自有主题', follow: '跟随 REFF',
+  restore: '恢复备份', confirmRestore: '恢复备份将覆盖当前装备配置。确定恢复？', backupChanged: '当前装备的主配置文件与备份不同。忽略后，下次成功保存会更新备份。', ignore: '忽略', theme: '界面主题', custom: '自有主题', follow: '跟随 REFF',
   themeHelp: '自有主题使用冰青配色；跟随 REFF 会实时使用公共主题色。', scope: '仅影响差分管理器正文。',
-  nativeHelp: '其他游戏专属选项可在原生差分管理器中设置。', helpTitle: '分组管理显隐，预设保存组合。',
-  helpGroups: '普通组内预设互斥；全局组的隐藏优先于其他组。选择分组后，点击预设即可应用。',
-  helpSave: '调整网格与材质后输入名称保存。同名预设会被覆盖；默认预设会在装备载入时应用。',
-  helpSelection: '打开“选择分组材质”，勾选所需材质并创建分组。退出选择模式后继续调整显隐。',
-  helpRestore: '“恢复备份”会从备份覆盖当前装备配置。',
+  loadingHelp: '正在读取帮助…', retryHelp: '重新读取', noHelp: '暂无帮助内容。',
   confirmDelete: '确定删除', cancel: '取消', confirm: '确认删除', suspended: '条件变换暂时挂起',
   visibleCount: '显示', materials: '材质', noParts: '当前没有可用部件', saved: '已保存', created: '已创建分组',
   conditions: '条件变换', conditionMode: '条件模式', singleCondition: '单选', parallelConditions: '并行', enableConditions: '启用条件变换', enableCondition: '启用',
@@ -24,7 +20,7 @@ const zh = {
   ruleTargets: '变换目标', targetGroup: '目标分组', targetPreset: '目标预设', choosePreset: '选择预设', missingTarget: '已不存在', addTarget: '新增目标', removeTarget: '移除目标', noTargets: '添加目标，为此规则指定分组与预设。',
   chainNodes: '链式节点', chainNode: '节点', addNode: '新增节点', removeNode: '移除节点', nodeDuration: '持续时间（秒）', noNodes: '添加节点，按顺序设置每一步的持续时间与目标。',
   conditionTest: '游戏内测试', testHp: 'HP（%）', setHp: '设置 HP', testDamage: '受击测试（减少 25 HP）', noConditions: '当前装备没有可用条件。',
-  applyValue: '保存', validNumber: '请输入有效数值', helpConditions: '在“条件变换”中选择条件、编辑规则并指定目标。单选只启用选中的条件；并行可同时启用多个条件，数字越小，覆盖优先级越高。数值修改后按 Enter 或离开输入框保存。',
+  applyValue: '保存', validNumber: '请输入有效数值',
 };
 type Key = keyof typeof zh;
 const en: Record<Key, string> = {
@@ -36,13 +32,9 @@ const en: Record<Key, string> = {
   unavailable: 'Not present on this equipment', noMaterials: 'No materials in this part', noMatches: 'No matching materials', hidden: 'Globally hidden', member: 'Groups',
   selection: 'Select group materials', selecting: 'Selecting group materials', selectionHelp: 'Select materials, then create a group. Visibility is unchanged.',
   selected: 'Selected', wait: 'Waiting for character and equipment', loading: 'Connecting to REFF…', saving: 'Applying…', retry: 'Reconnect',
-  restore: 'Restore backup', confirmRestore: 'Restore the current equipment configuration from backup?', theme: 'Interface theme', custom: 'Own theme', follow: 'Follow REFF',
+  restore: 'Restore backup', confirmRestore: 'Restoring the backup will overwrite the current equipment configuration. Restore?', backupChanged: 'The current equipment configuration differs from its backup. After ignoring, the next successful save will update the backup.', ignore: 'Ignore', theme: 'Interface theme', custom: 'Own theme', follow: 'Follow REFF',
   themeHelp: 'Own theme uses ice cyan. Follow REFF uses the shared colors live.', scope: 'Only affects the Armor Variant Manager content.',
-  nativeHelp: 'Other game-specific options are available in the native manager.', helpTitle: 'Groups organize visibility. Presets save combinations.',
-  helpGroups: 'Presets in a regular group are mutually exclusive. Global groups take priority when hiding. Select a group, then a preset to apply it.',
-  helpSave: 'Adjust meshes and materials, then enter a name to save. An existing name overwrites that preset. Default presets apply when equipment loads.',
-  helpSelection: 'Enable “Select group materials”, select the materials, and create a group. Leave selection mode to edit visibility again.',
-  helpRestore: '“Restore backup” replaces the current equipment configuration with its backup.',
+  loadingHelp: 'Loading help…', retryHelp: 'Reload help', noHelp: 'No help content available.',
   confirmDelete: 'Delete', cancel: 'Cancel', confirm: 'Delete', suspended: 'Conditional transforms paused',
   visibleCount: 'Visible', materials: 'materials', noParts: 'No parts available', saved: 'Saved', created: 'Group created',
   conditions: 'Conditions', conditionMode: 'Condition mode', singleCondition: 'Single', parallelConditions: 'Parallel', enableConditions: 'Enable conditions', enableCondition: 'Enable',
@@ -50,7 +42,7 @@ const en: Record<Key, string> = {
   ruleTargets: 'Transform targets', targetGroup: 'Target group', targetPreset: 'Target preset', choosePreset: 'Choose a preset', missingTarget: 'Missing', addTarget: 'Add target', removeTarget: 'Remove target', noTargets: 'Add a target to choose a group and preset for this rule.',
   chainNodes: 'Chain nodes', chainNode: 'Node', addNode: 'Add node', removeNode: 'Remove node', nodeDuration: 'Duration (seconds)', noNodes: 'Add nodes to set the duration and targets for each step.',
   conditionTest: 'In-game test', testHp: 'HP (%)', setHp: 'Set HP', testDamage: 'Damage test (−25 HP)', noConditions: 'No conditions available for this equipment.',
-  applyValue: 'Save', validNumber: 'Enter a valid number', helpConditions: 'Choose a condition, edit its rules, and set its targets. Single mode runs only the selected condition. Parallel mode can enable several; lower numbers have higher override priority. Press Enter or leave a number field to save.',
+  applyValue: 'Save', validNumber: 'Enter a valid number',
 };
 export type Translate = (key: Key) => string;
 export function useText(snapshot: Ref<Snapshot | null>) {

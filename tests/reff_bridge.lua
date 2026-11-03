@@ -104,6 +104,78 @@ for _, game in ipairs({"Wilds","Rise"}) do
         rejects(function() f.controller.action({kind="mode",weapon="true"}) end,"装备模式无效")
     end)
 
+    test(game .. " backup notice follows the current equipment and defaults to false", function()
+        local f=controller_fixture(game)
+        assert(f.controller.snapshot().backupPending == false,"missing backup dependency must default to false")
+        local pending={armor=true,["other-armor"]=false,weapon=true}
+        local requested={}
+        f.deps.backup_pending=function(id)
+            assert(id == f.context.id)
+            requested[#requested+1]=id
+            return pending[id]
+        end
+        local initial=f.controller.snapshot()
+        assert(initial.bodyId == "armor" and initial.backupPending == true)
+        f.context.id="other-armor"
+        local other=f.controller.snapshot()
+        assert(other.bodyId == "other-armor" and other.backupPending == false)
+        f.context.id="weapon";f.context.weapon=true
+        local weapon=f.controller.snapshot()
+        assert(weapon.bodyId == "weapon" and weapon.backupPending == true)
+        S.equal(requested,{"armor","other-armor","weapon"})
+        f.context.id=nil
+        f.deps.backup_pending=function() error("empty scene queried equipment backup") end
+        local empty=f.controller.snapshot()
+        assert(empty.bodyId == "" and empty.backupPending == false)
+        assert(initial.backupPending == true and other.backupPending == false)
+    end)
+
+    test(game .. " backup dismissal is guarded and affects only the requested equipment", function()
+        local f=controller_fixture(game)
+        local pending={armor=true,["other-armor"]=true}
+        local dismissed={}
+        f.deps.backup_pending=function(id) return pending[id] end
+        f.operations["dismiss-backup"]=function(request,context)
+            assert(request.bodyId == context.id and context == f.context)
+            dismissed[#dismissed+1]=context.id
+            pending[context.id]=false
+            return true
+        end
+        rejects(function() f.controller.action({kind="dismiss-backup",bodyId="other-armor"}) end,"装备已变化")
+        f.context.suspended=true
+        rejects(function() f.controller.action({kind="dismiss-backup",bodyId="armor"}) end,"角色不可用或正在切换装备")
+        f.context.suspended=false;f.context.id=nil
+        rejects(function() f.controller.action({kind="dismiss-backup",bodyId="armor"}) end,"角色不可用或正在切换装备")
+        assert(#dismissed == 0 and pending.armor and pending["other-armor"])
+        f.context.id="armor"
+        local result=f.controller.action({kind="dismiss-backup",bodyId="armor"})
+        assert(result.backupPending == false and pending["other-armor"])
+        f.context.id="other-armor"
+        rejects(function() f.controller.action({kind="dismiss-backup",bodyId="armor"}) end,"装备已变化")
+        assert(f.controller.snapshot().backupPending == true)
+        S.equal(dismissed,{"armor"})
+    end)
+
+    test(game .. " documentation is requested on demand without an actor and uses the current language", function()
+        local f=controller_fixture(game)
+        f.context.id=nil;f.context.suspended=true;f.context.config=nil;f.context.pending=nil
+        local language,reads="zh",0
+        f.deps.language=function() return language end
+        f.deps.documentation=function()
+            reads=reads+1
+            return {sections={{title=language,content={"help:" .. language}}}}
+        end
+        setmetatable(f.operations,{__index=function() error("documentation queried equipment operations") end})
+        local snapshot=f.controller.snapshot()
+        assert(reads == 0 and snapshot.documentation == nil,"snapshot loaded documentation eagerly")
+        local chinese=f.controller.documentation()
+        serializable(chinese,f.forbidden)
+        S.equal(chinese,{sections={{title="zh",content={"help:zh"}}}})
+        language="en"
+        S.equal(f.controller.documentation(),{sections={{title="en",content={"help:en"}}}})
+        assert(reads == 2 and chinese.sections[1].title == "zh" and f.parts_calls == 0)
+    end)
+
     test(game .. " settings remain visible without an actor and preserve theme/mode actions", function()
         local f=controller_fixture(game)
         f.context.id=nil;f.context.config=nil;f.context.pending=nil
@@ -422,6 +494,11 @@ end)
 
 test("isolated SDK registers controller methods and unregisters on reset", function()
     local f=controller_fixture("Rise")
+    local documentation_reads=0
+    f.deps.documentation=function()
+        documentation_reads=documentation_reads+1
+        return {sections={{title="Help",content={"Current-language instructions"}}}}
+    end
     local registered,unregistered=0,0
     local handle={unregister=function() unregistered=unregistered+1 end}
     local bridge,resets,errors=bridge_fixture({},function(name)
@@ -432,14 +509,21 @@ test("isolated SDK registers controller methods and unregisters on reset", funct
             local methods=definition.methods
             assert(methods["monkeysama.avm.snapshot"] == f.controller.snapshot)
             assert(methods["monkeysama.avm.action"] == f.controller.action)
-            local count=0;for _ in pairs(methods) do count=count+1 end;assert(count == 2)
+            assert(methods["monkeysama.avm.documentation"] == f.controller.documentation,"documentation method was not forwarded")
+            local count=0;for _ in pairs(methods) do count=count+1 end;assert(count == 3,"expected three registered methods")
             serializable(methods["monkeysama.avm.snapshot"](),f.forbidden)
             assert(methods["monkeysama.avm.action"]({kind="theme",value="reff"}).theme == "reff")
+            assert(documentation_reads == 0)
+            f.context.id=nil
+            S.equal(methods["monkeysama.avm.documentation"](),
+                {sections={{title="Help",content={"Current-language instructions"}}}})
+            assert(documentation_reads == 1)
             registered=registered+1
             return handle
         end}
     end)
-    assert(bridge.register(f.controller) == handle and registered == 1 and #errors == 0 and #resets == 1)
+    assert(bridge.register(f.controller) == handle and registered == 1 and #errors == 0 and #resets == 1,
+        table.concat(errors,"\n"))
     resets[1]()
     assert(unregistered == 1)
 end)

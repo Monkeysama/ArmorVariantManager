@@ -610,13 +610,15 @@ end
 -- 用于 mod 重装后一键还原玩家手动调整过的预设。
 local function restore_config_from_backup(body_id)
     if not game.wilds then
-        if not application.restore(body_id) then return false end
+        local restored, reason = application.restore(body_id)
+        if not restored then return false, reason end
         current_config = application.load(body_id)
         update_group_names_list()
         update_preset_names_list()
         return true
     end
-    if not config_session.restore(body_id) then return false end
+    local restored, reason = config_session.restore(body_id)
+    if not restored then return false, reason end
     active_overrides[body_id] = nil
     active_group_presets[body_id] = nil
     -- 重新加载并刷新 UI
@@ -1386,6 +1388,10 @@ do
         game=game.name,version=version,context=context,parts=reff_parts.snapshot,conditions=conditions,settings=settings,
         main_label=function() return T("main_list") end,
         language=function() return global_config.language end,
+        backup_pending=config_session.pending,
+        documentation=function()
+            return require("ArmorVariantManager_Core.UI.Reff.Help").snapshot(global_config.language,game.name)
+        end,
         theme=function() return global_config.reff_theme == "reff" and "reff" or "custom" end,
         set_theme=function(value)
             local previous = global_config.reff_theme
@@ -1449,6 +1455,10 @@ do
                 return saved,reason
             end,
             restore=function(_,current) return restore_config_from_backup(current.id) end,
+            ["dismiss-backup"]=function(_,current)
+                config_session.dismiss(current.id)
+                return true
+            end,
         },
     })
     require("ArmorVariantManager_Core.UI.Reff.Bridge").register(controller)
