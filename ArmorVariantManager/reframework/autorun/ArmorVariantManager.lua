@@ -54,7 +54,6 @@ local GroundClippingTargets = require("ArmorVariantManager_Core.GroundClippingTa
 local GamePresets = require("ArmorVariantManager_Core.Games.Wilds.Presets")
 local PresetGroups = require("ArmorVariantManager_Core.Presets.Groups")
 local PresetEditor = require("ArmorVariantManager_Core.Presets.Editor")
-local Processor = require("ArmorVariantManager_Core.Runtime.Processor")
 
 -- 获取本地化字符串
 local function T(key)
@@ -118,6 +117,8 @@ appearance = require("ArmorVariantManager_Core.Games.Wilds.Appearance").new({
     game_object = safe_get_game_object,
     is_weapon_id = is_weapon_id,
 })
+local application = require("ArmorVariantManager_Core.Games.Wilds.Application").new(
+    runtime, appearance, config_session, TransformManager, is_weapon_id)
 local active_overrides, active_group_presets = appearance.overrides, appearance.groups
 local actor_runtime, ground_clipping_presets = appearance.state, appearance.height
 
@@ -478,39 +479,7 @@ local function apply_preset(preset_name)
         appearance.select(current_body_id, current_config, current_group_name, preset_name)
         temp_applied_presets[current_body_id] = preset_name
     end
-    local all_chars = get_all_characters()
-    -- 本地玩家是预设切换的直接目标；在装备箱/菜单等场景中，异步扫描缓存可能暂时漏掉它，
-    -- 因此强制把本地角色补入本帧列表，保证自定义 Body ID 也能立即应用预设。
-    local local_char_for_preset = get_local_player_character()
-    if local_char_for_preset and sdk.is_managed_object(local_char_for_preset) then
-        local local_seen = false
-        for _, listed_char in ipairs(all_chars) do
-            if listed_char == local_char_for_preset then
-                local_seen = true
-                break
-            end
-        end
-        if not local_seen then
-            table.insert(all_chars, local_char_for_preset)
-        end
-    end
-    for _, char in ipairs(all_chars) do
-        if is_weapon_id(current_body_id) then
-            local char_weapon_id, w_objs = get_character_weapon_id(char)
-            if char_weapon_id and char_weapon_id == current_body_id then
-                local config = load_config_data(char_weapon_id)
-                local new_overrides = resolve_character_overrides(char_weapon_id, config, char, "weapon")
-                apply_preset_to_weapon(char, w_objs, new_overrides, true, true)
-            end
-        else
-            local char_body_id = get_character_body_id(char)
-            if char_body_id and char_body_id == current_body_id then
-                local config = load_config_data(char_body_id)
-                local new_overrides = resolve_character_overrides(char_body_id, config, char, "armor")
-                apply_preset_to_armor(char, new_overrides, true, true)
-            end
-        end
-    end
+    if current_body_id then application.refresh(current_body_id) end
 end
 
 -- 辅助函数：加载指定 Body ID 的配置 (用于 UI 和本地玩家)
@@ -538,25 +507,7 @@ end
 
 -- 辅助函数：保存配置到文件
 local function save_current_config_to_file(body_id, preserve_active_state)
-    if not body_id then return end
-    -- 新旧 UI 的规则、预设和分组修改都走此处，避免摘要在编辑后继续沿用旧结果。
-    if not preserve_active_state then TransformManager.refresh_config_rules(current_config) end
-    if not config_session.save(body_id, current_config) then return false end
-    -- 允许调用方仅持久化数据，不重置用户当前选中的分组、预设与变身状态。
-    if preserve_active_state then return true end
-    -- 清除 active_overrides 缓存，强制下一帧重新合并所有默认预设
-    if active_overrides[body_id] then
-        active_overrides[body_id] = nil
-    end
-    -- 清除 active_group_presets 缓存，确保下一帧 apply_all_defaults 使用配置中的默认预设，
-    -- 避免变身规则之前设置的全局分组预设残留导致状态不一致
-    active_group_presets[body_id] = nil
-    
-    -- 清除状态机缓存，强制下一帧重新应用最新的预设内容
-    if TransformManager.clear_last_state_cache then
-        TransformManager.clear_last_state_cache()
-    end
-    return true
+    return application.save(body_id, current_config, preserve_active_state)
 end
 
 -- 将指定预设写为当前分组的默认预设，供旧 UI、新 UI 和自动保存开关共用。
@@ -1202,21 +1153,7 @@ end
 -- temp_applied_presets 已在文件头部定义
 runtime.install_hooks()
 -- 运行时与界面共用同一配置、默认意图和角色规则入口。
-local process_character = Processor.new({
-    identify = function(character, slot)
-        if slot == "armor" then return get_character_body_id(character) end
-        return get_character_weapon_id(character)
-    end,
-    load = load_config_data,
-    initialize = function(id)
-        if not active_overrides[id] then apply_all_defaults(id) end
-    end,
-    resolve = resolve_character_overrides,
-    apply = function(character, slot, objects, result, changed)
-        if slot == "armor" then apply_preset_to_armor(character, result, true, changed)
-        else apply_preset_to_weapon(character, objects, result, true, changed) end
-    end,
-})
+local process_character = application.process
 
 local frame_callbacks = {
     suspended = function(value) variant_manager_ui:set_suspended(value) end,

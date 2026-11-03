@@ -275,6 +275,13 @@ env.config_session = require("ArmorVariantManager_Core.Config.Session").new(
         load = function(path) return clone(stored[path]) end,
         save = env.safe_json_save
     })
+sdk.is_managed_object = env.sdk.is_managed_object
+env.application = require("ArmorVariantManager_Core.Games.Wilds.Application").new({
+    actors={all=env.get_all_characters, local_player=env.get_local_player_character},
+    equipment={body_id=function(...) return env.get_character_body_id(...) end,
+        weapon_id=function(...) return env.get_character_weapon_id(...) end},
+    materials={},
+}, env.appearance, env.config_session, env.TransformManager, env.is_weapon_id)
 env.loaded_configs = env.config_session.cache
 env.config_restored = env.config_session.restored
 env.config_restore_handled = env.config_session.handled

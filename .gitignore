@@ -40,6 +40,7 @@ sync_main_release.py
 !/tests/rise_dissolve.lua
 !/tests/rise_runtime.lua
 !/tests/rise_application.lua
+!/tests/wilds_application.lua
 !/tests/appearance.lua
 !/tests/rules_compatibility.lua
 !/tests/test_release.py

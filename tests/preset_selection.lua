@@ -32,6 +32,10 @@ local function environment(game, selected)
         env.appearance = require("ArmorVariantManager_Core.Games.Wilds.Appearance").new({is_weapon_id=env.is_weapon_id})
         env.appearance.overrides, env.appearance.groups = env.active_overrides, env.active_group_presets
         env.appearance.height = env.ground_clipping_presets
+        env.application = require("ArmorVariantManager_Core.Games.Wilds.Application").new({
+            actors={all=env.get_all_characters, local_player=env.get_local_player_character},
+            equipment={}, materials={},
+        }, env.appearance, {}, {}, env.is_weapon_id)
     end
     env.get_current_preset_data=function(name)
         local owner=env.current_group_name == "" and env.current_config or env.current_config.groups[env.current_group_name]

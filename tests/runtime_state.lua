@@ -45,8 +45,14 @@ env.appearance.transform = function(...) return env.apply_transform_rules_for_ch
 local helpers = S.section(source, "-- 辅助函数：变身规则激活", "-- 辅助函数：获取当前分组的预设数据")
 local helper_name = "resolve_character_overrides"
 env[helper_name] = assert(load(helpers .. "\nreturn " .. helper_name, "actual-resolve", "t", env))()
-env.Processor = require("ArmorVariantManager_Core.Runtime.Processor")
-local processor_source = S.section(source, "local process_character = Processor.new", "re.on_frame(function()")
+env.appearance.defaults = env.apply_all_defaults
+env.application = require("ArmorVariantManager_Core.Games.Wilds.Application").new({
+    equipment={body_id=function(...) return env.get_character_body_id(...) end,
+        weapon_id=function(...) return env.get_character_weapon_id(...) end},
+    materials={armor=function(...) return env.apply_preset_to_armor(...) end,
+        weapon=function(...) return env.apply_preset_to_weapon(...) end},
+}, env.appearance, {load=env.load_config_data}, {}, function() return false end)
+local processor_source = S.section(source, "local process_character = application.process", "re.on_frame(function()")
 env.process_character = assert(load(processor_source .. "\nreturn process_character", "actual-processor", "t", env))()
 local runtime_source = S.read("ArmorVariantManager/reframework/autorun/ArmorVariantManager_Core/Games/Wilds/Runtime.lua")
 local body = S.section(runtime_source, "    function runtime.tick(frame)", "    return runtime")
