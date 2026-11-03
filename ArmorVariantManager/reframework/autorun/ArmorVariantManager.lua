@@ -28,6 +28,9 @@ local TransformManager = require("ArmorVariantManager_Core.TransformManager")
 local RuntimeGuard = require("ArmorVariantManager_Core.RuntimeGuard")
 -- REFramework 重载脚本时可能保留 Lua 模块缓存，新UI必须重新加载最新实现。
 local refd2d_module_names = {
+    "ArmorVariantManager_Core.PortraitCamera",
+    "ArmorVariantManager_Core.PortraitModel",
+    "ArmorVariantManager_Core.PortraitPreview",
     "ArmorVariantManager_Core.GroundClippingFix",
     "ArmorVariantManager_Core.GroundClippingTargets",
     "ArmorVariantManager_Core.UI.VariantManagerUI",
@@ -123,7 +126,11 @@ end
 -- 加载全局配置
 local function load_global_settings()
     local loaded = safe_json_load(global_config_path)
-    if loaded then
+    if type(loaded) == "table" then
+        -- 新增镜头选项按需读取，保存常规设置时也保留旧文件中的未知扩展字段。
+        for key, value in pairs(loaded) do
+            if global_config[key] == nil then global_config[key] = value end
+        end
         if loaded.language then global_config.language = loaded.language end
         if loaded.scan_interval then global_config.scan_interval = loaded.scan_interval end
         if loaded.body_id_ttl then global_config.body_id_ttl = loaded.body_id_ttl end

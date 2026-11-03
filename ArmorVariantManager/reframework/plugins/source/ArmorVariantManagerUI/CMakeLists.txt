@@ -16,6 +16,8 @@ target_include_directories(avm_lua PUBLIC ${lua_SOURCE_DIR})
 set(AVM_D2D_SRC upstream/reframework-d2d/src)
 add_library(ArmorVariantManager_UI SHARED
     BridgeRuntime.cpp
+    PortraitPreview.cpp
+    PortraitPose.cpp
     ${AVM_D2D_SRC}/D2DFont.cpp
     ${AVM_D2D_SRC}/D2DImage.cpp
     ${AVM_D2D_SRC}/D2DPainter.cpp

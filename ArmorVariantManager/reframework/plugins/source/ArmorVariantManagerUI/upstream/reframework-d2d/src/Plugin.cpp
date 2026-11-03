@@ -15,6 +15,8 @@
 #include "D3D12Renderer.hpp"
 #include "DrawList.hpp"
 #include "BridgeRuntime.hpp"
+#include "PortraitPreview.hpp"
+#include "PortraitPose.hpp"
 
 using API = reframework::API;
 using Clock = std::chrono::high_resolution_clock;
@@ -132,6 +134,25 @@ void on_ref_lua_state_created(lua_State* l) try {
         return avm_bridge_unregister_runtime(client_id);
     };
     // 独立命名空间供外部 D2D 模式使用，避免修改外部 d2d 表的所有权。
+    // 即使使用外置 d2d，也保留同一套原生 GPU 预览接口；不覆盖其 d2d 全局表。
+    bridge["portrait_update"] = &portrait_gpu_update;
+    bridge["portrait_rectangle"] = &portrait_gpu_rectangle;
+    bridge["portrait_output"] = &portrait_gpu_set_output_contract;
+    bridge["portrait_alpha"] = &portrait_gpu_set_alpha_mode;
+    bridge["portrait_version"] = &portrait_gpu_color_version;
+    bridge["portrait_ready"] = &portrait_gpu_ready;
+    bridge["portrait_state"] = &portrait_gpu_state;
+    bridge["portrait_error"] = [] { return std::string(portrait_gpu_error()); };
+    bridge["portrait_drawn"] = &portrait_gpu_drawn;
+    bridge["portrait_pose_version"] = &avm_portrait_pose_version;
+    bridge["portrait_mesh_copy"] = &avm_portrait_mesh_copy;
+    using Addresses = sol::as_table_t<std::vector<uintptr_t>>;
+    bridge["portrait_pose_bind"] = [](Addresses st, Addresses ct, Addresses sj, Addresses cj, Addresses sm, Addresses cm) {
+        return avm_portrait_pose_bind(st.value(), ct.value(), sj.value(), cj.value(), sm.value(), cm.value());
+    };
+    bridge["portrait_pose_sync"] = &avm_portrait_pose_sync;
+    bridge["portrait_pose_clear"] = &avm_portrait_pose_clear;
+    bridge["portrait_pose_error"] = [] { return std::string(avm_portrait_pose_error()); };
     lua["avm_bridge"] = bridge;
 
     if (external_d2d) {
@@ -360,6 +381,8 @@ void on_ref_lua_state_created(lua_State* l) try {
 }
 
 void on_ref_lua_state_destroyed(lua_State* l) try {
+    portrait_gpu_update(0,0,0,0,0,0);
+    avm_portrait_pose_clear();
     g_plugin->drawlist.acquire().commands.clear();
     g_plugin->draw_fns.clear();
     g_plugin->init_fns.clear();
@@ -575,6 +598,9 @@ extern "C" __declspec(dllexport) bool reframework_plugin_initialize(const REFram
     param->functions->on_present(on_ref_frame);
     param->functions->on_device_reset(on_ref_device_reset);
     param->functions->on_pre_application_entry("BeginRendering", on_begin_rendering);
+
+    // 注册在内置 D2D Present 之后，让预览显示在窗口预留的矩形区域内。
+    if (!avm_portrait_initialize(param)) API::get()->log_error("[AVM Portrait] initialization unavailable");
 
     return true;
 }

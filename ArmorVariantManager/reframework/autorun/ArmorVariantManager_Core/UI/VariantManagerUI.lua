@@ -14,6 +14,7 @@ local InputBlocker = require("ArmorVariantManager_UI.Service.InputBlocker")
 local NativeTextInput = require("ArmorVariantManager_UI.Service.NativeTextInput")
 local DrawTransform = require("ArmorVariantManager_UI.Service.DrawTransform")
 local Documentation = require("ArmorVariantManager_Core.Documentation")
+local PortraitPreview = require("ArmorVariantManager_Core.PortraitPreview")
 
 local VariantManagerUI = {}
 
@@ -77,6 +78,7 @@ local LAYOUT = {
     header_top = 18,
     content_top = 82,
     footer_height = 48,
+    footer_tab_height = 28,
     footer_gap = 2,
     header_height = 64,
     header_center = 43,
@@ -87,14 +89,14 @@ local LAYOUT = {
     mode_button_padding = 16,
     mode_button_gap = 8,
     close_button_size = 30,
-    settings_language_title = 58,
-    settings_language_controls = 96,
-    settings_performance_title = 156,
-    settings_performance_controls = 190,
-    settings_performance_row_gap = 42,
-    settings_description_top = 324,
-    settings_shortcut_title = 392,
-    settings_shortcut_controls = 426,
+    settings_language_title = 96,
+    settings_language_controls = 126,
+    settings_performance_title = 176,
+    settings_performance_controls = 208,
+    settings_performance_row_gap = 38,
+    settings_description_top = 332,
+    settings_shortcut_title = 386,
+    settings_shortcut_controls = 418,
     preset_actions_height = 190,
     group_actions_height = 190
 }
@@ -180,6 +182,18 @@ function VariantManagerUI.new(deps)
     self.input_blocker = nil
     -- 使用原型表暴露 update、draw 等实例方法，避免冒号调用时方法丢失。
     setmetatable(self, { __index = VariantManagerUI })
+    local portrait_preview_deps = {
+        camera_settings = deps.config.portrait_camera,
+        should_show = function()
+            return self.visible and self.ready and self.deps.config.new_ui_enabled and not self.suspended
+                and not (self.deps.is_suspended and self.deps.is_suspended())
+        end,
+        log = function(message) if log and log.error then log.error("[AVM Portrait] " .. message) end end
+    }
+    -- 允许离线 UI 和宿主测试注入控制器；正式入口未注入时仍使用游戏适配器。
+    self.portrait_preview = deps.portrait_preview or PortraitPreview.new(portrait_preview_deps)
+    self.portrait_preview.set_camera_settings(deps.config.portrait_camera)
+    self.portrait_preview.set_enabled(deps.config.portrait_enabled == true)
 
     return self
 end
@@ -214,7 +228,11 @@ function VariantManagerUI:ensure_d2d_backend()
         scan_interval = Slider.new(adapted_api, COLORS, self.fonts),
         body_id_ttl = Slider.new(adapted_api, COLORS, self.fonts),
         scanner_batch_size = Slider.new(adapted_api, COLORS, self.fonts),
-        high_heel_height = Slider.new(adapted_api, COLORS, self.fonts)
+        high_heel_height = Slider.new(adapted_api, COLORS, self.fonts),
+        portrait_distance = Slider.new(adapted_api, COLORS, self.fonts),
+        portrait_horizontal = Slider.new(adapted_api, COLORS, self.fonts),
+        portrait_vertical = Slider.new(adapted_api, COLORS, self.fonts),
+        portrait_light_intensity = Slider.new(adapted_api, COLORS, self.fonts)
     }
 
     api.register(
@@ -2022,7 +2040,7 @@ function VariantManagerUI:draw_right_tabs(x, y, w)
         settings_width = math.max(settings_width, self.fonts.body:measure(settings_label) + 24)
     end
     local transform_width = parts_width
-    local tab_height = 28
+    local tab_height = LAYOUT.footer_tab_height
     local tab_gap = LAYOUT.mode_button_gap
     -- 底部页签右端与右侧内容面板右边界对齐，部件、变身管理、设置依次排列。
     local tabs_x = x + w - LAYOUT.content_inset - parts_width - transform_width
@@ -2068,12 +2086,67 @@ function VariantManagerUI:draw_wrapped_text(text, x, y, max_width, font, line_he
     return line_y + line_height
 end
 
--- 绘制右侧设置页，整合旧 UI 的语言、性能和快捷键配置。
+-- 镜头页复用现有滑块；保存全局取景选项，不改动防具预设或在绘制阶段访问 SDK。
+function VariantManagerUI:draw_camera_settings(x, y, w)
+    local preview = self.portrait_preview
+    local settings = preview.camera_settings
+    local changed_any = false
+    for i, item in ipairs({ { "distance", "preview_distance", 1.0, 6.0 },
+        { "horizontal", "preview_horizontal", -1.5, 1.5 }, { "vertical", "preview_vertical", -1.5, 1.5 },
+        { "light_intensity", "preview_light_intensity", 0.0, 2.0 } }) do
+        local label = self:T(item[2])
+        local changed, value = self.sliders["portrait_" .. item[1]]:draw(label,
+            settings[item[1]], x + 12, y + 108 + (i - 1) * 52, w - 24, item[3], item[4], 0.05,
+            function(number) return item[1] == "light_intensity" and string.format("%.0f%%", number * 100) or string.format("%.2f m", number) end,
+            { label_width = math.max(136, self.fonts.body:measure(label) + 16), value_width = 68 })
+        if changed then settings[item[1]], changed_any = value, true end
+    end
+    Runtime.text(self.d2d, self.fonts.body, self:T("preview_refresh_rate"), x + 12, y + 316, COLORS.muted)
+    for i, fps in ipairs({30, 60, 0}) do
+        local label = fps == 0 and self:T("preview_full_speed") or tostring(fps) .. " FPS"
+        if self.button:draw(label, x + 12 + (i - 1) * 116, y + 340, 108, 30, settings.refresh_fps == fps) then
+            settings.refresh_fps, changed_any = fps, true
+        end
+    end
+    if self.button:draw(self:T("preview_camera_reset"), x + 12, y + 386, 156, 30, false) then
+        settings.distance, settings.horizontal, settings.vertical, settings.light_intensity = 2.8, 0.0, 0.0, 1.0
+        settings.refresh_fps = 30
+        changed_any = true
+    end
+    if changed_any then
+        preview.set_camera_settings(settings)
+        self.deps.config.portrait_camera = preview.camera_settings
+        self.deps.save_settings()
+    end
+end
+
+-- 两个开关入口共用持久化；关闭管理器窗口只暂停预览，不改变用户选项。
+function VariantManagerUI:set_portrait_enabled(value)
+    self.portrait_preview.set_enabled(value)
+    self.deps.config.portrait_enabled = value == true
+    self.deps.save_settings()
+end
+
+-- 常规设置与镜头设置分开显示，保持原有语言、性能和快捷键入口。
 function VariantManagerUI:draw_settings_panel(x, y, w, h)
     local config = self.deps.config
     self.panel:draw(x, y, w, h)
     Runtime.text(self.d2d, self.fonts.small, self:T("d2d_settings_tab"),
         x + LAYOUT.panel_inset, y + LAYOUT.panel_inset, COLORS.muted)
+    if self.portrait_preview and self.button:draw(self:T("preview_title"), x + w - 168, y + 8,
+        156, 30, self.portrait_preview.enabled) then
+        self:set_portrait_enabled(not self.portrait_preview.enabled)
+        if self.portrait_preview.enabled then self.settings_section = "camera" end
+    end
+    if self.portrait_preview and self.portrait_preview.enabled and not self.preview_has_space then
+        self:draw_wrapped_text(self:T("preview_no_space"), x + 12, y + h - 42, w - 24,
+            self.fonts.tiny, 18, COLORS.muted)
+    end
+    if self.button:draw(self:T("d2d_settings_general"), x + 12, y + 48, 112, 30,
+        self.settings_section ~= "camera") then self.settings_section = "general" end
+    if self.button:draw(self:T("preview_camera_tab"), x + 132, y + 48, 132, 30,
+        self.settings_section == "camera") then self.settings_section = "camera" end
+    if self.settings_section == "camera" then self:draw_camera_settings(x, y, w); return end
 
     Runtime.text(self.d2d, self.fonts.body, self:T("d2d_settings_language"),
         x + LAYOUT.panel_inset, y + LAYOUT.settings_language_title, COLORS.text)
@@ -2235,6 +2308,40 @@ function VariantManagerUI:draw_parts(x, y, w, h, context)
 end
 
 -- 绘制新 UI 弹窗和右上角入口。
+-- 左侧预览卡片只绘制背景与控件；图像由原生 Present 直接采样，不创建 Lua 位图。
+function VariantManagerUI:draw_portrait_preview(x, y, w, h, scale)
+    local preview = self.portrait_preview
+    if not preview or not preview.enabled then return end
+    self.panel:draw(x, y, w, h)
+    -- 单行标题与关闭按钮共用主窗口的按钮中心线。
+    local title = self:T("preview_title")
+    local close_x = x + w - LAYOUT.header_inset - LAYOUT.close_button_size
+    local title_font = self.fonts.small
+    if title_font:measure(title) > close_x - x - LAYOUT.header_inset - 8 then
+        title_font = self.fonts.tiny
+    end
+    local _, title_h = title_font:measure(title)
+    Runtime.text(self.d2d, title_font, title, x + LAYOUT.header_inset,
+        y + LAYOUT.header_center - title_h / 2, COLORS.text)
+    if self.button:draw("×", close_x,
+        y + LAYOUT.header_center - LAYOUT.close_button_size / 2,
+        LAYOUT.close_button_size, LAYOUT.close_button_size, false) then self:set_portrait_enabled(false) end
+    -- 提交完整可用区域；原生 GPU 按真实源比例居中裁切，不能靠改相机投影来拉伸填充。
+    local image_w, image_h = w - 24, h - LAYOUT.header_height - LAYOUT.footer_height
+    local image_x, image_y = x + 12, y + LAYOUT.header_height
+    preview.set_rectangle({ x = image_x * scale, y = image_y * scale, w = image_w * scale, h = image_h * scale })
+    -- 页脚按完整换行块居中，长状态也不越过卡片底边。
+    local status_lines = Runtime.wrap_text(self.fonts.tiny, self:T(preview.status), w - LAYOUT.header_inset * 2)
+    local _, line_h = self.fonts.tiny:measure(status_lines[1])
+    local status_h = line_h + (#status_lines - 1) * 18
+    local status_y = math.min(y + h - status_h,
+        y + h - LAYOUT.footer_height + (LAYOUT.footer_height - status_h) / 2)
+    for i, line in ipairs(status_lines) do
+        Runtime.text(self.d2d, self.fonts.tiny, line, x + LAYOUT.header_inset, status_y + (i - 1) * 18,
+            preview.error and COLORS.danger or COLORS.muted)
+    end
+end
+
 function VariantManagerUI:draw()
     if self.suspended or (self.deps.is_suspended and self.deps.is_suspended()) then return end
     local config = self.deps.config
@@ -2252,7 +2359,9 @@ function VariantManagerUI:draw()
     local mx, my = Runtime.mouse_position()
     local raw_mx, raw_my = Runtime.raw_mouse_position()
 
-    local panel_w = math.min(1160, sw - 70)
+    local preview = self.portrait_preview
+    local panel_w, preview_w = PortraitPreview.widths(sw, preview and preview.enabled)
+    self.preview_has_space = preview_w > 0
     local panel_h = math.min(700, sh - 70)
     if not self.window_x then self.window_x = math.max(24, sw - panel_w - 48) end
     if not self.window_y then self.window_y = (sh - panel_h) / 2 end
@@ -2328,6 +2437,9 @@ function VariantManagerUI:draw()
         self.resize_edge = edge_at(raw_mx, raw_my)
     end
     panel_x, panel_y = self.window:update(mx, my, panel_x, panel_y, panel_w, panel_h, sw, sh, excluded, false)
+    if preview_w > 0 and sw - panel_w - 24 >= preview_w + 24 then
+        panel_x = math.max(panel_x, preview_w + 24)
+    end
     self.window_x, self.window_y = panel_x, panel_y
     -- 拖拽后立即按新面板坐标重算顶部控件，避免按钮滞后一帧再归位。
     mode_x = panel_x + (panel_w - mode_group_width) / 2
@@ -2337,6 +2449,13 @@ function VariantManagerUI:draw()
 
     self.d2d.fill_rect(0, 0, raw_sw, raw_sh, 0x66000000)
     self.d2d.push_transform(0, 0, scale)
+    if preview and preview.enabled then
+        if preview_w > 0 and panel_x >= preview_w + 24 then
+            self:draw_portrait_preview(panel_x - preview_w, panel_y, preview_w, panel_h, scale)
+        else
+            preview.set_rectangle(nil)
+        end
+    end
     self.d2d.fill_rounded_rect(panel_x, panel_y, panel_w, panel_h, 10, 10, COLORS.background)
     self.d2d.outline_rect(panel_x, panel_y, panel_w, panel_h, 1, COLORS.border)
     Runtime.text(self.d2d, self.fonts.title, self:T("mod_name"),
@@ -2421,7 +2540,7 @@ function VariantManagerUI:draw()
     Runtime.text(self.d2d, self.fonts.small, footer_text,
         panel_x + LAYOUT.content_inset, footer_y, COLORS.muted)
     self:draw_right_tabs(panel_x,
-        panel_y + panel_h - LAYOUT.footer_height + 9, panel_w)
+        footer_top + (LAYOUT.footer_height - LAYOUT.footer_tab_height) / 2, panel_w)
     -- 绘制轻量级自绘箭头光标，放在所有控件之后，确保光标始终位于弹窗上层。
     -- 使用少量线段而不是每帧创建图片资源，避免额外的帧耗和资源抖动。
     self.d2d.pop_transform()
