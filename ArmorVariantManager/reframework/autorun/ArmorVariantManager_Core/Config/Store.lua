@@ -26,7 +26,7 @@ function Store.load(filepath)
     return data
 end
 
--- 写入 JSON 文件：先序列化成功再落盘，避免留下半截/空文件。
+-- 序列化成功后写入，并确认关闭时的落盘结果。
 function Store.save(filepath, value)
     if not filepath or not value then return false end
     local ok_text, text = pcall(json.dump_string, value, 4)
@@ -40,8 +40,13 @@ function Store.save(filepath, value)
         log.error(string.format("[AVM] 无法写入配置文件: %s", tostring(filepath)))
         return false
     end
-    handle:write(text)
-    handle:close()
+    local written, write_error = handle:write(text)
+    local closed, close_error = handle:close()
+    if not written or not closed then
+        local reason = string.format("[AVM] 配置写入失败: %s (%s)", tostring(filepath), tostring(write_error or close_error))
+        log.error(reason)
+        return false, reason
+    end
     return true
 end
 

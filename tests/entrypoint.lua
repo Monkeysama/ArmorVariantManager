@@ -49,7 +49,7 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
                 backup_path=function(id) return "ArmorVariantManager/backup/"..id..".json" end,
                 load=function(path) return S.copy(data[path]) end,
                 save=function(path,value)
-                    if write_failed then return false end
+                    if write_failed then return false, "disk full" end
                     data[path]=S.copy(value); writes[#writes+1]=path; return true
                 end}
         end
@@ -164,6 +164,39 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
         assert(not visible and current.parts[1].materials[1].enabled==false)
         assert(not pcall(send,"material",{part=0,name="absent",enabled=true}))
         assert(not pcall(dispatch,{kind="save",name="stale",bodyId="old"}))
+        assert(#current.conditions.definitions==(game=="mhrise" and 10 or 12))
+        assert(current.conditions.canEnable==(game=="mhrise"))
+        assert(current.conditions.canTestHp==(game=="mhwilds"))
+        current=send("condition",{op="parallel",value=true})
+        assert(current.conditions.parallel and data["ArmorVariantManager/armor.json"].is_parallel)
+        assert(current.parts[1].materials[1].enabled==false,"condition editing preserves manual intent")
+        current=send("condition",{op="target_add",condition="weapon",rule=1})
+        local function weapon_rule(value)
+            for _,definition in ipairs(value.conditions.definitions) do
+                if definition.id=="weapon" then return definition.rules[1] end
+            end
+        end
+        local target=weapon_rule(current).targets[1]
+        local before=target.preset
+        write_failed=true
+        local applied_before = #applied
+        local ok, reason = pcall(send,"condition",{op="target_set",condition="weapon",rule=1,target=1,field="preset",value="Hide"})
+        assert(not ok and reason:find("disk full",1,true),"storage error reaches the page")
+        assert(#applied==applied_before,"failed save does not refresh appearance")
+        assert(weapon_rule(snapshot()).targets[1].preset==before,"failed condition save restores same config")
+        write_failed=false
+        current=send("condition",{op="target_set",condition="weapon",rule=1,target=1,field="preset",value="Show"})
+        local saved_condition=data["ArmorVariantManager/armor.json"]
+        assert(saved_condition.weapon_transform_rules[1].targets[1].preset=="Show" and saved_condition.extra.keep)
+        assert(not pcall(dispatch,{kind="condition",op="parallel",value=false,bodyId="old"}))
+        assert(snapshot().conditions.parallel,"stale request cannot edit current condition")
+        if game=="mhrise" then
+            current=send("condition",{op="enabled",value=true})
+            assert(current.conditions.enabled and data["ArmorVariantManager/armor.json"].enable_transform)
+        else
+            assert(not pcall(send,"condition",{op="enabled",value=false}),"Wilds has no added total switch")
+            assert(not pcall(send,"condition",{op="test_hp",value=50}),"menu actor cannot receive live HP writes")
+        end
         current=send("theme",{value="reff"})
         assert(current.theme=="reff" and data["ArmorVariantManager/GlobalSettings.json"].reff_theme=="reff")
         write_failed=true
@@ -206,4 +239,4 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
     if populated then assert(unregistered,"reset unregisters REFF methods") end
     _G.require = native_require
 end
-print("PASS: actual entry selects only its game, loads native UI, runs selection/save, empty-scene frames/reset and rejects unsupported games")
+print("PASS: actual dual-game entry runs native/REFF selection and condition writes, rollback/stale guards, empty-scene frames/reset")

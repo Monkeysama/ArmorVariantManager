@@ -55,7 +55,8 @@ function Application.new(runtime, appearance, session, rules, is_weapon_id)
     function app.save(id, config, preserve)
         if not id then return end
         if not preserve then rules.refresh_config_rules(config) end
-        if not session.save(id, config) then return false end
+        local saved, reason = session.save(id, config)
+        if not saved then return false, reason end
         if preserve then return true end
         appearance.overrides[id], appearance.groups[id] = nil, nil
         if rules.clear_last_state_cache then rules.clear_last_state_cache() end

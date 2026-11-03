@@ -1,4 +1,4 @@
-import type { Material, Part, Snapshot } from './types';
+import type { ConditionDefinition, ConditionField, ConditionNode, ConditionRule, Conditions, ConditionTarget, Material, Part, Snapshot } from './types';
 
 function list<T>(value: unknown, field: string): T[] {
   if (Array.isArray(value)) return value;
@@ -9,6 +9,7 @@ function list<T>(value: unknown, field: string): T[] {
 export function normalizeSnapshot(value: Snapshot): Snapshot {
   return {
     ...value,
+    conditions: value.conditions ? normalizeConditions(value.conditions) : null,
     groups: list(value.groups, 'groups'),
     presets: list(value.presets, 'presets'),
     parts: list<Part>(value.parts, 'parts').map(part => ({
@@ -16,5 +17,24 @@ export function normalizeSnapshot(value: Snapshot): Snapshot {
       materials: list<Material>(part.materials, 'materials').map(material => ({ ...material, groups: list(material.groups, 'material.groups') })),
     })),
     pending: Object.fromEntries(Object.entries(value.pending ?? {}).map(([part, materials]) => [part, materials ?? {}])),
+  };
+}
+
+function normalizeConditions(value: Conditions): Conditions {
+  const targets = (value: unknown) => list<ConditionTarget>(value, 'condition.targets');
+  return {
+    ...value,
+    targets: list<Conditions['targets'][number]>(value.targets, 'conditions.targets').map(group => ({ ...group, presets: list(group.presets, 'condition.presets') })),
+    definitions: list<ConditionDefinition>(value.definitions, 'conditions.definitions').map(definition => ({
+      ...definition,
+      fields: list<ConditionField>(definition.fields, 'condition.fields').map(field => ({ ...field,
+        ...(field.kind === 'select' ? { options: list(field.options, 'condition.options') } : {}),
+        ...(field.modes !== undefined ? { modes: list(field.modes, 'condition.modes') } : {}),
+      })),
+      rules: list<ConditionRule>(definition.rules, 'condition.rules').map(rule => ({ ...rule,
+        targets: targets(rule.targets),
+        ...(rule.chain_nodes !== undefined ? { chain_nodes: list<ConditionNode>(rule.chain_nodes, 'condition.chain_nodes').map(node => ({ ...node, targets: targets(node.targets) })) } : {}),
+      })),
+    })),
   };
 }

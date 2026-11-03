@@ -63,7 +63,8 @@ function Application.new(settings, session)
 
     -- 写入失败不重建手动意图；成功后按调用方选择保留编辑状态或重建默认预设。
     function app.save(id, config, preserve)
-        if not session.save(id, config) then return false end
+        local saved, reason = session.save(id, config)
+        if not saved then return false, reason end
         Rules.invalidate_config(id, config)
         if not preserve then app.appearance.defaults(id, config) end
         app.runtime.materials.invalidate(id)

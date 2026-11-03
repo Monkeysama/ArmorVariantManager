@@ -1,13 +1,40 @@
 export interface Material { name: string; enabled: boolean; hidden: boolean; groups: string[] }
 export interface Part { index: number; label: string; available: boolean; enabled: boolean; meshLocked: boolean; materials: Material[] }
+export interface ConditionTarget { index: number; group: string; preset: string }
+export interface ConditionNode { index: number; duration: number; targets: ConditionTarget[] }
+export interface ConditionRule {
+  index: number; label: string; targets: ConditionTarget[]; chain_nodes?: ConditionNode[];
+  [key: string]: number | string | ConditionTarget[] | ConditionNode[] | undefined;
+}
+export interface ConditionField {
+  key: string; label: string; kind: 'number' | 'select'; default: number | string;
+  min?: number; max?: number; modes?: number[]; options?: { value: number | string; label: string }[];
+}
+export interface ConditionDefinition {
+  id: string; label: string; enabled: boolean; priority: number; fields: ConditionField[];
+  canAdd: boolean; canRemove: boolean; rules: ConditionRule[]; stateLabel?: string; warning?: string;
+}
+export interface Conditions {
+  enabled: boolean; canEnable: boolean; parallel: boolean; selected: string;
+  definitions: ConditionDefinition[]; targets: { name: string; label: string; global: boolean; presets: string[] }[];
+  canTestHp?: boolean; canTestDamage?: boolean;
+}
 export interface Snapshot {
   game: 'Wilds' | 'Rise'; version: string; bodyId: string; weapon: boolean; suspended: boolean;
   groups: { name: string; label: string; global: boolean }[]; group: string;
   presets: { name: string; default: boolean; active: boolean }[]; selectedPreset: string;
   parts: Part[]; theme: 'custom' | 'reff'; language: string; selectionMode: boolean;
   pending: Record<string, Record<string, boolean>>;
+  conditions: Conditions | null;
+}
+export interface ConditionAction {
+  kind: 'condition';
+  op: 'parallel' | 'select' | 'enabled' | 'setting' | 'rule_add' | 'rule_delete' | 'rule_set'
+    | 'target_add' | 'target_delete' | 'target_set' | 'chain_add' | 'chain_delete' | 'chain_set' | 'test_hp' | 'test_damage';
+  condition?: string; rule?: number; node?: number; target?: number; field?: string; value?: boolean | number | string;
 }
 export type Action =
+  | ConditionAction
   | { kind: 'mode'; weapon: boolean }
   | { kind: 'theme'; value: 'custom' | 'reff' }
   | { kind: 'group' | 'preset' | 'save' | 'delete-preset' | 'default' | 'delete-group'; name: string }

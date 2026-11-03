@@ -1264,8 +1264,62 @@ do
     local function preset_name(request)
         return type(request.name) == "string" and request.name ~= "" and request.name
     end
+    local Conditions = require("ArmorVariantManager_Core.UI.Reff.Conditions")
+    local condition_model = require(game.prefix .. "ConditionModel")
+    local module_checks = game.wilds and {
+        hp={"is_hp_module_initialized","hp_module_not_found"}, weapon={"has_weapon_getter","weapon_module_not_found"},
+        spirit={"has_spirit_getter","spirit_module_not_found"}, dual_blades={"has_dual_blades_getter","dual_module_not_found"},
+        switch_axe={"has_switch_axe_getter","switch_axe_module_not_found"}, insect_glaive={"has_insect_glaive_getter","insect_glaive_module_not_found"},
+        charge_blade={"has_charge_blade_getter","charge_blade_module_not_found"}, greatsword_type={"has_greatsword_getter","greatsword_module_not_found"},
+        greatsword_level={"has_greatsword_getter","greatsword_module_not_found"}, bow_level={"has_bow_getter","bow_module_not_found"},
+        hammer_level={"has_hammer_getter","hammer_module_not_found"},
+    } or {}
+    local conditions = Conditions.new({
+        model=condition_model,translate=T,
+        save=function(current) return application.save(current.id,current.config,true) end,
+        -- 条件编辑不清除手动基线；持久化成功后才失效规则缓存并立即应用。
+        refresh=function(current)
+            if game.wilds then
+                TransformManager.refresh_config_rules(current.config)
+                TransformManager.clear_last_state_cache()
+                application.refresh(current.id)
+            else
+                application.refresh(current.id,current.config,current.character)
+            end
+        end,
+        state=function(current,id)
+            if game.wilds then
+                if not can_use_transform(current.character) then return nil end
+            elseif not current.player then return nil end
+            local ok,value,warning = pcall(function()
+                local check = module_checks[id]
+                local raw
+                if game.wilds then
+                    local object = safe_get_game_object(current.character,"reff_condition_state")
+                    raw = TransformManager.get_configured_state(current.config,id,current.character,tostring(object or current.character))
+                else
+                    raw = TransformManager.get_current_raw_state({transform_type=id,is_parallel=false},current.player)
+                end
+                if check and TransformManager.has_configured_condition(current.config,id)
+                    and not TransformManager[check[1]]() then return nil,T(check[2]) end
+                return Conditions.format_state(condition_model,id,raw,T)
+            end)
+            if not ok then return nil,tostring(value) end
+            return value,warning
+        end,
+        test_hp=game.wilds and function(current,value)
+            if not can_use_transform(current.character) then return false,"当前角色不能测试生命值" end
+            return TransformManager.set_character_hp_percent(current.character,math.max(0,math.min(100,value)))
+        end or nil,
+        test_damage=game.wilds and function(current)
+            if not can_use_transform(current.character) then return false,"当前角色不能测试受击" end
+            local hp = TransformManager.get_character_hp(current.character)
+            if not hp then return false,"当前生命值不可用" end
+            return TransformManager.set_character_hp(current.character,hp-25)
+        end or nil,
+    })
     local controller = require("ArmorVariantManager_Core.UI.Reff.Controller").new({
-        game=game.name,version=version,context=context,parts=reff_parts.snapshot,
+        game=game.name,version=version,context=context,parts=reff_parts.snapshot,conditions=conditions,
         main_label=function() return T("main_list") end,
         language=function() return global_config.language end,
         theme=function() return global_config.reff_theme == "reff" and "reff" or "custom" end,

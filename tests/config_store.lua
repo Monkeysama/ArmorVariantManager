@@ -40,6 +40,33 @@ assert(Store.load(path) == nil)
 os.remove(path)
 assert(Store.load(path) == nil)
 
+-- Lua 文件写入和关闭失败返回 nil,error，不能向调用方报告成功。
+local real_open = io.open
+json.dump_string = function() return saved end
+for _, failed in ipairs({"write", "close"}) do
+    local closed = false
+    io.open = function(name, mode)
+        assert(name == path and mode == "w")
+        local handle = {}
+        function handle:write(text)
+            assert(text == saved)
+            if failed == "write" then return nil, "disk full" end
+            return self
+        end
+        function handle:close()
+            closed = true
+            if failed == "close" then return nil, "flush failed" end
+            return true
+        end
+        return handle
+    end
+    local ok, reason = Store.save(path, original)
+    io.open = real_open
+    assert(not ok, failed .. " failure reported as saved")
+    assert(closed, "Close the file even when writing fails")
+    assert(reason and reason:find(failed == "write" and "disk full" or "flush failed", 1, true))
+end
+
 -- 运行真实入口的加载及备份比较，避免只验证模块而漏掉调用接线。
 local Session = require("ArmorVariantManager_Core.Config.Session")
 local disk, reads, refreshes = {}, 0, 0
@@ -69,4 +96,4 @@ disk[Store.backup_path("changed")] = S.copy(original)
 assert(load_config("changed") and session.pending("changed"))
 S.equal(disk[Store.backup_path("changed")], original, "Do not overwrite an unresolved backup")
 assert(load_config(nil) == nil)
-print("PASS: config paths, file IO, codec failure, cached entry loading and raw backup comparison")
+print("PASS: config paths, file IO/write/close errors, codec failure, cached entry loading and raw backup comparison")

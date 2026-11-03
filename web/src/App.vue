@@ -3,12 +3,13 @@ import { computed, shallowRef, watch } from 'vue';
 import { ElButton, ElConfigProvider, ElRadio, ElRadioGroup, REFF_ELEMENT_LOCALES } from '@reff/ui';
 import CatalogPane from './CatalogPane.vue';
 import MaterialsPane from './MaterialsPane.vue';
+import ConditionsPane from './ConditionsPane.vue';
 import { useAvm } from './useAvm';
 import { useText } from './i18n';
 
 const { snapshot, busy, loading, error, notice, perform, connect } = useAvm();
 const { t, english } = useText(snapshot);
-const tab = shallowRef<'parts' | 'settings' | 'help'>('parts');
+const tab = shallowRef<'parts' | 'conditions' | 'settings' | 'help'>('parts');
 const disabled = computed(() => busy.value || !snapshot.value?.bodyId);
 const restoreConfirmation = shallowRef(false);
 watch([() => snapshot.value?.bodyId, () => tab.value], () => { restoreConfirmation.value = false; });
@@ -36,6 +37,7 @@ async function restore() {
           <CatalogPane :snapshot="snapshot" :busy="busy" :perform="perform" :t="t" @notice="notice = $event" />
           <MaterialsPane :snapshot="snapshot" :busy="busy" :perform="perform" :t="t" />
         </div>
+        <ConditionsPane v-show="tab === 'conditions'" :key="snapshot.bodyId" :conditions="snapshot.conditions" :busy="busy" :perform="perform" :t="t" />
         <section v-show="tab === 'settings'" class="information settings-page" :aria-label="t('settings')">
           <div class="section-kicker">{{ t('settings') }}</div><h2>{{ t('theme') }}</h2>
           <ElRadioGroup :model-value="snapshot.theme" :disabled="busy" @change="(value: string | number | boolean | undefined) => perform({ kind: 'theme', value: value as 'custom' | 'reff' })">
@@ -46,7 +48,7 @@ async function restore() {
         </section>
         <section v-show="tab === 'help'" class="information help-page" :aria-label="t('help')">
           <div class="section-kicker">{{ t('help') }}</div><h2>{{ t('helpTitle') }}</h2>
-          <p>{{ t('helpGroups') }}</p><p>{{ t('helpSave') }}</p><p>{{ t('helpSelection') }}</p><p>{{ t('helpRestore') }}</p>
+          <p>{{ t('helpGroups') }}</p><p>{{ t('helpSave') }}</p><p>{{ t('helpSelection') }}</p><p>{{ t('helpConditions') }}</p><p>{{ t('helpRestore') }}</p>
           <div class="native-note">{{ t('nativeHelp') }}</div>
         </section>
       </template>
@@ -60,7 +62,7 @@ async function restore() {
         </template>
         <div class="status" role="status"><span v-if="busy" class="active-dot"></span>{{ busy ? t('saving') : notice || (snapshot?.suspended ? t('suspended') : '') }}</div>
         <nav class="footer-tabs" :aria-label="t('title')">
-          <button v-for="item in (['parts', 'settings', 'help'] as const)" :key="item" :aria-current="tab === item ? 'page' : undefined" @click="tab = item">{{ t(item) }}</button>
+          <button v-for="item in (['parts', 'conditions', 'settings', 'help'] as const)" :key="item" :aria-current="tab === item ? 'page' : undefined" @click="tab = item">{{ t(item) }}</button>
         </nav>
       </footer>
     </main>

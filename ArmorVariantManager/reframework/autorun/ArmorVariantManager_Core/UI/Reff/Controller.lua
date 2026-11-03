@@ -24,6 +24,7 @@ function Controller.new(deps)
             }
         end
         snapshot.parts = deps.parts(context)
+        if deps.conditions then snapshot.conditions = deps.conditions.snapshot(context) end
         for part, materials in pairs(context.pending) do
             local copy = {}
             for name, selected in pairs(materials) do copy[name] = selected == true end
@@ -46,7 +47,7 @@ function Controller.new(deps)
             local context = deps.context()
             assert(context.id and not context.suspended, "角色不可用或正在切换装备")
             assert(request.bodyId == context.id, "装备已变化，请重新操作")
-            local operation = deps.operations[kind]
+            local operation = kind == "condition" and deps.conditions and deps.conditions.action or deps.operations[kind]
             assert(operation, "未知操作: " .. tostring(kind))
             local success, reason = operation(request, context)
             assert(success, reason or "操作未保存，请重试")

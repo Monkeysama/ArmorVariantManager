@@ -65,7 +65,8 @@ function Session.new(schema, on_loaded, store)
     function session.save(id, data)
         if not id then return nil end
         session.cache[id] = data
-        if not store.save(store.config_path(id), data) then return false end
+        local saved, reason = store.save(store.config_path(id), data)
+        if not saved then return false, reason end
         if not session.pending(id) then
             store.save(store.backup_path(id), data)
             session.restored[id] = nil

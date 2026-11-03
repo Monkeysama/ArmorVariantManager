@@ -18,6 +18,8 @@ sync_main_release.py
 !/tests/run.py
 !/tests/entrypoint.lua
 !/tests/reff_bridge.lua
+!/tests/reff_conditions.lua
+!/tests/wilds_hp.lua
 !/tests/rise_options.lua
 !/tests/support.lua
 !/tests/config_compatibility.lua

@@ -53,18 +53,18 @@ local function init_hp_reflection(character)
                             end }
                             max_hp_getter = { call = function(_, target)
                                 local hunter_health = get_hunter_health:call(target)
-                                if not hunter_health then return 0 end
+                                if not hunter_health then return 0, "未找到 HunterHealth 对象" end
                                 local health_mgr = get_health_mgr:call(hunter_health)
-                                if not health_mgr then return 0 end
+                                if not health_mgr then return 0, "未找到 HealthMgr 对象" end
                                 return max_getter:call(health_mgr)
                             end }
                             if setter then
                                 hp_setter = { call = function(_, target, value)
                                     local hunter_health = get_hunter_health:call(target)
-                                    if not hunter_health then return end
+                                    if not hunter_health then return false, "未找到 HunterHealth 对象" end
                                     local health_mgr = get_health_mgr:call(hunter_health)
-                                    if not health_mgr then return end
-                                    setter:call(health_mgr, value)
+                                    if not health_mgr then return false, "未找到 HealthMgr 对象" end
+                                    return setter:call(health_mgr, value)
                                 end }
                             end
                             hp_reflection_initialized = true
@@ -89,10 +89,15 @@ function M.get_hp(character)
 end
 
 function M.set_hp(character, target_hp)
-    if not character then return end
-    if not hp_reflection_initialized then init_hp_reflection(character) end
-    if not hp_setter then return end
-    pcall(function() hp_setter:call(character, target_hp) end)
+    if not character then return false, "角色不可用" end
+    local ok, result, reason = pcall(function()
+        if not hp_reflection_initialized then init_hp_reflection(character) end
+        if not hp_setter then return false, "未找到生命值设置方法" end
+        return hp_setter:call(character, target_hp)
+    end)
+    if not ok then return false, result end
+    if result == false then return false, reason or "生命值设置失败" end
+    return true
 end
 
 function M.get_state(character)
@@ -108,14 +113,18 @@ function M.get_state(character)
 end
 
 function M.set_state(character, percent)
-    if not character then return end
-    if not hp_reflection_initialized then init_hp_reflection(character) end
-    if not hp_setter or not max_hp_getter then return end
-    local ok, max_hp = pcall(function() return max_hp_getter:call(character) end)
-    if ok and type(max_hp) == "number" and max_hp > 0 then
-        local target_hp = (percent / 100) * max_hp
-        pcall(function() hp_setter:call(character, target_hp) end)
+    if not character then return false, "角色不可用" end
+    local ok, max_hp, reason = pcall(function()
+        if not hp_reflection_initialized then init_hp_reflection(character) end
+        if not hp_setter then return nil, "未找到生命值设置方法" end
+        if not max_hp_getter then return nil, "未找到最大生命值读取方法" end
+        return max_hp_getter:call(character)
+    end)
+    if not ok then return false, max_hp end
+    if type(max_hp) ~= "number" or not (max_hp > 0) then
+        return false, reason or "无法读取有效的最大生命值"
     end
+    return M.set_hp(character, (percent / 100) * max_hp)
 end
 
 local function get_active_hp_rule(rules, cur_hp)
