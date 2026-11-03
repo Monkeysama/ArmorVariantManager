@@ -65,7 +65,10 @@ body { background: transparent; }
 .sortable-row { position: relative; display: flex; align-items: stretch; min-width: 0; flex-shrink: 0; }
 .sortable-row > .catalog-row { flex: 1; min-width: 0; }
 .drag-handle { width: 16px; height: 16px; flex: 0 0 16px; color: var(--avm-muted); stroke: currentColor; stroke-width: 2; stroke-linecap: round; cursor: grab; }
+.catalog-row { -webkit-user-drag: none; user-select: none; }
+.catalog-row[data-sortable="true"] { touch-action: none; }
 .sortable-row.is-dragging { opacity: .45; }
+.sortable-row.is-dragging, .sortable-row.is-dragging * { cursor: grabbing; }
 .sortable-row.drop-before::before, .sortable-row.drop-after::after { content: ''; position: absolute; inset-inline: 0; height: 2px; background: var(--avm-accent); z-index: 1; pointer-events: none; }
 .sortable-row.drop-before::before { top: 0; }
 .sortable-row.drop-after::after { bottom: 0; }

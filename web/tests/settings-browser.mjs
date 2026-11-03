@@ -49,26 +49,32 @@ async function select(label, option) {
 async function calls() { return evaluate(`JSON.parse(document.querySelector('#fixture-controls output').textContent).calls`); }
 async function lastCall() { const list = await calls(); return list[list.length - 1]; }
 async function names(pane) { return evaluate(`Array.from(document.querySelectorAll('.${pane} .row-name'), el => el.textContent.trim())`); }
-async function startDrag(pane, source) {
+let dragPosition;
+async function rowPoint(pane, name, after = false) {
   return evaluate(`(() => {
-    const button = [...document.querySelectorAll('.${pane} .catalog-row')].find(el => el.querySelector('.row-name').textContent.trim() === ${JSON.stringify(source)});
-    if (!button) throw new Error('Drag source not found');
-    window.catalogDragTransfer = new DataTransfer();
-    return button.dispatchEvent(new DragEvent('dragstart', { bubbles: true, cancelable: true, dataTransfer: window.catalogDragTransfer }));
+    const button = [...document.querySelectorAll('.${pane} .catalog-row')].find(el => el.querySelector('.row-name').textContent.trim() === ${JSON.stringify(name)});
+    if (!button) throw new Error('Sort row not found: ' + ${JSON.stringify(name)});
+    button.scrollIntoView({ block: 'nearest' });
+    const rect = button.getBoundingClientRect();
+    return { x: rect.left + Math.min(48, rect.width / 2), y: rect.top + rect.height * ${after ? .75 : .25} };
   })()`);
 }
+async function startDrag(pane, source) {
+  dragPosition = await rowPoint(pane, source);
+  await cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', ...dragPosition, buttons: 0 });
+  await cdp('Input.dispatchMouseEvent', { type: 'mousePressed', ...dragPosition, button: 'left', buttons: 1, clickCount: 1 });
+  return evaluate(`!!document.querySelector('.${pane} .catalog-row[data-sortable="true"]:active')`);
+}
 async function drop(pane, source, target, after) {
-  const accepted = await evaluate(`(() => {
-    const rows = [...document.querySelectorAll('.${pane} .sortable-row')];
-    const row = rows.find(el => el.querySelector('.row-name').textContent.trim() === ${JSON.stringify(target)});
-    const rect = row.getBoundingClientRect(), dataTransfer = window.catalogDragTransfer;
-    const options = { bubbles: true, cancelable: true, dataTransfer, clientY: rect.top + rect.height * ${after ? .75 : .25} };
-    const accepted = !row.dispatchEvent(new DragEvent('dragover', options));
-    row.dispatchEvent(new DragEvent('drop', options));
-    rows.find(el => el.querySelector('.row-name').textContent.trim() === ${JSON.stringify(source)})?.querySelector('.catalog-row').dispatchEvent(new DragEvent('dragend', { bubbles: true, dataTransfer }));
-    delete window.catalogDragTransfer;
-    return accepted;
-  })()`);
+  const destination = await rowPoint(pane, target, after);
+  for (let step = 1; step <= 8; step++) {
+    await cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', button: 'none', buttons: 1,
+      x: dragPosition.x + (destination.x - dragPosition.x) * step / 8,
+      y: dragPosition.y + (destination.y - dragPosition.y) * step / 8 });
+  }
+  const accepted = await evaluate(`!!document.querySelector('.${pane} .drop-before, .${pane} .drop-after')`);
+  await cdp('Input.dispatchMouseEvent', { type: 'mouseReleased', ...destination, button: 'left', buttons: 0, clickCount: 1 });
+  dragPosition = undefined;
   await settled();
   return accepted;
 }
@@ -158,7 +164,8 @@ try {
   // Direct dragging never moves the main/global region or changes the active selection.
   assert.equal(await evaluate(`document.querySelector('.sort-toggle') === null`), true);
   assert.deepEqual(await names('groups-pane'), ['主预设', '全局隐藏', '上身', '腰部装饰']);
-  assert.deepEqual(await evaluate(`Array.from(document.querySelectorAll('.groups-pane .catalog-row'), el => el.draggable)`), [false, false, true, true]);
+  assert.deepEqual(await evaluate(`Array.from(document.querySelectorAll('.groups-pane .catalog-row'), el => el.draggable)`), [false, false, false, false]);
+  assert.deepEqual(await evaluate(`Array.from(document.querySelectorAll('.groups-pane .catalog-row'), el => el.dataset.sortable)`), ['false', 'false', 'true', 'true']);
   let beforeSorting = (await calls()).length;
   assert.equal(await startDrag('groups-pane', '全局隐藏'), false);
   assert.equal(await drop('groups-pane', '全局隐藏', '上身', true), false);
@@ -189,6 +196,11 @@ try {
   await until(`document.querySelector('.equipment-id').textContent === 'ch03_002_0000'`);
   assert.equal(await drop('groups-pane', '上身', '腰部装饰', false), false);
   assert.equal((await calls()).length, beforeSorting);
+  const sortInput = (await evaluate(`JSON.parse(document.querySelector('#fixture-controls output').textContent)`)).sortInput;
+  assert.equal(sortInput.nativeDragStarts, 0);
+  assert.ok(sortInput.captures > 0);
+  assert.equal(sortInput.captures, sortInput.releases);
+  assert.equal(await evaluate(`document.querySelector('.is-dragging, .drop-before, .drop-after') === null`), true);
   await click('#fixture-controls button', 'Restore character');
   await until(`document.querySelector('.equipment-id').textContent === 'ch03_001_0000'`);
   await screenshot('sorting-ice-cyan');
@@ -224,12 +236,12 @@ try {
   await click('.footer-tabs button', '部件材质');
   await input('setting-ground_clipping_height_cm', 12.5, true);
   assert.equal((await lastCall()).bodyId, 'ch03_001_0000');
-  assert.match(await evaluate(`document.querySelector('.height-pane').textContent`), /预设草稿/);
+  assert.equal(await evaluate(`!!document.querySelector('.height-help-button')`), true);
 
   // All global settings remain usable without a character; equipment does not.
   await click('#fixture-controls button', 'No character');
   await until(`document.querySelector('.equipment-id').textContent === '—'`);
-  assert.equal(await evaluate(`document.getElementById('setting-ground_clipping_height_cm').disabled`), true);
+  assert.equal(await evaluate(`document.querySelector('.height-pane')`), null);
   await click('.footer-tabs button', '设置');
   assert.equal(await evaluate(`document.getElementById('setting-scan_interval').disabled`), false);
   await input('setting-body_id_ttl', 1.5, true);

@@ -49,7 +49,7 @@ async function dismissBackup() {
           </div>
         </div>
         <div v-show="tab === 'parts'" class="workspace">
-          <CatalogPane :snapshot="snapshot" :busy="busy" :perform="perform" :load-imports="loadImports" :t="t" @notice="notice = $event" />
+          <CatalogPane :active="tab === 'parts'" :snapshot="snapshot" :busy="busy" :perform="perform" :load-imports="loadImports" :t="t" @notice="notice = $event" />
           <MaterialsPane :snapshot="snapshot" :busy="busy" :perform="perform" :t="t" />
         </div>
         <ConditionsPane v-show="tab === 'conditions'" :key="snapshot.bodyId" :conditions="snapshot.conditions" :busy="busy" :perform="perform" :t="t" />

@@ -113,7 +113,14 @@ const importFiles: ImportFile[] = [
   { path: 'ArmorVariantManager/wp00_0000.json', name: 'wp00_0000.json' },
 ];
 let status: HTMLOutputElement | undefined;
-function renderStatus() { if (status) status.textContent = JSON.stringify({ polls, peak, calls, documents, imports, layouts }); }
+const sortInput = { nativeDragStarts: 0, captures: 0, releases: 0 };
+function renderStatus() { if (status) status.textContent = JSON.stringify({ polls, peak, calls, documents, imports, layouts, sortInput }); }
+for (const [type, counter] of [['dragstart', 'nativeDragStarts'], ['gotpointercapture', 'captures'], ['lostpointercapture', 'releases']] as const) {
+  document.addEventListener(type, event => {
+    if (!(event.target instanceof Element) || !event.target.closest('.catalog-list')) return;
+    sortInput[counter] += 1; renderStatus();
+  }, true);
+}
 const wait = (delay = 120) => new Promise(resolve => setTimeout(resolve, delay));
 function applyCondition(request: ConditionAction) {
   const conditions = state.conditions!;

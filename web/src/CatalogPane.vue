@@ -4,8 +4,9 @@ import { ElButton, ElCheckbox, ElInput } from '@reff/ui';
 import ImportPresetPane from './ImportPresetPane.vue';
 import type { Imports, Perform, Snapshot } from './types';
 import type { Translate } from './i18n';
+import { useCatalogSort, type CatalogList } from './useCatalogSort';
 
-const props = defineProps<{ snapshot: Snapshot; busy: boolean; perform: Perform; loadImports: () => Promise<Imports>; t: Translate }>();
+const props = defineProps<{ snapshot: Snapshot; active: boolean; busy: boolean; perform: Perform; loadImports: () => Promise<Imports>; t: Translate }>();
 const emit = defineEmits<{ notice: [message: string] }>();
 const groupName = shallowRef('');
 const global = shallowRef(false);
@@ -18,9 +19,6 @@ const groups = computed(() => [
   ...props.snapshot.groups.filter(item => item.name !== '' && !item.global),
 ]);
 const customGroups = computed(() => groups.value.filter(item => item.name !== '' && !item.global));
-type List = 'group' | 'preset';
-const dragging = shallowRef<{ list: List; name: string } | null>(null);
-const dropTarget = shallowRef<{ list: List; name: string; after: boolean } | null>(null);
 const group = computed(() => props.snapshot.groups.find(item => item.name === props.snapshot.group));
 const selected = computed(() => props.snapshot.presets.find(item => item.name === props.snapshot.selectedPreset));
 const selectionCount = computed(() => Object.values(props.snapshot.pending).reduce((total, part) => total + Object.values(part).filter(Boolean).length, 0));
@@ -28,46 +26,19 @@ watch([() => props.snapshot.bodyId, () => props.snapshot.group], () => { confirm
 watch([() => props.snapshot.game, () => props.snapshot.bodyId, () => props.snapshot.weapon, () => props.snapshot.selectionMode], () => {
   groupName.value = ''; global.value = false;
 });
-watch([() => props.snapshot.game, () => props.snapshot.bodyId, () => props.snapshot.weapon, () => props.snapshot.group,
-  () => props.snapshot.selectionMode, () => props.snapshot.suspended, () => props.busy], cancelDrag, { flush: 'sync' });
 
-function sortable(list: List, name: string) {
-  return !disabled.value && (list === 'group' ? customGroups.value : props.snapshot.presets).some(item => item.name === name);
+function sortable(list: CatalogList, name: string) {
+  return props.active && !props.snapshot.suspended && !disabled.value
+    && (list === 'group' ? customGroups.value : props.snapshot.presets).some(item => item.name === name);
 }
-function cancelDrag() { dragging.value = null; dropTarget.value = null; }
-function beginDrag(event: DragEvent, list: List, name: string) {
-  if (!sortable(list, name) || !event.dataTransfer) { event.preventDefault(); return; }
-  dragging.value = { list, name };
-  event.dataTransfer.effectAllowed = 'move';
-  event.dataTransfer.setData('text/plain', name);
-}
-function previewDrop(event: DragEvent, list: List, name: string) {
-  if (dragging.value?.list !== list || dragging.value.name === name || !sortable(list, name)) {
-    dropTarget.value = null; return;
-  }
-  event.preventDefault();
-  if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
-  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
-  dropTarget.value = { list, name, after: event.clientY >= rect.top + rect.height / 2 };
-}
-async function finishDrag(event: DragEvent, list: List, name: string) {
-  event.preventDefault();
-  const source = dragging.value, target = dropTarget.value;
-  cancelDrag();
-  if (!source || source.list !== list || !target || target.list !== list || target.name !== name
-    || !sortable(list, source.name) || !sortable(list, name)) return;
-  await props.perform({ kind: list === 'group' ? 'reorder-group' : 'reorder-preset', name: source.name,
-    target: name, after: target.after, group: props.snapshot.group, weapon: props.snapshot.weapon });
-}
-function rowClass(list: List, name: string) {
-  return { 'is-dragging': dragging.value?.list === list && dragging.value.name === name,
-    'drop-before': dropTarget.value?.list === list && dropTarget.value.name === name && !dropTarget.value.after,
-    'drop-after': dropTarget.value?.list === list && dropTarget.value.name === name && dropTarget.value.after };
-}
-function leaveList(event: DragEvent) {
-  if (!(event.relatedTarget instanceof Node) || !(event.currentTarget as HTMLElement).contains(event.relatedTarget)) dropTarget.value = null;
-}
-async function moveWithKey(event: KeyboardEvent, list: List, name: string) {
+const { begin: beginDrag, cancel: cancelDrag, acceptClick, rowClass } = useCatalogSort({ sortable,
+  commit: (list, name, target, after) => props.perform({ kind: list === 'group' ? 'reorder-group' : 'reorder-preset',
+    name, target, after, group: props.snapshot.group, weapon: props.snapshot.weapon }),
+});
+watch([() => props.snapshot.game, () => props.snapshot.bodyId, () => props.snapshot.weapon, () => props.snapshot.group,
+  () => props.snapshot.selectionMode, () => props.snapshot.suspended, () => props.busy, () => props.active], cancelDrag, { flush: 'sync' });
+
+async function moveWithKey(event: KeyboardEvent, list: CatalogList, name: string) {
   if (!event.altKey || (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') || !sortable(list, name)) return;
   event.preventDefault();
   const names = (list === 'group' ? customGroups.value : props.snapshot.presets).map(item => item.name);
@@ -108,13 +79,13 @@ async function remove() {
 <template>
   <section class="pane groups-pane" :aria-label="t('groups')">
     <div class="pane-heading"><h2>{{ t('groups') }}</h2><span class="count">{{ snapshot.groups.length }}</span></div>
-    <div class="catalog-list" @dragleave="leaveList">
+    <div class="catalog-list" @dragstart.prevent>
       <div v-for="item in groups" :key="item.name" class="sortable-row" :class="rowClass('group', item.name)"
-        @dragover="previewDrop($event, 'group', item.name)" @drop="finishDrag($event, 'group', item.name)">
+        data-sort-list="group" :data-sort-name="item.name">
       <button class="catalog-row" :aria-pressed="snapshot.group === item.name" :disabled="disabled"
-        :draggable="sortable('group', item.name)" :aria-keyshortcuts="item.name && !item.global ? 'Alt+ArrowUp Alt+ArrowDown' : undefined"
-        @dragstart="beginDrag($event, 'group', item.name)" @dragend="cancelDrag"
-        @keydown="moveWithKey($event, 'group', item.name)" @click="chooseGroup(item.name)">
+        :draggable="false" :data-sortable="sortable('group', item.name)" :aria-keyshortcuts="item.name && !item.global ? 'Alt+ArrowUp Alt+ArrowDown' : undefined"
+        @pointerdown="beginDrag($event, 'group', item.name)"
+        @keydown="moveWithKey($event, 'group', item.name)" @click="acceptClick($event) && chooseGroup(item.name)">
         <svg v-if="item.name && !item.global" class="drag-handle" viewBox="0 0 16 16" :aria-label="t('sort')" role="img"><path d="M5 3h1m4 0h1M5 8h1m4 0h1M5 13h1m4 0h1" /></svg>
         <span class="row-name" :title="item.label">{{ item.label }}</span><span v-if="item.global" class="row-tag">{{ t('global') }}</span><span class="row-arrow" aria-hidden="true">›</span>
       </button>
@@ -142,13 +113,13 @@ async function remove() {
   <section class="pane presets-pane" :aria-label="t('presets')">
     <div class="pane-heading"><h2>{{ t('presets') }}</h2><span class="count">{{ snapshot.presets.length }}</span></div>
     <div class="group-caption">{{ group?.label ?? t('main') }}</div>
-    <div class="catalog-list" @dragleave="leaveList">
+    <div class="catalog-list" @dragstart.prevent>
       <div v-for="item in snapshot.presets" :key="item.name" class="sortable-row" :class="rowClass('preset', item.name)"
-        @dragover="previewDrop($event, 'preset', item.name)" @drop="finishDrag($event, 'preset', item.name)">
+        data-sort-list="preset" :data-sort-name="item.name">
       <button class="catalog-row preset-row" :aria-pressed="snapshot.selectedPreset === item.name" :disabled="disabled"
-        :draggable="sortable('preset', item.name)" aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
-        @dragstart="beginDrag($event, 'preset', item.name)" @dragend="cancelDrag"
-        @keydown="moveWithKey($event, 'preset', item.name)" @click="choosePreset(item.name)">
+        :draggable="false" :data-sortable="sortable('preset', item.name)" aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
+        @pointerdown="beginDrag($event, 'preset', item.name)"
+        @keydown="moveWithKey($event, 'preset', item.name)" @click="acceptClick($event) && choosePreset(item.name)">
         <svg class="drag-handle" viewBox="0 0 16 16" :aria-label="t('sort')" role="img"><path d="M5 3h1m4 0h1M5 8h1m4 0h1M5 13h1m4 0h1" /></svg>
         <span class="row-name" :title="item.name">{{ item.name }}</span><svg v-if="item.default" class="default-star" viewBox="0 0 16 16" :aria-label="t('default')" role="img"><title>{{ t('default') }}</title><path d="m8 1.5 1.9 4 4.4.6-3.2 3.1.8 4.4L8 11.5l-3.9 2.1.8-4.4-3.2-3.1 4.4-.6Z" /></svg><span v-if="item.active" class="active-dot" :title="t('active')" :aria-label="t('active')"></span>
       </button>
