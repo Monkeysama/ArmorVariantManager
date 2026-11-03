@@ -12,6 +12,7 @@ DEFAULT_TESTS = (
     "tests/config_compatibility.lua",
     "tests/config_store.lua",
     "tests/config_session.lua",
+    "tests/global_settings.lua",
     "tests/preset_compatibility.lua",
     "tests/preset_editor.lua",
     "tests/preset_selection.lua",
