@@ -14,6 +14,7 @@ DEFAULT_TESTS = (
     "tests/preset_compatibility.lua",
     "tests/runtime_state.lua",
     "tests/wilds_equipment.lua",
+    "tests/wilds_actors.lua",
     "tests/rules_compatibility.lua",
     "tests/high_heel_height_regression.lua",
     "tests/ground_clipping_targets_regression.lua",

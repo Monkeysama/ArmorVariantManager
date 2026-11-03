@@ -2,8 +2,11 @@
 package.path = "ArmorVariantManager/reframework/autorun/?.lua;" .. package.path
 local file = assert(io.open("ArmorVariantManager/reframework/autorun/ArmorVariantManager.lua", "r"))
 local source = file:read("a"); file:close()
+local main_source = source
+file = assert(io.open("ArmorVariantManager/reframework/autorun/ArmorVariantManager_Core/Games/Wilds/Actors.lua", "r"))
+source = file:read("a"); file:close()
 local first = assert(source:find("local function flush_scene_reset(", 1, true))
-local last = assert(source:find("\nlocal function get_all_characters()", first, true))
+local last = assert(source:find("\n    local function get_all_characters()", first, true))
 local now, invalidations, transform_reads = 10, 0, 0
 local equipment_clears, mesh_clears = 0, 0
 local loading, menu, scene_key = false, false, "scene-a"
@@ -20,7 +23,7 @@ local sdk_mock = {
     get_managed_singleton = function(name) return name == "app.GUIManager" and gui_manager or {} end
 }
 local guard_env = setmetatable({ sdk = sdk_mock }, { __index = _G })
-local guard_module = assert(loadfile("ArmorVariantManager/reframework/autorun/ArmorVariantManager_Core/RuntimeGuard.lua", "t", guard_env))()
+local guard_module = assert(loadfile("ArmorVariantManager/reframework/autorun/ArmorVariantManager_Core/Games/Wilds/RuntimeGuard.lua", "t", guard_env))()
 local preserved = { keep = true }
 local env = setmetatable({
     scanner = { state = "IDLE", force_rescan = true, last_scan_time = 0 },
@@ -51,6 +54,10 @@ local env = setmetatable({
         end }
     }
 }, { __index = _G })
+env.TransformManager = { clear_last_state_cache = function() end }
+local reset_start = assert(main_source:find("local function reset_actor_context()", 1, true))
+local reset_end = assert(main_source:find("\nactors = Actors.new", reset_start, true))
+env.on_reset = assert(load(main_source:sub(reset_start, reset_end - 1) .. "\nreturn reset_actor_context", "actual-reset", "t", env))()
 local function object(fields)
     fields = fields or {}
     fields.call = function(self, name)
@@ -122,8 +129,8 @@ env.runtime_guard:mark_load_end(false); assert(env.runtime_guard:update(), "Fast
 env.runtime_guard:mark_load_end(true); assert(not env.runtime_guard:update())
 assert(invalidations == 3)
 assert(equipment_clears == 3 and mesh_clears == 3, "Scene cleanup releases adapter-owned object caches")
-local ui_start = assert(source:find("re.on_draw_ui(function()", 1, true))
-local tree = assert(source:find('imgui.tree_node(T("mod_name"))', ui_start, true))
-local pause = assert(source:find("if runtime_guard.suspended then", ui_start, true))
+local ui_start = assert(main_source:find("re.on_draw_ui(function()", 1, true))
+local tree = assert(main_source:find('imgui.tree_node(T("mod_name"))', ui_start, true))
+local pause = assert(main_source:find("if runtime_guard.suspended then", ui_start, true))
 assert(tree < pause, "Legacy UI entry remains present while suspended")
 print("PASS: isolated object/character failures, bounded burst, rescan interval, preserved UI/cache, scene changes, missing scene, loading, menus, fast-travel fade-in and legacy UI entry")
