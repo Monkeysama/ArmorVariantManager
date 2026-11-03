@@ -68,6 +68,17 @@ const initial: Snapshot = {
   })), theme: 'custom', language: 'zh-CN', selectionMode: false, pending: {}, conditions: wildsConditions(), settings: settingsFor('Wilds'),
 };
 let state = structuredClone(initial);
+const layoutFixture = new URLSearchParams(location.search).has('layout');
+if (layoutFixture) {
+  state.bodyId = 'ch03_037_0012'; state.backupPending = true;
+  state.groups = [{ name: '', label: '默认分组', global: false }, ...['内裤', '帽子', '触手', '上衣', '鞋子'].map(name => ({ name, label: name, global: false }))];
+  state.group = '内裤'; state.selectedPreset = '';
+  state.presets = [{ name: '隐藏', default: true, active: true }, { name: '显示', default: false, active: false }];
+  state.parts = ['头部', '身体', '手臂', '腰部', '腿部', '投射器'].map((label, index) => ({
+    index, label: `${label} [ch03_037_${['0012', '0012', '0011', '0015', '0014', '0016'][index]}]`, available: true, enabled: true, meshLocked: false,
+    materials: index === 1 ? ['SB_panty', 'SB_panty_MT', '身体内衬_透明与金属混合材质\nBody_lining_translucent_and_metallic_surface', 'VeryLongMaterialNameWithoutSeparators_ForEquipmentBodyInnerLining_037_0012'].map((name, material) => ({ name, enabled: material !== 1, hidden: false, groups: ['内裤'] })) : [],
+  }));
+}
 let failNext = false;
 let failNextDocumentation = false;
 let slowNextDocumentation = false;
@@ -216,6 +227,12 @@ if (new URLSearchParams(location.search).has('controls')) {
   add('Chinese / Wilds', () => { state.language = 'zh-CN'; state.game = 'Wilds'; state.canImport = false; state.conditions = wildsConditions(); state.settings = settingsFor('Wilds'); });
   add('English only', () => { state.language = 'en-US'; });
   add('Chinese only', () => { state.language = 'zh-CN'; });
+  if (layoutFixture) add('Long English labels', () => {
+    state.language = 'en-US';
+    state.groups[1].label = 'Underwear and inner lining';
+    state.presets[0].name = 'Hide the selected equipment materials';
+    state.parts.forEach((part, index) => { part.label = part.label.replace(/^[^[]+/, ['Head armor ', 'Body and inner lining ', 'Arm equipment ', 'Waist decorations ', 'Leg armor ', 'Slinger attachment '][index]); });
+  });
   add('Rise only', () => { state.game = 'Rise'; state.canImport = true; state.conditions = riseConditions(); state.settings = settingsFor('Rise'); });
   add('Preview unavailable', () => { state.settings!.sections.find(section => section.id === 'preview')?.fields.forEach(field => { field.disabled = true; field.reason = '预览模块未加载'; }); });
   add('Condition warning', () => { state.conditions!.definitions[0].warning = '生命值模块尚未初始化'; });

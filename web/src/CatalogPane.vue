@@ -51,7 +51,7 @@ async function remove() {
     <div class="catalog-list">
       <div v-for="item in snapshot.groups" :key="item.name" class="sortable-row">
       <button class="catalog-row" :aria-pressed="snapshot.group === item.name" :disabled="disabled" @click="chooseGroup(item.name)">
-        <span class="row-name">{{ item.label }}</span><span v-if="item.global" class="row-tag">{{ t('global') }}</span><span class="row-arrow" aria-hidden="true">›</span>
+        <span class="row-name" :title="item.label">{{ item.label }}</span><span v-if="item.global" class="row-tag">{{ t('global') }}</span><span class="row-arrow" aria-hidden="true">›</span>
       </button>
       <div v-if="sortGroups && item.name !== ''" class="sort-actions">
         <button v-for="offset in ([-1, 1] as const)" :key="offset" class="move-button" :aria-label="t(offset === -1 ? 'moveUp' : 'moveDown') + ' · ' + item.label" :title="t(offset === -1 ? 'moveUp' : 'moveDown')" :disabled="disabled || (offset === -1 ? customGroups[0]?.name === item.name : customGroups[customGroups.length - 1]?.name === item.name)" @click="perform({ kind: 'reorder-group', name: item.name, offset })"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path :d="offset === -1 ? 'M4 10 8 6l4 4' : 'm4 6 4 4 4-4'" /></svg></button>
@@ -78,7 +78,7 @@ async function remove() {
     <div class="catalog-list">
       <div v-for="(item, index) in snapshot.presets" :key="item.name" class="sortable-row">
       <button class="catalog-row preset-row" :aria-pressed="snapshot.selectedPreset === item.name" :disabled="disabled" @click="choosePreset(item.name)">
-        <span class="row-name">{{ item.name }}</span><span v-if="item.default" class="default-star" :title="t('default')" :aria-label="t('default')">★</span><span v-if="item.active" class="active-dot" :title="t('active')" :aria-label="t('active')"></span>
+        <span class="row-name" :title="item.name">{{ item.name }}</span><span v-if="item.default" class="default-star" :title="t('default')" :aria-label="t('default')">★</span><span v-if="item.active" class="active-dot" :title="t('active')" :aria-label="t('active')"></span>
       </button>
       <div v-if="sortPresets" class="sort-actions">
         <button v-for="offset in ([-1, 1] as const)" :key="offset" class="move-button" :aria-label="t(offset === -1 ? 'moveUp' : 'moveDown') + ' · ' + item.name" :title="t(offset === -1 ? 'moveUp' : 'moveDown')" :disabled="disabled || (offset === -1 ? index === 0 : index === snapshot.presets.length - 1)" @click="perform({ kind: 'reorder-preset', name: item.name, offset })"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path :d="offset === -1 ? 'M4 10 8 6l4 4' : 'm4 6 4 4 4-4'" /></svg></button>

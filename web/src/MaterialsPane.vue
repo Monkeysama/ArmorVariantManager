@@ -25,6 +25,8 @@ function bulk(enabled: boolean) {
   if (actions.length) void props.perform(actions);
 }
 function groupLabel(name: string) { return props.snapshot.groups.find(item => item.name === name)?.label ?? name; }
+function partName(label: string) { return label.replace(/\s+\[[^\]]+\]$/, ''); }
+function partId(label: string) { return /\s+\[([^\]]+)\]$/.exec(label)?.[1]; }
 </script>
 
 <template>
@@ -32,9 +34,10 @@ function groupLabel(name: string) { return props.snapshot.groups.find(item => it
     <div class="pane-heading"><h2>{{ snapshot.weapon ? t('weapon') : t('armor') }} · {{ t('parts') }}</h2><span class="count">{{ snapshot.parts.length }}</span></div>
     <div v-if="part" class="materials-layout">
       <nav class="part-list" :aria-label="t('parts')">
-        <button v-for="item in snapshot.parts" :key="item.index" class="part-row" :class="{ unavailable: !item.available }" :aria-pressed="part.index === item.index" @click="selectedIndex = item.index"><span>{{ item.label }}</span><span class="part-count">{{ item.materials.length }}</span></button>
+        <button v-for="item in snapshot.parts" :key="item.index" class="part-row" :class="{ unavailable: !item.available }" :aria-label="item.label" :title="item.label" :aria-pressed="part.index === item.index" @click="selectedIndex = item.index"><span class="part-name">{{ partName(item.label) }}</span><span class="part-count">{{ item.materials.length }}</span></button>
       </nav>
       <div class="material-detail">
+        <div v-if="partId(part.label)" class="part-equipment equipment-id" :title="part.label">{{ partId(part.label) }}</div>
         <div class="mesh-line">
           <ElCheckbox :model-value="part.enabled" :disabled="disabled || part.meshLocked || snapshot.selectionMode" @change="(value: boolean | string | number) => perform({ kind: 'mesh', part: part.index, enabled: !!value })">{{ t('mesh') }}</ElCheckbox>
           <span v-if="part.meshLocked" class="count">{{ t('locked') }}</span>
@@ -47,7 +50,7 @@ function groupLabel(name: string) { return props.snapshot.groups.find(item => it
         </div>
         <div class="material-list">
           <div v-for="material in materials" :key="material.name" class="material-row" :class="{ 'globally-hidden': material.hidden && !snapshot.selectionMode }">
-            <ElCheckbox :model-value="checked(material)" :disabled="disabled || (material.hidden && !snapshot.selectionMode)" @change="(value: boolean | string | number) => toggle(material, !!value)"><span class="material-name">{{ material.name }}</span></ElCheckbox>
+            <ElCheckbox :model-value="checked(material)" :disabled="disabled || (material.hidden && !snapshot.selectionMode)" @change="(value: boolean | string | number) => toggle(material, !!value)"><span class="material-name" :title="material.name">{{ material.name }}</span></ElCheckbox>
             <div v-if="material.hidden || material.groups.length" class="material-meta">
               <span v-if="material.hidden" class="hidden-label">{{ t('hidden') }}</span>
               <span v-if="material.groups.length" :title="t('member')">{{ material.groups.map(groupLabel).join(' · ') }}</span>
