@@ -26,7 +26,7 @@ local global_config = {
 local Localization = require("ArmorVariantManager_Core.Localization")
 local TransformManager = require("ArmorVariantManager_Core.TransformManager")
 local ConfigStore = require("ArmorVariantManager_Core.Config.Store")
-local ConfigNormalize = require("ArmorVariantManager_Core.Config.Normalize")
+local ConfigSession = require("ArmorVariantManager_Core.Config.Session")
 local GameConfig = require("ArmorVariantManager_Core.Games.Wilds.Config")
 -- REFramework 重载脚本时可能保留 Lua 模块缓存，新UI必须重新加载最新实现。
 local refd2d_module_names = {
@@ -122,7 +122,8 @@ local actors
 local show_window = true
 local last_body_id = nil
 -- BODY_ID_CACHE_TTL 已移至全局配置 global_config.body_id_ttl
-local loaded_configs = {} -- 缓存所有 Body ID 的配置 { [body_id] = config_table }
+local config_session = ConfigSession.new(GameConfig, TransformManager.refresh_config_rules)
+local loaded_configs = config_session.cache
 local temp_applied_presets = {} -- 记录当前临时应用的预设 (BodyID -> PresetName)
 local active_overrides = {} -- 记录共享手动基线，不保存角色条件结果 (BodyID -> { [part_index] = { mesh_enabled=..., materials={...} } })
 -- 记录各分组当前选中的预设名 (BodyID -> { [""] = "主列表预设名", ["分组名"] = "预设名" })
@@ -149,15 +150,6 @@ local function apply_transform_rules_for_character(config, character, overrides,
     ground_clipping_presets.set_runtime(character, config, result and result.ground_clipping_fix)
     return result, changed, targets, all_targets
 end
-
--- 记录配置是否被外部还原 (BodyID -> true)
--- 检测原理：插件在玩家保存时会同时写主配置和备份(backup/)，两者此刻内容一致；
--- mod 重装只会还原主配置文件而不会动备份文件，因此加载时若发现"备份存在且与主配置不一致"，
--- 即可判定主配置被 mod 管理器还原成了作者版本，从而提示玩家一键恢复。
-local config_restored = {}
--- 记录玩家已对"配置被还原"提示做出处理（恢复或忽略），用于点击后立即隐藏横幅。
--- 会话级标记：重启游戏后清空，下次仍能正常检测提示。
-local config_restore_handled = {}
 
 -- 当前 Body 的配置数据结构 (用于 UI 编辑):
 -- {
@@ -339,52 +331,6 @@ local function get_effective_group_presets(body_id)
     local slot = is_weapon_id(body_id) and "weapon" or "armor"
     local context = character and actor_runtime:peek(tostring(character), slot, body_id, loaded_configs[body_id])
     return context and context.groups or active_group_presets[body_id] or {}
-end
-
-local get_config_path = ConfigStore.config_path
-local get_backup_path = ConfigStore.backup_path
-
--- 辅助函数：深度比较两个 table 是否内容一致
--- 用于判断主配置是否被外部还原（与备份不一致即视为被改写）
-local function deep_equal(a, b)
-    if a == b then return true end
-    local ta, tb = type(a), type(b)
-    if ta ~= tb then return false end
-    if ta ~= "table" then return false end
-    for k, v in pairs(a) do
-        if not deep_equal(v, b[k]) then return false end
-    end
-    for k, v in pairs(b) do
-        if a[k] == nil then return false end
-    end
-    return true
-end
-
--- 判断主配置是否被外部（mod 管理器）还原，并维护还原提示标记。
--- 成立条件：备份存在，且主配置与备份不一致。
--- 注意：主配置缺失/为空/损坏时同样成立——mod 重装常把主配置删掉或换成作者版本，
--- 此时备份是玩家手里唯一的副本，不能因为"主配置读不出来"就跳过检测，
--- 否则面板永远不会出现还原入口（旧实现就卡在这里）。
-local function detect_config_restored(body_id)
-    if not body_id then return false end
-    local backup_path = get_backup_path(body_id)
-    if not backup_path then return false end
-    local backup_data = safe_json_load(backup_path)
-    if not backup_data then return false end
-    local raw_config = safe_json_load(get_config_path(body_id))
-    if raw_config and deep_equal(raw_config, backup_data) then
-        config_restored[body_id] = nil
-        return false
-    end
-    config_restored[body_id] = true
-    if log and log.info then
-        -- 该标记会一直保留到玩家点击"恢复/忽略"为止（见 save_current_config_to_file），
-        -- 因此这里只需输出一次，便于事后从日志确认提示是否被触发过。
-        log.info(string.format(
-            "[ArmorVariantManager] 主配置与备份不一致，已提示玩家还原（处理前不覆盖备份）: %s",
-            tostring(body_id)))
-    end
-    return true
 end
 
 -- =============================================================================
@@ -609,34 +555,7 @@ end
 -- =============================================================================
 -- 辅助函数：仅加载配置数据，不更新 UI 状态
 local function load_config_data(body_id)
-    if not body_id then return nil end
-    if loaded_configs[body_id] then
-        -- 如果缓存的是加载失败标记，返回 nil（不再重试）
-        if loaded_configs[body_id] == "LOAD_FAILED" then return nil end
-        return loaded_configs[body_id]
-    end
-    local path = get_config_path(body_id)
-    -- 文件不存在、为空（该套装还没有预设文件）或内容损坏时，safe_json_load 一律返回 nil
-    -- 且不产生任何错误日志；单条预设不可用不应影响其余装备的加载。
-    local loaded_data = safe_json_load(path)
-    if loaded_data then
-        ConfigNormalize.apply(loaded_data, GameConfig)
-        -- 检测主配置是否被外部还原：备份存在且与主配置不一致时，打上标记供 UI 提示一键恢复。
-        -- 比较必须用原始文件内容（而非补全后的 loaded_data），因为加载流程会为缺失字段
-        -- 补全默认值，导致"补全后数据 vs 原始备份"产生误差。
-        detect_config_restored(body_id)
-        -- 写入缓存
-        -- 迁移和默认节点补齐后判断实际目标；空默认节点不会启动条件监测。
-        TransformManager.refresh_config_rules(loaded_data)
-        loaded_configs[body_id] = loaded_data
-        return loaded_data
-    end
-    -- 主配置缺失/为空/损坏：仍要检测备份。mod 管理器重装时主配置可能被删掉或换掉，
-    -- 这时备份里的预设就是玩家唯一的内容，必须给出还原入口。
-    detect_config_restored(body_id)
-    -- 加载失败：缓存标记，避免每帧重复读取
-    loaded_configs[body_id] = "LOAD_FAILED"
-    return nil
+    return config_session.load(body_id)
 end
 
 -- 辅助函数：将预设数据合并到复合状态表中
@@ -923,27 +842,7 @@ local function save_current_config_to_file(body_id, preserve_active_state)
     if not body_id then return end
     -- 新旧 UI 的规则、预设和分组修改都走此处，避免摘要在编辑后继续沿用旧结果。
     if not preserve_active_state then TransformManager.refresh_config_rules(current_config) end
-    -- 更新缓存
-    loaded_configs[body_id] = current_config
-    local path = get_config_path(body_id)
-    if not safe_json_save(path, current_config) then return false end
-
-    -- 同步写入备份文件：保存时主配置与备份内容一致，
-    -- 后续若主配置被 mod 管理器还原，备份仍保留玩家改动，作为恢复来源。
-    -- 例外：已经检测到"配置被外部还原"、玩家还没决定恢复还是忽略时，绝不能覆盖备份。
-    -- 自动保存默认开启，玩家在面板里点一下预设就会触发保存；若此时覆盖备份，
-    -- 备份会被换成刚被还原的作者版本，玩家自己的预设再也找不回来，提示也会跟着消失。
-    local conflict_pending = config_restored[body_id] == true
-        and config_restore_handled[body_id] ~= true
-    local backup_path = get_backup_path(body_id)
-    if backup_path and not conflict_pending then
-        safe_json_save(backup_path, current_config)
-    end
-    if not conflict_pending then
-        -- 玩家主动保存视为已是最新状态，清除"被还原"标记
-        config_restored[body_id] = nil
-        config_restore_handled[body_id] = nil
-    end
+    if not config_session.save(body_id, current_config) then return false end
     -- 允许调用方仅持久化数据，不重置用户当前选中的分组、预设与变身状态。
     if preserve_active_state then return true end
     -- 清除 active_overrides 缓存，强制下一帧重新合并所有默认预设
@@ -991,38 +890,9 @@ end
 -- 将 backup/<id>.json 的内容写回主配置文件并刷新内存状态，
 -- 用于 mod 重装后一键还原玩家手动调整过的预设。
 local function restore_config_from_backup(body_id)
-    if not body_id then return false end
-    local backup_path = get_backup_path(body_id)
-    if not backup_path then return false end
-    local backup_data = safe_json_load(backup_path)
-    if not backup_data then
-        if log and log.warn then
-            log.warn(string.format("[ArmorVariantManager] 没有可用的备份，无法还原: %s", tostring(body_id)))
-        end
-        return false
-    end
-    -- 用备份覆盖主配置文件
-    local path = get_config_path(body_id)
-    -- 写回失败必须如实返回 false：否则 UI 会以为已经恢复，横幅消失，
-    -- 而备份也会因为"已处理"而不再受保护，玩家的内容就真的丢了。
-    if not safe_json_save(path, backup_data) then
-        if log and log.error then
-            log.error(string.format("[ArmorVariantManager] 还原备份失败，主配置未能写回: %s", tostring(path)))
-        end
-        return false
-    end
-    -- 玩家已完成还原：标记"已处理"，避免重新检测后横幅再次弹出。
-    -- 此刻主配置与备份内容一致，因此保留该标记不会重新触发提示。
-    config_restore_handled[body_id] = true
-    -- 清除该 body 的所有内存缓存，强制下一帧重新加载备份内容
-    loaded_configs[body_id] = nil
+    if not config_session.restore(body_id) then return false end
     active_overrides[body_id] = nil
-    -- 清除恢复前的临时选中预设，确保后续 apply_all_defaults 重新采用备份中的默认预设。
     active_group_presets[body_id] = nil
-    config_restored[body_id] = nil
-    if log and log.info then
-        log.info(string.format("[ArmorVariantManager] 已从备份还原玩家配置: %s", tostring(body_id)))
-    end
     -- 重新加载并刷新 UI
     local data = load_config_data(body_id)
     if data then
@@ -1649,8 +1519,7 @@ variant_manager_ui = VariantManagerUI.new({
             -- 新 UI 按名称选中，不能在分组切换过渡帧通过旧索引反查上一分组的预设。
             selected_preset_name = active_preset_name ~= "" and active_preset_name
                 or preset_names_list[selected_preset_index],
-            config_restored = body_id and config_restored[body_id] == true
-                and config_restore_handled[body_id] ~= true,
+            config_restored = body_id and config_session.pending(body_id),
             config = current_config
         }
     end,
@@ -1681,8 +1550,7 @@ variant_manager_ui = VariantManagerUI.new({
 
     dismiss_backup = function(body_id)
         if not body_id then return end
-        config_restore_handled[body_id] = true
-        config_restored[body_id] = nil
+        config_session.dismiss(body_id)
     end,
 
     -- 新 UI 切换模式时与旧 UI 共用分组记忆和缓存刷新规则。
@@ -2332,8 +2200,8 @@ re.on_draw_ui(function()
                         -- 使用 pcall 包裹整个预设管理区域，防止 UI 脚本报错导致 ImGui Mismatch 崩溃
                         local ui_status, ui_err = pcall(function()
                             -- 配置被还原提示横幅：检测到主配置被 mod 重装覆盖时，提供一键恢复入口
-                            -- config_restore_handled 用于点击恢复/忽略后立即隐藏横幅，避免恢复流程重新检测导致复现
-                            if config_restored[body_id] and not config_restore_handled[body_id] then
+                            -- 恢复/忽略后由配置会话立即隐藏横幅。
+                            if config_session.pending(body_id) then
                                 imgui.text_colored(T("config_restored_warning"), 0xFF00CCFF)
                                 if imgui.button(T("restore_from_backup") .. "##restore_backup") then
                                     -- "已处理"标记由 restore_config_from_backup 在写回成功后设置。
@@ -2341,8 +2209,7 @@ re.on_draw_ui(function()
                                 end
                                 imgui.same_line()
                                 if imgui.button(T("dismiss") .. "##dismiss_restore") then
-                                    config_restore_handled[body_id] = true
-                                    config_restored[body_id] = nil
+                                    config_session.dismiss(body_id)
                                 end
                                 imgui.separator()
                             end

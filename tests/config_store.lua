@@ -41,31 +41,32 @@ os.remove(path)
 assert(Store.load(path) == nil)
 
 -- 运行真实入口的加载及备份比较，避免只验证模块而漏掉调用接线。
+local Session = require("ArmorVariantManager_Core.Config.Session")
 local disk, reads, refreshes = {}, 0, 0
-local env = setmetatable({
-    get_config_path = Store.config_path, get_backup_path = Store.backup_path,
-    ConfigNormalize = Normalize, GameConfig = Schema, loaded_configs = {}, config_restored = {},
-    safe_json_load = function(name) reads = reads + 1; return S.copy(disk[name]) end,
-    TransformManager = { refresh_config_rules = function() refreshes = refreshes + 1 end },
-    log = { info = function() end }
-}, { __index = _G })
-local detection = S.section(source, "local function deep_equal", "-- =============================================================================\n-- 预设和分组 UI")
+local session = Session.new(Schema, function() refreshes = refreshes + 1 end, {
+    config_path = Store.config_path, backup_path = Store.backup_path,
+    load = function(name) reads = reads + 1; return S.copy(disk[name]) end,
+    save = function(name, value) disk[name] = S.copy(value); return true end
+})
+local env = setmetatable({ config_session = session }, { __index = _G })
 local loading = S.section(source, "local function load_config_data", "-- 辅助函数：将预设数据合并")
-local load_config = assert(load(detection .. loading .. "\nreturn load_config_data", "entry-config", "t", env))()
+local load_config = assert(load(loading .. "\nreturn load_config_data", "entry-config", "t", env))()
 disk[Store.config_path("armor")] = S.copy(original)
 disk[Store.backup_path("armor")] = S.copy(original)
 local config = load_config("armor")
 S.equal(config, Normalize.apply(S.copy(original), Schema))
-assert(not env.config_restored.armor, "Compare raw files, not normalized defaults")
+assert(not session.pending("armor"), "Compare raw files, not normalized defaults")
 local before = reads
 assert(load_config("armor") == config and reads == before and refreshes == 1)
+
 disk[Store.backup_path("deleted")] = S.copy(original)
-assert(load_config("deleted") == nil and env.config_restored.deleted)
+assert(load_config("deleted") == nil and session.pending("deleted"))
 before = reads
 assert(load_config("deleted") == nil and reads == before, "Failed loads are cached")
+
 disk[Store.config_path("changed")] = { presets = {} }
 disk[Store.backup_path("changed")] = S.copy(original)
-assert(load_config("changed") and env.config_restored.changed)
+assert(load_config("changed") and session.pending("changed"))
 S.equal(disk[Store.backup_path("changed")], original, "Do not overwrite an unresolved backup")
 assert(load_config(nil) == nil)
 print("PASS: config paths, file IO, codec failure, cached entry loading and raw backup comparison")

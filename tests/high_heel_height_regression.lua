@@ -254,6 +254,15 @@ local env = setmetatable({
     sdk = { is_managed_object = function() return true end },
     ground_clipping_fix = { settings_changed = function() end }
 }, { __index = _G })
+env.config_session = require("ArmorVariantManager_Core.Config.Session").new(
+    require("ArmorVariantManager_Core.Games.Wilds.Config"), nil, {
+        config_path = env.get_config_path, backup_path = env.get_backup_path,
+        load = function(path) return clone(stored[path]) end,
+        save = env.safe_json_save
+    })
+env.loaded_configs = env.config_session.cache
+env.config_restored = env.config_session.restored
+env.config_restore_handled = env.config_session.handled
 env.get_effective_group_presets = function(id) return env.active_group_presets[id] or {} end
 local save_source = extract("save_current_config_to_file", "\n-- 将指定预设写为")
 env.save_current_config_to_file = assert(load(save_source .. "\nreturn save_current_config_to_file", "save", "t", env))()
@@ -406,7 +415,7 @@ end
 env.TransformManager = engine
 env.can_use_transform = function() return true end
 env.safe_get_game_object = function(character) return character end
-local wrapper_source = extract("apply_transform_rules_for_character", "\n-- 记录配置是否被外部还原")
+local wrapper_source = extract("apply_transform_rules_for_character", "\n-- 当前 Body 的配置数据结构")
 local transform = assert(load(wrapper_source .. "\nreturn apply_transform_rules_for_character", "transform", "t", env))()
 local config = env.current_config
 config.transform_type, config.is_parallel = "hp", true

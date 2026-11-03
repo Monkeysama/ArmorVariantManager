@@ -117,7 +117,7 @@ assert(runtime:peek(tostring(b), "weapon", "wp01", config) == nil)
 -- 界面读取本地角色快照而不是最后处理的远端角色；配置替换后退回手动选择。
 env.loaded_configs = { armor = config }
 env.is_weapon_id = function(id) return id:sub(1, 2) == "wp" end
-local display_source = S.section(source, "local function get_effective_group_presets", "local get_config_path =")
+local display_source = S.section(source, "local function get_effective_group_presets", "-- =============================================================================\n-- 预设和分组 UI")
 local display = assert(load(display_source .. "\nreturn get_effective_group_presets", "actual-display", "t", env))()
 a.body = nil
 local a_context = runtime:get(tostring(a), "armor", "armor", config)
@@ -179,7 +179,8 @@ env.get_body_id = function() return "armor" end
 env.current_config, env.current_group_name = config, "Lock"
 env.preset_names_list, env.group_names_list = { "On", "Off" }, { "Lock" }
 env.selected_preset_index = 1
-env.config_restored, env.config_restore_handled = {}, {}
+env.config_session = require("ArmorVariantManager_Core.Config.Session").new(
+    require("ArmorVariantManager_Core.Games.Wilds.Config"))
 local ui_source = S.section(source, "    get_context = function()", "    -- 判断配置中是否已有任意预设")
 local ui_context = assert(load("return {" .. ui_source .. "}", "actual-ui-context", "t", env))().get_context
 assert(ui_context().selected_preset_name == "Off")
