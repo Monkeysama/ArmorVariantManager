@@ -8,6 +8,7 @@ import json
 import re
 import shutil
 import sys
+import tempfile
 import zipfile
 from pathlib import Path
 
@@ -22,6 +23,12 @@ PORTRAIT_DLL = SOURCE_REFRAMEWORK / "plugins" / "ArmorVariantManager_Portrait.dl
 PORTRAIT_ASSETS = PROJECT / "natives" / "STM" / "ArmorVariantManager" / "Portrait"
 PORTRAIT_FILES = ("portrait_camera.pfb.18", "portrait_resources.user.3", "portrait.rtex.6")
 REFF_PLUGIN = SOURCE_REFRAMEWORK / "reff" / "plugins" / "monkeysama.avm"
+LICENSE = ROOT / "LICENSE"
+NATIVE_LICENSES = SOURCE_REFRAMEWORK / "plugins" / "source" / "THIRD_PARTY_LICENSES.txt"
+D2D_LICENSE = SOURCE_REFRAMEWORK / "plugins" / "source" / "ArmorVariantManagerUI" / "upstream" / "reframework-d2d" / "LICENSE"
+GAMES = {"wilds": "MHWILDS", "rise": "MHRISE"}
+
+
 def long_bracket_end(text: str, start: int) -> tuple[str, int] | None:
     if start >= len(text) or text[start] != "[":
         return None
@@ -130,35 +137,53 @@ def assert_no_duplicate_scripts() -> None:
         )
 
 
-def ensure_inputs() -> None:
-    required = [AUTORUN_SOURCE, UI_DLL, PORTRAIT_DLL, *(PORTRAIT_ASSETS / name for name in PORTRAIT_FILES),
+def ensure_inputs(game: str = "wilds") -> None:
+    required = [AUTORUN_SOURCE / "ArmorVariantManager.lua", LICENSE,
                 REFF_PLUGIN / "manifest.json", REFF_PLUGIN / "ui" / "dist" / "index.html",
                 REFF_PLUGIN / "ui" / "dist" / "REFF-LICENSE.txt"]
+    if game == "wilds":
+        required.extend([UI_DLL, PORTRAIT_DLL, NATIVE_LICENSES, D2D_LICENSE,
+                         *(PORTRAIT_ASSETS / name for name in PORTRAIT_FILES)])
     missing = [str(path) for path in required if not path.exists()]
     if missing:
         raise RuntimeError("Missing release inputs:\n" + "\n".join(missing))
     assert_no_duplicate_scripts()
 
 
-def copy_reff_plugin(destination: Path) -> None:
+def copy_reff_plugin(destination: Path, game: str = "wilds") -> None:
     """只复制插件清单与已构建页面，不打包 REFF 本体或 Web 开发依赖。"""
     target = destination / "reframework" / "reff" / "plugins" / REFF_PLUGIN.name
     target.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(REFF_PLUGIN / "manifest.json", target / "manifest.json")
+    manifest = json.loads((REFF_PLUGIN / "manifest.json").read_text(encoding="utf-8"))
+    manifest["games"] = [GAMES[game]]
+    (target / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     shutil.copytree(REFF_PLUGIN / "ui", target / "ui")
 
 
-def copy_native_plugins(destination: Path) -> None:
+def copy_native_plugins(destination: Path, game: str = "wilds") -> None:
     """旧弹窗与独立预览分别发布，不能遗漏任一运行依赖。"""
+    if game != "wilds":
+        return
     target = destination / "reframework" / "plugins"
     target.mkdir(parents=True, exist_ok=True)
     for source in (UI_DLL, PORTRAIT_DLL):
         shutil.copy2(source, target / source.name)
 
 
-def verify_reff_plugin(release_directory: Path) -> None:
+def copy_licenses(destination: Path, game: str = "wilds") -> None:
+    shutil.copy2(LICENSE, destination / "LICENSE")
+    if game == "wilds":
+        target = destination / "licenses"
+        target.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(NATIVE_LICENSES, target / NATIVE_LICENSES.name)
+        shutil.copy2(D2D_LICENSE, target / "reframework-d2d-LICENSE.txt")
+
+
+def verify_reff_plugin(release_directory: Path, game: str = "wilds") -> None:
     target = release_directory / "reframework" / "reff" / "plugins" / REFF_PLUGIN.name
     manifest = json.loads((target / "manifest.json").read_text(encoding="utf-8"))
+    if manifest.get("games") != [GAMES[game]]:
+        raise RuntimeError(f"Release verification failed: REFF manifest does not target {game}")
     if not (target / manifest["ui"]["entry"]).is_file():
         raise RuntimeError("Release verification failed: REFF page entry is missing")
     expected = {path.relative_to(REFF_PLUGIN) for path in REFF_PLUGIN.rglob("*") if path.is_file()}
@@ -168,6 +193,7 @@ def verify_reff_plugin(release_directory: Path) -> None:
 
 
 def copy_stripped_lua_files(destination_autorun: Path) -> int:
+    # 两包保留相同 Lua 库存：旧公开入口仍会跨游戏目录 require。
     count = 0
     for source_path in AUTORUN_SOURCE.rglob("*.lua"):
         relative_path = source_path.relative_to(AUTORUN_SOURCE)
@@ -180,19 +206,22 @@ def copy_stripped_lua_files(destination_autorun: Path) -> int:
     return count
 
 
-def verify_release(release_directory: Path) -> None:
-    verify_reff_plugin(release_directory)
-    for source in (UI_DLL, PORTRAIT_DLL):
-        if not (release_directory / "reframework" / "plugins" / source.name).is_file():
-            raise RuntimeError(f"Release verification failed: required DLL is missing: {source.name}")
-    for name in PORTRAIT_FILES:
-        asset = release_directory / "natives" / "STM" / "ArmorVariantManager" / "Portrait" / name
-        if not asset.is_file() or asset.read_bytes() != (PORTRAIT_ASSETS / name).read_bytes():
-            raise RuntimeError(f"Release verification failed: missing or changed portrait asset: {name}")
+def verify_release(release_directory: Path, game: str = "wilds") -> None:
+    verify_reff_plugin(release_directory, game)
+    if game == "wilds":
+        for source in (UI_DLL, PORTRAIT_DLL):
+            if not (release_directory / "reframework" / "plugins" / source.name).is_file():
+                raise RuntimeError(f"Release verification failed: required DLL is missing: {source.name}")
+        for name in PORTRAIT_FILES:
+            asset = release_directory / "natives" / "STM" / "ArmorVariantManager" / "Portrait" / name
+            if not asset.is_file() or asset.read_bytes() != (PORTRAIT_ASSETS / name).read_bytes():
+                raise RuntimeError(f"Release verification failed: missing or changed portrait asset: {name}")
     forbidden = [
         release_directory / "reframework" / "data",
         release_directory / "reframework" / "plugins" / "source",
     ]
+    if game == "rise":
+        forbidden.extend([release_directory / "reframework" / "plugins", release_directory / "natives"])
     present = [str(path) for path in forbidden if path.exists()]
     if present:
         raise RuntimeError("Release verification failed: development content found:\n" + "\n".join(present))
@@ -205,44 +234,63 @@ def create_zip(release_directory: Path, archive_path: Path) -> None:
                 archive.write(path, path.relative_to(release_directory))
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description="Build an Armor Variant Manager distribution package.")
-    parser.add_argument("--version", default=None, help="Release version. Defaults to the Lua script version.")
-    parser.add_argument("--overwrite", action="store_true", help="Replace an existing release with the same version.")
-    args = parser.parse_args()
+def release_paths(output_root: Path, version: str, game: str = "wilds") -> tuple[Path, Path]:
+    # Wilds 沿用旧命名，保留现有发布目录消费者；Rise 使用独立名称。
+    suffix = "" if game == "wilds" else "_Rise"
+    paths = (output_root / f"ArmorVariantManager{suffix}_v{version}",
+             output_root / f"差分管理器{suffix}_v{version}.zip")
+    if any(path.resolve().parent != output_root.resolve() for path in paths):
+        raise RuntimeError("Release version must not contain path separators")
+    return paths
 
-    ensure_inputs()
-    version = args.version or read_version()
-    release_directory = RELEASE_ROOT / f"ArmorVariantManager_v{version}"
-    archive_path = RELEASE_ROOT / f"差分管理器_v{version}.zip"
-    staging_directory = RELEASE_ROOT / f".ArmorVariantManager_v{version}.staging"
 
-    if (release_directory.exists() or archive_path.exists()) and not args.overwrite:
-        raise RuntimeError("Release output already exists. Use --overwrite after reviewing the target.")
-    if staging_directory.exists():
-        shutil.rmtree(staging_directory)
-    staging_autorun = staging_directory / "reframework" / "autorun"
-    lua_count = copy_stripped_lua_files(staging_autorun)
-
-    copy_native_plugins(staging_directory)
-    # 独立相机所需资源随代码一起分发；不打包任何用户预设或游戏原始配置。
-    asset_directory = staging_directory / "natives" / "STM" / "ArmorVariantManager" / "Portrait"
-    asset_directory.mkdir(parents=True, exist_ok=True)
-    for name in PORTRAIT_FILES:
-        shutil.copy2(PORTRAIT_ASSETS / name, asset_directory / name)
-    copy_reff_plugin(staging_directory)
-    verify_release(staging_directory)
-
-    if release_directory.exists():
-        shutil.rmtree(release_directory)
-    if archive_path.exists():
-        archive_path.unlink()
-    shutil.copytree(staging_directory, release_directory)
-    shutil.rmtree(staging_directory)
-    create_zip(release_directory, archive_path)
-    print(f"Built {release_directory}")
+def _build_release(output_root: Path, version: str, game: str) -> None:
+    release_directory, archive_path = release_paths(output_root, version, game)
+    output_root.mkdir(parents=True, exist_ok=True)
+    # 唯一暂存目录不会清掉其他构建留下的待检查内容。
+    with tempfile.TemporaryDirectory(prefix=f".ArmorVariantManager_{game}_", dir=output_root) as temporary:
+        staging_directory = Path(temporary) / "package"
+        staging_autorun = staging_directory / "reframework" / "autorun"
+        lua_count = copy_stripped_lua_files(staging_autorun)
+        copy_native_plugins(staging_directory, game)
+        if game == "wilds":
+            asset_directory = staging_directory / "natives" / "STM" / "ArmorVariantManager" / "Portrait"
+            asset_directory.mkdir(parents=True, exist_ok=True)
+            for name in PORTRAIT_FILES:
+                shutil.copy2(PORTRAIT_ASSETS / name, asset_directory / name)
+        copy_reff_plugin(staging_directory, game)
+        copy_licenses(staging_directory, game)
+        verify_release(staging_directory, game)
+        staging_archive = Path(temporary) / "package.zip"
+        create_zip(staging_directory, staging_archive)
+        if release_directory.exists():
+            shutil.rmtree(release_directory)
+        if archive_path.exists():
+            archive_path.unlink()
+        shutil.move(str(staging_directory), release_directory)
+        shutil.move(str(staging_archive), archive_path)
+    print(f"Built {game}: {release_directory}")
     print(f"Built {archive_path}")
     print(f"Stripped comments from {lua_count} Lua files")
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Build an Armor Variant Manager distribution package.")
+    parser.add_argument("--version", default=None, help="Release version. Defaults to the Lua script version.")
+    parser.add_argument("--game", choices=(*GAMES, "all"), default="wilds", help="Target game; defaults to wilds (legacy output names).")
+    parser.add_argument("--output-dir", type=Path, default=RELEASE_ROOT, help="Output directory. Defaults to release/.")
+    parser.add_argument("--overwrite", action="store_true", help="Replace an existing release with the same version.")
+    args = parser.parse_args(argv)
+
+    version = args.version or read_version()
+    games = tuple(GAMES) if args.game == "all" else (args.game,)
+    # 双包构建先检查所有目标，避免第二个目标已有输出时先改动第一个。
+    for game in games:
+        ensure_inputs(game)
+        if any(path.exists() for path in release_paths(args.output_dir, version, game)) and not args.overwrite:
+            raise RuntimeError("Release output already exists. Use --overwrite after reviewing the target.")
+    for game in games:
+        _build_release(args.output_dir, version, game)
     return 0
 
 
