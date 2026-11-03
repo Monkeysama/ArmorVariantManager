@@ -59,3 +59,41 @@ local names = { presets = { Z = {}, A = {} } }
 assert(#current.Wilds(S.copy(names)).preset_order == 0)
 S.equal(current.Rise(S.copy(names)).preset_order, { "A", "Z" })
 print("PASS: per-game legacy fields/defaults/order, damage migration, unknown fields and table save/reload")
+
+-- 新装备草稿不是已加载 JSON：不提前添加旧入口没有保存的字段。
+local source = S.read("ArmorVariantManager/reframework/autorun/ArmorVariantManager.lua")
+local load_body = S.section(source, "local function load_body_config(", "local function save_current_config_to_file(")
+for _, game in ipairs({ "Wilds", "Rise" }) do
+    local schema = require("ArmorVariantManager_Core.Games." .. game .. ".Config")
+    local legacy_factory = dofile("tests/fixtures/legacy/" .. game:lower() .. "_config_draft.lua")
+    local first, second = schema.new(), schema.new()
+    local initial = legacy_factory(setmetatable({}, { __index = _G }))
+    S.equal(first, initial(), game .. " initial draft")
+    first.weapon_transform_rules[1].targets[1] = { preset = "Private" }
+    first.parallel_settings.weapon.priority = 99
+    first.presets.private = {}
+    first.groups.private = {}
+    S.equal(second, initial(), game .. " independent draft")
+    for _, input in ipairs({ "missing", "present", "nil" }) do
+        local function run(old)
+            local trace = {}
+            local data = input == "present" and { presets = { A = {} }, unknown = { keep = 1 } } or nil
+            local env = setmetatable({ GameConfig = schema, loaded_configs = {}, current_config = { stale = true } }, { __index = _G })
+            env.load_config_data = function(id) trace[#trace + 1] = "load:" .. id; return data end
+            env.update_group_names_list = function() trace[#trace + 1] = "groups" end
+            env.update_preset_names_list = function() trace[#trace + 1] = "presets" end
+            env.apply_all_defaults = function(id) trace[#trace + 1] = "defaults:" .. id end
+            local load
+            if old then local _; _, load = legacy_factory(env)
+            else load = assert(_G.load(load_body .. "\nreturn load_body_config", "entry", "t", env))() end
+            local ok = load(input ~= "nil" and "armor" or nil)
+            if data then assert(env.current_config == data and env.loaded_configs.armor == data) end
+            return { ok = ok, current = env.current_config, cache = env.loaded_configs, trace = trace }
+        end
+        S.equal(run(false), run(true), game .. " draft load " .. input)
+    end
+    local saved = current[game](schema.new())
+    S.equal(current[game](S.copy(saved)), saved, game .. " first save/reload")
+end
+assert(source:find("local current_config = GameConfig.new()", 1, true), "entry uses game draft factory")
+print("PASS: both games' initial/reset drafts, independent defaults, missing/loaded/nil equipment and first save/reload")

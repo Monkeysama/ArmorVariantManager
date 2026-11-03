@@ -77,4 +77,15 @@ function Config.normalize(data)
     Normalize.rules(data, definitions, false)
 end
 
+-- 新装备草稿沿用旧入口字段；加载补齐与迁移仍由 normalize 单独负责。
+function Config.new()
+    local data = {
+        default_preset = "", presets = {}, groups = {}, is_parallel = false,
+        transform_type = "hp", transform_rules = {},
+        parallel_settings = Config.default_parallel_settings(),
+    }
+    Normalize.rules(data, definitions, true)
+    return data
+end
+
 return Config
