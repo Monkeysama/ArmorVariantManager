@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed, shallowRef, watch } from 'vue';
 import { ElButton, ElCheckbox, ElInput } from '@reff/ui';
-import type { Perform, Snapshot } from './types';
+import ImportPresetPane from './ImportPresetPane.vue';
+import type { Imports, Perform, Snapshot } from './types';
 import type { Translate } from './i18n';
 
-const props = defineProps<{ snapshot: Snapshot; busy: boolean; perform: Perform; t: Translate }>();
+const props = defineProps<{ snapshot: Snapshot; busy: boolean; perform: Perform; loadImports: () => Promise<Imports>; t: Translate }>();
 const emit = defineEmits<{ notice: [message: string] }>();
 const groupName = shallowRef('');
 const global = shallowRef(false);
@@ -99,5 +100,6 @@ async function remove() {
       </div>
       <ElButton :disabled="disabled" @click="perform({ kind: 'find' })">{{ t('find') }}</ElButton>
     </form>
+    <ImportPresetPane v-if="snapshot.game === 'Rise' && snapshot.canImport" :snapshot="snapshot" :busy="busy" :perform="perform" :load-imports="loadImports" :t="t" @imported="presetName = ''" />
   </section>
 </template>

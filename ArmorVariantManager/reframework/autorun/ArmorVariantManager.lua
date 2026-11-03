@@ -668,6 +668,68 @@ local function save_preset(preset_name, body_id)
     return saved
 end
 
+local manual_import = not game.wilds and require(game.prefix .. "ManualImport").new() or nil
+local manual_selector = {files={}, names={}, index=1, open=false, error=""}
+
+-- 指定文件导入沿用本游戏旧结构；主文件保存成功后才替换界面和外观。
+local function load_manual_preset_file(file_path, body_id)
+    if not manual_import or not body_id or body_id ~= get_body_id()
+        or body_id ~= last_body_id or runtime.is_suspended() then
+        return false, "角色不可用或装备已变化"
+    end
+    local data, reason = manual_import.load(file_path)
+    if not data then return false, reason end
+    require("ArmorVariantManager_Core.Config.Normalize").apply(data, GameConfig)
+    local previous_cache = loaded_configs[body_id]
+    local saved, save_reason = application.save(body_id, data)
+    if not saved then
+        loaded_configs[body_id] = previous_cache
+        return false, save_reason
+    end
+    current_config = data
+    current_group_name, selected_group_index = "", 1
+    mode_group_selection[body_id] = ""
+    is_selection_mode, pending_material_selections, sort_mode = false, {}, nil
+    update_group_names_list()
+    update_preset_names_list()
+    application.refresh(body_id, current_config, get_local_player_character())
+    return true
+end
+
+-- 原生入口保留防具文件选择；REFF 同时支持旧新界面的武器导入用法。
+local function draw_manual_import(body_id)
+    if not manual_import or is_weapon_mode then return end
+    if manual_selector.body_id ~= body_id then
+        manual_selector.body_id, manual_selector.open, manual_selector.error = body_id, false, ""
+    end
+    if imgui.button(T("manual_find_preset")) then
+        manual_selector.open = not manual_selector.open
+        if manual_selector.open then
+            local ok, files = pcall(manual_import.list, false)
+            manual_selector.files, manual_selector.names, manual_selector.index = {}, {}, 1
+            manual_selector.error = ok and "" or tostring(files)
+            if ok then
+                manual_selector.files = files
+                for index, file in ipairs(files) do manual_selector.names[index] = file.name end
+            end
+        end
+    end
+    if not manual_selector.open then return end
+    if #manual_selector.files == 0 then
+        imgui.text(T("no_preset_files"))
+    else
+        local changed, index = imgui.combo("##manual_file_selector", manual_selector.index, manual_selector.names)
+        if changed then manual_selector.index = index end
+        if imgui.button(T("load_selected_preset")) then
+            local ok, saved, reason = pcall(load_manual_preset_file,
+                manual_selector.files[manual_selector.index].path, body_id)
+            if ok and saved then manual_selector.open, manual_selector.error = false, ""
+            else manual_selector.error = tostring(ok and reason or saved) end
+        end
+    end
+    if manual_selector.error ~= "" then imgui.text_colored(manual_selector.error, 0xFF0000FF) end
+end
+
 -- 辅助函数：自动查找匹配的预设
 local function find_auto_preset(target_body_id)
     local data, message = runtime.find_preset(target_body_id, get_local_player_character(),
@@ -1389,6 +1451,7 @@ do
         main_label=function() return T("main_list") end,
         language=function() return global_config.language end,
         backup_pending=config_session.pending,
+        imports=manual_import and function(current) return manual_import.list(current.weapon) end or nil,
         documentation=function()
             return require("ArmorVariantManager_Core.UI.Reff.Help").snapshot(global_config.language,game.name)
         end,
@@ -1453,6 +1516,9 @@ do
                 local saved,reason = find_auto_preset(current.id)
                 if saved then update_group_names_list(); update_preset_names_list() end
                 return saved,reason
+            end,
+            ["import-preset"]=function(request,current)
+                return load_manual_preset_file(request.path,current.id)
             end,
             restore=function(_,current) return restore_config_from_backup(current.id) end,
             ["dismiss-backup"]=function(_,current)
@@ -1869,6 +1935,7 @@ re.on_draw_ui(function()
                                 end
                                 if auto_find_log ~= "" then imgui.text_colored(auto_find_log, 0xFF00FFFF) end
                             end
+                            draw_manual_import(body_id)
 
                             -- 陷地修复放在预设、分组及自动查找按钮和结果提示下方。
                             if game.wilds and not is_weapon_mode then

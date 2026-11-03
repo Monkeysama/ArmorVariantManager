@@ -1,4 +1,4 @@
-import type { ConditionDefinition, ConditionField, ConditionNode, ConditionRule, Conditions, ConditionTarget, Documentation, DocumentationEntry, DocumentationSection, Material, Part, SettingField, Settings, SettingsSection, Snapshot } from './types';
+import type { ConditionDefinition, ConditionField, ConditionNode, ConditionRule, Conditions, ConditionTarget, Documentation, DocumentationEntry, DocumentationSection, Imports, Material, Part, SettingField, Settings, SettingsSection, Snapshot } from './types';
 
 function list<T>(value: unknown, field: string): T[] {
   if (Array.isArray(value)) return value;
@@ -10,6 +10,7 @@ export function normalizeSnapshot(value: Snapshot): Snapshot {
   return {
     ...value,
     backupPending: value.backupPending ?? false,
+    canImport: value.canImport ?? false,
     conditions: value.conditions ? normalizeConditions(value.conditions) : null,
     ...(value.settings !== undefined ? { settings: normalizeSettings(value.settings) } : {}),
     groups: list(value.groups, 'groups'),
@@ -20,6 +21,10 @@ export function normalizeSnapshot(value: Snapshot): Snapshot {
     })),
     pending: Object.fromEntries(Object.entries(value.pending ?? {}).map(([part, materials]) => [part, materials ?? {}])),
   };
+}
+
+export function normalizeImports(value: Imports): Imports {
+  return { ...value, files: list(value.files, 'imports.files') };
 }
 
 export function normalizeDocumentation(value: Documentation): Documentation {

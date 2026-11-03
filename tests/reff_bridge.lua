@@ -104,6 +104,87 @@ for _, game in ipairs({"Wilds","Rise"}) do
         rejects(function() f.controller.action({kind="mode",weapon="true"}) end,"装备模式无效")
     end)
 
+    test(game .. " manual import capability defaults to unavailable without scanning", function()
+        local f=controller_fixture(game)
+        assert(f.controller.snapshot().canImport == false)
+        f.deps.parts=function() error("import list queried equipment parts") end
+        setmetatable(f.operations,{__index=function() error("import list queried equipment operations") end})
+        local unavailable=f.controller.imports()
+        serializable(unavailable,f.forbidden)
+        S.equal(unavailable,{bodyId="armor",files={}})
+        f.context.id=nil
+        assert(f.controller.snapshot().canImport == false)
+        S.equal(f.controller.imports(),{bodyId="",files={}})
+    end)
+
+    test(game .. " manual import list is on demand, detached and follows the current context", function()
+        local f=controller_fixture(game)
+        local armor_files={{path="ArmorVariantManager/other.json",name="Other",config=f.context.config},
+            {path="ArmorVariantManager/backup/other.json",name="[备份] Other",object=f.context.character}}
+        local weapon_files={{path="ArmorVariantManager/weapon.json",name="Weapon"}}
+        local requested={}
+        f.deps.imports=function(context)
+            assert(context == f.context)
+            requested[#requested+1]={id=context.id,weapon=context.weapon}
+            return context.weapon and weapon_files or armor_files
+        end
+        assert(f.controller.snapshot().canImport == true and #requested == 0,"snapshot scanned preset files eagerly")
+        f.deps.parts=function() error("import list queried equipment parts") end
+        for _, files in ipairs({armor_files,weapon_files}) do
+            f.forbidden[files]=true
+            for _, file in ipairs(files) do f.forbidden[file]=true end
+        end
+        local list=f.controller.imports()
+        serializable(list,f.forbidden)
+        S.equal(list,{bodyId="armor",files={{path="ArmorVariantManager/other.json",name="Other"},
+            {path="ArmorVariantManager/backup/other.json",name="[备份] Other"}}})
+        list.files[1].name="Edited in web UI"
+        assert(armor_files[1].name == "Other","returned import row aliases a scanner row")
+        armor_files[2].name="Changed on disk"
+        assert(list.files[2].name == "[备份] Other","scanner changed an already returned import row")
+        list.files[3]={path="web-only.json",name="Web only"}
+        assert(#armor_files == 2,"returned import array aliases the scanner array")
+        f.context={id="weapon",weapon=true,suspended=false}
+        f.forbidden[f.context]=true
+        local weapons=f.controller.imports()
+        serializable(weapons,f.forbidden)
+        S.equal(weapons,{bodyId="weapon",files={{path="ArmorVariantManager/weapon.json",name="Weapon"}}})
+        S.equal(requested,{{id="armor",weapon=false},{id="weapon",weapon=true}})
+    end)
+
+    test(game .. " empty and suspended actors never scan manual import files", function()
+        local f=controller_fixture(game)
+        f.deps.imports=function() error("unavailable actor scanned import files") end
+        f.context.id=nil
+        assert(f.controller.snapshot().canImport == true,"actor availability changed the capability flag")
+        S.equal(f.controller.imports(),{bodyId="",files={}})
+        f.context.id="armor";f.context.suspended=true
+        assert(f.controller.snapshot().canImport == true)
+        S.equal(f.controller.imports(),{bodyId="armor",files={}})
+    end)
+
+    test(game .. " manual import scan and operation errors retain their causes", function()
+        local f=controller_fixture(game)
+        f.deps.imports=function(context)
+            assert(context == f.context)
+            error("预设扫描失败: access denied")
+        end
+        rejects(function() f.controller.imports() end,"预设扫描失败: access denied")
+        local request={kind="import-preset",bodyId="armor",path="ArmorVariantManager/other.json"}
+        f.operations["import-preset"]=function(received,context)
+            assert(received == request and context == f.context)
+            return false,"预设导入失败: disk full"
+        end
+        rejects(function() f.controller.action(request) end,"预设导入失败: disk full")
+        f.operations["import-preset"]=function() error("预设读取失败: invalid JSON") end
+        rejects(function() f.controller.action(request) end,"预设读取失败: invalid JSON")
+        f.operations["import-preset"]=function(received,context)
+            assert(received == request and context == f.context)
+            return true
+        end
+        assert(f.controller.action(request).bodyId == "armor")
+    end)
+
     test(game .. " backup notice follows the current equipment and defaults to false", function()
         local f=controller_fixture(game)
         assert(f.controller.snapshot().backupPending == false,"missing backup dependency must default to false")
@@ -223,7 +304,7 @@ for _, game in ipairs({"Wilds","Rise"}) do
     test(game .. " stale equipment and hover are rejected before dispatch", function()
         local f=controller_fixture(game)
         local dispatched=0
-        for _, kind in ipairs({"select","hover"}) do
+        for _, kind in ipairs({"select","hover","import-preset"}) do
             f.operations[kind]=function() dispatched=dispatched+1;return true end
             rejects(function() f.controller.action({kind=kind,bodyId="old-armor"}) end,"装备已变化")
             f.context.suspended=true
@@ -494,10 +575,15 @@ end)
 
 test("isolated SDK registers controller methods and unregisters on reset", function()
     local f=controller_fixture("Rise")
-    local documentation_reads=0
+    local documentation_reads,import_reads=0,0
     f.deps.documentation=function()
         documentation_reads=documentation_reads+1
         return {sections={{title="Help",content={"Current-language instructions"}}}}
+    end
+    f.deps.imports=function(context)
+        assert(context == f.context)
+        import_reads=import_reads+1
+        return {{path="ArmorVariantManager/other.json",name="Other"}}
     end
     local registered,unregistered=0,0
     local handle={unregister=function() unregistered=unregistered+1 end}
@@ -510,11 +596,18 @@ test("isolated SDK registers controller methods and unregisters on reset", funct
             assert(methods["monkeysama.avm.snapshot"] == f.controller.snapshot)
             assert(methods["monkeysama.avm.action"] == f.controller.action)
             assert(methods["monkeysama.avm.documentation"] == f.controller.documentation,"documentation method was not forwarded")
-            local count=0;for _ in pairs(methods) do count=count+1 end;assert(count == 3,"expected three registered methods")
+            assert(methods["monkeysama.avm.imports"] == f.controller.imports,"manual import list method was not forwarded")
+            local count=0;for _ in pairs(methods) do count=count+1 end;assert(count == 4,"expected four registered methods")
             serializable(methods["monkeysama.avm.snapshot"](),f.forbidden)
             assert(methods["monkeysama.avm.action"]({kind="theme",value="reff"}).theme == "reff")
-            assert(documentation_reads == 0)
+            assert(documentation_reads == 0 and import_reads == 0)
+            local imports=methods["monkeysama.avm.imports"]()
+            serializable(imports,f.forbidden)
+            S.equal(imports,{bodyId="armor",files={{path="ArmorVariantManager/other.json",name="Other"}}})
+            assert(import_reads == 1)
             f.context.id=nil
+            S.equal(methods["monkeysama.avm.imports"](),{bodyId="",files={}})
+            assert(import_reads == 1,"bridge import list scanned without an actor")
             S.equal(methods["monkeysama.avm.documentation"](),
                 {sections={{title="Help",content={"Current-language instructions"}}}})
             assert(documentation_reads == 1)

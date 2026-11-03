@@ -1,11 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeDocumentation, normalizeSnapshot } from '../src/snapshot.ts';
+import { normalizeDocumentation, normalizeImports, normalizeSnapshot } from '../src/snapshot.ts';
 
 test('normalizes the REFramework empty-table shapes at the snapshot boundary', () => {
   for (const empty of [null, {}]) {
     const result = normalizeSnapshot({ groups: empty, presets: empty, parts: empty, pending: null });
-    assert.deepEqual(result, { groups: [], presets: [], parts: [], pending: {}, conditions: null, backupPending: false });
+    assert.deepEqual(result, { groups: [], presets: [], parts: [], pending: {}, conditions: null, backupPending: false, canImport: false });
     const nested = normalizeSnapshot({ groups: [], presets: [], parts: [{ index: 1, materials: [{ name: 'body', groups: empty }] }, { index: 2, materials: empty }], pending: { 1: null } });
     assert.deepEqual(nested.parts[0].materials[0].groups, []);
     assert.deepEqual(nested.parts[1].materials, []);
@@ -14,8 +14,18 @@ test('normalizes the REFramework empty-table shapes at the snapshot boundary', (
 });
 test('preserves nonempty arrays and surfaces a nonempty object in an array field', () => {
   const value = { groups: [{ name: 'a', global: true }], presets: [{ name: 'one', default: true }], parts: [{ index: 2, materials: [{ name: 'x', enabled: false, groups: ['a'] }] }], pending: { 2: { x: true } } };
-  assert.deepEqual(normalizeSnapshot(value), { ...value, conditions: null, backupPending: false });
+  assert.deepEqual(normalizeSnapshot(value), { ...value, conditions: null, backupPending: false, canImport: false });
   assert.throws(() => normalizeSnapshot({ ...value, parts: { wrong: true } }), /parts must be an array/);
+});
+
+test('normalizes import lists and preserves display names, backup markers and exact action paths', () => {
+  const snapshot = { groups: [], presets: [], parts: [] };
+  assert.equal(normalizeSnapshot(snapshot).canImport, false);
+  assert.equal(normalizeSnapshot({ ...snapshot, canImport: true }).canImport, true);
+  for (const empty of [null, {}]) assert.deepEqual(normalizeImports({ bodyId: 'pl001', files: empty }), { bodyId: 'pl001', files: [] });
+  const value = { bodyId: 'pl001', files: [{ path: 'ArmorVariantManager/pl001.json', name: 'pl001.json' }, { path: 'ArmorVariantManager/pl001.json.backup', name: 'pl001.json [backup] <literal>' }] };
+  assert.deepEqual(normalizeImports(value), value);
+  assert.throws(() => normalizeImports({ bodyId: 'pl001', files: { wrong: true } }), /imports.files must be an array/);
 });
 
 test('preserves the backup warning and defaults older snapshots to no warning', () => {

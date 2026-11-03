@@ -10,7 +10,7 @@ import { useAvm } from './useAvm';
 import { useText } from './i18n';
 
 const tab = shallowRef<'parts' | 'conditions' | 'settings' | 'help'>('parts');
-const { snapshot, busy, loading, error, notice, perform, connect, documentation, documentationLoading, documentationError, retryDocumentation } = useAvm(computed(() => tab.value === 'help'));
+const { snapshot, busy, loading, error, notice, perform, connect, documentation, documentationLoading, documentationError, retryDocumentation, loadImports } = useAvm(computed(() => tab.value === 'help'));
 const { t, english } = useText(snapshot);
 const disabled = computed(() => busy.value || !snapshot.value?.bodyId);
 const backupWarning = computed(() => !!snapshot.value?.bodyId && snapshot.value.backupPending);
@@ -48,7 +48,7 @@ async function dismissBackup() {
           </div>
         </div>
         <div v-show="tab === 'parts'" class="workspace">
-          <CatalogPane :snapshot="snapshot" :busy="busy" :perform="perform" :t="t" @notice="notice = $event" />
+          <CatalogPane :snapshot="snapshot" :busy="busy" :perform="perform" :load-imports="loadImports" :t="t" @notice="notice = $event" />
           <MaterialsPane :snapshot="snapshot" :busy="busy" :perform="perform" :t="t" />
         </div>
         <ConditionsPane v-show="tab === 'conditions'" :key="snapshot.bodyId" :conditions="snapshot.conditions" :busy="busy" :perform="perform" :t="t" />

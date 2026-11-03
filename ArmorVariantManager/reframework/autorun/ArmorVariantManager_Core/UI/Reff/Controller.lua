@@ -9,7 +9,7 @@ function Controller.new(deps)
             game=deps.game, version=deps.version, bodyId=context.id or "", weapon=context.weapon,
             suspended=context.suspended, groups={}, group=context.group or "", presets={},
             selectedPreset=context.selected or "", parts={}, theme=deps.theme(), language=deps.language(),
-            selectionMode=context.selecting, pending={}, backupPending=false,
+            selectionMode=context.selecting, pending={}, backupPending=false, canImport=deps.imports ~= nil,
         }
         if deps.settings then snapshot.settings = deps.settings.snapshot(context) end
         if not context.id then return snapshot end
@@ -38,6 +38,17 @@ function Controller.new(deps)
     -- 长文档按需读取，不随每秒装备快照重复传输。
     function controller.documentation()
         return deps.documentation and deps.documentation() or {sections={}}
+    end
+
+    -- 文件清单只在选择器打开时读取，不随装备快照扫描磁盘。
+    function controller.imports()
+        local context = deps.context()
+        local result = {bodyId=context.id or "", files={}}
+        if not deps.imports or not context.id or context.suspended then return result end
+        for _, file in ipairs(deps.imports(context)) do
+            result.files[#result.files+1] = {path=file.path, name=file.name}
+        end
+        return result
     end
 
     -- 换装和场景切换后的旧网页请求不能修改新装备。

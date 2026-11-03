@@ -1,8 +1,8 @@
 import { computed, onBeforeUnmount, onMounted, shallowRef, watch, type Ref } from 'vue';
 import { REFF_UI_VERSION } from '@reff/ui';
 import { createEmbeddedTransport, createReffClient, installInputFocusReporter } from '@reff-sdk/index';
-import type { Documentation, Perform, Snapshot } from './types';
-import { normalizeDocumentation, normalizeSnapshot } from './snapshot';
+import type { Documentation, Imports, Perform, Snapshot } from './types';
+import { normalizeDocumentation, normalizeImports, normalizeSnapshot } from './snapshot';
 
 export function useAvm(helpOpen: Readonly<Ref<boolean>>) {
   const client = createReffClient(createEmbeddedTransport());
@@ -21,10 +21,11 @@ export function useAvm(helpOpen: Readonly<Ref<boolean>>) {
   let ready = false;
   let read: Promise<void> | undefined;
   let documentationRead: Promise<void> | undefined;
+  let importsRead: Promise<Imports> | undefined;
   let timer: number | undefined;
 
   function refresh() {
-    if (disposed || busy.value || read || documentationRead || document.hidden || !ready) return;
+    if (disposed || busy.value || read || documentationRead || importsRead || document.hidden || !ready) return;
     read = client.call<Snapshot>('monkeysama.avm.snapshot').then(value => {
       if (!disposed) snapshot.value = normalizeSnapshot(value);
     }).catch(reason => { if (!disposed) error.value = reason instanceof Error ? reason.message : String(reason); })
@@ -33,7 +34,7 @@ export function useAvm(helpOpen: Readonly<Ref<boolean>>) {
   }
   function loadDocumentation(retry = false) {
     if (retry) documentationError.value = '';
-    if (disposed || !ready || !helpOpen.value || !documentationKey.value || documentation.value || documentationError.value || busy.value || documentationRead) return;
+    if (disposed || !ready || !helpOpen.value || !documentationKey.value || documentation.value || documentationError.value || busy.value || documentationRead || importsRead) return;
     documentationLoading.value = true;
     documentationRead = (async () => {
       await read;
@@ -57,6 +58,15 @@ export function useAvm(helpOpen: Readonly<Ref<boolean>>) {
     documentationError.value = '';
     loadDocumentation();
   });
+  function loadImports(): Promise<Imports> {
+    if (importsRead) return importsRead;
+    importsRead = (async () => {
+      await read;
+      await documentationRead;
+      return normalizeImports(await client.call<Imports>('monkeysama.avm.imports'));
+    })().finally(() => { importsRead = undefined; loadDocumentation(); });
+    return importsRead;
+  }
   async function connect() {
     loading.value = true;
     error.value = '';
@@ -67,7 +77,7 @@ export function useAvm(helpOpen: Readonly<Ref<boolean>>) {
     } catch (reason) { error.value = reason instanceof Error ? reason.message : String(reason); }
     finally { loading.value = false; }
   }
-  // Polls, documentation reads and writes share one lane; older reads cannot overwrite action results.
+  // Polls, on-demand reads and writes share one lane; older reads cannot overwrite action results.
   const perform: Perform = async actions => {
     if (busy.value || !ready || disposed) return false;
     const bodyId = snapshot.value?.bodyId ?? '';
@@ -76,6 +86,8 @@ export function useAvm(helpOpen: Readonly<Ref<boolean>>) {
     try {
       await read;
       await documentationRead;
+      // The picker displays list-read errors; they must not block unrelated writes.
+      await importsRead?.catch(() => undefined);
       for (const action of Array.isArray(actions) ? actions : [actions]) {
         const params = action.kind === 'mode' || action.kind === 'theme' ? action : { ...action, bodyId };
         const value = await client.call<Snapshot>('monkeysama.avm.action', params);
@@ -102,5 +114,5 @@ export function useAvm(helpOpen: Readonly<Ref<boolean>>) {
     document.removeEventListener('visibilitychange', visible);
     stopInput(); client.dispose();
   });
-  return { snapshot, busy, loading, error, notice, perform, connect, documentation, documentationLoading, documentationError, retryDocumentation: () => loadDocumentation(true) };
+  return { snapshot, busy, loading, error, notice, perform, connect, documentation, documentationLoading, documentationError, retryDocumentation: () => loadDocumentation(true), loadImports };
 }

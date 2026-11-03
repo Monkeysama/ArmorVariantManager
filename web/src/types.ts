@@ -32,9 +32,11 @@ export interface Settings { sections: SettingsSection[] }
 export interface DocumentationEntry { title: string; paragraphs: string[] }
 export interface DocumentationSection { id: string; title: string; entries: DocumentationEntry[] }
 export interface Documentation { sections: DocumentationSection[] }
+export interface ImportFile { path: string; name: string }
+export interface Imports { bodyId: string; files: ImportFile[] }
 export interface Snapshot {
   game: 'Wilds' | 'Rise'; version: string; bodyId: string; weapon: boolean; suspended: boolean;
-  backupPending: boolean;
+  backupPending: boolean; canImport: boolean;
   groups: { name: string; label: string; global: boolean }[]; group: string;
   presets: { name: string; default: boolean; active: boolean }[]; selectedPreset: string;
   parts: Part[]; theme: 'custom' | 'reff'; language: string; selectionMode: boolean;
@@ -59,5 +61,6 @@ export type Action =
   | { kind: 'mesh'; part: number; enabled: boolean }
   | { kind: 'material' | 'select-material'; part: number; name: string; enabled: boolean }
   | { kind: 'selection'; enabled: boolean }
+  | { kind: 'import-preset'; path: string }
   | { kind: 'find' | 'restore' | 'dismiss-backup' };
 export type Perform = (actions: Action | Action[]) => Promise<boolean>;

@@ -14,6 +14,8 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
     local frames, draws, resets, errors, imports = {}, {}, {}, {}, {}
     local expected_errors = 0
     local action, writes, applied, captures = nil, {}, {}, 0
+    local native_file_index = 1
+    local weapon_id, applied_weapons = nil, {}
     local injected_preview
     local handlers, unregistered, write_failed, write_failed_path
     local enabled, visible = true, true
@@ -64,13 +66,13 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
                 local runtime={
                     actors={local_player=function() return object end,all=function() return {object} end,
                         get=function() return {entries={entry},local_entry=entry} end,can_transform=function() return false end},
-                    equipment={body_id=function() return "armor" end,weapon_id=function() return nil end,
+                    equipment={body_id=function() return "armor" end,weapon_id=function() return weapon_id end,
                         weapons=function() return {} end,clear=function() end},
                     meshes={first=function() return mesh end,part_meshes=function() return {mesh} end},
                     scene_object={game_object=function(o) return o end},
                     guard={suspended=false,get_scene=function() end},
                     materials={armor=function(_,result) applied[#applied+1]=S.copy(result) end,
-                        weapon=function() end,invalidate=function() end},
+                        weapon=function(_,_,result) applied_weapons[#applied_weapons+1]=S.copy(result) end,invalidate=function() end},
                     transition={draw_ui=function() end},
                     part_view=function() return {{index=0,label="Body",object=object}} end,
                     capture=function(actor,...)
@@ -119,8 +121,13 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
         on_script_reset=function(fn) resets[#resets+1]=fn end,
         on_application_entry=function() end, on_pre_application_entry=function() end}
     _G.log = {info=function() end, warn=function() end, error=function(message) errors[#errors+1]=message end}
-    _G.json = {load_file=function() return nil end, dump_file=function() return true end}
-    _G.fs = {glob=function() return {} end}
+    _G.json = {load_file=function(path) return S.copy(data[path]) end, dump_file=function() return true end}
+    _G.fs = {glob=function()
+        if populated and game=="mhrise" then
+            return {"ArmorVariantManager/manual_source.json","ArmorVariantManager/backup/manual_backup.json"}
+        end
+        return {}
+    end}
     _G.imgui = setmetatable({tree_node=function() return true end, checkbox=function(_,v) return false,v end,
         text_colored=function(message) assert(not tostring(message):find("Error:"),message) end},
         {__index=function() return function() end end})
@@ -128,6 +135,7 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
         imgui.begin_table=function() return true end
         imgui.combo=function(label,value)
             if action=="select" and label=="##preset_selector" then action=nil; return true,2 end
+            if action=="manual-select" and label=="##manual_file_selector" then action=nil; return true,native_file_index end
             return false,value
         end
         imgui.input_text=function(label,value)
@@ -136,6 +144,8 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
         end
         imgui.button=function(label)
             if action=="save" and label:find("##p_left",1,true) then action=nil; return true end
+            if action=="manual-open" and label=="Manual Find Preset" then action=nil; return true end
+            if action=="manual-load" and label=="Load Selected" then action=nil; return true end
             return false
         end
         imgui.slider_float=function(_,value) return false,value end
@@ -345,6 +355,51 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
         assert(not current.backupPending and #current.groups==1)
         S.equal(names(current.presets),latest_backup.preset_order)
         S.equal(data["ArmorVariantManager/armor.json"],latest_backup,"restore writes the current backup and retains unknown fields")
+        local file_list=handlers["monkeysama.avm.imports"]()
+        assert(current.canImport==(game=="mhrise") and file_list.bodyId=="armor")
+        if game=="mhrise" then
+            assert(#file_list.files==2,"manual candidates include JSON and backup even with existing presets")
+            local imported={presets={Imported={["0"]={materials={cloth=false}}}},preset_order={"Imported"},
+                default_preset="Imported",groups={Other={presets={},materials={}}},group_order={"Other"},
+                enable_transform=false,foreign={keep="source"}}
+            data["ArmorVariantManager/manual_source.json"]=S.copy(imported)
+            data["ArmorVariantManager/backup/manual_backup.json"]=S.copy(latest_backup)
+            local previous=S.copy(data["ArmorVariantManager/armor.json"])
+            send("selection",{enabled=true})
+            send("select-material",{part=0,name="cloth",enabled=true})
+            local before_import=snapshot()
+            local before_applied=S.copy(applied[#applied])
+            write_failed_path="ArmorVariantManager/armor.json"
+            local imported_ok,import_reason=pcall(send,"import-preset",{path="ArmorVariantManager/manual_source.json"})
+            assert(not imported_ok and import_reason:find("disk full",1,true))
+            S.equal(snapshot(),before_import,"failed import retains selection, draft and config")
+            S.equal(data["ArmorVariantManager/armor.json"],previous)
+            frames[1]()
+            S.equal(applied[#applied],before_applied,"failed import restores session cache before the next frame")
+            write_failed_path=nil
+            current=send("import-preset",{path="ArmorVariantManager/manual_source.json"})
+            assert(not current.selectionMode and next(current.pending)==nil and current.group=="")
+            assert(current.selectedPreset=="Imported" and #current.groups==2)
+            assert(data["ArmorVariantManager/armor.json"].foreign.keep=="source")
+            assert(data["ArmorVariantManager/armor.json"].longsword_transform_rules)
+            assert(applied[#applied]["0"].materials.cloth==false,"import immediately applies its default")
+            assert(not pcall(dispatch,{kind="import-preset",bodyId="old",path="ArmorVariantManager/manual_source.json"}))
+            data["ArmorVariantManager/invalid.json"]="not a config"
+            assert(not pcall(send,"import-preset",{path="ArmorVariantManager/invalid.json"}))
+            assert(snapshot().selectedPreset=="Imported","read errors retain imported equipment")
+            for index,file in ipairs(file_list.files) do
+                if file.path=="ArmorVariantManager/backup/manual_backup.json" then native_file_index=index end
+            end
+            action="manual-open"; draws[1](); assert(action==nil)
+            action="manual-select"; draws[1](); assert(action==nil)
+            write_failed_path="ArmorVariantManager/armor.json"
+            action="manual-load"; draws[1](); assert(action==nil)
+            assert(snapshot().selectedPreset=="Imported","native failed import retains the current config")
+            write_failed_path=nil
+            action="manual-load"; draws[1](); assert(action==nil)
+            current=snapshot()
+            S.equal(data["ArmorVariantManager/armor.json"],latest_backup,"native and REFF use the same backup file transaction")
+        else assert(#file_list.files==0,"Wilds does not gain Rise-only import") end
         send("mode",{weapon=true})
         assert(snapshot().bodyId=="","mode transition never pairs old config with new equipment")
         assert(not snapshot().backupPending and #documentation().sections==3,"empty equipment can read help without stale warning")
@@ -358,6 +413,16 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
         if game=="mhwilds" then
             assert(field("ground_clipping_height_cm",current).disabled)
             assert(not pcall(dispatch,{kind="setting",id="ground_clipping_height_cm",value=5,bodyId="armor"}))
+        else
+            weapon_id="wp_sword"
+            data["ArmorVariantManager/wp_sword.json"]=S.copy(cfg)
+            frames[1]()
+            assert(snapshot().bodyId==weapon_id and snapshot().weapon)
+            current=dispatch({kind="import-preset",bodyId=weapon_id,path="ArmorVariantManager/manual_source.json"})
+            assert(current.selectedPreset=="Imported" and current.weapon)
+            assert(data["ArmorVariantManager/wp_sword.json"].foreign.keep=="source")
+            assert(applied_weapons[#applied_weapons]["0"].materials.cloth==false,"manual weapon import applies through its own slot")
+            S.equal(data["ArmorVariantManager/armor.json"],latest_backup,"weapon import leaves armor configuration intact")
         end
     else assert(not handlers,"native core still starts without REFF") end
     for _, fn in ipairs(resets) do fn() end
@@ -380,4 +445,4 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
     if populated then assert(unregistered,"reset unregisters REFF methods") end
     _G.require = native_require
 end
-print("PASS: actual dual-game entry, conditions/settings/sorting, backup warning/dismiss/restore, on-demand help and stale/empty-scene/reset guards")
+print("PASS: actual dual-game entry, conditions/settings/sorting, backup/help, manual armor/weapon import and stale/empty-scene/reset guards")

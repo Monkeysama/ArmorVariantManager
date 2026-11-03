@@ -1,4 +1,4 @@
-import type { ConditionAction, ConditionDefinition, ConditionField, ConditionRule, Conditions, Snapshot } from '../src/types';
+import type { ConditionAction, ConditionDefinition, ConditionField, ConditionRule, Conditions, ImportFile, Snapshot } from '../src/types';
 import { settingsFor } from './settings-schema';
 import { documentationFor } from './documentation-fixture';
 
@@ -60,7 +60,7 @@ function riseConditions(): Conditions {
 
 // Browser-only fixture. It is not an entry in the production build.
 const initial: Snapshot = {
-  game: 'Wilds', version: '4.3.4', bodyId: 'ch03_001_0000', weapon: false, suspended: false, backupPending: false,
+  game: 'Wilds', version: '4.3.4', bodyId: 'ch03_001_0000', weapon: false, suspended: false, backupPending: false, canImport: false,
   groups: [{ name: '', label: '主预设', global: false }, { name: '上身', label: '上身', global: false }, { name: '腰部装饰', label: '腰部装饰', global: false }, { name: '全局隐藏', label: '全局隐藏', global: true }],
   group: '上身', presets: [{ name: '完整上装', default: true, active: false }, { name: '无外套', default: false, active: true }, { name: '内衬', default: false, active: false }], selectedPreset: '无外套',
   parts: ['头部', '身体', '手臂', '腰部', '腿部', '附加部件'].map((label, index) => ({ index, label, available: index !== 5, enabled: true, meshLocked: index === 0,
@@ -71,14 +71,23 @@ let state = structuredClone(initial);
 let failNext = false;
 let failNextDocumentation = false;
 let slowNextDocumentation = false;
+let failNextImports = false;
+let slowNextImports = false;
+let emptyImports = false;
 let emptyTables = false;
 let active = 0;
 let peak = 0;
 let polls = 0;
 const calls: Record<string, unknown>[] = [];
 const documents: { game: Snapshot['game']; language: string }[] = [];
+const imports: { bodyId: string; weapon: boolean }[] = [];
+const importFiles: ImportFile[] = [
+  { path: 'ArmorVariantManager/pl001_0000.json', name: 'pl001_0000.json' },
+  { path: 'ArmorVariantManager/pl001_0000.json.backup', name: 'pl001_0000.json [backup]' },
+  { path: 'ArmorVariantManager/wp00_0000.json', name: 'wp00_0000.json' },
+];
 let status: HTMLOutputElement | undefined;
-function renderStatus() { if (status) status.textContent = JSON.stringify({ polls, peak, calls, documents }); }
+function renderStatus() { if (status) status.textContent = JSON.stringify({ polls, peak, calls, documents, imports }); }
 const wait = (delay = 120) => new Promise(resolve => setTimeout(resolve, delay));
 function applyCondition(request: ConditionAction) {
   const conditions = state.conditions!;
@@ -111,7 +120,7 @@ function applyCondition(request: ConditionAction) {
 }
 (window as Window & { reffNativeCall?: (method: string, params: Record<string, unknown>) => Promise<unknown> }).reffNativeCall = async (method, params) => {
   if (method === 'ui.status') return { ready: true, epoch: 1 };
-  if (!['monkeysama.avm.snapshot', 'monkeysama.avm.action', 'monkeysama.avm.documentation'].includes(method)) throw new Error(`Fixture: unknown method ${method}`);
+  if (!['monkeysama.avm.snapshot', 'monkeysama.avm.action', 'monkeysama.avm.documentation', 'monkeysama.avm.imports'].includes(method)) throw new Error(`Fixture: unknown method ${method}`);
   active += 1; peak = Math.max(active, peak);
   try {
     if (method === 'monkeysama.avm.documentation') {
@@ -121,6 +130,14 @@ function applyCondition(request: ConditionAction) {
       await wait(delay);
       if (failNextDocumentation) { failNextDocumentation = false; throw new Error('测试：帮助读取失败'); }
       return value;
+    }
+    if (method === 'monkeysama.avm.imports') {
+      imports.push({ bodyId: state.bodyId, weapon: state.weapon }); renderStatus();
+      const value = { bodyId: state.bodyId, files: emptyImports ? {} : importFiles.filter(file => state.weapon || !file.name.startsWith('wp')) };
+      const delay = slowNextImports ? 1400 : 120; slowNextImports = false;
+      await wait(delay);
+      if (failNextImports) { failNextImports = false; throw new Error('测试：无法读取配置目录'); }
+      return structuredClone(value);
     }
     await wait();
     if (method === 'monkeysama.avm.snapshot') {
@@ -167,6 +184,12 @@ function applyCondition(request: ConditionAction) {
     else if (kind === 'material') { const material = state.parts.find(item => item.index === params.part)?.materials.find(item => item.name === params.name); if (material) material.enabled = !!params.enabled; }
     else if (kind === 'restore') { state.backupPending = false; state.parts.forEach(part => { part.enabled = true; part.materials.forEach(material => { material.enabled = true; }); }); }
     else if (kind === 'dismiss-backup') state.backupPending = false;
+    else if (kind === 'import-preset') {
+      if (!state.canImport || !importFiles.some(file => file.path === params.path)) throw new Error('无法导入该文件');
+      state.group = ''; state.groups = [{ name: '', label: 'Main presets', global: false }];
+      state.presets = [{ name: 'Imported preset', default: true, active: true }]; state.selectedPreset = 'Imported preset';
+      state.backupPending = false;
+    }
     return structuredClone(state);
   } finally { active -= 1; renderStatus(); }
 };
@@ -183,14 +206,17 @@ if (new URLSearchParams(location.search).has('controls')) {
   add('Other equipment', () => { state.bodyId = 'ch03_002_0000'; });
   add('Fail next help', () => { failNextDocumentation = true; });
   add('Slow next help', () => { slowNextDocumentation = true; });
+  add('Fail next imports', () => { failNextImports = true; });
+  add('Slow next imports', () => { slowNextImports = true; });
+  add('Empty import list', () => { emptyImports = !emptyImports; });
   add('No character', () => { state.bodyId = ''; });
   add('Restore character', () => { state.bodyId = initial.bodyId; });
   add('Empty Lua tables', () => { emptyTables = !emptyTables; });
-  add('English / Rise', () => { state.language = 'en-US'; state.game = 'Rise'; state.conditions = riseConditions(); state.settings = settingsFor('Rise'); });
-  add('Chinese / Wilds', () => { state.language = 'zh-CN'; state.game = 'Wilds'; state.conditions = wildsConditions(); state.settings = settingsFor('Wilds'); });
+  add('English / Rise', () => { state.language = 'en-US'; state.game = 'Rise'; state.canImport = true; state.conditions = riseConditions(); state.settings = settingsFor('Rise'); });
+  add('Chinese / Wilds', () => { state.language = 'zh-CN'; state.game = 'Wilds'; state.canImport = false; state.conditions = wildsConditions(); state.settings = settingsFor('Wilds'); });
   add('English only', () => { state.language = 'en-US'; });
   add('Chinese only', () => { state.language = 'zh-CN'; });
-  add('Rise only', () => { state.game = 'Rise'; state.conditions = riseConditions(); state.settings = settingsFor('Rise'); });
+  add('Rise only', () => { state.game = 'Rise'; state.canImport = true; state.conditions = riseConditions(); state.settings = settingsFor('Rise'); });
   add('Preview unavailable', () => { state.settings!.sections.find(section => section.id === 'preview')?.fields.forEach(field => { field.disabled = true; field.reason = '预览模块未加载'; }); });
   add('Condition warning', () => { state.conditions!.definitions[0].warning = '生命值模块尚未初始化'; });
   add('REFF amber', () => window.postMessage({ type: 'reff:preferences', preferences: { language: 'zh-CN', appearance: { preset: 'amber', accent: '#f1ba68', background: '#201c17', surface: '#2b251d', backgroundOpacity: .94, cornerRadius: 6, surfaceBlur: 8, textScale: 1 } } }, '*'));
