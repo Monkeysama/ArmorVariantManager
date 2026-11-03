@@ -26,6 +26,9 @@ local global_config = {
 local Localization = require("ArmorVariantManager_Core.Localization")
 local TransformManager = require("ArmorVariantManager_Core.TransformManager")
 local RuntimeGuard = require("ArmorVariantManager_Core.RuntimeGuard")
+local ConfigStore = require("ArmorVariantManager_Core.Config.Store")
+local ConfigNormalize = require("ArmorVariantManager_Core.Config.Normalize")
+local GameConfig = require("ArmorVariantManager_Core.Games.Wilds.Config")
 -- REFramework 重载脚本时可能保留 Lua 模块缓存，新UI必须重新加载最新实现。
 local refd2d_module_names = {
     "ArmorVariantManager_Core.PortraitCamera",
@@ -69,59 +72,8 @@ local function T(key)
     return Localization[lang][key] or tostring(key)
 end
 
--- =============================================================================
--- JSON 容错读写（必须定义在 load_global_settings 之前：主 chunk 会立刻调用它）
--- =============================================================================
--- json.load_file 内部会自行 spdlog::error 打印解析失败原因（例如文件被写坏时的
--- "[JSON] Failed to load file ... unexpected end of input"），**然后**才抛异常，
--- 所以 pcall 只能防止脚本中断，挡不住那条错误日志。
--- 而"切换装备时该套装还没有预设文件（0 字节）"是正常场景，不该刷 error。
--- 因此改为：自己读文本 -> 先判断内容非空 -> 再交给 json.load_string。
--- json.load_string 解析失败只返回 nil，不写日志，从而彻底消除这类报错。
-local function ensure_parent_directory(filepath)
-    local dir = string.match(filepath, "^(.*)[/\\][^/\\]+$")
-    if not dir then return true end
-    if fs and fs.create_directory then
-        local ok, created = pcall(fs.create_directory, dir)
-        return ok and created ~= false
-    end
-    return true
-end
-
--- 读取 JSON 文件：文件不存在、为空、或内容损坏一律返回 nil，且不产生错误日志。
-local function safe_json_load(filepath)
-    if not filepath then return nil end
-    local handle = io.open(filepath, "r")
-    if not handle then return nil end
-    local content = handle:read("a")
-    handle:close()
-    if not content then return nil end
-    content = content:gsub("^\239\187\191", "") -- 去掉可能存在的 UTF-8 BOM
-    -- 空文件/纯空白视为"暂无配置"，直接返回 nil，不进入解析器。
-    if content:match("^%s*$") then return nil end
-    local ok, data = pcall(json.load_string, content)
-    if not ok then return nil end
-    return data
-end
-
--- 写入 JSON 文件：先序列化成功再落盘，避免留下半截/空文件。
-local function safe_json_save(filepath, value)
-    if not filepath or not value then return false end
-    local ok_text, text = pcall(json.dump_string, value, 4)
-    if not ok_text or type(text) ~= "string" or text == "" then
-        log.error(string.format("[AVM] json 序列化失败，已跳过写入: %s", tostring(filepath)))
-        return false
-    end
-    ensure_parent_directory(filepath)
-    local handle = io.open(filepath, "w")
-    if not handle then
-        log.error(string.format("[AVM] 无法写入配置文件: %s", tostring(filepath)))
-        return false
-    end
-    handle:write(text)
-    handle:close()
-    return true
-end
+local safe_json_load = ConfigStore.load
+local safe_json_save = ConfigStore.save
 
 -- 加载全局配置
 local function load_global_settings()
@@ -294,55 +246,7 @@ local config_restore_handled = {}
 --     ...
 --   }
 -- }
--- 并行条件的显示和默认优先级顺序，与旧 UI 一致；数值越小优先级越高。
-local parallel_condition_order = {
-    "hp", "weapon", "damage", "spirit", "dual_blades", "switch_axe",
-    "insect_glaive", "charge_blade", "greatsword_type", "greatsword_level",
-    "bow_level", "hammer_level"
-}
-
--- 创建完整的并行条件默认配置，统一所有新建和缺失配置的优先级来源。
-local function create_default_parallel_settings()
-    local settings = {}
-    for index, key in ipairs(parallel_condition_order) do
-        settings[key] = { enabled = key == "hp", priority = index }
-    end
-    return settings
-end
-
--- 补齐旧 JSON 的并行条件。仅当检测到完整的旧版默认序列时重排，保留用户自定义优先级。
-local function normalize_parallel_settings(settings)
-    if type(settings) ~= "table" then return create_default_parallel_settings() end
-    local legacy_order = {
-        "hp", "weapon", "spirit", "dual_blades", "switch_axe", "insect_glaive",
-        "charge_blade", "greatsword_type", "greatsword_level", "bow_level", "hammer_level"
-    }
-    local legacy_default = type(settings.damage) ~= "table"
-    if legacy_default then
-        for index, key in ipairs(legacy_order) do
-            local item = settings[key]
-            if type(item) ~= "table" or item.enabled ~= (key == "hp")
-                or tonumber(item.priority) ~= index then
-                legacy_default = false
-                break
-            end
-        end
-    end
-    for index, key in ipairs(parallel_condition_order) do
-        if type(settings[key]) ~= "table" then
-            settings[key] = { enabled = key == "hp", priority = index }
-        else
-            if settings[key].enabled == nil then settings[key].enabled = false end
-            if tonumber(settings[key].priority) == nil then settings[key].priority = index end
-        end
-    end
-    if legacy_default then
-        for index, key in ipairs(parallel_condition_order) do
-            settings[key].priority = index
-        end
-    end
-    return settings
-end
+local create_default_parallel_settings = GameConfig.default_parallel_settings
 
 local current_config = {
     default_preset = "",
@@ -1060,17 +964,8 @@ local function get_body_id()
     return get_character_body_id(get_local_player_character())
 end
 
--- 辅助函数：获取配置文件路径
-local function get_config_path(body_id)
-    if not body_id then return nil end
-    return "ArmorVariantManager/" .. body_id .. ".json"
-end
-
--- 辅助函数：获取备份文件路径
-local function get_backup_path(body_id)
-    if not body_id then return nil end
-    return "ArmorVariantManager/backup/" .. body_id .. ".json"
-end
+local get_config_path = ConfigStore.config_path
+local get_backup_path = ConfigStore.backup_path
 
 -- 辅助函数：深度比较两个 table 是否内容一致
 -- 用于判断主配置是否被外部还原（与备份不一致即视为被改写）
@@ -1796,120 +1691,7 @@ local function load_config_data(body_id)
     -- 且不产生任何错误日志；单条预设不可用不应影响其余装备的加载。
     local loaded_data = safe_json_load(path)
     if loaded_data then
-        -- 确保结构完整
-        if not loaded_data.presets then loaded_data.presets = {} end
-        if not loaded_data.default_preset then loaded_data.default_preset = "" end
-        if not loaded_data.groups then loaded_data.groups = {} end
-        if not loaded_data.group_order then loaded_data.group_order = {} end
-        if not loaded_data.preset_order then loaded_data.preset_order = {} end
-        -- 确保各分组也有 preset_order
-        for _, g_data in pairs(loaded_data.groups) do
-            if not g_data.preset_order then g_data.preset_order = {} end
-        end
-        if not loaded_data.transform_type then loaded_data.transform_type = "hp" end
-        if loaded_data.is_parallel == nil then loaded_data.is_parallel = false end
-        loaded_data.parallel_settings = normalize_parallel_settings(loaded_data.parallel_settings)
-        
-        -- 数据迁移：将原来 HP 中的 trigger_on_damage 迁移到新的 damage 节点
-        local migrated_damage = false
-        if loaded_data.transform_rules then
-            for i = #loaded_data.transform_rules, 1, -1 do
-                local r = loaded_data.transform_rules[i]
-                if r.trigger_on_damage then
-                    if not loaded_data.damage_transform_rules then
-                        loaded_data.damage_transform_rules = { { duration = r.duration or 5, targets = r.targets or {} } }
-                    end
-                    table.remove(loaded_data.transform_rules, i)
-                    migrated_damage = true
-                end
-            end
-        end
-        
-        if not loaded_data.transform_rules then loaded_data.transform_rules = {} end
-        if not loaded_data.damage_transform_rules then loaded_data.damage_transform_rules = { { duration = 5, targets = {} } } end
-        if not loaded_data.weapon_transform_rules then
-            loaded_data.weapon_transform_rules = {
-                { state = "sheathed", targets = {} },
-                { state = "drawn", targets = {} }
-            }
-        end
-        if not loaded_data.spirit_transform_rules then
-            loaded_data.spirit_transform_rules = {
-                { level = 1, targets = {} },
-                { level = 2, targets = {} },
-                { level = 3, targets = {} },
-                { level = 4, targets = {} }
-            }
-        end
-        if not loaded_data.dual_blades_transform_rules then
-            loaded_data.dual_blades_transform_rules = {
-                { state = "normal", targets = {} },
-                { state = "kijin", targets = {} },
-                { state = "enhancement", targets = {} }
-            }
-        end
-        if not loaded_data.switch_axe_transform_rules then
-            loaded_data.switch_axe_transform_rules = {
-                { state = "sword_normal", targets = {} },
-                { state = "sword_awakened", targets = {} },
-                { state = "axe_normal", targets = {} },
-                { state = "axe_enhanced", targets = {} }
-            }
-        end
-        if not loaded_data.insect_glaive_transform_rules then
-            loaded_data.insect_glaive_transform_rules = {
-                { state = "none", targets = {} },
-                { state = "white", targets = {} },
-                { state = "orange", targets = {} },
-                { state = "red", targets = {} },
-                { state = "triple", targets = {} }
-            }
-        end
-        if not loaded_data.charge_blade_transform_rules then
-            loaded_data.charge_blade_transform_rules = {
-                { state = "sword", targets = {} },
-                { state = "axe", targets = {} },
-                { state = "sword_shield", targets = {} },
-                { state = "sword_sword", targets = {} },
-                { state = "sword_shield_sword", targets = {} },
-                { state = "axe_axe", targets = {} },
-                { state = "triple", targets = {} }
-            }
-        end
-        if not loaded_data.greatsword_type_transform_rules then
-            loaded_data.greatsword_type_transform_rules = {
-                { state = "0", targets = {} },
-                { state = "1", targets = {} },
-                { state = "2", targets = {} },
-                { state = "3", targets = {} },
-                { state = "5", targets = {} },
-                { state = "other", targets = {} }
-            }
-        end
-        if not loaded_data.greatsword_level_transform_rules then
-            loaded_data.greatsword_level_transform_rules = {
-                { level = 0, targets = {} },
-                { level = 1, targets = {} },
-                { level = 2, targets = {} },
-                { level = 3, targets = {} }
-            }
-        end
-        if not loaded_data.bow_level_transform_rules then
-            loaded_data.bow_level_transform_rules = {
-                { level = 1, targets = {} },
-                { level = 2, targets = {} },
-                { level = 3, targets = {} },
-                { level = 4, targets = {} }
-            }
-        end
-        if not loaded_data.hammer_level_transform_rules then
-            loaded_data.hammer_level_transform_rules = {
-                { level = 0, targets = {} },
-                { level = 1, targets = {} },
-                { level = 2, targets = {} },
-                { level = 3, targets = {} }
-            }
-        end
+        ConfigNormalize.apply(loaded_data, GameConfig)
         -- 检测主配置是否被外部还原：备份存在且与主配置不一致时，打上标记供 UI 提示一键恢复。
         -- 比较必须用原始文件内容（而非补全后的 loaded_data），因为加载流程会为缺失字段
         -- 补全默认值，导致"补全后数据 vs 原始备份"产生误差。

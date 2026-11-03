@@ -1,14 +1,15 @@
 package.path = "ArmorVariantManager/reframework/autorun/?.lua;" .. package.path
 local S = dofile("tests/support.lua")
-local source = S.read("ArmorVariantManager/reframework/autorun/ArmorVariantManager.lua")
-local helpers = S.section(source, "local parallel_condition_order =", "local current_config =")
-local body = S.section(source, "        -- 确保结构完整", "        -- 检测主配置是否被外部还原")
-local current_wilds = assert(load(helpers .. "\nreturn function(loaded_data)\n" .. body .. "\nreturn loaded_data end"))()
+local Normalize = require("ArmorVariantManager_Core.Config.Normalize")
 local legacy = {
     Wilds = dofile("tests/fixtures/legacy/wilds_config.lua"),
     Rise = dofile("tests/fixtures/legacy/rise_config.lua")
 }
-local current = { Wilds = current_wilds, Rise = legacy.Rise }
+local current = {}
+for _, game in ipairs({ "Wilds", "Rise" }) do
+    local schema = require("ArmorVariantManager_Core.Games." .. game .. ".Config")
+    current[game] = function(data) return Normalize.apply(data, schema) end
+end
 local cases = {
     {},
     { presets = { Z = {}, A = {} }, groups = { Boots = { presets = { High = {}, Flat = {} } } } },
@@ -41,6 +42,11 @@ for game, normalize in pairs(current) do
         S.equal(normalize(S.copy(saved)), saved, game .. " save/reload")
         if input.unknown then S.equal(data.unknown, input.unknown, "unknown fields") end
     end
+    local first, second = normalize({}), normalize({})
+    first.weapon_transform_rules[1].targets[1] = { preset = "OnlyFirst" }
+    first.parallel_settings.weapon.priority = 99
+    assert(#second.weapon_transform_rules[1].targets == 0 and second.parallel_settings.weapon.priority ~= 99,
+        game .. " configurations must not share mutable defaults")
 end
 local wilds, rise = current.Wilds({}), current.Rise({})
 assert(wilds.transform_type == "hp" and rise.transform_type == "weapon")

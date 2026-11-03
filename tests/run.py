@@ -10,6 +10,7 @@ import subprocess
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_TESTS = (
     "tests/config_compatibility.lua",
+    "tests/config_store.lua",
     "tests/high_heel_height_regression.lua",
     "tests/ground_clipping_targets_regression.lua",
     "tests/scanner_ui_regression.lua",
