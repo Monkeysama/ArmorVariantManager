@@ -1,0 +1,114 @@
+package.path = "ArmorVariantManager/reframework/autorun/?.lua;" .. package.path
+local S = dofile("tests/support.lua")
+local Editor = require("ArmorVariantManager_Core.Presets.Editor")
+local legacy = dofile("tests/fixtures/legacy/preset_edits.lua")
+local source = S.read("ArmorVariantManager/reframework/autorun/ArmorVariantManager.lua")
+local initial = {
+    presets = { A = { ["1"] = { materials = { Body = false } } }, B = {} },
+    default_preset = "A", preset_order = { "A", "B" },
+    extension = { enabled = false }, group_order = { "Normal", "Global" },
+    groups = {
+        Normal = { presets = { A = {}, B = {} }, default_preset = "A", preset_order = { "A", "B" }, mask = { ["1"] = { Body = true } }, custom = 7 },
+        Global = { presets = { A = { _empty = true }, B = {} }, default_preset = "A", preset_order = { "A", "B" }, is_global = true }
+    }
+}
+
+for _, game in ipairs({ "Wilds", "Rise" }) do
+    local schema = require("ArmorVariantManager_Core.Games." .. game .. ".Config")
+    for _, group in ipairs({ "", "Normal", "Global" }) do
+        local config = require("ArmorVariantManager_Core.Config.Normalize").apply(S.copy(initial), schema)
+        local baseline = S.copy(config)
+        local disk, fail, calls, preserve = nil, false, 0, nil
+        local function persist(keep)
+            calls, preserve = calls + 1, keep
+            if fail then return false end
+            disk = S.copy(config)
+            return true
+        end
+        local target = Editor.target(config, group)
+        local replacement = { ["1"] = { materials = { Body = true } }, _empty = false }
+        assert(Editor.write(config, group, "A", replacement, persist) and not preserve)
+        S.equal(target.preset_order, { "A", "B" })
+        assert(target.presets.A == replacement)
+        assert(Editor.write(config, group, "New", {}, persist))
+        S.equal(target.preset_order, { "A", "B", "New" })
+        assert(Editor.set_default(config, group, "New", persist) and preserve)
+        local saved, order, preset = S.copy(config), target.preset_order, target.presets.A
+        fail = true
+        assert(not Editor.write(config, group, "A", {}, persist))
+        assert(not Editor.write(config, group, "Failed", {}, persist))
+        assert(not Editor.delete(config, group, "New", persist))
+        assert(not Editor.set_default(config, group, "A", persist))
+        assert(not Editor.reorder(config, group, { "New", "B", "A" }, persist))
+        assert(not Editor.reorder_groups(config, { "Global", "Normal" }, persist))
+        S.equal(config, saved, game .. " failed edits must restore full config")
+        S.equal(disk, saved)
+        assert(target.preset_order == order and target.presets.A == preset)
+        fail = false
+
+        -- 旧应用与新编辑层的成功删除/排序生成完全相同的 JSON。
+        local old_env = setmetatable({ current_config = S.copy(config), current_group_name = group,
+            get_body_id = function() return "armor" end,
+            update_group_names_list = function() end, update_preset_names_list = function() end,
+            save_current_config_to_file = function() return true end
+        }, { __index = _G })
+        local old = legacy(old_env)
+        assert(old.delete_preset("New") and Editor.delete(config, group, "New", persist))
+        old.reorder_presets({ "B", "A" }); assert(Editor.reorder(config, group, { "B", "A" }, persist))
+        old.reorder_groups({ { name = "Global" }, { name = "Normal" } })
+        assert(Editor.reorder_groups(config, { "Global", "Normal" }, persist))
+        S.equal(config, old_env.current_config, game .. " legacy editing results")
+        S.equal(config.extension, baseline.extension)
+        assert(config.groups.Normal.custom == 7)
+        local before = calls
+        assert(not Editor.delete(config, group, "Missing", persist))
+        assert(not Editor.set_default(config, group, "Missing", persist))
+        assert(not Editor.reorder(config, "Missing", {}, persist))
+        assert(calls == before)
+    end
+end
+
+-- 旧保存入口允许创建缺少的列表；失败不能留下新组、空排序或空 presets。
+local missing = {}
+assert(not Editor.write(missing, "Group", "A", {}, function() return false end))
+S.equal(missing, {})
+assert(not Editor.write(missing, "", "A", {}, function() return false end))
+S.equal(missing, {})
+assert(Editor.write(missing, "Group", "A", { _empty = true }, function() return true end))
+S.equal(missing, { groups = { Group = { presets = { A = { _empty = true } }, mask = {}, preset_order = { "A" } } } })
+
+-- 真实入口包装及新 UI 的调用接线：失败返回 false，成功只保存一次并刷新列表。
+local config, writes, refreshed, fail = S.copy(initial), 0, 0, false
+local env = setmetatable({ current_config = config, current_group_name = "Normal", PresetEditor = Editor,
+    get_body_id = function() return "armor" end,
+    save_current_config_to_file = function(id, keep)
+        assert(id == "armor" and keep == false); writes = writes + 1; return not fail
+    end,
+    update_preset_names_list = function() refreshed = refreshed + 1 end,
+    update_group_names_list = function() refreshed = refreshed + 1 end
+}, { __index = _G })
+local wrappers = S.section(source, "local function delete_preset(", "-- 开启自动保存时")
+local methods = assert(load(wrappers .. "\nreturn { delete_preset = delete_preset, reorder_presets = reorder_presets, reorder_groups = reorder_groups }", "entry-editor", "t", env))()
+for name, fn in pairs(methods) do env[name] = fn end
+local blocks = {}
+for _, spec in ipairs({ { "reorder_groups", "-- 新 UI 创建分组" }, { "reorder_presets", "-- 新 UI 新增预设" }, { "delete_preset", "-- 新 UI 设置当前" } }) do
+    blocks[#blocks + 1] = S.section(source, "    " .. spec[1] .. " = function", "    " .. spec[2])
+end
+local ui = assert(load("return {\n" .. table.concat(blocks) .. "\n}", "ui-editor", "t", env))()
+fail = true
+assert(not ui.delete_preset("A") and config.groups.Normal.presets.A)
+fail = false
+assert(ui.delete_preset("A"))
+assert(ui.reorder_presets({ "B" }))
+assert(ui.reorder_groups({ { name = "Global" }, { name = "" }, { name = "Normal" } }))
+S.equal(config.group_order, { "Global", "Normal" })
+assert(writes == 4 and refreshed == 4)
+env.current_config = nil
+assert(not ui.delete_preset("B"))
+assert(not ui.reorder_presets({ "B" }))
+assert(not ui.reorder_groups({ { name = "Normal" } }))
+assert(writes == 4 and refreshed == 4)
+assert(source:find("delete_preset(current_preset_name, body_id)", 1, true))
+assert(source:find("saved = reorder_groups(sort_temp_list, body_id)", 1, true))
+assert(source:find("saved = reorder_presets(sort_temp_list, body_id)", 1, true))
+print("PASS: shared preset writes/defaults/delete/order, legacy JSON equality, failed-save rollback and actual UI operation wiring")

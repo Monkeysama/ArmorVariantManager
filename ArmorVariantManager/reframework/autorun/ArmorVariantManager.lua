@@ -64,6 +64,7 @@ local GroundClippingFix = require("ArmorVariantManager_Core.GroundClippingFix")
 local GroundClippingTargets = require("ArmorVariantManager_Core.GroundClippingTargets")
 local GamePresets = require("ArmorVariantManager_Core.Games.Wilds.Presets")
 local PresetGroups = require("ArmorVariantManager_Core.Presets.Groups")
+local PresetEditor = require("ArmorVariantManager_Core.Presets.Editor")
 local PresetSelection = require("ArmorVariantManager_Core.Presets.Selection")
 local PresetDefaults = require("ArmorVariantManager_Core.Presets.Defaults")
 local Processor = require("ArmorVariantManager_Core.Runtime.Processor")
@@ -863,21 +864,39 @@ end
 -- 将指定预设写为当前分组的默认预设，供旧 UI、新 UI 和自动保存开关共用。
 local function set_preset_as_default(preset_name, body_id)
     if not body_id or not preset_name or preset_name == "" or not current_config then return false end
-    local target = current_config
-    if current_group_name ~= "" and current_config.groups
-        and current_config.groups[current_group_name] then
-        target = current_config.groups[current_group_name]
-    end
-    if not target.presets or not target.presets[preset_name] then return false end
-    local previous_default = target.default_preset
-    target.default_preset = preset_name
-    -- 只修改默认名称，不重新应用其他分组默认值，否则自动保存会覆盖刚选中的预设高度。
-    if not save_current_config_to_file(body_id, true) then
-        target.default_preset = previous_default
-        return false
-    end
+    if not PresetEditor.set_default(current_config, current_group_name, preset_name, function(preserve)
+        return save_current_config_to_file(body_id, preserve)
+    end) then return false end
     update_preset_names_list()
     return true
+end
+
+-- 删除与排序都通过编辑层保存，失败时保留原配置。
+local function delete_preset(preset_name, body_id)
+    if not body_id or not preset_name or preset_name == "" or not current_config then return false end
+    local saved = PresetEditor.delete(current_config, current_group_name, preset_name, function(preserve)
+        return save_current_config_to_file(body_id, preserve)
+    end)
+    update_preset_names_list()
+    return saved
+end
+
+local function reorder_presets(names, body_id)
+    if not body_id or not current_config then return false end
+    local saved = PresetEditor.reorder(current_config, current_group_name, names, function(preserve)
+        return save_current_config_to_file(body_id, preserve)
+    end)
+    update_preset_names_list()
+    return saved
+end
+
+local function reorder_groups(names, body_id)
+    if not body_id or not current_config then return false end
+    local saved = PresetEditor.reorder_groups(current_config, names, function(preserve)
+        return save_current_config_to_file(body_id, preserve)
+    end)
+    update_group_names_list()
+    return saved
 end
 
 -- 开启自动保存时立即持久化当前选中预设，避免开关状态和当前默认预设不一致。
@@ -1007,47 +1026,11 @@ local function save_preset(preset_name, body_id)
         new_preset_data.ground_clipping_fix = ground_clipping_presets.get_editor(
             current_config, body_id, current_group_name, selected)
     end
-    -- 保留被覆盖的预设和排序，写盘失败时撤销本次修改，不向 UI 报告保存成功。
-    local previous_preset = get_current_preset_data(preset_name)
-    local previous_target = current_group_name == "" and current_config or current_config.groups and current_config.groups[current_group_name]
-    local previous_order = previous_target and deep_copy_table(previous_target.preset_order)
-    -- 保存到当前分组或主列表
-    if current_group_name == "" then
-        -- 保存到主列表
-        if not current_config.presets then current_config.presets = {} end
-        -- 维护 preset_order：如果是新预设则追加到末尾
-        if not current_config.presets[preset_name] then
-            if not current_config.preset_order then current_config.preset_order = {} end
-            table.insert(current_config.preset_order, preset_name)
-        end
-        current_config.presets[preset_name] = new_preset_data
-    else
-        -- 保存到当前分组
-        if not current_config.groups then current_config.groups = {} end
-        if not current_config.groups[current_group_name] then
-            current_config.groups[current_group_name] = { presets = {}, mask = {} }
-        end
-        -- 确保 presets 表存在
-        if not current_config.groups[current_group_name].presets then
-            current_config.groups[current_group_name].presets = {}
-        end
-        -- 维护分组的 preset_order：如果是新预设则追加到末尾
-        if not current_config.groups[current_group_name].presets[preset_name] then
-            if not current_config.groups[current_group_name].preset_order then
-                current_config.groups[current_group_name].preset_order = {}
-            end
-            table.insert(current_config.groups[current_group_name].preset_order, preset_name)
-        end
-        current_config.groups[current_group_name].presets[preset_name] = new_preset_data
-    end
-    if not save_current_config_to_file(body_id) then
-        local target = current_group_name == "" and current_config or current_config.groups[current_group_name]
-        target.presets[preset_name], target.preset_order = previous_preset, previous_order
-        update_preset_names_list()
-        return false
-    end
+    local saved = PresetEditor.write(current_config, current_group_name, preset_name, new_preset_data, function(preserve)
+        return save_current_config_to_file(body_id, preserve)
+    end)
     update_preset_names_list()
-    return true
+    return saved
 end
 
 -- 辅助函数：自动查找匹配的预设
@@ -1593,16 +1576,11 @@ variant_manager_ui = VariantManagerUI.new({
 
     -- 新 UI 拖动普通分组后写回旧 UI 共用的 group_order。
     reorder_groups = function(items)
-        local body_id = get_body_id()
-        if not body_id or not current_config then return end
-        current_config.group_order = {}
+        local names = {}
         for _, item in ipairs(items or {}) do
-            if item.name and item.name ~= "" then
-                table.insert(current_config.group_order, item.name)
-            end
+            if item.name and item.name ~= "" then names[#names + 1] = item.name end
         end
-        update_group_names_list()
-        save_current_config_to_file(body_id)
+        return reorder_groups(names, get_body_id())
     end,
 
     -- 新 UI 创建分组时复用旧 UI 的材质剥离、全局重叠和 group_order 逻辑。
@@ -1642,19 +1620,7 @@ variant_manager_ui = VariantManagerUI.new({
 
     -- 新 UI 拖动预设后写回默认分组或当前分组的 preset_order。
     reorder_presets = function(items)
-        local body_id = get_body_id()
-        if not body_id or not current_config then return end
-        local target = current_config
-        if current_group_name ~= "" and current_config.groups
-            and current_config.groups[current_group_name] then
-            target = current_config.groups[current_group_name]
-        end
-        target.preset_order = {}
-        for _, preset_name in ipairs(items or {}) do
-            table.insert(target.preset_order, preset_name)
-        end
-        update_preset_names_list()
-        save_current_config_to_file(body_id)
+        return reorder_presets(items, get_body_id())
     end,
 
     -- 新 UI 新增预设，复用旧 UI 的 save_preset、排序与配置保存逻辑。
@@ -1677,27 +1643,7 @@ variant_manager_ui = VariantManagerUI.new({
 
     -- 新 UI 删除预设，并同步移除默认预设和排序数组中的名称。
     delete_preset = function(preset_name)
-        local body_id = get_body_id()
-        if not body_id or not preset_name or preset_name == "" or not current_config then return false end
-        local target = current_config
-        if current_group_name ~= "" and current_config.groups
-            and current_config.groups[current_group_name] then
-            target = current_config.groups[current_group_name]
-        end
-        if not target.presets or not target.presets[preset_name] then return false end
-        target.presets[preset_name] = nil
-        if target.default_preset == preset_name then target.default_preset = "" end
-        if target.preset_order then
-            for index = #target.preset_order, 1, -1 do
-                if target.preset_order[index] == preset_name then
-                    table.remove(target.preset_order, index)
-                    break
-                end
-            end
-        end
-        update_preset_names_list()
-        save_current_config_to_file(body_id)
-        return true
+        return delete_preset(preset_name, get_body_id())
     end,
 
     -- 新 UI 设置当前选中预设为默认预设，沿用旧 UI 的分组配置写入规则。
@@ -2277,35 +2223,7 @@ re.on_draw_ui(function()
                                     local ctx_default = (current_group_name == "") and current_config.default_preset or
                                                        (current_config.groups[current_group_name] and current_config.groups[current_group_name].default_preset)
                                     if imgui.button(T("delete_preset")) then
-                                        if current_group_name == "" then
-                                            current_config.presets[current_preset_name] = nil
-                                            if current_config.default_preset == current_preset_name then current_config.default_preset = "" end
-                                            -- 维护 preset_order
-                                            if current_config.preset_order then
-                                                for pi = #current_config.preset_order, 1, -1 do
-                                                    if current_config.preset_order[pi] == current_preset_name then
-                                                        table.remove(current_config.preset_order, pi); break
-                                                    end
-                                                end
-                                            end
-                                        else
-                                            if current_config.groups[current_group_name] then
-                                                current_config.groups[current_group_name].presets[current_preset_name] = nil
-                                                if current_config.groups[current_group_name].default_preset == current_preset_name then
-                                                    current_config.groups[current_group_name].default_preset = ""
-                                                end
-                                                -- 维护分组 preset_order
-                                                if current_config.groups[current_group_name].preset_order then
-                                                    for pi = #current_config.groups[current_group_name].preset_order, 1, -1 do
-                                                        if current_config.groups[current_group_name].preset_order[pi] == current_preset_name then
-                                                            table.remove(current_config.groups[current_group_name].preset_order, pi); break
-                                                        end
-                                                    end
-                                                end
-                                            end
-                                        end
-                                        update_preset_names_list()
-                                        save_current_config_to_file(body_id)
+                                        delete_preset(current_preset_name, body_id)
                                     end
                                     imgui.same_line()
                                     if not global_config.auto_set_selected_preset_as_default
@@ -2550,32 +2468,16 @@ re.on_draw_ui(function()
                             -- 底部按钮
                             imgui.spacing()
                             if imgui.button(T("sort_confirm") .. "##sort_ok") then
+                                local saved
                                 if sort_mode == "group" then
-                                    current_config.group_order = {}
-                                    for _, gn in ipairs(sort_temp_list) do
-                                        table.insert(current_config.group_order, gn)
-                                    end
-                                    update_group_names_list()
+                                    saved = reorder_groups(sort_temp_list, body_id)
                                 elseif sort_mode == "preset" then
-                                    if current_group_name == "" then
-                                        current_config.preset_order = {}
-                                        for _, pn in ipairs(sort_temp_list) do
-                                            table.insert(current_config.preset_order, pn)
-                                        end
-                                    else
-                                        local g = current_config.groups and current_config.groups[current_group_name]
-                                        if g then
-                                            g.preset_order = {}
-                                            for _, pn in ipairs(sort_temp_list) do
-                                                table.insert(g.preset_order, pn)
-                                            end
-                                        end
-                                    end
-                                    update_preset_names_list()
+                                    saved = reorder_presets(sort_temp_list, body_id)
                                 end
-                                save_current_config_to_file(body_id)
-                                sort_mode = nil
-                                sort_temp_list = {}
+                                if saved then
+                                    sort_mode = nil
+                                    sort_temp_list = {}
+                                end
                             end
                             imgui.same_line()
                             if imgui.button(T("sort_cancel") .. "##sort_no") then
