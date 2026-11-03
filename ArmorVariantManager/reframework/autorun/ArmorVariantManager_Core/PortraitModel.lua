@@ -9,7 +9,7 @@ local function identity(value) return tostring(value:get_address()) end
 local function require_native(bridge)
     local api = bridge()
     assert(api and api.portrait_pose_version and api.portrait_pose_version() >= 3,
-        "Portrait visibility native module missing; restart with the updated ArmorVariantManager_UI.dll")
+        "Portrait visibility native module missing; restart with the updated ArmorVariantManager_Portrait.dll")
     return api
 end
 
@@ -17,7 +17,7 @@ end
 function PortraitModel.game_adapter(deps)
     deps = deps or {}
     local adapter = {}
-    local bridge = deps.bridge or function() return rawget(_G, "avm_bridge") end
+    local bridge = deps.bridge or function() return rawget(_G, "avm_portrait") or rawget(_G, "avm_bridge") end
     local object_type = assert(sdk.find_type_definition("via.GameObject"))
     local function component(object, name)
         return assert(object:call("createComponent(System.Type)", sdk.typeof(name)), "Portrait component creation failed: " .. name)
@@ -150,7 +150,7 @@ end
 -- 装备变化先停旧副本并确认销毁，再重建；每次更新最多创建两个网格，避免一次性构造整套装备。
 function PortraitModel.new(deps)
     deps = deps or {}
-    local bridge = deps.bridge or function() return rawget(_G, "avm_bridge") end
+    local bridge = deps.bridge or function() return rawget(_G, "avm_portrait") or rawget(_G, "avm_bridge") end
     local adapter, clock = deps.adapter or PortraitModel.game_adapter({ bridge = bridge }), deps.clock or os.clock
     local self = { state = "idle" }
     local objects, entries, signature, key, cursor, next_inventory, deadline = {}, {}, nil, nil, 1, 0, 0

@@ -190,7 +190,7 @@ function VariantManagerUI.new(deps)
         end,
         log = function(message) if log and log.error then log.error("[AVM Portrait] " .. message) end end
     }
-    -- 允许离线 UI 和宿主测试注入控制器；正式入口未注入时仍使用游戏适配器。
+    -- 正式入口注入应用层唯一控制器；保留旧独立调用方自行创建预览的入口。
     self.portrait_preview = deps.portrait_preview or PortraitPreview.new(portrait_preview_deps)
     self.portrait_preview.set_camera_settings(deps.config.portrait_camera)
     self.portrait_preview.set_enabled(deps.config.portrait_enabled == true)

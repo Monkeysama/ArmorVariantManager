@@ -25,6 +25,7 @@
 - 网页提供预设、分组、显隐、变身条件、设置、排序、自动查找与备份恢复。列表标题旁的 **排序** 可切换到上下移动模式，主分组固定在首位。
 - 设置中的全局选项直接保存；荒野的 **陷地修复** 属于当前分组的预设草稿，调整后需新建或覆盖预设。勾选并设为 `0 cm` 才会归零，取消勾选只退出该预设的高度控制。
 - 荒野镜头选项仍控制原 Home 弹窗中的全身预览，REFF 页面内的预览画面尚未接入。
+- 荒野安装时同时保留 `ArmorVariantManager_UI.dll` 与 `ArmorVariantManager_Portrait.dll`：前者显示原弹窗，后者负责独立预览、模型姿态和 GPU 资源。
 - 原生菜单入口保持不变：在 REFramework 的 **Script Generated UI** 中展开差分管理器。没有安装 REFF 也能使用该入口；荒野原 Home 弹窗暂时保留。
 - 原有 JSON 无需转换，仍从当前游戏的 `reframework/data/ArmorVariantManager` 读取和保存。
 <!-- - 在游戏中按 **Insert** 键打开 REFramework 菜单。

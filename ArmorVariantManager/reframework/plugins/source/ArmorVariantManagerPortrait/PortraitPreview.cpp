@@ -276,22 +276,33 @@ return c;
 };
 std::unique_ptr<Overlay> overlay;
 
-// 仅在 REFramework Present 回调提交独立列表，不替换外置/内置 d2d，也不安装图形钩子。
-void on_present() {
+// 每次 Present 都回收和检查心跳；hosted 本帧未绘制时也不会保留过期源。
+void present(bool submit) {
     std::scoped_lock lock(gate);
     if (overlay) overlay->reclaim();
     if (drawing && GetTickCount64()-heartbeat>500) { drawing=false; source.Reset(); }
-    if (!host || !output_sdr_confirmed || faulted || !drawing || !source || GetTickCount64()-heartbeat>500) return;
+    if (!submit || !host || !output_sdr_confirmed || faulted || !drawing || !source || GetTickCount64()-heartbeat>500) return;
     try {
         if (!overlay) overlay=std::make_unique<Overlay>(*host->renderer_data);
         if (overlay->render(source.Get(),rectangle,alpha_mode)) ++drawn;
     } catch(const std::exception& error) { faulted=true; drawing=false; source.Reset(); last_error=error.what(); note(error.what()); }
 }
+// 内嵌 D2D 显式提交后绘制，外部 D2D 和独立使用沿用自动回调。
+void on_present() { present(portrait_gpu_present_mode() == 0); }
 void on_reset() {
     std::scoped_lock lock(gate); drawing=false; source.Reset(); heartbeat=0;
     if (overlay && !overlay->drain()) { faulted=true; last_error="RESET GPU timeout; keeping resources alive, no more drawing"; note(last_error.c_str()); return; }
     overlay.reset(); faulted=false; last_error.clear(); note("DEVICE RESET: preview disabled");
 }
+}
+
+extern "C" __declspec(dllexport) int portrait_gpu_present_mode() {
+    const auto ui = GetModuleHandleW(L"ArmorVariantManager_UI.dll");
+    const auto hosted = ui ? reinterpret_cast<int (*)()>(GetProcAddress(ui, "avm_ui_portrait_hosted")) : nullptr;
+    return hosted && hosted() ? 1 : 0;
+}
+extern "C" __declspec(dllexport) void avm_portrait_present_hosted() {
+    if (portrait_gpu_present_mode() == 1) present(true);
 }
 
 // 当前游戏可热加载的只读验证入口；查询成功才返回描述，临时 COM 引用自动释放。
@@ -359,7 +370,7 @@ extern "C" __declspec(dllexport) int portrait_gpu_set_alpha_mode(int mode) {
     return 0;
 }
 
-// 正式插件共享现有初始化入口，离线探针使用同一份实现，避免两套渲染器漂移。
+// 独立插件与离线探针使用同一份实现，避免两套渲染器漂移。
 bool avm_portrait_initialize(const REFrameworkPluginInitializeParam* param) {
     if (!param || !param->renderer_data || param->renderer_data->renderer_type!=REFRAMEWORK_RENDERER_D3D12) return false;
     host=param;

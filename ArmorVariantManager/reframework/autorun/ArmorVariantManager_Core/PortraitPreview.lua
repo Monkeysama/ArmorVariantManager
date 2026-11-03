@@ -82,7 +82,7 @@ function PortraitPreview.new(deps)
     deps = deps or {}
     local adapter = deps.adapter or PortraitPreview.game_adapter()
     local clock = deps.clock or os.clock
-    local bridge = deps.bridge or function() return rawget(_G, "avm_bridge") end
+    local bridge = deps.bridge or function() return rawget(_G, "avm_portrait") or rawget(_G, "avm_bridge") end
     local self = { enabled = false, status = "preview_off", error = nil,
         camera_settings = PortraitCamera.settings(deps.camera_settings) }
     local snapshot, context, rect, rect_at, next_tick, alive, failed = nil, nil, nil, 0, 0, true, false

@@ -13,6 +13,7 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
     end
     local frames, draws, resets, errors, imports = {}, {}, {}, {}, {}
     local action, writes, applied, captures = nil, {}, {}, 0
+    local injected_preview
     local handlers, unregistered, write_failed, write_failed_path
     local enabled, visible = true, true
     local td = {get_method=function() return nil end}
@@ -89,7 +90,8 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
             end}
         end
         if name == "ArmorVariantManager_Core.UI.VariantManagerUI" then
-            return {new=function()
+            return {new=function(deps)
+                injected_preview = assert(deps.portrait_preview, "main owns the legacy host preview")
                 return {update=function() end, set_suspended=function() end,
                     draw_settings=function() return false end, invalidate_context=function() end}
             end}
@@ -171,6 +173,10 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
             end
         end
         assert(field("language").value=="en" and field("scan_interval").value==0.5)
+        if game=="mhwilds" then
+            assert(injected_preview and not field("portrait_enabled").disabled,
+                "settings use the application service even when the legacy UI exposes no preview field")
+        end
         current=dispatch({kind="setting",id="scan_interval",value=-2,bodyId="old"})
         assert(field("scan_interval",current).value==0.1,"global setting ignores equipment identity")
         assert(data["ArmorVariantManager/GlobalSettings.json"].extra.keep,"global unknown fields retained")

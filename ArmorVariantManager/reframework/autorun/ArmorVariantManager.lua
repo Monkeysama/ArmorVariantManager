@@ -31,6 +31,7 @@ local refd2d_module_names = {
     "ArmorVariantManager_Core.PortraitCamera",
     "ArmorVariantManager_Core.PortraitModel",
     "ArmorVariantManager_Core.PortraitPreview",
+    "ArmorVariantManager_Core.Games.Wilds.Portrait",
     "ArmorVariantManager_Core.GroundClippingFix",
     "ArmorVariantManager_Core.GroundClippingTargets",
     "ArmorVariantManager_Core.UI.VariantManagerUI",
@@ -91,7 +92,7 @@ load_global_settings()
 -- =============================================================================
 
 local type_mesh = nil
-local appearance, variant_manager_ui
+local appearance, variant_manager_ui, portrait_preview
 
 -- 场景变化只清运行状态，配置及手动预设选择保持不变。
 local function reset_actor_context()
@@ -763,7 +764,14 @@ local visibility_editor = require("ArmorVariantManager_Core.Runtime.Visibility")
     hidden = is_globally_hidden,
 })
 
+portrait_preview = require("ArmorVariantManager_Core.Games.Wilds.Portrait").new(global_config, function()
+    local ui = variant_manager_ui
+    return ui and ui.visible and ui.ready and global_config.new_ui_enabled and not ui.suspended
+        and not runtime.is_suspended()
+end)
+
 variant_manager_ui = VariantManagerUI.new({
+    portrait_preview = portrait_preview,
     is_suspended = function() return runtime_guard.suspended end,
     config = global_config,
     translate = T,
@@ -1350,7 +1358,7 @@ do
     local global_options = require("ArmorVariantManager_Core.UI.Reff.Settings").new({
         global_session=global_settings,translate=T,
         model=require(game.prefix .. "SettingsModel").new({config=global_config,transition=runtime.transition,
-            options=game_options,get_portrait_preview=function() return variant_manager_ui and variant_manager_ui.portrait_preview end}),
+            options=game_options,get_portrait_preview=function() return portrait_preview end}),
         on_saved=function(id,value,current)
             _G.__AVM_LANGUAGE = global_config.language
             if id == "auto_set_selected_preset_as_default" and value == true

@@ -9,6 +9,23 @@ import build_release as release
 
 
 class ReleaseTests(unittest.TestCase):
+    def test_ui_and_independent_portrait_are_both_required(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            ui, portrait = root / "ArmorVariantManager_UI.dll", root / "ArmorVariantManager_Portrait.dll"
+            ui.write_bytes(b"legacy-ui")
+            portrait.write_bytes(b"independent-portrait")
+            with patch.object(release, "UI_DLL", ui), patch.object(release, "PORTRAIT_DLL", portrait), \
+                    patch.object(release, "PORTRAIT_FILES", ()), patch.object(release, "verify_reff_plugin"):
+                release.copy_native_plugins(root / "out")
+                release.verify_release(root / "out")
+                target = root / "out/reframework/plugins"
+                self.assertEqual((target / ui.name).read_bytes(), b"legacy-ui")
+                self.assertEqual((target / portrait.name).read_bytes(), b"independent-portrait")
+                (target / portrait.name).unlink()
+                with self.assertRaisesRegex(RuntimeError, "ArmorVariantManager_Portrait.dll"):
+                    release.verify_release(root / "out")
+
     def test_reff_page_and_assets_are_packaged(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

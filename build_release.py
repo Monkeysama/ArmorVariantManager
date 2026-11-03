@@ -18,6 +18,7 @@ SOURCE_REFRAMEWORK = PROJECT / "reframework"
 RELEASE_ROOT = ROOT / "release"
 AUTORUN_SOURCE = SOURCE_REFRAMEWORK / "autorun"
 UI_DLL = SOURCE_REFRAMEWORK / "plugins" / "ArmorVariantManager_UI.dll"
+PORTRAIT_DLL = SOURCE_REFRAMEWORK / "plugins" / "ArmorVariantManager_Portrait.dll"
 PORTRAIT_ASSETS = PROJECT / "natives" / "STM" / "ArmorVariantManager" / "Portrait"
 PORTRAIT_FILES = ("portrait_camera.pfb.18", "portrait_resources.user.3", "portrait.rtex.6")
 REFF_PLUGIN = SOURCE_REFRAMEWORK / "reff" / "plugins" / "monkeysama.avm"
@@ -130,7 +131,7 @@ def assert_no_duplicate_scripts() -> None:
 
 
 def ensure_inputs() -> None:
-    required = [AUTORUN_SOURCE, UI_DLL, *(PORTRAIT_ASSETS / name for name in PORTRAIT_FILES),
+    required = [AUTORUN_SOURCE, UI_DLL, PORTRAIT_DLL, *(PORTRAIT_ASSETS / name for name in PORTRAIT_FILES),
                 REFF_PLUGIN / "manifest.json", REFF_PLUGIN / "ui" / "dist" / "index.html",
                 REFF_PLUGIN / "ui" / "dist" / "REFF-LICENSE.txt"]
     missing = [str(path) for path in required if not path.exists()]
@@ -145,6 +146,14 @@ def copy_reff_plugin(destination: Path) -> None:
     target.mkdir(parents=True, exist_ok=True)
     shutil.copy2(REFF_PLUGIN / "manifest.json", target / "manifest.json")
     shutil.copytree(REFF_PLUGIN / "ui", target / "ui")
+
+
+def copy_native_plugins(destination: Path) -> None:
+    """旧弹窗与独立预览分别发布，不能遗漏任一运行依赖。"""
+    target = destination / "reframework" / "plugins"
+    target.mkdir(parents=True, exist_ok=True)
+    for source in (UI_DLL, PORTRAIT_DLL):
+        shutil.copy2(source, target / source.name)
 
 
 def verify_reff_plugin(release_directory: Path) -> None:
@@ -173,9 +182,9 @@ def copy_stripped_lua_files(destination_autorun: Path) -> int:
 
 def verify_release(release_directory: Path) -> None:
     verify_reff_plugin(release_directory)
-    expected_dll = release_directory / "reframework" / "plugins" / UI_DLL.name
-    if not expected_dll.is_file():
-        raise RuntimeError("Release verification failed: required DLL is missing")
+    for source in (UI_DLL, PORTRAIT_DLL):
+        if not (release_directory / "reframework" / "plugins" / source.name).is_file():
+            raise RuntimeError(f"Release verification failed: required DLL is missing: {source.name}")
     for name in PORTRAIT_FILES:
         asset = release_directory / "natives" / "STM" / "ArmorVariantManager" / "Portrait" / name
         if not asset.is_file() or asset.read_bytes() != (PORTRAIT_ASSETS / name).read_bytes():
@@ -215,9 +224,7 @@ def main() -> int:
     staging_autorun = staging_directory / "reframework" / "autorun"
     lua_count = copy_stripped_lua_files(staging_autorun)
 
-    plugin_directory = staging_directory / "reframework" / "plugins"
-    plugin_directory.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(UI_DLL, plugin_directory / UI_DLL.name)
+    copy_native_plugins(staging_directory)
     # 独立相机所需资源随代码一起分发；不打包任何用户预设或游戏原始配置。
     asset_directory = staging_directory / "natives" / "STM" / "ArmorVariantManager" / "Portrait"
     asset_directory.mkdir(parents=True, exist_ok=True)
