@@ -23,6 +23,8 @@ sync_main_release.py
 !/tests/runtime_state.lua
 !/tests/wilds_equipment.lua
 !/tests/wilds_actors.lua
+!/tests/rise_equipment.lua
+!/tests/rise_actors.lua
 !/tests/rules_compatibility.lua
 !/tests/test_release.py
 !/tests/fixtures/
