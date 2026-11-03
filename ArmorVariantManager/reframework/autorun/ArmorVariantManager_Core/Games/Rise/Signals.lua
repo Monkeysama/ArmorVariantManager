@@ -9,6 +9,12 @@ function Signals.begin_frame(epoch)
     if sample_epoch~=epoch then sample_epoch,samples=epoch,{} end
 end
 function Signals.invalidate_samples() sample_epoch,samples=nil,nil end
+-- 场景清理同时释放玩家别名，避免沿用已离场的句柄。
+function Signals.clear()
+    Signals.invalidate_samples()
+    actor_aliases=setmetatable({}, {__mode='k'})
+end
+function Signals.forget_actor(game_object) actor_aliases[game_object]=nil end
 function Signals.bind_actor(player,game_object)
     if player and game_object then actor_aliases[game_object]=player end
 end
