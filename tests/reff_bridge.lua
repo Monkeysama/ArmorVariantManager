@@ -4,6 +4,7 @@ local prefix = "ArmorVariantManager_Core.UI.Reff."
 local Controller = require(prefix .. "Controller")
 local Parts = require(prefix .. "Parts")
 local bridge_path = "ArmorVariantManager/reframework/autorun/ArmorVariantManager_Core/UI/Reff/Bridge.lua"
+local height_path = "ArmorVariantManager/reframework/autorun/ArmorVariantManager_Core/Games/Wilds/HeightSettings.lua"
 local failures, passed = {}, 0
 
 local function test(name, run)
@@ -103,6 +104,50 @@ for _, game in ipairs({"Wilds","Rise"}) do
         rejects(function() f.controller.action({kind="mode",weapon="true"}) end,"装备模式无效")
     end)
 
+    test(game .. " settings remain visible without an actor and preserve theme/mode actions", function()
+        local f=controller_fixture(game)
+        f.context.id=nil;f.context.config=nil;f.context.pending=nil
+        local settings={sections={{id="general",scope="global",fields={{id="language",value="en"}}}}}
+        local reads=0
+        f.deps.settings={snapshot=function(context)
+            assert(context == f.context)
+            reads=reads+1
+            return settings
+        end,action=function() error("theme/mode dispatched a setting action") end}
+        setmetatable(f.operations,{__index=function() error("settings queried equipment operations") end})
+        local empty=f.controller.snapshot()
+        serializable(empty,f.forbidden)
+        S.equal(empty.settings,settings)
+        assert(empty.bodyId == "" and #empty.parts == 0 and reads == 1)
+        assert(f.controller.action({kind="theme",value="reff"}).theme == "reff")
+        assert(f.controller.action({kind="mode",weapon=true}).weapon == true)
+        assert(f.theme_writes == 1 and f.mode_writes == 1 and reads == 3 and f.parts_calls == 0)
+    end)
+
+    test(game .. " settings dispatch independently and preserve failure reasons", function()
+        local f=controller_fixture(game)
+        f.context.id=nil;f.context.suspended=true
+        local request={kind="setting",id="language",value="zh",bodyId="old-armor"}
+        local dispatched=0
+        f.deps.settings={snapshot=function(context) assert(context == f.context);return {sections={}} end,
+            action=function(received,context)
+                assert(received == request and context == f.context)
+                dispatched=dispatched+1
+                return true
+            end}
+        setmetatable(f.operations,{__index=function() error("setting queried equipment operations") end})
+        S.equal(f.controller.action(request).settings,{sections={}})
+        assert(dispatched == 1)
+        f.deps.settings.action=function() return false,"设置写入失败: access denied" end
+        rejects(function() f.controller.action(request) end,"设置写入失败: access denied")
+        f.deps.settings.action=function() error("设置应用失败: native unavailable") end
+        rejects(function() f.controller.action(request) end,"设置应用失败: native unavailable")
+        f.deps.settings.action=function() return false end
+        rejects(function() f.controller.action(request) end,"设置未保存，请重试")
+        f.deps.settings=nil
+        rejects(function() f.controller.action(request) end,"设置不可用")
+    end)
+
     test(game .. " stale equipment and hover are rejected before dispatch", function()
         local f=controller_fixture(game)
         local dispatched=0
@@ -136,6 +181,130 @@ for _, game in ipairs({"Wilds","Rise"}) do
         rejects(function() f.controller.action({kind="theme",value="reff"}) end,"主题保存失败")
     end)
 end
+
+local function height_fixture()
+    local f={value={enabled=true,height_cm=-2.5},reads=0,status_reads=0,writes={},persisted=0,set_ok=true}
+    local function persist()
+        f.persisted=f.persisted+1
+        error("height draft persisted global settings")
+    end
+    local env=setmetatable({json={dump_file=persist}}, {__index=_G})
+    env._G=env
+    local HeightSettings=assert(loadfile(height_path,"t",env))()
+    f.model=HeightSettings.new({translate=function(key) return "tr:" .. key end,
+        get=function()
+            f.reads=f.reads+1
+            if f.get_error then error(f.get_error) end
+            return f.value
+        end,
+        status=function()
+            f.status_reads=f.status_reads+1
+            if f.status_error then error(f.status_error) end
+            return f.status
+        end,
+        set=function(patch,body_id)
+            f.writes[#f.writes+1]={patch=S.copy(patch),bodyId=body_id}
+            if f.set_error then error(f.set_error) end
+            if f.set_ok then for key,value in pairs(patch) do f.value[key]=value end end
+            return f.set_ok,f.set_reason
+        end,
+        save=persist,global_session={save=persist}})
+    return f
+end
+
+test("Wilds height draft exposes two equipment-scoped fields and live status", function()
+    local f=height_fixture()
+    local context={id="armor",weapon=false,suspended=false}
+    assert(f.model.handles("ground_clipping_enabled") and f.model.handles("ground_clipping_height_cm"))
+    assert(not f.model.handles("language") and not f.model.handles(nil))
+    local section=f.model.snapshot(context)
+    serializable(section,{[context]=true,[f.value]=true})
+    assert(section.id == "ground_clipping" and section.scope == "equipment")
+    assert(section.label == "tr:heel_title" and section.description == "tr:heel_description")
+    S.equal(section.fields,{{id="ground_clipping_enabled",label="tr:heel_enable",type="boolean",value=true,disabled=false},
+        {id="ground_clipping_height_cm",label="tr:heel_height",type="number",value=-2.5,
+            min=-10,max=50,step=0.5,disabled=false}})
+    f.value={enabled=false,height_cm=0}
+    f.status={key="heel_error",error="target transform unavailable"}
+    local updated=f.model.snapshot(context)
+    assert(updated.fields[1].value == false and updated.fields[2].value == 0)
+    assert(updated.description == "tr:heel_error: target transform unavailable\ntr:heel_description")
+    assert(section.fields[1].value == true and section.fields[2].value == -2.5)
+    assert(f.reads == 2 and f.status_reads == 2 and #f.writes == 0 and f.persisted == 0)
+end)
+
+test("Wilds height availability follows actor, equipment mode and suspension", function()
+    for _, context in ipairs({{id="armor",weapon=false,suspended=false},
+        {weapon=false,suspended=false},{id="weapon",weapon=true,suspended=false},
+        {id="armor",weapon=false,suspended=true}}) do
+        local f=height_fixture()
+        local available=context.id ~= nil and not context.weapon and not context.suspended
+        local section=f.model.snapshot(context)
+        for _, field in ipairs(section.fields) do
+            assert(field.disabled == not available)
+            assert(field.reason == (not available and "tr:heel_armor_only" or nil))
+        end
+        assert(f.reads == (available and 1 or 0))
+        if not available then
+            assert(section.fields[1].value == false and section.fields[2].value == 10)
+            local ok,reason=f.model.action({id="ground_clipping_enabled",value=true,bodyId=context.id},context)
+            assert(ok == false and reason == "tr:heel_armor_only" and #f.writes == 0)
+        end
+        assert(f.persisted == 0)
+    end
+end)
+
+test("Wilds height rejects stale equipment and invalid values before setting a draft", function()
+    local f=height_fixture()
+    local context={id="armor",weapon=false,suspended=false}
+    local cases={
+        {{id="ground_clipping_enabled",value=true,bodyId="old-armor"},"装备已变化，请重新操作"},
+        {{id="ground_clipping_enabled",value="true",bodyId="armor"},"高度开关无效"},
+        {{id="ground_clipping_enabled",value=0,bodyId="armor"},"高度开关无效"},
+        {{id="ground_clipping_enabled",bodyId="armor"},"高度开关无效"},
+        {{id="ground_clipping_height_cm",value="0",bodyId="armor"},"高度数值无效"},
+        {{id="ground_clipping_height_cm",value=false,bodyId="armor"},"高度数值无效"},
+        {{id="ground_clipping_height_cm",bodyId="armor"},"高度数值无效"},
+        {{id="ground_clipping_height_cm",value=0/0,bodyId="armor"},"高度数值无效"},
+        {{id="ground_clipping_height_cm",value=math.huge,bodyId="armor"},"高度数值无效"},
+        {{id="ground_clipping_height_cm",value=-math.huge,bodyId="armor"},"高度数值无效"},
+        {{id="language",value=true,bodyId="armor"},"设置项不存在"},
+    }
+    for _, case in ipairs(cases) do
+        local ok,reason=f.model.action(case[1],context)
+        assert(ok == false and reason == case[2],tostring(reason))
+        assert(#f.writes == 0 and f.persisted == 0)
+    end
+end)
+
+test("Wilds height forwards booleans, zero and negative values without global persistence", function()
+    local f=height_fixture()
+    local context={id="armor",weapon=false,suspended=false}
+    for _, case in ipairs({{"ground_clipping_enabled","enabled",true},{"ground_clipping_enabled","enabled",false},
+        {"ground_clipping_height_cm","height_cm",0},{"ground_clipping_height_cm","height_cm",-2.5}}) do
+        local ok,reason=f.model.action({id=case[1],value=case[3],bodyId="armor"},context)
+        assert(ok == true and reason == nil)
+        S.equal(f.writes[#f.writes],{patch={[case[2]]=case[3]},bodyId="armor"})
+        assert(f.value[case[2]] == case[3] and f.persisted == 0)
+    end
+    assert(#f.writes == 4 and f.reads == 0)
+end)
+
+test("Wilds height preserves actual get, status and set failure reasons", function()
+    local f=height_fixture()
+    local context={id="armor",weapon=false,suspended=false}
+    f.get_error="draft read failed: config unavailable"
+    rejects(function() f.model.snapshot(context) end,f.get_error)
+    f.get_error=nil;f.status_error="status read failed: native unavailable"
+    rejects(function() f.model.snapshot(context) end,f.status_error)
+    f.status_error=nil;f.set_ok=false;f.set_reason="draft rejected: equipment changed"
+    local request={id="ground_clipping_height_cm",value=0,bodyId="armor"}
+    local ok,reason=f.model.action(request,context)
+    assert(ok == false and reason == f.set_reason)
+    f.set_error="draft apply failed: native target missing"
+    rejects(function() f.model.action(request,context) end,f.set_error)
+    assert(f.persisted == 0)
+end)
 
 local function parts_fixture(game, weapon)
     local mesh={enabled=false,names={"cloth","cloth","global","outside"},values={true,false,false,true}}

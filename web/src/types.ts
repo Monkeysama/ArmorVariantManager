@@ -19,6 +19,16 @@ export interface Conditions {
   definitions: ConditionDefinition[]; targets: { name: string; label: string; global: boolean; presets: string[] }[];
   canTestHp?: boolean; canTestDamage?: boolean;
 }
+export type SettingValue = boolean | number | string;
+export interface SettingField {
+  id: string; label: string; description?: string; type: 'boolean' | 'number' | 'select' | 'action'; value?: SettingValue;
+  min?: number; max?: number; step?: number; options?: { value: string | number; label: string }[];
+  disabled?: boolean; reason?: string;
+}
+export interface SettingsSection {
+  id: string; label: string; description?: string; scope: 'global' | 'equipment'; fields: SettingField[];
+}
+export interface Settings { sections: SettingsSection[] }
 export interface Snapshot {
   game: 'Wilds' | 'Rise'; version: string; bodyId: string; weapon: boolean; suspended: boolean;
   groups: { name: string; label: string; global: boolean }[]; group: string;
@@ -26,6 +36,7 @@ export interface Snapshot {
   parts: Part[]; theme: 'custom' | 'reff'; language: string; selectionMode: boolean;
   pending: Record<string, Record<string, boolean>>;
   conditions: Conditions | null;
+  settings?: Settings;
 }
 export interface ConditionAction {
   kind: 'condition';
@@ -37,6 +48,8 @@ export type Action =
   | ConditionAction
   | { kind: 'mode'; weapon: boolean }
   | { kind: 'theme'; value: 'custom' | 'reff' }
+  | { kind: 'setting'; id: string; value?: SettingValue }
+  | { kind: 'reorder-preset' | 'reorder-group'; name: string; offset: -1 | 1 }
   | { kind: 'group' | 'preset' | 'save' | 'delete-preset' | 'default' | 'delete-group'; name: string }
   | { kind: 'create-group'; name: string; global: boolean }
   | { kind: 'mesh'; part: number; enabled: boolean }

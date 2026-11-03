@@ -1,5 +1,7 @@
 -- 仅接管材质显隐，不启用整个 Mesh 或 GameObject。
 local Module = {}
+local Store = require("ArmorVariantManager_Core.Config.Store")
+local SETTINGS_PATH = 'ArmorVariantManager/DissolveTransitions.json'
 
 -- 每个会话独立持有动画；完成或重置时恢复原参数。
 function Module.new(deps)
@@ -7,6 +9,7 @@ function Module.new(deps)
     local clock = deps.clock or os.clock
     local valid = deps.valid or sdk.is_managed_object
     local vector = deps.vector or function(x,y,z,w) return Vector4f.new(x,y,z,w) end
+    local store, settings = deps.store or Store, {}
     local st = {active={}, enabled=true, duration=0.355, completed=0, errors=0}
     local function key(mesh,index) return tostring(mesh)..':'..index end
     local function values(v) return {v.x,v.y,v.z,v.w} end
@@ -108,6 +111,7 @@ function Module.new(deps)
     -- 每帧推进并检查对象身份，原生隐藏时结束而非重新显示。
     function st:tick()
         if next(self.active)==nil then return end
+        if not self.enabled then self:finish_all();return end
         local now=clock()
         for k,s in pairs(self.active) do
             local ok=pcall(function()
@@ -131,30 +135,58 @@ function Module.new(deps)
     -- On a scene boundary discard references without touching stale objects.
     function st:abandon() self.active={} end
     function st:finish_all()
-        for _,s in pairs(self.active) do
-            pcall(function() if alive(s) then finish(s) end end)
+        local reason
+        for k,s in pairs(self.active) do
+            local ok,err=pcall(function() if alive(s) then finish(s) end end)
+            if ok then self.active[k]=nil
+            else
+                self.errors=self.errors+1
+                reason=reason or tostring(err)
+            end
         end
-        self.active={}
+        return reason==nil,reason
     end
     function st:save_settings()
-        pcall(json.dump_file,'ArmorVariantManager/DissolveTransitions.json',
-            {enabled=self.enabled,duration=self.duration})
+        local previous_enabled, previous_duration = settings.enabled, settings.duration
+        settings.enabled, settings.duration = self.enabled, self.duration
+        local ok, saved, reason = pcall(store.save, SETTINGS_PATH, settings)
+        if not ok or saved ~= true then
+            settings.enabled, settings.duration = previous_enabled, previous_duration
+            return false, ok and reason or saved
+        end
+        self.settings_error = nil
+        return true
     end
     -- Draw inline in AVM settings; the transition has no standalone panel.
     function st:draw_ui(translate)
+        local previous_enabled, previous_duration = self.enabled, self.duration
         local changed,value=imgui.checkbox(translate('enable_dissolve')..'##avm_dissolve',self.enabled)
-        if changed then self.enabled=value;if not value then self:finish_all() end end
+        if changed then self.enabled=value end
         local changed_duration=false
         if self.enabled then
             local duration
             changed_duration,duration=imgui.slider_float(translate('dissolve_duration')..'##avm_dissolve',self.duration,0.1,2.0)
             if changed_duration then self.duration=duration end
         end
-        if changed or changed_duration then self:save_settings() end
+        if changed or changed_duration then
+            local saved, reason = self:save_settings()
+            if saved then
+                self.settings_error = nil
+                if not self.enabled then
+                    local applied, apply_reason = self:finish_all()
+                    if not applied then self.settings_error = apply_reason end
+                end
+            else
+                self.enabled, self.duration = previous_enabled, previous_duration
+                self.settings_error = reason or 'Dissolve settings save failed'
+            end
+        end
+        if self.settings_error then imgui.text_colored(tostring(self.settings_error), 0xFF8080FF) end
     end
-    if not deps.clock then
-        local ok,cfg=pcall(json.load_file,'ArmorVariantManager/DissolveTransitions.json')
+    if not deps.clock or deps.store then
+        local ok,cfg=pcall(store.load, SETTINGS_PATH)
         if ok and type(cfg)=='table' then
+            settings=cfg
             if type(cfg.enabled)=='boolean' then st.enabled=cfg.enabled end
             if type(cfg.duration)=='number' and cfg.duration==cfg.duration then
                 st.duration=math.max(0.1,math.min(2,cfg.duration))

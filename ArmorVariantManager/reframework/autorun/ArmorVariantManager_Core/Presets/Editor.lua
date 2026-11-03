@@ -66,18 +66,20 @@ function Editor.set_default(config, group_name, name, persist)
     if not target or not target.presets or not target.presets[name] then return false end
     local previous = target.default_preset
     target.default_preset = name
-    if persist(true) then return true end
+    local saved, reason = persist(true)
+    if saved then return true end
     target.default_preset = previous
-    return false
+    return false, reason
 end
 
 local function save_order(target, key, names, persist)
     if not target then return false end
     local previous = target[key]
     target[key] = copy_order(names) or {}
-    if persist(false) then return true end
+    local saved, reason = persist(false)
+    if saved then return true end
     target[key] = previous
-    return false
+    return false, reason
 end
 
 -- 两套 UI 提交名称序列，不把拖拽控件的数据结构写进配置。

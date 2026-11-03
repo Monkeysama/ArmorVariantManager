@@ -11,6 +11,7 @@ function Controller.new(deps)
             selectedPreset=context.selected or "", parts={}, theme=deps.theme(), language=deps.language(),
             selectionMode=context.selecting, pending={},
         }
+        if deps.settings then snapshot.settings = deps.settings.snapshot(context) end
         if not context.id then return snapshot end
         snapshot.groups[1] = {name="", label=deps.main_label(), global=false}
         for _, name in ipairs(context.group_names) do
@@ -43,6 +44,10 @@ function Controller.new(deps)
         elseif kind == "mode" then
             assert(type(request.weapon) == "boolean", "装备模式无效")
             deps.set_mode(request.weapon)
+        elseif kind == "setting" then
+            assert(deps.settings, "设置不可用")
+            local success, reason = deps.settings.action(request, deps.context())
+            assert(success, reason or "设置未保存，请重试")
         else
             local context = deps.context()
             assert(context.id and not context.suspended, "角色不可用或正在切换装备")

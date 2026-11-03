@@ -129,7 +129,8 @@ function Options.new(global_config, runtime, T, save_global_settings)
         end
 
     end
-    return {multiplayer = draw_multiplayer_panel, performance = draw_performance}
+    return {multiplayer = draw_multiplayer_panel, performance = draw_performance,
+        apply_fps_cap = apply_fps_cap, apply_image_quality = apply_image_quality}
 end
 
 return Options

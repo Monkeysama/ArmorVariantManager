@@ -80,8 +80,9 @@ end
 
 -- 保存全局配置，返回写盘结果供调用方使用。
 local function save_global_settings()
-    _G.__AVM_LANGUAGE = global_config.language
-    return global_settings.save()
+    local saved, reason = global_settings.save()
+    if saved then _G.__AVM_LANGUAGE = global_config.language end
+    return saved, reason
 end
 
 -- 初始化加载
@@ -561,9 +562,10 @@ end
 -- 将指定预设写为当前分组的默认预设，供旧 UI、新 UI 和自动保存开关共用。
 local function set_preset_as_default(preset_name, body_id)
     if not body_id or not preset_name or preset_name == "" or not current_config then return false end
-    if not PresetEditor.set_default(current_config, current_group_name, preset_name, function(preserve)
+    local saved, reason = PresetEditor.set_default(current_config, current_group_name, preset_name, function(preserve)
         return save_current_config_to_file(body_id, preserve)
-    end) then return false end
+    end)
+    if not saved then return false, reason end
     update_preset_names_list()
     return true
 end
@@ -580,20 +582,20 @@ end
 
 local function reorder_presets(names, body_id)
     if not body_id or not current_config then return false end
-    local saved = PresetEditor.reorder(current_config, current_group_name, names, function(preserve)
+    local saved, reason = PresetEditor.reorder(current_config, current_group_name, names, function(preserve)
         return save_current_config_to_file(body_id, preserve)
     end)
     update_preset_names_list()
-    return saved
+    return saved, reason
 end
 
 local function reorder_groups(names, body_id)
     if not body_id or not current_config then return false end
-    local saved = PresetEditor.reorder_groups(current_config, names, function(preserve)
+    local saved, reason = PresetEditor.reorder_groups(current_config, names, function(preserve)
         return save_current_config_to_file(body_id, preserve)
     end)
     update_group_names_list()
-    return saved
+    return saved, reason
 end
 
 -- 开启自动保存时立即持久化当前选中预设，避免开关状态和当前默认预设不一致。
@@ -707,7 +709,7 @@ local draw_part_list = require("ArmorVariantManager_Core.UI.ImGui.Parts").new(
 -- 基于原生 UI Runtime 的差分管理器界面。
 -- 独立解析战斗、菜单与过场角色；各骨架按自己的防具读取预设，不依赖 MasterPlayer 存在。
 local show_debug_window = false
-local get_ground_clipping_settings, set_ground_clipping_settings
+local get_ground_clipping_settings, set_ground_clipping_settings, get_ground_clipping_status
 if game.wilds then
 local collect_ground_clipping_targets = GroundClippingTargets.new({
     get_scene = function() return runtime_guard:get_scene() end,
@@ -730,6 +732,7 @@ local ground_clipping_fix = GroundClippingFix.new({
         return ground_clipping_presets.get_runtime(hunter, config, base), body_id
     end
 })
+get_ground_clipping_status = ground_clipping_fix.get_status
 
 -- 新旧界面共用预设草稿，实时预览；新增或覆盖预设时才持久化到 JSON 和备份。
 get_ground_clipping_settings = function()
@@ -1210,6 +1213,11 @@ local function draw_targets_ui(targets, rule_type, rule_idx)
     end
 end
 
+local game_options
+if not game.wilds then
+    game_options = require(game.prefix .. "Options").new(global_config, runtime, T, save_global_settings)
+end
+
 -- REFF 与原生面板共用选择状态，桥接仅暴露可序列化快照。
 do
     local access = require(game.prefix .. "MaterialView").new()
@@ -1263,6 +1271,27 @@ do
     end
     local function preset_name(request)
         return type(request.name) == "string" and request.name ~= "" and request.name
+    end
+    -- 按当前界面序列移动一格，未列出的旧字段不参与排序写入。
+    local function reorder(request, current, groups)
+        if not preset_name(request) or (request.offset ~= -1 and request.offset ~= 1) then
+            return false, "排序参数无效"
+        end
+        local names, index = {}, nil
+        for position, name in ipairs(groups and current.group_names or current.preset_names) do
+            names[position] = name
+            if name == request.name then index = position end
+        end
+        if not index then return false, "排序项目已不存在" end
+        local destination = index + request.offset
+        if destination < 1 or destination > #names then return false, "项目已在列表边界" end
+        names[index], names[destination] = names[destination], names[index]
+        if groups then
+            local saved, reason = reorder_groups(names, current.id)
+            if saved then select_group(current.group) end
+            return saved, reason
+        end
+        return reorder_presets(names, current.id)
     end
     local Conditions = require("ArmorVariantManager_Core.UI.Reff.Conditions")
     local condition_model = require(game.prefix .. "ConditionModel")
@@ -1318,8 +1347,35 @@ do
             return TransformManager.set_character_hp(current.character,hp-25)
         end or nil,
     })
+    local global_options = require("ArmorVariantManager_Core.UI.Reff.Settings").new({
+        global_session=global_settings,translate=T,
+        model=require(game.prefix .. "SettingsModel").new({config=global_config,transition=runtime.transition,
+            options=game_options,get_portrait_preview=function() return variant_manager_ui and variant_manager_ui.portrait_preview end}),
+        on_saved=function(id,value,current)
+            _G.__AVM_LANGUAGE = global_config.language
+            if id == "auto_set_selected_preset_as_default" and value == true
+                and current.id and not current.suspended and current.selected and get_current_preset_data(current.selected) then
+                return auto_set_selected_preset_as_default(current.id)
+            end
+            return true
+        end,
+    })
+    local height_options = game.wilds and require(game.prefix .. "HeightSettings").new({
+        translate=T,get=get_ground_clipping_settings,set=set_ground_clipping_settings,status=get_ground_clipping_status,
+    })
+    local settings = {
+        snapshot=function(current)
+            local result = global_options.snapshot(current)
+            if height_options then result.sections[#result.sections+1] = height_options.snapshot(current) end
+            return result
+        end,
+        action=function(request,current)
+            if height_options and height_options.handles(request.id) then return height_options.action(request,current) end
+            return global_options.action(request,current)
+        end,
+    }
     local controller = require("ArmorVariantManager_Core.UI.Reff.Controller").new({
-        game=game.name,version=version,context=context,parts=reff_parts.snapshot,conditions=conditions,
+        game=game.name,version=version,context=context,parts=reff_parts.snapshot,conditions=conditions,settings=settings,
         main_label=function() return T("main_list") end,
         language=function() return global_config.language end,
         theme=function() return global_config.reff_theme == "reff" and "reff" or "custom" end,
@@ -1342,6 +1398,8 @@ do
             save=function(request,current) return preset_name(request) and save_preset(request.name,current.id) end,
             ["delete-preset"]=function(request,current) return preset_name(request) and delete_preset(request.name,current.id) end,
             default=function(request,current) return preset_name(request) and set_preset_as_default(request.name,current.id) end,
+            ["reorder-preset"]=function(request,current) return reorder(request,current,false) end,
+            ["reorder-group"]=function(request,current) return reorder(request,current,true) end,
             mesh=function(request,current) return edit(request,current,false) end,
             material=function(request,current) return edit(request,current,true) end,
             selection=function(request)
@@ -1469,11 +1527,6 @@ local draw_game_conditions = require(game.prefix .. "ImGuiConditions").new({
     can_transform = can_use_transform,
     game_object = safe_get_game_object,
 })
-
-local game_options
-if not game.wilds then
-    game_options = require(game.prefix .. "Options").new(global_config, runtime, T, save_global_settings)
-end
 
 -- UI 绘制回调
 re.on_draw_ui(function()

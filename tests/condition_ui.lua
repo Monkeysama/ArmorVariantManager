@@ -132,7 +132,7 @@ end
 
 -- 检查正式入口传入实际依赖，并把当前配置/装备/角色交给面板。
 local source=S.read("ArmorVariantManager/reframework/autorun/ArmorVariantManager.lua")
-local wiring=S.section(source,"local draw_game_conditions = ","local game_options")
+local wiring=S.section(source,"local draw_game_conditions = ","-- UI 绘制回调")
 local env={game={wilds=true,prefix="ArmorVariantManager_Core.Games.Wilds."},application={},T={},TransformManager={},save_current_config_to_file={},draw_targets_ui={},
     can_use_transform={},safe_get_game_object={}}
 local received

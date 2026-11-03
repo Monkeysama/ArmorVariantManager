@@ -1,4 +1,4 @@
-import type { ConditionDefinition, ConditionField, ConditionNode, ConditionRule, Conditions, ConditionTarget, Material, Part, Snapshot } from './types';
+import type { ConditionDefinition, ConditionField, ConditionNode, ConditionRule, Conditions, ConditionTarget, Material, Part, SettingField, Settings, SettingsSection, Snapshot } from './types';
 
 function list<T>(value: unknown, field: string): T[] {
   if (Array.isArray(value)) return value;
@@ -10,6 +10,7 @@ export function normalizeSnapshot(value: Snapshot): Snapshot {
   return {
     ...value,
     conditions: value.conditions ? normalizeConditions(value.conditions) : null,
+    ...(value.settings !== undefined ? { settings: normalizeSettings(value.settings) } : {}),
     groups: list(value.groups, 'groups'),
     presets: list(value.presets, 'presets'),
     parts: list<Part>(value.parts, 'parts').map(part => ({
@@ -18,6 +19,15 @@ export function normalizeSnapshot(value: Snapshot): Snapshot {
     })),
     pending: Object.fromEntries(Object.entries(value.pending ?? {}).map(([part, materials]) => [part, materials ?? {}])),
   };
+}
+
+function normalizeSettings(value: Settings): Settings {
+  return { ...value, sections: list<SettingsSection>(value?.sections ?? null, 'settings.sections').map(section => ({
+    ...section,
+    fields: list<SettingField>(section.fields, 'settings.fields').map(field => ({ ...field,
+      ...(field.type === 'select' ? { options: list(field.options, 'settings.options') } : {}),
+    })),
+  })) };
 }
 
 function normalizeConditions(value: Conditions): Conditions {

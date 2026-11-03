@@ -12,6 +12,7 @@ DEFAULT_TESTS = (
     "tests/entrypoint.lua",
     "tests/reff_bridge.lua",
     "tests/reff_conditions.lua",
+    "tests/reff_settings.lua",
     "tests/wilds_hp.lua",
     "tests/rise_options.lua",
     "tests/config_compatibility.lua",

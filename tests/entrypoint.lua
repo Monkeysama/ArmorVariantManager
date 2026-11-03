@@ -13,7 +13,7 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
     end
     local frames, draws, resets, errors, imports = {}, {}, {}, {}, {}
     local action, writes, applied, captures = nil, {}, {}, 0
-    local handlers, unregistered, write_failed
+    local handlers, unregistered, write_failed, write_failed_path
     local enabled, visible = true, true
     local td = {get_method=function() return nil end}
     local mesh = {get_type_definition=function() return td end}
@@ -33,7 +33,7 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
     local cfg = {presets={Show={["0"]={materials={cloth=true}}},Hide={["0"]={materials={cloth=false}}}},
         preset_order={"Show","Hide"},default_preset="Show",groups={},extra={keep=true},enable_transform=false}
     local data = {["ArmorVariantManager/armor.json"]=cfg,
-        ["ArmorVariantManager/GlobalSettings.json"]={language="en",auto_set_selected_preset_as_default=false}}
+        ["ArmorVariantManager/GlobalSettings.json"]={language="en",auto_set_selected_preset_as_default=false,extra={keep=true}}}
     local native_require = require
     _G.require = function(name)
         imports[name] = true
@@ -49,7 +49,7 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
                 backup_path=function(id) return "ArmorVariantManager/backup/"..id..".json" end,
                 load=function(path) return S.copy(data[path]) end,
                 save=function(path,value)
-                    if write_failed then return false, "disk full" end
+                    if write_failed or path==write_failed_path then return false, "disk full" end
                     data[path]=S.copy(value); writes[#writes+1]=path; return true
                 end}
         end
@@ -160,6 +160,45 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
             args=args or {}; args.kind=kind; args.bodyId="armor"
             return dispatch(args)
         end
+        local function names(items)
+            local result={}
+            for index,item in ipairs(items) do result[index]=item.name end
+            return result
+        end
+        local function field(id, value)
+            for _,section in ipairs((value or snapshot()).settings.sections) do
+                for _,item in ipairs(section.fields) do if item.id==id then return item end end
+            end
+        end
+        assert(field("language").value=="en" and field("scan_interval").value==0.5)
+        current=dispatch({kind="setting",id="scan_interval",value=-2,bodyId="old"})
+        assert(field("scan_interval",current).value==0.1,"global setting ignores equipment identity")
+        assert(data["ArmorVariantManager/GlobalSettings.json"].extra.keep,"global unknown fields retained")
+        write_failed=true
+        local settings_ok,settings_reason=pcall(send,"setting",{id="language",value="zh"})
+        assert(not settings_ok and settings_reason:find("disk full",1,true))
+        assert(snapshot().language=="en" and _G.__AVM_LANGUAGE=="en","failed language save has no side effect")
+        write_failed=false
+        assert(send("setting",{id="language",value="zh"}).language=="zh")
+        assert(_G.__AVM_LANGUAGE=="zh")
+        send("setting",{id="language",value="en"})
+        current=send("reorder-preset",{name="Captured",offset=-1})
+        S.equal(names(current.presets),{"Show","Captured","Hide"})
+        S.equal(data["ArmorVariantManager/armor.json"].preset_order,{"Show","Captured","Hide"})
+        local before_order=S.copy(data["ArmorVariantManager/armor.json"].preset_order)
+        write_failed=true
+        local sorted,sort_reason=pcall(send,"reorder-preset",{name="Captured",offset=-1})
+        assert(not sorted and sort_reason:find("disk full",1,true))
+        S.equal(names(snapshot().presets),before_order)
+        S.equal(data["ArmorVariantManager/armor.json"].preset_order,before_order)
+        write_failed=false
+        local before_writes=#writes
+        assert(not pcall(send,"reorder-preset",{name="Show",offset=-1}))
+        assert(not pcall(send,"reorder-preset",{name="Missing",offset=1}))
+        assert(not pcall(send,"reorder-preset",{name="Hide",offset=0}))
+        assert(not pcall(dispatch,{kind="reorder-preset",name="Hide",offset=-1,bodyId="old"}))
+        assert(#writes==before_writes,"invalid or stale sorting must not write")
+        current=send("reorder-preset",{name="Captured",offset=1})
         current=send("material",{part=0,name="cloth",enabled=false})
         assert(not visible and current.parts[1].materials[1].enabled==false)
         assert(not pcall(send,"material",{part=0,name="absent",enabled=true}))
@@ -210,14 +249,67 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
         write_failed=false
         current=send("create-group",{name="Cape",global=false})
         assert(current.group=="Cape" and #current.groups==2 and not current.selectionMode)
+        send("selection",{enabled=true})
+        send("select-material",{part=0,name="cloth",enabled=true})
+        send("create-group",{name="Layer",global=true})
+        send("group",{name="Cape"})
+        current=send("reorder-group",{name="Cape",offset=1})
+        S.equal(names(current.groups),{"","Layer","Cape"})
+        assert(current.group=="Cape","sorting retains current group context")
+        S.equal(data["ArmorVariantManager/armor.json"].group_order,{"Layer","Cape"})
+        write_failed=true
+        sorted,sort_reason=pcall(send,"reorder-group",{name="Cape",offset=-1})
+        assert(not sorted and sort_reason:find("disk full",1,true))
+        S.equal(names(snapshot().groups),{"","Layer","Cape"})
+        assert(snapshot().group=="Cape")
+        write_failed=false
+        before_writes=#writes
+        assert(not pcall(send,"reorder-group",{name="",offset=1}))
+        assert(not pcall(send,"reorder-group",{name="Layer",offset=-1}))
+        assert(#writes==before_writes,"main group and boundaries cannot be reordered")
+        send("delete-group",{name="Layer"})
+        send("group",{name="Cape"})
         write_failed=true
         assert(not pcall(send,"delete-group",{name="Cape"}))
         assert(snapshot().group=="Cape" and #snapshot().groups==2)
         write_failed=false
         current=send("delete-group",{name="Cape"})
         assert(current.group=="" and #current.groups==1)
+        send("preset",{name="Hide"})
+        local previous_default=data["ArmorVariantManager/armor.json"].default_preset
+        write_failed_path="ArmorVariantManager/armor.json"
+        settings_ok,settings_reason=pcall(send,"setting",{id="auto_set_selected_preset_as_default",value=true})
+        assert(not settings_ok and settings_reason:find("disk full",1,true))
+        assert(data["ArmorVariantManager/GlobalSettings.json"].auto_set_selected_preset_as_default==true)
+        assert(field("auto_set_selected_preset_as_default").value==true)
+        assert(data["ArmorVariantManager/armor.json"].default_preset==previous_default,"failed equipment save rolls back only its default")
+        write_failed_path=nil
+        before_writes=#writes
+        send("setting",{id="auto_set_selected_preset_as_default",value=true})
+        assert(data["ArmorVariantManager/armor.json"].default_preset=="Hide","same-value retry applies current default")
+        for index=before_writes+1,#writes do
+            assert(writes[index]~="ArmorVariantManager/GlobalSettings.json","same-value retry does not rewrite global JSON")
+        end
+        if game=="mhwilds" then
+            assert(field("ground_clipping_height_cm").min==-10)
+            before_writes=#writes
+            send("setting",{id="ground_clipping_enabled",value=true})
+            current=send("setting",{id="ground_clipping_height_cm",value=0})
+            assert(field("ground_clipping_enabled",current).value==true and field("ground_clipping_height_cm",current).value==0)
+            assert(#writes==before_writes,"height edits remain preset drafts")
+            assert(not pcall(dispatch,{kind="setting",id="ground_clipping_height_cm",value=5,bodyId="old"}))
+            send("save",{name="HeightZero"})
+            local height=data["ArmorVariantManager/armor.json"].presets.HeightZero.ground_clipping_fix
+            assert(height.enabled and height.height_cm==0,"preset capture persists checked zero height")
+        else assert(not field("ground_clipping_height_cm"),"Rise does not expose Wilds height") end
         send("mode",{weapon=true})
         assert(snapshot().bodyId=="","mode transition never pairs old config with new equipment")
+        current=dispatch({kind="setting",id="body_id_ttl",value=2})
+        assert(current.bodyId=="" and field("body_id_ttl",current).value==2,"empty equipment retains global settings")
+        if game=="mhwilds" then
+            assert(field("ground_clipping_height_cm",current).disabled)
+            assert(not pcall(dispatch,{kind="setting",id="ground_clipping_height_cm",value=5,bodyId="armor"}))
+        end
     else assert(not handlers,"native core still starts without REFF") end
     for _, fn in ipairs(resets) do fn() end
     if game == "unknown" then
@@ -239,4 +331,4 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
     if populated then assert(unregistered,"reset unregisters REFF methods") end
     _G.require = native_require
 end
-print("PASS: actual dual-game entry runs native/REFF selection and condition writes, rollback/stale guards, empty-scene frames/reset")
+print("PASS: actual dual-game entry, conditions/settings/sorting, partial-save retry, height drafts and stale/empty-scene/reset guards")

@@ -32,3 +32,22 @@ test('normalizes empty condition tables without changing rule fields or target r
     assert.deepEqual(normalizeSnapshot({ groups: [], presets: [], parts: [], conditions: { targets: empty, definitions: empty } }).conditions, { targets: [], definitions: [] });
   }
 });
+
+test('normalizes settings schema arrays without changing values, capabilities or order', () => {
+  for (const empty of [null, {}]) {
+    const base = { groups: [], presets: [], parts: [] };
+    assert.deepEqual(normalizeSnapshot({ ...base, settings: { sections: empty } }).settings, { sections: [] });
+    const settings = { sections: [{ id: 'global', scope: 'global', fields: empty }, { id: 'portrait', scope: 'global', fields: [
+      { id: 'portrait_camera.refresh_fps', type: 'select', value: 0, options: empty, disabled: true, reason: 'Preview unavailable' },
+      { id: 'scan_interval', type: 'number', value: .3, min: .1, max: 5, step: .1 },
+      { id: 'portrait_camera.reset', type: 'action', label: 'Reset camera' },
+    ] }] };
+    const result = normalizeSnapshot({ ...base, settings }).settings;
+    assert.deepEqual(result.sections.map(section => section.id), ['global', 'portrait']);
+    assert.deepEqual(result.sections[0].fields, []);
+    assert.deepEqual(result.sections[1].fields[0], { ...settings.sections[1].fields[0], options: [] });
+    assert.deepEqual(result.sections[1].fields[1], settings.sections[1].fields[1]);
+    assert.deepEqual(result.sections[1].fields[2], settings.sections[1].fields[2]);
+    assert.throws(() => normalizeSnapshot({ ...base, settings: { sections: { wrong: true } } }), /settings.sections must be an array/);
+  }
+});

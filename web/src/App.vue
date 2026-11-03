@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, shallowRef, watch } from 'vue';
-import { ElButton, ElConfigProvider, ElRadio, ElRadioGroup, REFF_ELEMENT_LOCALES } from '@reff/ui';
+import { ElButton, ElConfigProvider, REFF_ELEMENT_LOCALES } from '@reff/ui';
 import CatalogPane from './CatalogPane.vue';
 import MaterialsPane from './MaterialsPane.vue';
 import ConditionsPane from './ConditionsPane.vue';
+import SettingsPane from './SettingsPane.vue';
 import { useAvm } from './useAvm';
 import { useText } from './i18n';
 
@@ -38,14 +39,7 @@ async function restore() {
           <MaterialsPane :snapshot="snapshot" :busy="busy" :perform="perform" :t="t" />
         </div>
         <ConditionsPane v-show="tab === 'conditions'" :key="snapshot.bodyId" :conditions="snapshot.conditions" :busy="busy" :perform="perform" :t="t" />
-        <section v-show="tab === 'settings'" class="information settings-page" :aria-label="t('settings')">
-          <div class="section-kicker">{{ t('settings') }}</div><h2>{{ t('theme') }}</h2>
-          <ElRadioGroup :model-value="snapshot.theme" :disabled="busy" @change="(value: string | number | boolean | undefined) => perform({ kind: 'theme', value: value as 'custom' | 'reff' })">
-            <ElRadio value="custom">{{ t('custom') }}</ElRadio><ElRadio value="reff">{{ t('follow') }}</ElRadio>
-          </ElRadioGroup>
-          <p>{{ t('themeHelp') }}</p><p class="muted">{{ t('scope') }}</p>
-          <div class="native-note">{{ t('nativeHelp') }}</div>
-        </section>
+        <SettingsPane v-show="tab === 'settings'" :snapshot="snapshot" :busy="busy" :perform="perform" :t="t" />
         <section v-show="tab === 'help'" class="information help-page" :aria-label="t('help')">
           <div class="section-kicker">{{ t('help') }}</div><h2>{{ t('helpTitle') }}</h2>
           <p>{{ t('helpGroups') }}</p><p>{{ t('helpSave') }}</p><p>{{ t('helpSelection') }}</p><p>{{ t('helpConditions') }}</p><p>{{ t('helpRestore') }}</p>

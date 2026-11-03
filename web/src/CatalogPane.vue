@@ -10,7 +10,10 @@ const groupName = shallowRef('');
 const global = shallowRef(false);
 const presetName = shallowRef(props.snapshot.selectedPreset);
 const confirmation = shallowRef<{ kind: 'delete-group' | 'delete-preset'; name: string } | null>(null);
+const sortGroups = shallowRef(false);
+const sortPresets = shallowRef(false);
 const disabled = computed(() => props.busy || !props.snapshot.bodyId);
+const customGroups = computed(() => props.snapshot.groups.filter(item => item.name !== ''));
 const group = computed(() => props.snapshot.groups.find(item => item.name === props.snapshot.group));
 const selected = computed(() => props.snapshot.presets.find(item => item.name === props.snapshot.selectedPreset));
 const selectionCount = computed(() => Object.values(props.snapshot.pending).reduce((total, part) => total + Object.values(part).filter(Boolean).length, 0));
@@ -43,11 +46,16 @@ async function remove() {
 
 <template>
   <section class="pane groups-pane" :aria-label="t('groups')">
-    <div class="pane-heading"><h2>{{ t('groups') }}</h2><span class="count">{{ snapshot.groups.length }}</span></div>
+    <div class="pane-heading"><h2>{{ t('groups') }}</h2><span class="count">{{ snapshot.groups.length }}</span><button class="sort-toggle" :aria-pressed="sortGroups" :disabled="disabled || customGroups.length < 2" @click="sortGroups = !sortGroups">{{ t(sortGroups ? 'finishSort' : 'sort') }}</button></div>
     <div class="catalog-list">
-      <button v-for="item in snapshot.groups" :key="item.name" class="catalog-row" :aria-pressed="snapshot.group === item.name" :disabled="disabled" @click="chooseGroup(item.name)">
+      <div v-for="item in snapshot.groups" :key="item.name" class="sortable-row">
+      <button class="catalog-row" :aria-pressed="snapshot.group === item.name" :disabled="disabled" @click="chooseGroup(item.name)">
         <span class="row-name">{{ item.label }}</span><span v-if="item.global" class="row-tag">{{ t('global') }}</span><span class="row-arrow" aria-hidden="true">›</span>
       </button>
+      <div v-if="sortGroups && item.name !== ''" class="sort-actions">
+        <button v-for="offset in ([-1, 1] as const)" :key="offset" class="move-button" :aria-label="t(offset === -1 ? 'moveUp' : 'moveDown') + ' · ' + item.label" :title="t(offset === -1 ? 'moveUp' : 'moveDown')" :disabled="disabled || (offset === -1 ? customGroups[0]?.name === item.name : customGroups[customGroups.length - 1]?.name === item.name)" @click="perform({ kind: 'reorder-group', name: item.name, offset })"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path :d="offset === -1 ? 'M4 10 8 6l4 4' : 'm4 6 4 4 4-4'" /></svg></button>
+      </div>
+      </div>
     </div>
     <div class="pane-actions">
       <ElCheckbox :model-value="snapshot.selectionMode" :disabled="disabled" @change="(value: boolean | string | number) => perform({ kind: 'selection', enabled: !!value })">{{ t('selection') }}</ElCheckbox>
@@ -64,12 +72,17 @@ async function remove() {
     </div>
   </section>
   <section class="pane presets-pane" :aria-label="t('presets')">
-    <div class="pane-heading"><h2>{{ t('presets') }}</h2><span class="count">{{ snapshot.presets.length }}</span></div>
+    <div class="pane-heading"><h2>{{ t('presets') }}</h2><span class="count">{{ snapshot.presets.length }}</span><button class="sort-toggle" :aria-pressed="sortPresets" :disabled="disabled || snapshot.presets.length < 2" @click="sortPresets = !sortPresets">{{ t(sortPresets ? 'finishSort' : 'sort') }}</button></div>
     <div class="group-caption">{{ group?.label ?? t('main') }}</div>
     <div class="catalog-list">
-      <button v-for="item in snapshot.presets" :key="item.name" class="catalog-row preset-row" :aria-pressed="snapshot.selectedPreset === item.name" :disabled="disabled" @click="choosePreset(item.name)">
+      <div v-for="(item, index) in snapshot.presets" :key="item.name" class="sortable-row">
+      <button class="catalog-row preset-row" :aria-pressed="snapshot.selectedPreset === item.name" :disabled="disabled" @click="choosePreset(item.name)">
         <span class="row-name">{{ item.name }}</span><span v-if="item.default" class="default-star" :title="t('default')" :aria-label="t('default')">★</span><span v-if="item.active" class="active-dot" :title="t('active')" :aria-label="t('active')"></span>
       </button>
+      <div v-if="sortPresets" class="sort-actions">
+        <button v-for="offset in ([-1, 1] as const)" :key="offset" class="move-button" :aria-label="t(offset === -1 ? 'moveUp' : 'moveDown') + ' · ' + item.name" :title="t(offset === -1 ? 'moveUp' : 'moveDown')" :disabled="disabled || (offset === -1 ? index === 0 : index === snapshot.presets.length - 1)" @click="perform({ kind: 'reorder-preset', name: item.name, offset })"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path :d="offset === -1 ? 'M4 10 8 6l4 4' : 'm4 6 4 4 4-4'" /></svg></button>
+      </div>
+      </div>
       <p v-if="!snapshot.presets.length" class="empty-note">{{ t('none') }}</p>
     </div>
     <form class="pane-actions" @submit.prevent="save">

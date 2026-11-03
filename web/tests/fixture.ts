@@ -1,4 +1,5 @@
 import type { ConditionAction, ConditionDefinition, ConditionField, ConditionRule, Conditions, Snapshot } from '../src/types';
+import { settingsFor } from './settings-schema';
 
 const targetGroups: Conditions['targets'] = [
   { name: '', label: '主预设', global: false, presets: ['日常', '战斗'] },
@@ -63,7 +64,7 @@ const initial: Snapshot = {
   group: '上身', presets: [{ name: '完整上装', default: true, active: false }, { name: '无外套', default: false, active: true }, { name: '内衬', default: false, active: false }], selectedPreset: '无外套',
   parts: ['头部', '身体', '手臂', '腰部', '腿部', '附加部件'].map((label, index) => ({ index, label, available: index !== 5, enabled: true, meshLocked: index === 0,
     materials: index === 5 ? [] : ['body_leather', 'body_lining', 'cape_outer', 'metal_trim', 'guild_emblem'].map((name, material) => ({ name: index === 1 ? name : `${['head', 'body', 'arm', 'waist', 'leg'][index]}_${name}`, enabled: material !== 2, hidden: material === 4, groups: material === 4 ? ['全局隐藏'] : material < 2 ? ['上身'] : [] })),
-  })), theme: 'custom', language: 'zh-CN', selectionMode: false, pending: {}, conditions: wildsConditions(),
+  })), theme: 'custom', language: 'zh-CN', selectionMode: false, pending: {}, conditions: wildsConditions(), settings: settingsFor('Wilds'),
 };
 let state = structuredClone(initial);
 let failNext = false;
@@ -118,9 +119,26 @@ function applyCondition(request: ConditionAction) {
     calls.push(params);
     if (failNext) { failNext = false; throw new Error('测试：保存失败，名称已保留'); }
     const kind = params.kind as string;
-    if (!['theme', 'mode'].includes(kind) && params.bodyId !== state.bodyId) throw new Error('装备已变化，请重试');
+    if (!['theme', 'mode', 'setting'].includes(kind) && params.bodyId !== state.bodyId) throw new Error('装备已变化，请重试');
     if (kind === 'condition') applyCondition(params as unknown as ConditionAction);
     else if (kind === 'theme') state.theme = params.value as Snapshot['theme'];
+    else if (kind === 'setting') {
+      const field = state.settings!.sections.flatMap(section => section.fields).find(field => field.id === params.id);
+      if (!field || field.disabled) throw new Error(field?.reason ?? '设置不存在');
+      const section = state.settings!.sections.find(section => section.fields.includes(field))!;
+      if (section.scope === 'equipment' && (!state.bodyId || state.weapon || params.bodyId !== state.bodyId)) throw new Error('当前装备不支持该设置');
+      if (field.id === 'portrait_camera.reset') {
+        const defaults = { distance: 2.8, horizontal: 0, vertical: 0, light_intensity: 1, refresh_fps: 30 };
+        for (const [key, value] of Object.entries(defaults)) section.fields.find(item => item.id === 'portrait_camera.' + key)!.value = value;
+      } else field.value = params.value as typeof field.value;
+      if (field.id === 'language') state.language = field.value === 'en' ? 'en-US' : 'zh-CN';
+    } else if (kind === 'reorder-group' || kind === 'reorder-preset') {
+      const items = kind === 'reorder-group' ? state.groups.filter(item => item.name !== '') : state.presets;
+      const index = items.findIndex(item => item.name === params.name), target = index + Number(params.offset);
+      if (index < 0 || target < 0 || target >= items.length) throw new Error('无法移动该项');
+      [items[index], items[target]] = [items[target], items[index]];
+      if (kind === 'reorder-group') state.groups = [state.groups.find(item => item.name === '')!, ...(items as Snapshot['groups'])];
+    }
     else if (kind === 'mode') { state.weapon = !!params.weapon; state.bodyId = state.weapon ? 'wp00_000_0000' : initial.bodyId; }
     else if (kind === 'group') { state.group = String(params.name); state.selectedPreset = ''; }
     else if (kind === 'preset' || kind === 'save') {
@@ -151,8 +169,9 @@ if (new URLSearchParams(location.search).has('controls')) {
   add('No character', () => { state.bodyId = ''; });
   add('Restore character', () => { state.bodyId = initial.bodyId; });
   add('Empty Lua tables', () => { emptyTables = !emptyTables; });
-  add('English / Rise', () => { state.language = 'en-US'; state.game = 'Rise'; state.conditions = riseConditions(); });
-  add('Chinese / Wilds', () => { state.language = 'zh-CN'; state.game = 'Wilds'; state.conditions = wildsConditions(); });
+  add('English / Rise', () => { state.language = 'en-US'; state.game = 'Rise'; state.conditions = riseConditions(); state.settings = settingsFor('Rise'); });
+  add('Chinese / Wilds', () => { state.language = 'zh-CN'; state.game = 'Wilds'; state.conditions = wildsConditions(); state.settings = settingsFor('Wilds'); });
+  add('Preview unavailable', () => { state.settings!.sections.find(section => section.id === 'preview')?.fields.forEach(field => { field.disabled = true; field.reason = '预览模块未加载'; }); });
   add('Condition warning', () => { state.conditions!.definitions[0].warning = '生命值模块尚未初始化'; });
   add('REFF amber', () => window.postMessage({ type: 'reff:preferences', preferences: { language: 'zh-CN', appearance: { preset: 'amber', accent: '#f1ba68', background: '#201c17', surface: '#2b251d', backgroundOpacity: .94, cornerRadius: 6, surfaceBlur: 8, textScale: 1 } } }, '*'));
   add('REFF violet / 140%', () => window.postMessage({ type: 'reff:preferences', preferences: { language: 'zh-CN', appearance: { preset: 'violet', accent: '#c8a0ef', background: '#1b1823', surface: '#272031', backgroundOpacity: .94, cornerRadius: 6, surfaceBlur: 8, textScale: 1.4 } } }, '*'));
