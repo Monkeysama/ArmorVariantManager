@@ -5,7 +5,7 @@ imgui = { get_mouse = function() return { x = -1, y = -1 } end,
     is_mouse_clicked = function() return false end, is_mouse_down = function() return false end }
 local UI = require("ArmorVariantManager_Core.UI.VariantManagerUI")
 local languages = require("ArmorVariantManager_Core.Localization")
-local Preview = require("ArmorVariantManager_Core.PortraitPreview")
+local Preview = require("ArmorVariantManager_Core.Games.Wilds.PortraitPreview")
 local Slider = require("ArmorVariantManager_UI.Component.Slider")
 local Runtime = require("ArmorVariantManager_UI.Component.Runtime")
 local Panel = require("ArmorVariantManager_UI.Component.Panel")

@@ -1,6 +1,6 @@
 package.path = "ArmorVariantManager/reframework/autorun/?.lua;" .. package.path
-local Camera = require("ArmorVariantManager_Core.PortraitCamera")
-local Preview = require("ArmorVariantManager_Core.PortraitPreview")
+local Camera = require("ArmorVariantManager_Core.Games.Wilds.PortraitCamera")
+local Preview = require("ArmorVariantManager_Core.Games.Wilds.PortraitPreview")
 local function same(a, b, message) assert(a == b, (message or "mismatch") .. ": " .. tostring(a) .. " ~= " .. tostring(b)) end
 
 -- 镜头配置兼容旧文件，修正越界值，并保留不属于本功能的字段。

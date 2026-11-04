@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.25)
 project(ArmorVariantManager_UI)
 
 # 旧 UI 保留 D2D/输入桥接；预览以独立 DLL 构建，不共享 GPU/pose 实例。
-include(../ArmorVariantManagerPortrait/LuaDependencies.cmake)
+include(../Shared/LuaDependencies.cmake)
 CPMAddPackage("gh:nemtrif/utfcpp@4.0.5")
 
 set(AVM_D2D_SRC upstream/reframework-d2d/src)
@@ -19,7 +19,7 @@ add_library(ArmorVariantManager_UI SHARED
 target_include_directories(ArmorVariantManager_UI PRIVATE
     .
     ${AVM_D2D_SRC}
-    upstream/reframework-d2d/deps/reframework/include
+    ../Shared/reframework/include
 )
 target_compile_features(ArmorVariantManager_UI PRIVATE cxx_std_20)
 target_compile_options(ArmorVariantManager_UI PRIVATE /utf-8)

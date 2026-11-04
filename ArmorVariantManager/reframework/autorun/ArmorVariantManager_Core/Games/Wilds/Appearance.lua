@@ -3,7 +3,7 @@ local Selection = require("ArmorVariantManager_Core.Presets.Selection")
 local Visibility = require("ArmorVariantManager_Core.Presets.Visibility")
 local State = require("ArmorVariantManager_Core.Runtime.State")
 local Presets = require("ArmorVariantManager_Core.Games.Wilds.Presets")
-local Height = require("ArmorVariantManager_Core.GroundClippingFix")
+local Height = require("ArmorVariantManager_Core.Games.Wilds.GroundClippingFix")
 local Appearance = {}
 
 -- 手动意图按装备共享；条件结果与高度快照按角色保存。

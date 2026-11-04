@@ -1,5 +1,5 @@
 package.path = "ArmorVariantManager/reframework/autorun/?.lua;" .. package.path
-local Preview = require("ArmorVariantManager_Core.PortraitPreview")
+local Preview = require("ArmorVariantManager_Core.Games.Wilds.PortraitPreview")
 local function same(a, b, message) assert(a == b, (message or "mismatch") .. ": " .. tostring(a) .. " ~= " .. tostring(b)) end
 local now, in_game, visible, live, identity, hdr = 0, false, true, true, "first", 0
 local camera = { fov = 17, x = 0, y = 0.06, z = 1 }

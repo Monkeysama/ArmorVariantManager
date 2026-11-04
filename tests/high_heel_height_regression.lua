@@ -1,7 +1,7 @@
 game = {wilds=true, prefix="ArmorVariantManager_Core.Games.Wilds."}
 -- 高跟鞋核心与 JSON 接入的离线回归，不需要启动游戏或操作桌面。
 package.path = "ArmorVariantManager/reframework/autorun/?.lua;" .. package.path
-local Height = require("ArmorVariantManager_Core.GroundClippingFix")
+local Height = require("ArmorVariantManager_Core.Games.Wilds.GroundClippingFix")
 local function copy(p) return { x = p.x, y = p.y, z = p.z } end
 local function near(actual, expected, message)
     assert(math.abs(actual - expected) < 0.000001, (message or "position") .. ": " .. actual .. " ~= " .. expected)
@@ -498,7 +498,7 @@ local Button = require("ArmorVariantManager_UI.Component.Button")
 local Checkbox = require("ArmorVariantManager_UI.Component.Checkbox")
 local Slider = require("ArmorVariantManager_UI.Component.Slider")
 local UI = require("ArmorVariantManager_Core.UI.VariantManagerUI")
-local Preview = require("ArmorVariantManager_Core.PortraitPreview")
+local Preview = require("ArmorVariantManager_Core.Games.Wilds.PortraitPreview")
 local mouse = { x = -100, y = -100, down = false, clicked = false }
 imgui = {
     get_mouse = function() return { x = mouse.x, y = mouse.y } end,

@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 3.25)
 project(ArmorVariantManager_Portrait)
 
-include(LuaDependencies.cmake)
-set(AVM_SDK_INCLUDE ${CMAKE_CURRENT_SOURCE_DIR}/../ArmorVariantManagerUI/upstream/reframework-d2d/deps/reframework/include)
+include(../Shared/LuaDependencies.cmake)
+set(AVM_SDK_INCLUDE ${CMAKE_CURRENT_SOURCE_DIR}/../Shared/reframework/include)
 
 add_library(ArmorVariantManager_Portrait SHARED Plugin.cpp PortraitPreview.cpp PortraitPose.cpp)
 target_include_directories(ArmorVariantManager_Portrait PRIVATE ${AVM_SDK_INCLUDE})

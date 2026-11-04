@@ -1,8 +1,12 @@
 package.path = "ArmorVariantManager/reframework/autorun/?.lua;" .. package.path
+-- 旧 require 路径仍返回正式实现，不创建第二份模块状态或生命周期。
+for _, name in ipairs({"PortraitCamera", "PortraitModel", "PortraitPreview", "GroundClippingFix", "GroundClippingTargets"}) do
+    assert(require("ArmorVariantManager_Core." .. name) == require("ArmorVariantManager_Core.Games.Wilds." .. name))
+end
 local created, received, visible, preview_enabled = 0, nil, false, false
 local preview = { set_enabled = function(value) preview_enabled = value end,
     set_camera_settings = function(value) received = value end }
-package.loaded["ArmorVariantManager_Core.PortraitPreview"] = {
+package.loaded["ArmorVariantManager_Core.Games.Wilds.PortraitPreview"] = {
     new = function(deps) created = created + 1; preview.deps = deps; return preview end,
 }
 re = { on_frame = function() end, on_script_reset = function() end }

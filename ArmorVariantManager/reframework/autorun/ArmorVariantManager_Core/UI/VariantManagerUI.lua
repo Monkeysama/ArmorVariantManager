@@ -14,7 +14,7 @@ local InputBlocker = require("ArmorVariantManager_UI.Service.InputBlocker")
 local NativeTextInput = require("ArmorVariantManager_UI.Service.NativeTextInput")
 local DrawTransform = require("ArmorVariantManager_UI.Service.DrawTransform")
 local Documentation = require("ArmorVariantManager_Core.Documentation")
-local PortraitPreview = require("ArmorVariantManager_Core.PortraitPreview")
+local PortraitPreview = require("ArmorVariantManager_Core.Games.Wilds.PortraitPreview")
 
 local VariantManagerUI = {}
 

@@ -1,6 +1,6 @@
 local TransformManager = {}
 local RuleEngine = require("ArmorVariantManager_Core.Rules.Engine")
-local GroundClippingFix = require("ArmorVariantManager_Core.GroundClippingFix")
+local GroundClippingFix = require("ArmorVariantManager_Core.Games.Wilds.GroundClippingFix")
 
 -- 引入条件注册表
 local ConditionRegistry = require("ArmorVariantManager_Core.Games.Wilds.ConditionRegistry")

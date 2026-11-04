@@ -1,6 +1,6 @@
 local Settings = require("ArmorVariantManager_Core.Config.Settings")
 local Defaults = require("ArmorVariantManager_Core.Games.Wilds.Settings")
-local PortraitCamera = require("ArmorVariantManager_Core.PortraitCamera")
+local PortraitCamera = require("ArmorVariantManager_Core.Games.Wilds.PortraitCamera")
 local Model = {}
 
 function Model.new(deps)

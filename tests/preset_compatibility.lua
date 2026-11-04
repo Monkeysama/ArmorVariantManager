@@ -2,7 +2,7 @@ game = {wilds=true, prefix="ArmorVariantManager_Core.Games.Wilds."}
 package.path = "ArmorVariantManager/reframework/autorun/?.lua;" .. package.path
 local S = dofile("tests/support.lua")
 local Groups = require("ArmorVariantManager_Core.Presets.Groups")
-local Height = require("ArmorVariantManager_Core.GroundClippingFix")
+local Height = require("ArmorVariantManager_Core.Games.Wilds.GroundClippingFix")
 
 local function environment(config)
     local env = setmetatable({ current_config = S.copy(config), current_group_name = "",

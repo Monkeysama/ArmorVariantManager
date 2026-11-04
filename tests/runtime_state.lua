@@ -16,7 +16,7 @@ local env = setmetatable({
     GamePresets = GamePresets,
     PresetSelection = require("ArmorVariantManager_Core.Presets.Selection"),
     actor_runtime = require("ArmorVariantManager_Core.Runtime.State").new(),
-    GroundClippingFix = require("ArmorVariantManager_Core.GroundClippingFix"),
+    GroundClippingFix = require("ArmorVariantManager_Core.Games.Wilds.GroundClippingFix"),
     active_overrides = {}, active_group_presets = {},
     get_all_characters = function() return chars end,
     get_local_player_character = function() return a end,
@@ -216,7 +216,7 @@ print("PASS: shared game policies and actual UI context/group selection")
 
 local editor_selection
 env.ground_clipping_presets.get_editor = function(_, _, _, selected) editor_selection = selected end
-local Height=require("ArmorVariantManager_Core.GroundClippingFix")
+local Height=require("ArmorVariantManager_Core.Games.Wilds.GroundClippingFix")
 local old_new=Height.new
 Height.new=function() return {} end
 app.runtime.guard={}; sdk.find_type_definition=function() end

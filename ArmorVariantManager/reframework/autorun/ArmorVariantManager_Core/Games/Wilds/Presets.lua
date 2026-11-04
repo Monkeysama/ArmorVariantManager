@@ -1,5 +1,5 @@
 local Compose = require("ArmorVariantManager_Core.Presets.Compose")
-local GroundClippingFix = require("ArmorVariantManager_Core.GroundClippingFix")
+local GroundClippingFix = require("ArmorVariantManager_Core.Games.Wilds.GroundClippingFix")
 local Presets = {}
 
 -- 手动材质合成不写入高度，预览高度由现有高度状态管理。

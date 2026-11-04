@@ -1,7 +1,7 @@
 -- 使用真实解析器与骨骼运行时，覆盖没有 MasterPlayer 的菜单、CG、多玩家和生命周期。
 package.path = "ArmorVariantManager/reframework/autorun/?.lua;" .. package.path
-local Height = require("ArmorVariantManager_Core.GroundClippingFix")
-local Targets = require("ArmorVariantManager_Core.GroundClippingTargets")
+local Height = require("ArmorVariantManager_Core.Games.Wilds.GroundClippingFix")
+local Targets = require("ArmorVariantManager_Core.Games.Wilds.GroundClippingTargets")
 local function near(value, expected) assert(math.abs(value - expected) < 0.000001, value .. " ~= " .. expected) end
 local function copy(p) return { x = p.x, y = p.y, z = p.z } end
 local callbacks, hooks = { motion = {}, late = {}, render = {}, reset = {} }, {}

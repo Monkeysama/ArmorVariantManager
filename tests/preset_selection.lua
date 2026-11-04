@@ -1,7 +1,7 @@
 package.path = "ArmorVariantManager/reframework/autorun/?.lua;" .. package.path
 local S = dofile("tests/support.lua")
 local Selection = require("ArmorVariantManager_Core.Presets.Selection")
-local Height = require("ArmorVariantManager_Core.GroundClippingFix")
+local Height = require("ArmorVariantManager_Core.Games.Wilds.GroundClippingFix")
 local legacy = dofile("tests/fixtures/legacy/preset_selection.lua")
 local Fixture=dofile("tests/app_fixture.lua")
 local function preset(materials) return {["0"]={materials=materials}} end

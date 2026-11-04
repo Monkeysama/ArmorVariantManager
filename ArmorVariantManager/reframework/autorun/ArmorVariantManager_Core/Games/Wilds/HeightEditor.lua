@@ -8,8 +8,8 @@ function HeightEditor.new(app)
     local ground_clipping_presets = app.appearance.height
     local runtime_guard = runtime.guard
     local safe_get_game_object = runtime.scene_object.game_object
-    local GroundClippingFix = require("ArmorVariantManager_Core.GroundClippingFix")
-    local GroundClippingTargets = require("ArmorVariantManager_Core.GroundClippingTargets")
+    local GroundClippingFix = require("ArmorVariantManager_Core.Games.Wilds.GroundClippingFix")
+    local GroundClippingTargets = require("ArmorVariantManager_Core.Games.Wilds.GroundClippingTargets")
     local collect_ground_clipping_targets = GroundClippingTargets.new({
         get_scene = function() return runtime_guard:get_scene() end,
         get_game_object = safe_get_game_object

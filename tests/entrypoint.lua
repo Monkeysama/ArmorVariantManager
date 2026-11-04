@@ -519,7 +519,7 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
         assert(imports["ArmorVariantManager_Core.Games."..(game=="mhrise" and "Rise" or "Wilds")..".ImGuiConditions"])
         if game=="mhrise" then
             assert(not imports["ArmorVariantManager_Core.UI.VariantManagerUI"])
-            assert(not package.loaded["ArmorVariantManager_Core.GroundClippingFix"])
+            assert(not package.loaded["ArmorVariantManager_Core.Games.Wilds.GroundClippingFix"])
         end
     end
     if populated then assert(unregistered,"reset unregisters REFF methods") end
