@@ -183,7 +183,7 @@ function applyCondition(request: ConditionAction) {
   if (method === 'ui.preview.remove') { previewRemovals++; renderStatus(); return {}; }
   if (method === 'monkeysama.avm.preview') {
     previewCalls.push(params); if (previewCalls.length > 50) previewCalls.shift(); renderStatus();
-    return { ...state.preview, status: params.visible ? 'preview_waiting' : 'preview_disabled' };
+    return { ...state.preview, status: params.visible ? state.preview?.status : 'preview_disabled' };
   }
   if (!['monkeysama.avm.snapshot', 'monkeysama.avm.action', 'monkeysama.avm.documentation', 'monkeysama.avm.imports'].includes(method)) throw new Error(`Fixture: unknown method ${method}`);
   active += 1; peak = Math.max(active, peak);
@@ -307,6 +307,8 @@ if (new URLSearchParams(location.search).has('controls')) {
   });
   add('Rise only', () => { state.game = 'Rise'; state.canImport = true; state.conditions = riseConditions(); state.settings = settingsFor('Rise'); });
   add('Preview unavailable', () => { if (state.preview) state.preview.available = false; state.settings!.sections.find(section => section.id === 'preview')?.fields.forEach(field => { field.disabled = true; field.reason = '预览模块未加载'; }); });
+  add('Preview awaiting compositor', () => { if (state.preview) state.preview.status = 'preview_compositor_waiting'; });
+  add('Preview drawn', () => { if (state.preview) state.preview.status = 'preview_live'; });
   add('Condition warning', () => { state.conditions!.definitions[0].warning = '生命值模块尚未初始化'; });
   add('REFF amber', () => window.postMessage({ type: 'reff:preferences', preferences: { language: 'zh-CN', appearance: { preset: 'amber', accent: '#f1ba68', background: '#201c17', surface: '#2b251d', backgroundOpacity: .94, cornerRadius: 6, surfaceBlur: 8, textScale: 1 } } }, '*'));
   add('REFF violet / 140%', () => window.postMessage({ type: 'reff:preferences', preferences: { language: 'zh-CN', appearance: { preset: 'violet', accent: '#c8a0ef', background: '#1b1823', surface: '#272031', backgroundOpacity: .94, cornerRadius: 6, surfaceBlur: 8, textScale: 1.4 } } }, '*'));

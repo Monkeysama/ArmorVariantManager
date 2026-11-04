@@ -54,15 +54,21 @@ active = false
 p.set_enabled(true); same(reads, 0, "Enabling in draw only records intent")
 step(); same(camera.fov, 40); same(camera.y, 0.06 - 0.75); same(camera.z, 2.8); same(p.status, "preview_live")
 -- 网页只请求切换宿主；停绘、还原与重建仍在游戏回调执行。
-local host_calls = {}
+local host_calls, presented = {}, 100
 native.portrait_reff_ready = function() return 1 end
 native.portrait_reff = function(value) assert(in_game); host_calls[#host_calls + 1] = value; return 0 end
+native.portrait_drawn = function() return presented end
 local before_switch = updates
 p.set_host("reff"); same(updates, before_switch); same(#host_calls, 0)
 step(); same(host_calls[1], 1); same(p.host, "reff"); same(camera.fov, 40)
+same(p.status, "preview_compositor_waiting", "An accepted texture is not a REFF draw")
+presented = presented + 1; step(); same(p.status, "preview_live")
+visible = false; step(); visible = true; step()
+same(p.status, "preview_compositor_waiting", "Previous draws must not confirm a restarted provider")
+presented = presented + 1; step(); same(p.status, "preview_live")
 p.set_host("legacy"); same(#host_calls, 1)
 step(); same(host_calls[2], 0); same(p.host, "legacy"); same(camera.fov, 40)
-native.portrait_reff_ready, native.portrait_reff = nil, nil
+native.portrait_reff_ready, native.portrait_reff, native.portrait_drawn = nil, nil, nil
 -- 面板拖动必须立即更新绘制矩形，不等待100ms的游戏对象检查，也不能触碰SDK。
 local moved = 0
 native.portrait_rectangle = function(x,y,w,h)

@@ -89,6 +89,7 @@ function PortraitPreview.new(deps)
     local pending_change = false
     local restore_attempts = 0
     local gpu_owned = false
+    local first_draw
     local frame_error
     local requested_host, applied_host = "legacy", nil
 
@@ -126,7 +127,7 @@ function PortraitPreview.new(deps)
         -- 只停止本控制器提交过的绘制；空闲界面不能反复清除其他独立预览的请求。
         if gpu_owned and native and native.portrait_update then
             local ok, result = pcall(native.portrait_update, 0, 0, 0, 0, 0, 0)
-            if ok and result == 0 then gpu_owned = false end
+            if ok and result == 0 then gpu_owned, first_draw = false, nil end
         end
         local ok, err = true, nil
         if adapter.stop and not keep_camera then ok, err = pcall(adapter.stop) end
@@ -242,6 +243,7 @@ function PortraitPreview.new(deps)
             if context and identity ~= context then self.stop("preview_waiting"); return end
             local holder = adapter.holder(system)
             -- 原生解析/输出模式先过关，才允许调整相机；第一帧可显示原头像。
+            if requested_host == "reff" and first_draw == nil then first_draw = native.portrait_drawn() end
             gpu_owned = true
             assert(native.portrait_update(holder, 1, rect.x, rect.y, rect.w, rect.h) == 0, "GPU source unavailable")
             if adapter.independent then
@@ -256,7 +258,9 @@ function PortraitPreview.new(deps)
                 adapter.offset(argument, { x = original.x, y = original.y - 0.75, z = 2.8 })
                 assert(native.portrait_alpha(0) == 0, "GPU alpha mode unavailable")
             end
-            self.status = "preview_live"
+            -- 提供者接受纹理不代表 REFF 已消费槽位；旧宿主保持原状态语义。
+            self.status = requested_host == "reff" and native.portrait_drawn() <= first_draw
+                and "preview_compositor_waiting" or "preview_live"
         end, tostring)
         if not ok then
             failed, self.status, self.error = true, "preview_error", err

@@ -2,7 +2,7 @@ import { computed, type Ref } from 'vue';
 import type { Snapshot } from './types';
 
 const zh = {
-  preview: '全身预览', previewLive: '预览就绪', previewWaiting: '等待角色与预览相机…', previewUnavailable: '更新 REFF 与预览插件后可使用网页预览。', previewSdr: '当前输出模式不支持预览，请切换为 SDR。',
+  preview: '全身预览', previewLive: '预览就绪', previewWaiting: '等待角色与预览相机…', previewWaitingForHost: '等待 REFF 绘制预览…', previewUnavailable: '更新 REFF 与预览插件后可使用网页预览。', previewSdr: '当前输出模式不支持预览，请切换为 SDR。',
   title: '差分管理器', armor: '防具', weapon: '武器', groups: '分组', presets: '预设', parts: '部件材质', settings: '设置', help: '帮助',
   groupName: '分组名称', newGroup: '新增分组', global: '全局组', create: '创建分组', delete: '删除', presetName: '预设名称', save: '保存预设',
   heightDraft: '调整后，新增或覆盖预设保存。', heightHelp: '高度控制说明',
@@ -31,7 +31,7 @@ const zh = {
 };
 type Key = keyof typeof zh;
 const en: Record<Key, string> = {
-  preview: 'Full-body preview', previewLive: 'Preview ready', previewWaiting: 'Waiting for character and preview camera…', previewUnavailable: 'Update REFF and the portrait plugin to use this preview.', previewSdr: 'Preview requires SDR output.',
+  preview: 'Full-body preview', previewLive: 'Preview ready', previewWaiting: 'Waiting for character and preview camera…', previewWaitingForHost: 'Waiting for REFF to draw the preview…', previewUnavailable: 'Update REFF and the portrait plugin to use this preview.', previewSdr: 'Preview requires SDR output.',
   title: 'Armor Variant Manager', armor: 'Armor', weapon: 'Weapon', groups: 'Groups', presets: 'Presets', parts: 'Parts & materials', settings: 'Settings', help: 'Help',
   groupName: 'Group name', newGroup: 'New group', global: 'Global group', create: 'Create group', delete: 'Delete', presetName: 'Preset name', save: 'Save preset',
   heightDraft: 'Create or overwrite a preset to save these changes.', heightHelp: 'About height control',

@@ -14,6 +14,7 @@ const message = computed(() => {
   if (!state.value.available) return props.t('previewUnavailable');
   if (state.value.error) return state.value.error;
   if (state.value.status === 'preview_output_unsupported') return props.t('previewSdr');
+  if (state.value.status === 'preview_compositor_waiting') return props.t('previewWaitingForHost');
   return props.t(state.value.status === 'preview_live' ? 'previewLive' : 'previewWaiting');
 });
 let slot: NativePreviewSlot | undefined;
