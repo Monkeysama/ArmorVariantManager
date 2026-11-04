@@ -197,7 +197,7 @@ test("camera reset changes only five legacy values and restores in place on fail
     local camera, extension, applied = global.value.portrait_camera, global.value.portrait_camera.extension, 0
     local settings = new(global, Wilds.new({ config = global.value, get_portrait_preview = function()
         return { set_camera_settings = function(value)
-            assert(value == camera and disk.saved.portrait_camera.distance == 2.8)
+            assert(value == camera and disk.saved.portrait_camera.distance == 1.5)
             applied = applied + 1
         end }
     end }))
@@ -211,7 +211,7 @@ test("camera reset changes only five legacy values and restores in place on fail
     disk.result = true
     assert(set(settings, "portrait_camera.reset"))
     assert(global.value.portrait_camera == camera and camera.extension == extension and applied == 1)
-    S.equal(camera, { distance = 2.8, horizontal = 0, vertical = 0, light_intensity = 1, refresh_fps = 30,
+    S.equal(camera, { distance = 1.5, horizontal = 0, vertical = 0, light_intensity = 1, refresh_fps = 30,
         extension = { keep = 4 } })
     S.equal(disk.saved.portrait_camera, camera)
     local writes = disk.writes

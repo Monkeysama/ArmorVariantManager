@@ -179,7 +179,7 @@ for _, language in ipairs({ "zh", "en" }) do
         assert(ui.deps.config.portrait_camera.refresh_fps == fps and saved == old_saved + 1)
     end
     request = languages[lang].preview_camera_reset; settings_frame(-1, -1)
-    assert(ui.deps.config.portrait_camera.distance == 2.8 and ui.deps.config.portrait_camera.horizontal == 0)
+    assert(ui.deps.config.portrait_camera.distance == 1.5 and ui.deps.config.portrait_camera.horizontal == 0)
     assert(ui.deps.config.portrait_camera.light_intensity == 1)
     assert(ui.deps.config.portrait_camera.refresh_fps == 30)
     assert(ui.deps.config.portrait_camera.vertical == 0 and ui.deps.config.portrait_camera.extension == "retain")

@@ -5,7 +5,9 @@ local function same(a, b, message) assert(a == b, (message or "mismatch") .. ": 
 
 -- 镜头配置兼容旧文件，修正越界值，并保留不属于本功能的字段。
 local defaults = Camera.settings(nil)
-same(defaults.distance, 2.8); same(defaults.horizontal, 0); same(defaults.vertical, 0)
+same(defaults.distance, 1.5); same(defaults.horizontal, 0); same(defaults.vertical, 0)
+same(Camera.settings({distance=2.8}).distance, 2.8, "Keep explicitly saved camera distances")
+same(Camera.settings({distance=1.25}).distance, 1.25)
 same(defaults.light_intensity, 1.0)
 same(defaults.refresh_fps, 30)
 for _, value in ipairs({0, 30, 60}) do same(Camera.settings({refresh_fps=value}).refresh_fps, value) end

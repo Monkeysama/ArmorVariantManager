@@ -13,7 +13,7 @@ function PortraitCamera.settings(value)
     if type(value) == "table" then
         for key, entry in pairs(value) do result[key] = entry end
     end
-    for key, bounds in pairs({ distance = { 2.8, 1.0, 6.0 },
+    for key, bounds in pairs({ distance = { 1.5, 1.0, 6.0 },
         horizontal = { 0.0, -1.5, 1.5 }, vertical = { 0.0, -1.5, 1.5 }, light_intensity = { 1.0, 0.0, 2.0 } }) do
         local number = result[key]
         if type(number) ~= "number" or number ~= number or math.abs(number) == math.huge then number = bounds[1] end

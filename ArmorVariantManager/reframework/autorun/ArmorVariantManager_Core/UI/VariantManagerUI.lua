@@ -15,6 +15,7 @@ local NativeTextInput = require("ArmorVariantManager_UI.Service.NativeTextInput"
 local DrawTransform = require("ArmorVariantManager_UI.Service.DrawTransform")
 local Documentation = require("ArmorVariantManager_Core.Documentation")
 local PortraitPreview = require("ArmorVariantManager_Core.Games.Wilds.PortraitPreview")
+local PortraitCamera = require("ArmorVariantManager_Core.Games.Wilds.PortraitCamera")
 
 local VariantManagerUI = {}
 
@@ -2109,8 +2110,7 @@ function VariantManagerUI:draw_camera_settings(x, y, w)
         end
     end
     if self.button:draw(self:T("preview_camera_reset"), x + 12, y + 386, 156, 30, false) then
-        settings.distance, settings.horizontal, settings.vertical, settings.light_intensity = 2.8, 0.0, 0.0, 1.0
-        settings.refresh_fps = 30
+        for key, value in pairs(PortraitCamera.settings()) do settings[key] = value end
         changed_any = true
     end
     if changed_any then
