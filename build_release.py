@@ -24,6 +24,7 @@ PORTRAIT_FILES = ("portrait_camera.pfb.18", "portrait_resources.user.3", "portra
 REFF_PLUGIN = SOURCE_REFRAMEWORK / "reff" / "plugins" / "monkeysama.avm"
 LICENSE = ROOT / "LICENSE"
 README = ROOT / "README.md"
+CHANGELOG = ROOT / "CHANGELOG.md"
 GUIDE_NAME = "ArmorVariantManager-README.md"
 NATIVE_LICENSES = SOURCE_REFRAMEWORK / "plugins" / "source" / "THIRD_PARTY_LICENSES.txt"
 GAMES = {"wilds": "MHWILDS", "rise": "MHRISE"}
@@ -138,7 +139,7 @@ def assert_no_duplicate_scripts() -> None:
 
 
 def ensure_inputs(game: str = "universal") -> None:
-    required = [AUTORUN_SOURCE / "ArmorVariantManager.lua", LICENSE, README,
+    required = [AUTORUN_SOURCE / "ArmorVariantManager.lua", LICENSE, README, CHANGELOG,
                 REFF_PLUGIN / "manifest.json", REFF_PLUGIN / "ui" / "dist" / "index.html",
                 REFF_PLUGIN / "ui" / "dist" / "REFF-LICENSE.txt"]
     if game in ("universal", "wilds"):
@@ -231,6 +232,9 @@ def verify_release(release_directory: Path, game: str = "universal") -> None:
     guide = release_directory / GUIDE_NAME
     if not guide.is_file() or guide.read_bytes() != README.read_bytes():
         raise RuntimeError("Release verification failed: user guide is missing or changed")
+    history = release_directory / "CHANGELOG.md"
+    if not history.is_file() or history.read_bytes() != CHANGELOG.read_bytes():
+        raise RuntimeError("Release verification failed: changelog is missing or changed")
 
 
 def create_zip(release_directory: Path, archive_path: Path) -> None:
@@ -267,6 +271,7 @@ def _build_release(output_root: Path, version: str, game: str) -> None:
         copy_reff_plugin(staging_directory, game)
         copy_licenses(staging_directory, game)
         shutil.copy2(README, staging_directory / GUIDE_NAME)
+        shutil.copy2(CHANGELOG, staging_directory / "CHANGELOG.md")
         verify_release(staging_directory, game)
         staging_archive = Path(temporary) / "package.zip"
         create_zip(staging_directory, staging_archive)

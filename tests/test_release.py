@@ -45,9 +45,10 @@ def release_inputs(root):
         "PORTRAIT_ASSETS": root / "source/natives/STM/ArmorVariantManager/Portrait",
         "LICENSE": root / "source/LICENSE",
         "README": root / "source/README.md",
+        "CHANGELOG": root / "source/CHANGELOG.md",
         "NATIVE_LICENSES": root / "source/reframework/plugins/source/THIRD_PARTY_LICENSES.txt",
     }
-    for key in ("PORTRAIT_DLL", "LICENSE", "README", "NATIVE_LICENSES"):
+    for key in ("PORTRAIT_DLL", "LICENSE", "README", "CHANGELOG", "NATIVE_LICENSES"):
         paths[key].parent.mkdir(parents=True, exist_ok=True)
         paths[key].write_bytes(key.encode())
     paths["PORTRAIT_ASSETS"].mkdir(parents=True)
@@ -68,7 +69,7 @@ def release_inputs(root):
 
 class ReleaseTests(unittest.TestCase):
     def assert_inventory(self, directory, archive_path, game):
-        expected = {"LICENSE", release.GUIDE_NAME}
+        expected = {"LICENSE", release.GUIDE_NAME, "CHANGELOG.md"}
         expected.update("reframework/autorun/" + path.relative_to(release.AUTORUN_SOURCE).as_posix()
                         for path in release.AUTORUN_SOURCE.rglob("*.lua"))
         expected.update("reframework/reff/plugins/monkeysama.avm/" + path.relative_to(release.REFF_PLUGIN).as_posix()
@@ -80,6 +81,7 @@ class ReleaseTests(unittest.TestCase):
         actual = {path.relative_to(directory).as_posix() for path in directory.rglob("*") if path.is_file()}
         self.assertEqual(actual, expected)
         self.assertEqual((directory / release.GUIDE_NAME).read_bytes(), release.README.read_bytes())
+        self.assertEqual((directory / "CHANGELOG.md").read_bytes(), release.CHANGELOG.read_bytes())
         with release.zipfile.ZipFile(archive_path) as archive:
             self.assertEqual(set(archive.namelist()), expected)
             for name in expected:
@@ -138,7 +140,7 @@ class ReleaseTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             with release_inputs(root):
-                for path in (release.LICENSE, release.README, release.REFF_PLUGIN / "manifest.json",
+                for path in (release.LICENSE, release.README, release.CHANGELOG, release.REFF_PLUGIN / "manifest.json",
                              release.REFF_PLUGIN / "ui/dist/index.html", release.REFF_PLUGIN / "ui/dist/REFF-LICENSE.txt"):
                     with self.subTest(path=path):
                         content = path.read_bytes()
@@ -195,19 +197,22 @@ class ReleaseTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "development content"):
                     release.verify_release(directory, "rise")
 
-    def test_verify_rejects_missing_or_stale_user_guide(self):
+    def test_verify_rejects_missing_or_stale_user_documents(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             with release_inputs(root):
                 release.main(["--output-dir", str(root / "out")])
                 directory, _ = release.release_paths(root / "out", "1.2.3")
-                guide = directory / release.GUIDE_NAME
-                guide.unlink()
-                with self.assertRaisesRegex(RuntimeError, "user guide is missing or changed"):
-                    release.verify_release(directory)
-                guide.write_bytes(b"outdated guide")
-                with self.assertRaisesRegex(RuntimeError, "user guide is missing or changed"):
-                    release.verify_release(directory)
+                for name, reason in ((release.GUIDE_NAME, "user guide"), ("CHANGELOG.md", "changelog")):
+                    document = directory / name
+                    original = document.read_bytes()
+                    document.unlink()
+                    with self.assertRaisesRegex(RuntimeError, reason + " is missing or changed"):
+                        release.verify_release(directory)
+                    document.write_bytes(b"outdated document")
+                    with self.assertRaisesRegex(RuntimeError, reason + " is missing or changed"):
+                        release.verify_release(directory)
+                    document.write_bytes(original)
 
     @unittest.skipUnless(LUA, "Set LUA to a Lua 5.4 executable for runtime semantics checks")
     def test_package_literals_and_legacy_require_entrypoints_execute_unchanged(self):
