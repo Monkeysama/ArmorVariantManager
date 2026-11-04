@@ -82,7 +82,6 @@ body { background: transparent; }
 .row-tag { font-size: var(--reff-font-size-xs, 12px); color: var(--avm-muted); margin-left: auto; white-space: nowrap; }
 .row-tag + .row-arrow { margin-left: 0; }
 .avm .avm-tag.el-tag { --tag-color: var(--avm-accent); flex-shrink: 0; max-width: 100%; height: auto; min-height: calc(20px * var(--reff-text-scale, 1)); padding-inline: 5px; border-radius: 3px; color: var(--tag-color); border-color: color-mix(in srgb, var(--tag-color) 32%, var(--avm-line)); background: color-mix(in srgb, var(--tag-color) 13%, var(--avm-panel)); font-size: var(--reff-font-size-xs, 12px); line-height: 1.35; }
-.avm .tag-default.el-tag { --tag-color: var(--el-color-success, var(--avm-accent)); }
 .avm .tag-global.el-tag { --tag-color: var(--el-color-warning, #e6a23c); }
 .avm-tag .el-tag__content { overflow-wrap: anywhere; white-space: normal; }
 .active-dot { width: 5px; height: 5px; background: var(--avm-accent); flex: 0 0 5px; display: inline-block; border-radius: 50%; }

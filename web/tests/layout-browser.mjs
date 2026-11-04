@@ -93,6 +93,14 @@ async function primaryStates() {
   await cdp('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 });
   check(await evaluate(`document.activeElement.matches('${selector}') && getComputedStyle(document.activeElement).outlineStyle !== 'none'`), 'Keyboard focus on the primary must be visible');
 }
+async function defaultTagTheme(name) {
+  const colors = await evaluate(`(() => {
+    const tag = document.querySelector('.tag-default'), app = document.querySelector('.avm');
+    return { tag:getComputedStyle(tag).color, accent:getComputedStyle(document.querySelector('.mode-switch .selected')).color,
+      token:getComputedStyle(tag).getPropertyValue('--tag-color').trim(), theme:getComputedStyle(app).getPropertyValue('--avm-accent').trim() };
+  })()`);
+  check(colors.tag === colors.accent && colors.token === colors.theme, `${name}: default Tag must use the active theme accent: ${JSON.stringify(colors)}`);
+}
 try {
   await cdp('Runtime.enable'); await cdp('Page.enable');
   await mkdir(new URL('../test-results/', import.meta.url), { recursive: true });
@@ -122,11 +130,13 @@ try {
   await measure('layout-140-small', 400, 850);
   const ownAccent = await evaluate(`getComputedStyle(document.querySelector('.avm')).getPropertyValue('--avm-accent').trim()`);
   check(ownAccent === '#76d8dc', 'Own theme must retain ice cyan while REFF text scale changes');
+  await defaultTagTheme('Own theme with violet REFF host');
   await click('.footer-tabs button', 'Settings');
   await click('.theme-settings .el-radio', 'Follow REFF');
   await click('.footer-tabs button', 'Parts & materials');
   const followed = await evaluate(`({ avm:getComputedStyle(document.querySelector('.avm')).getPropertyValue('--avm-accent').trim(), shared:getComputedStyle(document.documentElement).getPropertyValue('--reff-accent').trim() })`);
   check(followed.avm === followed.shared && followed.avm === '#c8a0ef', 'Follow REFF must use the live shared accent');
+  await defaultTagTheme('Follow REFF theme');
   await measure('layout-reff-140-narrow', 700, 900);
   await primaryStates();
   await evaluate(`(() => { const input = document.getElementById('preset-name'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, ''); input.dispatchEvent(new Event('input', { bubbles:true })); })()`);
