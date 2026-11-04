@@ -24,14 +24,4 @@ function Fixture.new(game, options)
     return app
 end
 
--- 只替换旧显示宿主和预览生命周期，执行正式 UI 适配器的全部回调接线。
-function Fixture.legacy(app)
-    local env = setmetatable({require=function(name)
-        if name == prefix .. "UI.VariantManagerUI" then return {new=function(deps) return deps end} end
-        if name == prefix .. "Games.Wilds.Portrait" then return {new=function() return {} end} end
-        return require(name)
-    end}, {__index=_G})
-    return assert(loadfile("ArmorVariantManager/reframework/autorun/ArmorVariantManager_Core/UI/Legacy.lua", "t", env))().new(app)
-end
-
 return Fixture

@@ -191,7 +191,7 @@ local wilds = Selection.compose(fill_config, {}, {}, {}, GamePresets)
 local rise = Selection.compose(fill_config, {}, {}, {}, require("ArmorVariantManager_Core.Games.Rise.Presets"))
 assert(wilds["0"].materials.cloth == true and rise["0"].materials.cloth == nil)
 
--- 新界面上下文与分组切换同样读取本地角色快照。
+-- 工作区分组切换同样读取本地角色快照。
 env.loaded_configs.armor = config
 env.get_effective_group_presets = display
 env.get_body_id = function() return "armor" end
@@ -206,13 +206,12 @@ ws.get_body_id=env.get_body_id
 app.session=env.config_session
 app.runtime.scene_object={}; app.runtime.meshes={}
 sdk=env.sdk
-local ui=dofile("tests/app_fixture.lua").legacy(app)
-assert(ui.get_context().selected_preset_name=="Off")
+ws.update_preset_names_list()
 assert(ws.state.presets[ws.state.preset_index]=="Off")
 ws.state.preset_index=1
-ui.select_group("Lock")
+assert(ws.select_group("Lock"))
 assert(ws.state.presets[ws.state.preset_index]=="Off")
-print("PASS: shared game policies and actual UI context/group selection")
+print("PASS: shared game policies and workspace group selection")
 
 local editor_selection
 env.ground_clipping_presets.get_editor = function(_, _, _, selected) editor_selection = selected end

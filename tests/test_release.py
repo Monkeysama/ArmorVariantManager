@@ -41,15 +41,13 @@ def release_inputs(root):
     paths = {
         "AUTORUN_SOURCE": autorun,
         "REFF_PLUGIN": plugin,
-        "UI_DLL": root / "source/reframework/plugins/ArmorVariantManager_UI.dll",
         "PORTRAIT_DLL": root / "source/reframework/plugins/ArmorVariantManager_Portrait.dll",
         "PORTRAIT_ASSETS": root / "source/natives/STM/ArmorVariantManager/Portrait",
         "LICENSE": root / "source/LICENSE",
         "README": root / "source/README.md",
         "NATIVE_LICENSES": root / "source/reframework/plugins/source/THIRD_PARTY_LICENSES.txt",
-        "D2D_LICENSE": root / "source/reframework/plugins/source/d2d/LICENSE",
     }
-    for key in ("UI_DLL", "PORTRAIT_DLL", "LICENSE", "README", "NATIVE_LICENSES", "D2D_LICENSE"):
+    for key in ("PORTRAIT_DLL", "LICENSE", "README", "NATIVE_LICENSES"):
         paths[key].parent.mkdir(parents=True, exist_ok=True)
         paths[key].write_bytes(key.encode())
     paths["PORTRAIT_ASSETS"].mkdir(parents=True)
@@ -76,9 +74,9 @@ class ReleaseTests(unittest.TestCase):
         expected.update("reframework/reff/plugins/monkeysama.avm/" + path.relative_to(release.REFF_PLUGIN).as_posix()
                         for path in release.REFF_PLUGIN.rglob("*") if path.is_file())
         if game in ("universal", "wilds"):
-            expected.update("reframework/plugins/" + path.name for path in (release.UI_DLL, release.PORTRAIT_DLL))
+            expected.add("reframework/plugins/" + release.PORTRAIT_DLL.name)
             expected.update("natives/STM/ArmorVariantManager/Portrait/" + name for name in release.PORTRAIT_FILES)
-            expected.update(("licenses/THIRD_PARTY_LICENSES.txt", "licenses/reframework-d2d-LICENSE.txt"))
+            expected.add("licenses/THIRD_PARTY_LICENSES.txt")
         actual = {path.relative_to(directory).as_posix() for path in directory.rglob("*") if path.is_file()}
         self.assertEqual(actual, expected)
         self.assertEqual((directory / release.GUIDE_NAME).read_bytes(), release.README.read_bytes())
@@ -120,7 +118,7 @@ class ReleaseTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             with release_inputs(root):
-                dependencies = [release.UI_DLL, release.PORTRAIT_DLL, release.NATIVE_LICENSES, release.D2D_LICENSE,
+                dependencies = [release.PORTRAIT_DLL, release.NATIVE_LICENSES,
                                 *(release.PORTRAIT_ASSETS / name for name in release.PORTRAIT_FILES)]
                 for path in dependencies:
                     with self.subTest(path=path.name):
@@ -245,23 +243,24 @@ io.write(result, "\n")
                               'assert(require("ArmorVariantManager_Core.TransformManager").game == "Wilds")\n')
                     subprocess.run([LUA, "-"], input=script.encode(), cwd=autorun, check=True, capture_output=True)
 
-    def test_ui_and_independent_portrait_are_both_required(self):
+    def test_only_independent_portrait_is_required_and_retired_ui_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            ui, portrait = root / "ArmorVariantManager_UI.dll", root / "ArmorVariantManager_Portrait.dll"
-            ui.write_bytes(b"legacy-ui")
-            portrait.write_bytes(b"independent-portrait")
-            with patch.object(release, "UI_DLL", ui), patch.object(release, "PORTRAIT_DLL", portrait), \
-                    patch.object(release, "PORTRAIT_FILES", ()), patch.object(release, "verify_reff_plugin"):
-                release.copy_native_plugins(root / "out")
-                shutil.copy2(release.README, root / "out" / release.GUIDE_NAME)
-                release.verify_release(root / "out")
-                target = root / "out/reframework/plugins"
-                self.assertEqual((target / ui.name).read_bytes(), b"legacy-ui")
-                self.assertEqual((target / portrait.name).read_bytes(), b"independent-portrait")
-                (target / portrait.name).unlink()
+            with release_inputs(root):
+                release.main(["--output-dir", str(root / "out")])
+                output, _ = release.release_paths(root / "out", "1.2.3")
+                target = output / "reframework/plugins"
+                self.assertFalse((target / "ArmorVariantManager_UI.dll").exists())
+                self.assertEqual((target / release.PORTRAIT_DLL.name).read_bytes(), b"PORTRAIT_DLL")
+                for name in ("ArmorVariantManager_UI.dll", "AVM_InputBridge.dll"):
+                    retired = target / name
+                    retired.write_bytes(b"retired")
+                    with self.assertRaisesRegex(RuntimeError, "development content"):
+                        release.verify_release(output)
+                    retired.unlink()
+                (target / release.PORTRAIT_DLL.name).unlink()
                 with self.assertRaisesRegex(RuntimeError, "ArmorVariantManager_Portrait.dll"):
-                    release.verify_release(root / "out")
+                    release.verify_release(output)
 
     def test_reff_page_and_assets_are_packaged(self):
         with tempfile.TemporaryDirectory() as directory:

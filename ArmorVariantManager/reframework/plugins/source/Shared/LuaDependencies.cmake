@@ -1,6 +1,6 @@
 include_guard(GLOBAL)
 
-# 与旧 UI 共用 Lua/sol2 的版本与下载缓存，独立构建时不引入 D2D。
+# 固定 Lua/sol2 版本并复用下载缓存，预览独立构建。
 include(${CMAKE_CURRENT_LIST_DIR}/CPM.cmake)
 CPMAddPackage("gh:ThePhD/sol2@3.3.0")
 CPMAddPackage(NAME lua GITHUB_REPOSITORY lua/lua VERSION 5.4.3 DOWNLOAD_ONLY YES)

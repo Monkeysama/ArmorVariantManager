@@ -7,7 +7,7 @@ file = assert(io.open("ArmorVariantManager/reframework/autorun/ArmorVariantManag
 source = file:read("a"); file:close()
 local first = assert(source:find("local function flush_scene_reset(", 1, true))
 local last = assert(source:find("\n    local function get_all_characters()", first, true))
-local now, invalidations, transform_reads = 10, 0, 0
+local now, context_resets, transform_reads = 10, 0, 0
 local equipment_clears, mesh_clears = 0, 0
 local loading, menu, scene_key = false, false, "scene-a"
 local loading_method = { call = function() return loading end }
@@ -35,7 +35,6 @@ local env = setmetatable({
     meshes = { clear = function() mesh_clears = mesh_clears + 1 end },
     active_overrides = { keep = true }, active_group_presets = { keep = true }, current_config = { keep = true },
     preview_character_names = {}, clear_dead_object_marks = function() end,
-    variant_manager_ui = { invalidate_context = function() invalidations = invalidations + 1 end },
     safe_get_game_object = function(obj, origin)
         if origin == "scanner_transform" then transform_reads = transform_reads + 1 end
         if obj.dead then return nil end
@@ -57,6 +56,11 @@ local env = setmetatable({
 env.TransformManager = { clear_last_state_cache = function() end }
 env.appearance = require("ArmorVariantManager_Core.Games.Wilds.Appearance").new({rules=env.TransformManager})
 env.appearance.state = env.actor_runtime
+local reset_appearance = env.appearance.reset
+env.appearance.reset = function()
+    context_resets = context_resets + 1
+    return reset_appearance()
+end
 local reset_start = assert(main_source:find("local function reset_actor_context()", 1, true))
 local reset_end = assert(main_source:find("\nlocal runtime, application", reset_start, true))
 env.on_reset = assert(load(main_source:sub(reset_start, reset_end - 1) .. "\nreturn reset_actor_context", "actual-reset", "t", env))()
@@ -88,16 +92,16 @@ batch({ object({ dead = true }), object({ bad_name = true }), object({ bad_compo
     object({ valid = false }), object({ bad_cache = true }), good })
 assert(tick() and not env.runtime_guard.suspended)
 assert(env.character_cache == preserved and env.character_cache[tostring(good)])
-assert(invalidations == 0 and env.scanner.state == "IDLE", "Local faults must not reset UI or discard valid players")
+assert(context_resets == 0 and env.scanner.state == "IDLE", "Local faults must not reset UI or discard valid players")
 local dead = {}; for i = 1, 200 do dead[i] = object({ dead = true }) end
 local reads = transform_reads
 batch(dead); assert(tick())
 assert(transform_reads - reads == 8, "Bound native failure count per scan")
-assert(env.scanner.state == "IDLE" and not env.scanner.force_rescan and invalidations == 0)
+assert(env.scanner.state == "IDLE" and not env.scanner.force_rescan and context_resets == 0)
 env.method_cache.Scene_findComponents = { call = function() error("enumeration failed") end }
 assert(tick(), "Retry interval must avoid immediate rescans")
 now = now + 1
-assert(tick() and not env.runtime_guard.suspended and invalidations == 0, "Enumeration failure in same scene preserves UI")
+assert(tick() and not env.runtime_guard.suspended and context_resets == 0, "Enumeration failure in same scene preserves UI")
 local valid_character = object()
 scene.call = function() return { get_elements = function() return { object({ bad_cache = true }), valid_character } end } end
 env.method_cache.Scene_findComponents = nil
@@ -106,34 +110,34 @@ assert(env.character_cache[tostring(valid_character)], "Dead app.Character must 
 batch({ good }); local old_reads = transform_reads
 scene_key = "scene-b"
 assert(not tick() and env.runtime_guard.suspended)
-assert(transform_reads == old_reads and invalidations == 0, "Changed scene never reads old snapshot; cleanup stays deferred")
+assert(transform_reads == old_reads and context_resets == 0, "Changed scene never reads old snapshot; cleanup stays deferred")
 assert(not env.runtime_guard:update())
-assert(invalidations == 1 and env.character_cache ~= preserved)
+assert(context_resets == 1 and env.character_cache ~= preserved)
 assert(env.actor_runtime:peek("old-scene-actor", "armor", "armor", runtime_config) == nil, "Scene cleanup releases actor results")
 assert(env.active_overrides.keep and env.active_group_presets.keep and env.current_config.keep, "Scene cleanup preserves JSON and preset selections")
 assert(tick())
 batch({ good }); old_reads = transform_reads; scene_key = ""
 assert(not tick() and env.runtime_guard.suspended and env.scanner.force_rescan)
 assert(not env.runtime_guard:update()); assert(not tick())
-assert(transform_reads == old_reads and invalidations == 1, "Missing scene pauses safely without destroying UI state")
+assert(transform_reads == old_reads and context_resets == 1, "Missing scene pauses safely without destroying UI state")
 scene_key = "scene-b"
 assert(not env.runtime_guard:update()); assert(tick())
 loading = true; assert(env.runtime_guard:update())
 assert(env.runtime_guard.scene_suspended, "Loading also pauses display skeletons")
-assert(invalidations == 2, "Actual loading must still flush object caches")
+assert(context_resets == 2, "Actual loading must still flush object caches")
 loading = false; assert(not env.runtime_guard:update())
 menu = true; assert(env.runtime_guard:update())
 assert(not env.runtime_guard.scene_suspended, "Quest menu pauses material scanning, not display skeletons")
 menu = false; assert(not env.runtime_guard:update())
-assert(invalidations == 2, "Menu pause must not clear caches")
+assert(context_resets == 2, "Menu pause must not clear caches")
 env.runtime_guard:begin_transition(true); assert(env.runtime_guard:update())
 env.runtime_guard:mark_load_end(false); assert(env.runtime_guard:update(), "Fast travel waits for fade-in")
 env.runtime_guard:mark_load_end(true); assert(not env.runtime_guard:update())
-assert(invalidations == 3)
+assert(context_resets == 3)
 assert(equipment_clears == 3 and mesh_clears == 3, "Scene cleanup releases adapter-owned object caches")
 main_source = assert(io.open("ArmorVariantManager/reframework/autorun/ArmorVariantManager_Core/UI/ImGui/Main.lua")):read("a")
 local ui_start = 1
 local tree = assert(main_source:find('imgui.tree_node(T("mod_name"))', ui_start, true))
 local pause = assert(main_source:find("if runtime.is_suspended() then", ui_start, true))
-assert(tree < pause, "Legacy UI entry remains present while suspended")
-print("PASS: isolated object/character failures, bounded burst, rescan interval, preserved UI/cache, scene changes, missing scene, loading, menus, fast-travel fade-in and legacy UI entry")
+assert(tree < pause, "Native UI entry remains present while suspended")
+print("PASS: isolated object/character failures, bounded burst, rescan interval, preserved UI/cache, scene changes, missing scene, loading, menus, fast-travel fade-in and native UI entry")

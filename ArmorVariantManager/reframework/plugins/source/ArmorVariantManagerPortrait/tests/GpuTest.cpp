@@ -260,10 +260,10 @@ int main(int argc, char** argv) {
                 if(message->Severity<=D3D12_MESSAGE_SEVERITY_WARNING) { std::cerr<<message->pDescription<<"\n";throw std::runtime_error("D3D12 debug validation warning/error"); }
             }
         }
-        // hosted 宿主没有提交时，自动 Present 仍须停止过期绘制并释放源引用。
+        // 自动 Present 仍须停止过期绘制并释放源引用。
         source=image; drawing=true; heartbeat=GetTickCount64()-501;
-        present(false);
-        if(drawing||source)throw std::runtime_error("hosted idle frame retained expired source");
+        present();
+        if(drawing||source)throw std::runtime_error("idle frame retained expired source");
         renderer.reset();DestroyWindow(window);window=nullptr;
         std::cout<<"PASS: actual renderer, SDR8/10 color/alpha composition, rectangle containment, HDR rejection, source validation, 120 completed frames and fence-safe reclaim; debug_layer="<<(debug?1:0)<<"\n";
         return 0;

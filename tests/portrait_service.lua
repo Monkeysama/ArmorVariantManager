@@ -17,12 +17,7 @@ assert(service == preview and created == 1 and preview_enabled == true)
 assert(preview.deps.camera_settings == config.portrait_camera)
 assert(not preview.deps.should_show()); visible = true; assert(preview.deps.should_show())
 
--- 旧弹窗仅借用应用服务，独立调用方仍能自行创建；设置入口不经弹窗取实例。
-local UI = require("ArmorVariantManager_Core.UI.VariantManagerUI")
-local ui = UI.new({ config = config, portrait_preview = service })
-assert(ui.portrait_preview == service and created == 1)
-assert(received == config.portrait_camera)
-ui.portrait_preview = nil
+-- 设置入口直接借用应用服务，公开独立构造入口不依赖任何显示框架。
 local Global = require("ArmorVariantManager_Core.Config.Global")
 local defaults = require("ArmorVariantManager_Core.Games.Wilds.Settings")
 local session = Global.new(defaults, { save = function() return true end })
@@ -36,8 +31,8 @@ local settings = require("ArmorVariantManager_Core.UI.Reff.Settings").new({
 })
 assert(settings.action({kind="setting",id="portrait_camera.distance",value=4}, {}))
 assert(received.distance == 4 and received.extension == "keep" and created == 1)
-local standalone = UI.new({ config = config })
-assert(standalone.portrait_preview == service and created == 2)
+local standalone = Portrait.new(config, function() return visible end)
+assert(standalone == service and created == 2)
 
 local now, suspended, available, host, rectangle = 0, false, true
 local reff_visible=true
@@ -48,7 +43,7 @@ preview.set_rectangle=function(value) rectangle=value end
 preview.enabled,preview.status=true,"preview_live"
 visible=false
 local shared,web=Portrait.connect(config,{
-    clock=function() return now end,suspended=function() return suspended end,legacy_visible=function() return visible end,
+    clock=function() return now end,suspended=function() return suspended end,
 })
 assert(shared==preview and created==3 and not preview.deps.should_show())
 assert(web.action({visible=true}).available and host=="reff" and rectangle.w==330)
@@ -57,12 +52,12 @@ assert(rectangle.w==280 and rectangle.h==680,"Web canvas dimensions were discard
 assert(preview.deps.should_show())
 suspended=true;assert(not preview.deps.should_show());suspended=false
 now=.4;web.action({visible=true});now=.8;assert(preview.deps.should_show(),"heartbeat did not renew camera lease")
-reff_visible=false;assert(not preview.deps.should_show() and host=="legacy","hidden REFF kept camera active")
+reff_visible=false;assert(not preview.deps.should_show() and host=="reff","hidden REFF kept camera active")
 reff_visible=true;web.action({visible=true})
-now=1.4;assert(not preview.deps.should_show() and host=="legacy","closed page retained REFF camera ownership")
-visible=true;assert(preview.deps.should_show(),"old preview cannot resume after page closes")
+now=1.4;assert(not preview.deps.should_show() and host=="reff","closed page retained REFF camera ownership")
+visible=true;assert(not preview.deps.should_show(),"closed page resumed a retired host")
 web.action({visible=true});web.action({visible=false})
-assert(host=="legacy" and rectangle==nil and preview.deps.should_show())
-available=false;assert(not web.action({visible=true}).available and host=="legacy")
+assert(host=="reff" and rectangle==nil and not preview.deps.should_show())
+available=false;assert(not web.action({visible=true}).available and not preview.deps.should_show())
 assert(not pcall(web.action,{visible="yes"}),"invalid visibility intent was accepted")
-print("PASS: application-owned portrait, injected legacy host, independent settings and old standalone constructor")
+print("PASS: application-owned REFF portrait, hidden/expired leases, independent settings and public standalone constructor")

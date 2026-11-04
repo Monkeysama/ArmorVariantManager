@@ -1,6 +1,6 @@
 local Main = {}
 
-function Main.new(app, legacy)
+function Main.new(app)
     local game, backend, runtime = app.game, app.backend, app.runtime
     local appearance, global_config = app.appearance, app.global_config
     local workspace = app.workspace
@@ -11,7 +11,6 @@ function Main.new(app, legacy)
     local view = {new_preset_name="", new_group_name="", new_group_is_global=false,
         filters={}, sort_temp_list={}, sort_selected_index=1, auto_find_log=""}
     local show_debug_window = false
-    local variant_manager_ui = legacy
     local game_options = app.game_options
     local safe_get_game_object = runtime.scene_object and runtime.scene_object.game_object
     local actors = runtime.actors
@@ -57,7 +56,7 @@ function Main.new(app, legacy)
     end
 
     return function()
-        -- D2D与旧ImGui回调都读取同一状态，不在这里重复轮询游戏菜单/加载状态。
+        -- 绘制只读取运行状态，不重复轮询游戏菜单或加载状态。
         if imgui.tree_node(T("mod_name")) then
             if runtime.is_suspended() then
                 imgui.text(T("runtime_paused"))
@@ -66,12 +65,6 @@ function Main.new(app, legacy)
             end
             imgui.text_colored(string.format(T("version") .. ": %s | " .. T("author") .. ": %s", version, author), 0xFF808080)
             imgui.separator()
-
-            -- 新 UI 设置和旧 UI 隐藏逻辑由独立模块处理。
-            if variant_manager_ui and variant_manager_ui:draw_settings() then
-                imgui.tree_pop()
-                return
-            end
 
             if game.wilds and show_debug_window then
                 if imgui.tree_node("Debug Info") then

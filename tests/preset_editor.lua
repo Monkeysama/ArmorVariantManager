@@ -76,7 +76,7 @@ S.equal(missing, {})
 assert(Editor.write(missing, "Group", "A", { _empty = true }, function() return true end))
 S.equal(missing, { groups = { Group = { presets = { A = { _empty = true } }, mask = {}, preset_order = { "A" } } } })
 
--- 真实入口包装及新 UI 的调用接线：失败返回 false，成功只保存一次并刷新列表。
+-- 正式应用操作：失败返回 false，成功只保存一次并刷新列表。
 local config, writes, refreshed, fail = S.copy(initial), 0, 0, false
 local env = setmetatable({ current_config = config, current_group_name = "Normal", PresetEditor = Editor,
     get_body_id = function() return "armor" end,
@@ -91,19 +91,17 @@ app.workspace.config, app.workspace.state.group=config,"Normal"
 app.workspace.update_preset_names_list=env.update_preset_names_list
 app.workspace.update_group_names_list=env.update_group_names_list
 app.backend.save=function(id, data, keep) return env.save_current_config_to_file(id, keep) end
-sdk={is_managed_object=function() return true end}
-local ui=dofile("tests/app_fixture.lua").legacy(app)
 fail = true
-assert(not ui.delete_preset("A") and config.groups.Normal.presets.A)
+assert(not app.delete_preset("A","armor") and config.groups.Normal.presets.A)
 fail = false
-assert(ui.delete_preset("A"))
-assert(ui.reorder_presets({ "B" }))
-assert(ui.reorder_groups({ { name = "Global" }, { name = "" }, { name = "Normal" } }))
+assert(app.delete_preset("A","armor"))
+assert(app.reorder_presets({ "B" },"armor"))
+assert(app.reorder_groups({ "Global", "Normal" },"armor"))
 S.equal(config.group_order, { "Global", "Normal" })
 assert(writes == 4 and refreshed == 4)
 app.workspace.config = nil
-assert(not ui.delete_preset("B"))
-assert(not ui.reorder_presets({ "B" }))
-assert(not ui.reorder_groups({ { name = "Normal" } }))
+assert(not app.delete_preset("B","armor"))
+assert(not app.reorder_presets({ "B" },"armor"))
+assert(not app.reorder_groups({ "Normal" },"armor"))
 assert(writes == 4 and refreshed == 4)
-print("PASS: shared preset writes/defaults/delete/order, legacy JSON equality, failed-save rollback and actual UI operation wiring")
+print("PASS: shared preset writes/defaults/delete/order, legacy JSON equality, failed-save rollback and application operations")

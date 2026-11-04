@@ -18,7 +18,6 @@ PROJECT = ROOT / "ArmorVariantManager"
 SOURCE_REFRAMEWORK = PROJECT / "reframework"
 RELEASE_ROOT = ROOT / "release"
 AUTORUN_SOURCE = SOURCE_REFRAMEWORK / "autorun"
-UI_DLL = SOURCE_REFRAMEWORK / "plugins" / "ArmorVariantManager_UI.dll"
 PORTRAIT_DLL = SOURCE_REFRAMEWORK / "plugins" / "ArmorVariantManager_Portrait.dll"
 PORTRAIT_ASSETS = PROJECT / "natives" / "STM" / "ArmorVariantManager" / "Portrait"
 PORTRAIT_FILES = ("portrait_camera.pfb.18", "portrait_resources.user.3", "portrait.rtex.6")
@@ -27,7 +26,6 @@ LICENSE = ROOT / "LICENSE"
 README = ROOT / "README.md"
 GUIDE_NAME = "ArmorVariantManager-README.md"
 NATIVE_LICENSES = SOURCE_REFRAMEWORK / "plugins" / "source" / "THIRD_PARTY_LICENSES.txt"
-D2D_LICENSE = SOURCE_REFRAMEWORK / "plugins" / "source" / "ArmorVariantManagerUI" / "upstream" / "reframework-d2d" / "LICENSE"
 GAMES = {"wilds": "MHWILDS", "rise": "MHRISE"}
 
 
@@ -144,7 +142,7 @@ def ensure_inputs(game: str = "universal") -> None:
                 REFF_PLUGIN / "manifest.json", REFF_PLUGIN / "ui" / "dist" / "index.html",
                 REFF_PLUGIN / "ui" / "dist" / "REFF-LICENSE.txt"]
     if game in ("universal", "wilds"):
-        required.extend([UI_DLL, PORTRAIT_DLL, NATIVE_LICENSES, D2D_LICENSE,
+        required.extend([PORTRAIT_DLL, NATIVE_LICENSES,
                          *(PORTRAIT_ASSETS / name for name in PORTRAIT_FILES)])
     missing = [str(path) for path in required if not path.exists()]
     if missing:
@@ -163,13 +161,12 @@ def copy_reff_plugin(destination: Path, game: str = "universal") -> None:
 
 
 def copy_native_plugins(destination: Path, game: str = "universal") -> None:
-    """通用包包含荒野旧弹窗与预览；两个 DLL 在崛起中不启动。"""
+    """通用包保留独立预览 DLL；崛起不启动其能力。"""
     if game == "rise":
         return
     target = destination / "reframework" / "plugins"
     target.mkdir(parents=True, exist_ok=True)
-    for source in (UI_DLL, PORTRAIT_DLL):
-        shutil.copy2(source, target / source.name)
+    shutil.copy2(PORTRAIT_DLL, target / PORTRAIT_DLL.name)
 
 
 def copy_licenses(destination: Path, game: str = "universal") -> None:
@@ -178,7 +175,6 @@ def copy_licenses(destination: Path, game: str = "universal") -> None:
         target = destination / "licenses"
         target.mkdir(parents=True, exist_ok=True)
         shutil.copy2(NATIVE_LICENSES, target / NATIVE_LICENSES.name)
-        shutil.copy2(D2D_LICENSE, target / "reframework-d2d-LICENSE.txt")
 
 
 def verify_reff_plugin(release_directory: Path, game: str = "universal") -> None:
@@ -212,9 +208,8 @@ def copy_stripped_lua_files(destination_autorun: Path) -> int:
 def verify_release(release_directory: Path, game: str = "universal") -> None:
     verify_reff_plugin(release_directory, game)
     if game in ("universal", "wilds"):
-        for source in (UI_DLL, PORTRAIT_DLL):
-            if not (release_directory / "reframework" / "plugins" / source.name).is_file():
-                raise RuntimeError(f"Release verification failed: required DLL is missing: {source.name}")
+        if not (release_directory / "reframework" / "plugins" / PORTRAIT_DLL.name).is_file():
+            raise RuntimeError(f"Release verification failed: required DLL is missing: {PORTRAIT_DLL.name}")
         for name in PORTRAIT_FILES:
             asset = release_directory / "natives" / "STM" / "ArmorVariantManager" / "Portrait" / name
             if not asset.is_file() or asset.read_bytes() != (PORTRAIT_ASSETS / name).read_bytes():
@@ -222,6 +217,11 @@ def verify_release(release_directory: Path, game: str = "universal") -> None:
     forbidden = [
         release_directory / "reframework" / "data",
         release_directory / "reframework" / "plugins" / "source",
+        release_directory / "reframework" / "plugins" / "ArmorVariantManager_UI.dll",
+        release_directory / "reframework" / "plugins" / "AVM_InputBridge.dll",
+        release_directory / "reframework" / "autorun" / "ArmorVariantManager_UI",
+        release_directory / "reframework" / "autorun" / "ArmorVariantManager_Core" / "UI" / "Legacy.lua",
+        release_directory / "reframework" / "autorun" / "ArmorVariantManager_Core" / "UI" / "VariantManagerUI.lua",
     ]
     if game == "rise":
         forbidden.extend([release_directory / "reframework" / "plugins", release_directory / "natives"])

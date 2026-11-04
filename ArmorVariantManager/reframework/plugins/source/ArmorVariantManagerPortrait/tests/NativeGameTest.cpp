@@ -57,21 +57,14 @@ int main(int argc, char** argv) {
     param.functions = &functions;
     param.renderer_data = &renderer;
     assert(initialize(&param));
-    const bool ui = GetProcAddress(module, "avm_ui_portrait_hosted") != nullptr;
     if (wilds) {
-        assert(callbacks == (ui ? 5 : 4));
-        if (ui) {
-            for (int attempt = 0; attempt < 200 && !std::filesystem::exists(runtime); ++attempt) Sleep(5);
-            assert(std::filesystem::exists(runtime));
-            for (int attempt = 0; attempt < 200 && __imp_SetCursorPos == cursor; ++attempt) Sleep(5);
-            assert(__imp_SetCursorPos != cursor);
-        }
-        // 与真实宿主一致：活动回调和输入工作线程随进程退出，不模拟运行中卸载。
+        assert(callbacks == 4 && !std::filesystem::exists(runtime) && __imp_SetCursorPos == cursor);
+        // 与真实宿主一致：活动回调随进程退出，不模拟运行中卸载。
     } else {
         Sleep(100);
         assert(callbacks == 0 && !std::filesystem::exists(runtime) && __imp_SetCursorPos == cursor);
         assert(FreeLibrary(module));
         std::filesystem::remove_all(root);
     }
-    std::puts(wilds ? "PASS: Wilds native callbacks and existing input startup" : "PASS: Rise loads native DLL without callbacks, input hooks or runtime files");
+    std::puts(wilds ? "PASS: Wilds portrait callbacks without UI/input startup" : "PASS: Rise loads native DLL without callbacks, input hooks or runtime files");
 }

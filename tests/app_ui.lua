@@ -72,11 +72,10 @@ for _, game in ipairs({"Wilds", "Rise"}) do
     assert(app.set_setting("auto_set_selected_preset_as_default",true))
     assert(global_writes==written and ws.config.groups.Normal.default_preset=="B")
     if game=="Wilds" then
-        local legacy=Fixture.legacy(app)
-        assert(legacy.set_auto_default_enabled(false,"B","armor"))
+        assert(app.set_setting("auto_set_selected_preset_as_default",false,"B","armor"))
         global_failed=true
-        assert(not legacy.set_auto_default_enabled(true,"A","armor"))
+        assert(not app.set_setting("auto_set_selected_preset_as_default",true,"A","armor"))
         assert(not app.global_config.auto_set_selected_preset_as_default and ws.config.groups.Normal.default_preset=="B")
     end
 end
-print("PASS: actual native group preview/sorting, failed-save retention and shared native/legacy settings transactions")
+print("PASS: actual native group preview/sorting, failed-save retention and shared settings transactions")

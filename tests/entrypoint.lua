@@ -21,7 +21,6 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
     local native_file_index = 1
     local checkbox_labels = {}
     local weapon_id, applied_weapons = nil, {}
-    local injected_preview
     local handlers, unregistered, write_failed, write_failed_path
     local enabled, visible = true, true
     local td = {get_method=function() return nil end}
@@ -48,6 +47,9 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
     data["ArmorVariantManager/backup/armor.json"] = S.copy(player_backup)
     local native_require = require
     _G.require = function(name)
+        assert(not name:match("^ArmorVariantManager_UI")
+            and name ~= "ArmorVariantManager_Core.UI.VariantManagerUI"
+            and name ~= "ArmorVariantManager_Core.UI.Legacy", "retired UI imported: " .. name)
         imports[name] = true
         if name=="reff.sdk" then
             return {register=function(id, value)
@@ -93,18 +95,12 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
                 function runtime.install_hooks() re.on_script_reset(callbacks.reset) end
                 function runtime.refresh() callbacks.process(entry,false,runtime); return true end
                 function runtime.tick(ui)
-                    ui.suspended(false); ui.update()
+                    if ui.suspended then ui.suspended(false) end
+                    ui.update()
                     if game=="mhrise" then callbacks.process(entry,false,runtime)
                     else ui.retain({[tostring(object)]=ui.process(object)}) end
                 end
                 return runtime
-            end}
-        end
-        if name == "ArmorVariantManager_Core.UI.VariantManagerUI" then
-            return {new=function(deps)
-                injected_preview = assert(deps.portrait_preview, "main owns the legacy host preview")
-                return {update=function() end, set_suspended=function() end,
-                    draw_settings=function() return false end, invalidate_context=function() end}
             end}
         end
         return native_require(name)
@@ -228,8 +224,8 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
         assert_auto_default_label("Automatically set selected preset as default")
         if game=="mhwilds" then
             assert(field("scan_interval").value==0.5)
-            assert(injected_preview and not field("portrait_enabled").disabled,
-                "settings use the application service even when the legacy UI exposes no preview field")
+            assert(not field("portrait_enabled").disabled,
+                "settings use the application service without the retired UI")
             current=dispatch({kind="setting",id="scan_interval",value=-2,bodyId="old"})
             assert(field("scan_interval",current).value==0.1,"global setting ignores equipment identity")
         else

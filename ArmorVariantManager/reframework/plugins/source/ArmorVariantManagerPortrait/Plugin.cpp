@@ -35,7 +35,7 @@ void on_lua_state_created(lua_State* state) try {
     register_portrait(portrait);
     lua["avm_portrait"] = portrait;
 
-    // UI DLL 可能先注册或后注册，只补齐预览接口，不接管 runtime 与外部 d2d。
+    // 保留公开桥接表，只补齐预览接口，不接管已有 runtime 或其他 MOD 的 d2d。
     const sol::object existing = lua["avm_bridge"];
     auto bridge = existing.valid() && existing.get_type() == sol::type::table
         ? existing.as<sol::table>() : lua.create_table();
@@ -61,7 +61,7 @@ extern "C" __declspec(dllexport) void reframework_plugin_required_version(REFram
 
 extern "C" __declspec(dllexport) bool reframework_plugin_initialize(const REFrameworkPluginInitializeParam* param) {
     if (!param || !param->version || !param->version->game_name) return false;
-    // 与旧弹窗一起随通用包分发，崛起不注册预览能力和 GPU 回调。
+    // 随通用包分发，崛起不注册预览能力和 GPU 回调。
     if (std::string_view{param->version->game_name} != "MHWILDS") return true;
     if (!param->renderer_data || param->renderer_data->renderer_type != REFRAMEWORK_RENDERER_D3D12) return false;
     reframework::API::initialize(param);

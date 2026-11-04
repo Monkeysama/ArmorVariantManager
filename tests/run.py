@@ -18,7 +18,6 @@ DEFAULT_TESTS = (
     "tests/wilds_hp.lua",
     "tests/portrait_service.lua",
     "tests/portrait_preview_regression.lua",
-    "tests/portrait_preview_ui_regression.lua",
     "tests/portrait_camera_settings_regression.lua",
     "tests/rise_options.lua",
     "tests/config_compatibility.lua",

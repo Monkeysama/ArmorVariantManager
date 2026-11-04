@@ -124,15 +124,6 @@ in_game = true; p.shutdown(); in_game = false
 same(camera.fov, 17); same(camera.y, 0.06); same(active, false)
 old_reads = reads; step(); same(reads, old_reads, "Shutdown callbacks must remain inert")
 
-for _, width in ipairs({ 1100, 1280, 1366, 1920, 2560 }) do
-    local panel, card = Preview.widths(width, true)
-    same(panel, math.min(1160, width - 70 - card), "Do not reserve the removed preview gap")
-    assert(panel + card + 70 <= width, "Reserved card must fit beside original content")
-    assert(panel >= 800 and card >= 198, "Keep main editor and preview usable")
-end
-local panel, card = Preview.widths(1000, true)
-same(card, 0); same(panel, 930)
-same(select(2, Preview.widths(1920, false)), 0)
 -- 正式独立相机使用游戏 UpdateBehavior；旧菜单适配器仍保留 on_frame 入口。
 local frame_callbacks, update_callbacks, reset_callbacks, late_callbacks = {}, {}, {}, {}
 re = {
@@ -163,4 +154,4 @@ probe_bridge(); same(dedicated_reads, 1); same(legacy_reads, 0)
 avm_portrait = nil
 probe_bridge(); same(legacy_reads, 1)
 avm_bridge = nil
-print("PASS: game-thread SDK access, 1000-frame stability, visibility/context/stale/reset restore, native/source/bridge faults, HDR rejection, partial writes, restoration retry, independent bridge and reserved layout")
+print("PASS: game-thread SDK access, 1000-frame stability, visibility/context/stale/reset restore, native/source/bridge faults, HDR rejection, partial writes, restoration retry, independent bridge")

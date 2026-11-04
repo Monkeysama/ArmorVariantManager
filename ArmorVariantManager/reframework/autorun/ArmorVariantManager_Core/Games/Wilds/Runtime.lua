@@ -27,9 +27,12 @@ function Runtime.new(config, callbacks)
     -- 先检查场景和扫描，再更新界面选择，最后将各角色结果应用到对应对象。
     function runtime.tick(frame)
         local suspended = runtime.guard:update()
-        frame.suspended(suspended)
+        if frame.suspended then frame.suspended(suspended) end
         if suspended then return end
-        if not runtime.actors.tick() then frame.suspended(true); return end
+        if not runtime.actors.tick() then
+            if frame.suspended then frame.suspended(true) end
+            return
+        end
         frame.update()
 
         local characters = runtime.actors.all()

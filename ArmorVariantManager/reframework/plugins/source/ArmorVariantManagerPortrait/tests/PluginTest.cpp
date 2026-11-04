@@ -20,16 +20,13 @@ void log_error(const char*, ...) { ++errors; }
 }
 
 int main(int argc, char** argv) {
-    assert(argc == 4);
-    const bool bridge_first = std::string_view(argv[3]) == "bridge-first";
-    HMODULE ui{};
-    if (bridge_first) { ui = LoadLibraryA(argv[2]); assert(ui); }
+    assert(argc == 3);
+    const bool bridge_first = std::string_view(argv[2]) == "bridge-first";
     const auto plugin = LoadLibraryA(argv[1]);
     assert(plugin);
     const auto initialize = reinterpret_cast<REFPluginInitializeFn>(GetProcAddress(plugin, "reframework_plugin_initialize"));
     const auto mode = reinterpret_cast<int (*)()>(GetProcAddress(plugin, "portrait_gpu_present_mode"));
-    const auto hosted_present = reinterpret_cast<void (*)()>(GetProcAddress(plugin, "avm_portrait_present_hosted"));
-    assert(initialize && mode && hosted_present);
+    assert(initialize && mode);
     REFrameworkPluginFunctions functions{};
     functions.on_lua_state_created = register_created;
     functions.on_lua_state_destroyed = register_destroyed;
@@ -46,11 +43,7 @@ int main(int argc, char** argv) {
     param.renderer_data = &renderer;
     assert(initialize(&param));
     assert(created && destroyed && present && reset);
-    assert(mode() == (bridge_first ? 1 : 0));
-    if (!ui) { ui = LoadLibraryA(argv[2]); assert(ui); }
-    assert(mode() == 1);
-    const auto set_hosted = reinterpret_cast<void (*)(int)>(GetProcAddress(ui, "test_set_hosted"));
-    assert(set_hosted);
+    assert(mode() == 0);
 
     for (int generation = 0; generation < 2; ++generation) {
         sol::state lua;
@@ -64,7 +57,7 @@ int main(int argc, char** argv) {
             assert(avm_bridge.register_runtime() == 42 and avm_bridge.retained == 17)
             assert(avm_portrait.register_runtime == nil and d2d == original_d2d and d2d.owner == 'external')
             for _, name in ipairs({'update', 'rectangle', 'output', 'alpha', 'version', 'ready', 'state',
-                'error', 'drawn', 'present_mode', 'pose_version', 'mesh_copy', 'pose_bind', 'pose_sync', 'pose_clear', 'pose_error'}) do
+                'error', 'drawn', 'present_mode', 'reff_ready', 'reff', 'pose_version', 'mesh_copy', 'pose_bind', 'pose_sync', 'pose_clear', 'pose_error'}) do
                 assert(type(avm_portrait['portrait_' .. name]) == 'function', name)
                 assert(type(avm_bridge['portrait_' .. name]) == 'function', name)
             end
@@ -74,15 +67,13 @@ int main(int argc, char** argv) {
             assert(avm_portrait.portrait_update(0, 0, 0, 0, 0, 0) == 0)
             avm_portrait.portrait_pose_clear()
         )");
-        // 两种宿主回调顺序都只保留一个 GPU 回调；hosted 没有实际绘制也可清理/重置。
-        set_hosted(1); hosted_present(); present(); present(); hosted_present();
-        assert(mode() == 1);
-        set_hosted(0); assert(mode() == 0); present(); hosted_present();
-        set_hosted(1);
+        // 不加载旧 UI DLL，只有独立预览拥有 Present/Reset 回调。
+        present(); present();
+        assert(mode() == 0);
         destroyed(lua.lua_state());
         reset();
     }
     assert(errors == 0);
-    std::puts("PASS: standalone Lua registration, runtime/portrait table merge, external D2D ownership, either host load order, one present/reset callback and Lua reset");
+    std::puts("PASS: standalone Lua registration, either bridge initialization order, external D2D ownership, one present/reset callback and Lua reset without the retired UI DLL");
     // 回调指针在 host 生命周期内有效；离线进程直接退出，不模拟运行中卸载插件。
 }

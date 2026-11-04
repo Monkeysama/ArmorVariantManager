@@ -119,7 +119,7 @@ function Runtime.new(config, callbacks)
 
     function runtime.tick(ui)
         if pending_reset then
-            if ui then ui.suspended(true) end
+            if ui and ui.suspended then ui.suspended(true) end
             pending_reset = false
             clear("scene")
             events, has_events, last_has_events = {}, false, nil
@@ -131,7 +131,8 @@ function Runtime.new(config, callbacks)
         runtime.equipment.begin_frame(frame)
         runtime.transition:tick()
         runtime.actors.tick()
-        if ui then ui.suspended(false); ui.update() end
+        if ui and ui.suspended then ui.suspended(false) end
+        if ui then ui.update() end
 
         if frame % 5 == 0 then
             local next_events = runtime.actors.events()

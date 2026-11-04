@@ -1,12 +1,6 @@
 local PortraitPreview = {}
 local PortraitCamera = require("ArmorVariantManager_Core.Games.Wilds.PortraitCamera")
 
--- 保留主面板的三栏结构，屏幕够宽时才为左侧预览分配独立空间。
-function PortraitPreview.widths(surface_width, enabled)
-    local card = enabled and surface_width >= 1100 and math.min(280, surface_width * 0.18) or 0
-    return math.min(1160, surface_width - 70 - card), card
-end
-
 local function finite(value)
     return type(value) == "number" and value == value and math.abs(value) < math.huge
 end

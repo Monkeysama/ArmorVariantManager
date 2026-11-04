@@ -44,13 +44,8 @@ local function fixture(action, modern, selection)
     end})
     env.sdk.find_type_definition=function() return env.type_mesh end
     _G.sdk, _G.imgui = env.sdk, env.imgui
-    local draw, callbacks
+    local draw
     if modern then
-        local context=dofile("tests/app_fixture.lua").new("Wilds")
-        context.appearance=app
-        local ws=context.workspace
-        ws.config=env.current_config
-        ws.is_globally_hidden=env.is_globally_hidden
         draw=require(prefix .. "UI.ImGui.Materials").new({
             access=require(prefix .. "Games.Wilds.MaterialView").new(), translate=env.T, edit=app.edit,
             owner=env.get_material_group_owner, global_groups=env.get_material_global_groups,
@@ -58,11 +53,9 @@ local function fixture(action, modern, selection)
             context=function() return {filters=env.mat_filter_text,pending=env.pending_material_selections,
                 selecting=selection,overrides=app.overrides,config=env.current_config,group=""} end,
         })
-        callbacks=dofile("tests/app_fixture.lua").legacy(context)
-    else draw, callbacks=legacy(env) end
+    else draw=legacy(env) end
     local object={call=function(_, method) assert(method == "getComponent(System.Type)"); return mesh end}
-    return {app=app, env=env, mesh=mesh, trace=trace, draw=function() draw(object, "Body", "armor", 0) end,
-        callbacks=callbacks}
+    return {app=app, env=env, mesh=mesh, trace=trace, draw=function() draw(object, "Body", "armor", 0) end}
 end
 
 for _, selection in ipairs({false, true}) do
@@ -76,24 +69,4 @@ for _, selection in ipairs({false, true}) do
     end
 end
 
-for _, enabled in ipairs({false, true}) do
-    for _, name in ipairs({"cloth", "locked", "missing"}) do
-        local old, new=fixture("",false), fixture("",true)
-        for _, f in ipairs({old,new}) do
-            -- 包含同名材质的全部索引、多 Mesh 和失效对象。
-            f.callbacks.set_mesh_enabled("armor",0,{f.mesh,false},enabled)
-            f.callbacks.set_material_enabled("armor",0,{f.mesh,false,f.mesh},name,enabled)
-        end
-        S.equal(new.trace,old.trace,"custom UI engine calls")
-        S.equal(new.app.overrides,old.app.overrides,"custom UI intent")
-        S.equal(new.mesh.values,old.mesh.values,"custom UI rendering")
-        assert(new.app.overrides.armor["0"].materials[name] == enabled)
-        if name == "locked" then assert(new.mesh.values[2] == false) end
-    end
-end
-local f=fixture("",true)
-local before=S.copy(f.app.overrides)
-assert(not f.callbacks.set_mesh_enabled(nil,0,{f.mesh},true))
-assert(#f.trace == 0)
-S.equal(f.app.overrides,before,"missing ID leaves draft intact")
-print("PASS: native and custom UI visibility matches legacy, global locks, multi-mesh and drafts")
+print("PASS: native visibility matches legacy, global locks, selection masks and drafts")

@@ -17,7 +17,7 @@ function App.new(options)
     local manual_import = not game.wilds and require(game.prefix .. "ManualImport").new() or nil
     app.manual_import = manual_import
     local Normalize = require("ArmorVariantManager_Core.Config.Normalize")
-    -- 预览和游戏选项装配后建立设置事务，三个界面共用保存与应用失败语义。
+    -- 预览和游戏选项装配后建立设置事务，REF/REFF 共用保存与应用失败语义。
     function app.initialize_settings()
         app.settings = require("ArmorVariantManager_Core.Config.Settings").new({
             global_session=app.global_settings,translate=app.translate,
@@ -110,7 +110,7 @@ function App.new(options)
         return backend.save(body_id, workspace.config, preserve_active_state)
     end
 
-    -- 将指定预设写为当前分组的默认预设，供旧 UI、新 UI 和自动保存开关共用。
+    -- 将指定预设写为当前分组的默认预设，供界面和自动保存开关共用。
     function app.set_preset_as_default(preset_name, body_id)
         if not body_id or not preset_name or preset_name == "" or not workspace.config then return false end
         local saved, reason = PresetEditor.set_default(workspace.config, state.group, preset_name, function(preserve)

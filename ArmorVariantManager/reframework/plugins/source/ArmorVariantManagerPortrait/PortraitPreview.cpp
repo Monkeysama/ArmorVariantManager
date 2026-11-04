@@ -279,20 +279,20 @@ return c;
 };
 std::unique_ptr<Overlay> overlay;
 
-// 每次 Present 都回收和检查心跳；hosted 本帧未绘制时也不会保留过期源。
-void present(bool submit) {
+// 每次 Present 都回收和检查心跳；REFF 停画时也不保留过期源。
+void present() {
     std::scoped_lock lock(gate);
     if (overlay) overlay->reclaim();
     if (drawing && GetTickCount64()-heartbeat>500) { drawing=false; source.Reset(); }
     if (reff_host) { if(!drawing)portrait_reff::stop();return; }
-    if (!submit || !host || !output_sdr_confirmed || faulted || !drawing || !source || GetTickCount64()-heartbeat>500) return;
+    if (!host || !output_sdr_confirmed || faulted || !drawing || !source || GetTickCount64()-heartbeat>500) return;
     try {
         if (!overlay) overlay=std::make_unique<Overlay>(*host->renderer_data);
         if (overlay->render(source.Get(),rectangle,alpha_mode)) ++drawn;
     } catch(const std::exception& error) { faulted=true; drawing=false; source.Reset(); last_error=error.what(); note(error.what()); }
 }
-// 内嵌 D2D 显式提交后绘制，外部 D2D 和独立使用沿用自动回调。
-void on_present() { present(portrait_gpu_present_mode() == 0); }
+// 公开独立预览入口沿用自动回调；REFF 模式只由正式合成器绘制。
+void on_present() { present(); }
 void on_reset() {
     std::scoped_lock lock(gate); drawing=false; source.Reset(); heartbeat=0;portrait_reff::stop();
     if (overlay && !overlay->drain()) { faulted=true; last_error="RESET GPU timeout; keeping resources alive, no more drawing"; note(last_error.c_str()); return; }
@@ -301,13 +301,7 @@ void on_reset() {
 }
 
 extern "C" __declspec(dllexport) int portrait_gpu_present_mode() {
-    if(reff_host)return 2;
-    const auto ui = GetModuleHandleW(L"ArmorVariantManager_UI.dll");
-    const auto hosted = ui ? reinterpret_cast<int (*)()>(GetProcAddress(ui, "avm_ui_portrait_hosted")) : nullptr;
-    return hosted && hosted() ? 1 : 0;
-}
-extern "C" __declspec(dllexport) void avm_portrait_present_hosted() {
-    if (portrait_gpu_present_mode() == 1) present(true);
+    return reff_host ? 2 : 0;
 }
 
 // 当前游戏可热加载的只读验证入口；查询成功才返回描述，临时 COM 引用自动释放。

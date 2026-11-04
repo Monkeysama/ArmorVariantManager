@@ -14,7 +14,7 @@
 2. 退出游戏，将通用包内的文件解压到游戏根目录（`MonsterHunterWilds.exe` 或 `MonsterHunterRise.exe` 所在的目录）。不要多套一层发布目录。
 3. 确认存在 `游戏目录/reframework/autorun/ArmorVariantManager.lua`，以及完整的 `reframework/reff/plugins/monkeysama.avm`。
 
-包内包含荒野旧弹窗与预览使用的两个 DLL、三项预览资源及许可证；在崛起中，这两个 DLL 不启动输入桥接、渲染或预览回调。无需为崛起手工删减通用包。
+包内包含荒野独立预览 DLL、三项预览资源及许可证；预览 DLL 在崛起中静默停用，无需手工删减通用包。
 
 ### 2. 使用
 
@@ -32,10 +32,10 @@
 - **帮助** 中可查看完整配置说明、使用方法和原荒野版本更新记录，没有角色时也能阅读。
 - 设置中的全局选项直接保存。材质显隐和荒野 **陷地修复** 属于预设草稿，调整后需新建或覆盖预设；高度控件位于 **部件材质** 右侧底部，悬停或键盘聚焦信息按钮可查看说明。
 - 数值可拖动滑动条快调，也可在输入框精确填写。受击时间、次数的滑动条范围只是快调范围，不限制原配置可保存的数值；保存失败时保留输入供重试。
-- 荒野勾选页面顶部的 **全身预览**，在左侧深色画布查看当前人物；画布随可用高度调整，镜头参数仍在 **设置** 中调整。关闭页面、切换插件或隐藏 REFF 后停止网页预览；原 Home 弹窗与网页共用一台预览相机。
-- 网页全身预览需要支持 **原生预览接口 v1、预览布局协议 2** 的 REFF 和本包的 `ArmorVariantManager_Portrait.dll`，目前只支持游戏 SDR 输出。升级时成套更新 REFF 的 DLL 与宿主 EXE，并同步本包网页文件；旧版 REFF 不影响原有预设管理和 Home 弹窗预览。
-- 荒野安装时同时保留 `ArmorVariantManager_UI.dll` 与 `ArmorVariantManager_Portrait.dll`：前者显示原弹窗，后者负责独立预览、模型姿态和 GPU 资源。
-- 原生菜单入口保持不变：在 REFramework 的 **Script Generated UI** 中展开差分管理器。没有安装 REFF 也能使用该入口；荒野原 Home 弹窗暂时保留。
+- 荒野勾选页面顶部的 **全身预览**，在左侧深色画布查看当前人物；画布随可用高度调整，镜头参数在 **设置** 中调整。关闭页面、切换插件或隐藏 REFF 后停止预览并释放相机。
+- 网页全身预览需要支持 **原生预览接口 v1、预览布局协议 2** 的 REFF 和本包的 `ArmorVariantManager_Portrait.dll`，目前只支持游戏 SDR 输出。升级时成套更新 REFF 的 DLL 与宿主 EXE，并同步本包网页文件；旧版 REFF 不影响原有预设管理和 REF 原生菜单。
+- 荒野只需保留 `ArmorVariantManager_Portrait.dll`，负责独立预览、模型姿态和 GPU 资源。旧 Home 弹窗、专属输入框架与 `ArmorVariantManager_UI.dll` 已退出，升级时按下节移出旧程序项。
+- 原生菜单入口保持不变：在 REFramework 的 **Script Generated UI** 中展开差分管理器。没有安装 REFF 也能使用该入口。
 - 原有 JSON 无需转换，仍从当前游戏的 `reframework/data/ArmorVariantManager` 读取和保存。
 
 ### 3. 常见问题
@@ -139,7 +139,7 @@ python build_release.py --output-dir ./output
 ```
 
 - 默认产物为 `release/ArmorVariantManager_v<版本>` 和 `release/差分管理器_v<版本>.zip`，REFF 清单同时声明 `MHWILDS` 与 `MHRISE`。
-- 包内保留完整 Lua 库存与旧 `require` 入口，启动时只创建当前游戏的运行服务。荒野保留旧 Home 弹窗与独立预览；对应 DLL 在崛起中不启动。
+- 包内保留业务模块的旧 `require` 入口，启动时只创建当前游戏的运行服务。荒野的独立预览通过 REFF 显示；预览 DLL 在崛起中不启动。
 - 同名产物已存在时默认不覆盖；确认要替换时添加 `--overwrite`。
 - 旧自动化显式使用的 `--game wilds`、`--game rise`、`--game all` 仍保留原构建含义；日常构建无需指定游戏。
 

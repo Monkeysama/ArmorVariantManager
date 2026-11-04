@@ -20,8 +20,8 @@ function Model.new(deps)
     end
     local function available()
         if preview() then return true end
-        return false, config.language == "en" and "Full-body preview is not connected to REFF yet."
-            or "全身预览尚未接入 REFF。"
+        return false, config.language == "en" and "Full-body preview service is unavailable."
+            or "全身预览服务不可用。"
     end
     local camera_defaults = PortraitCamera.settings()
     local fields = {
