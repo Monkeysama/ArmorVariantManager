@@ -15,10 +15,12 @@ function Main.start(ctx)
     local Targets = require("ArmorVariantManager_Core.Games.RE4.Targets")
     local CharacterId = require("ArmorVariantManager_Core.Games.RE4.CharacterId")
     local Localization = require("ArmorVariantManager_Core.Games.RE4.Localization")
+    local Dissolve = require("ArmorVariantManager_Core.Games.RE4.Dissolve")
 
     local global_config_path = "ArmorVariantManager/GlobalSettings.json"
     -- 默认英文(面板顶部有「中文」勾选框,勾了才切中文)。语言是全局的,不跟角色配置走。
-    local global_config = { language = "en" }
+    -- ui_dissolve_*:在面板上手动切状态 / 预设时的溶解过渡(只作用于溶解模板的材质)
+    local global_config = { language = "en", ui_dissolve_enabled = true, ui_dissolve_time = 1.0 }
     local function load_global_settings()
         local loaded = json.load_file(global_config_path)
         if not loaded then return end
@@ -29,6 +31,8 @@ function Main.start(ctx)
         if type(loaded.weapon_hide_storage) == "boolean" then
             global_config.weapon_hide_storage = loaded.weapon_hide_storage
         end
+        if type(loaded.ui_dissolve_enabled) == "boolean" then global_config.ui_dissolve_enabled = loaded.ui_dissolve_enabled end
+        if tonumber(loaded.ui_dissolve_time) then global_config.ui_dissolve_time = tonumber(loaded.ui_dissolve_time) end
     end
     local function save_global_settings()
         json.dump_file(global_config_path, global_config)
@@ -720,13 +724,42 @@ function Main.start(ctx)
     -- 面板当前编辑的目标(Targets.collect 给的 id)。nil = 还没选过,取第一个(本地玩家)。
     local selected_target_id = nil
 
-    local function apply_resolved(source, resolved, active_preview)
+    -- 一个槛位的材质开关,经过溶解(Dissolve.lua):带 Dissolve_Rate 的材质按过渡溶解,其余照旧瞬间开关。
+    --   owner_of(slot, mat) -> 决定这个材质的层键;trans[层键] = 这一层当前的过渡设置(nil = 瞬间)
+    --   drive[mat] = { on = 终点外观里的开关, p = 进度 }:血量驱动中、两种外观里开关不同的材质
+    -- 只处理传进来的材质名,没提到的材质保持原状(同 Utils.apply_preset_to_slot)。
+    local function apply_slot(mesh, slot, slot_data, owner_of, trans, drive)
+        local ok, count = pcall(function() return mesh:call("get_MaterialNum") end)
+        if not ok or not count or count <= 0 then return end
+        for i = 0, count - 1 do
+            local ok_n, name = pcall(function() return mesh:call("getMaterialName", i) end)
+            if ok_n and name then
+                local d = drive and drive[name]
+                local want = slot_data.materials[name]
+                if d or want ~= nil then
+                    local ok_c, cur = pcall(function() return mesh:call("getMaterialsEnable", i) end)
+                    if ok_c then
+                        if d then
+                            pcall(Dissolve.drive_material, mesh, i, d.on, d.p, cur)
+                        elseif cur ~= want or Dissolve.is_animating(mesh, i) then
+                            local key = owner_of and owner_of(slot, name)
+                            Dissolve.use(trans and key and trans[key] or nil)
+                            pcall(Dissolve.set_material, mesh, i, want, cur)
+                        end
+                    end
+                end
+            end
+        end
+        Dissolve.use(nil)
+    end
+
+    local function apply_resolved(source, resolved, active_preview, owner_of, trans, drive_map)
         if not resolved then return end
         for _, slot in ipairs(Utils.MESH_SLOTS) do
             local slot_data = resolved[slot]
             if slot_data then
                 local mesh = Utils.get_mesh(source, slot)
-                if mesh then Utils.apply_preset_to_slot(mesh, slot_data) end
+                if mesh then apply_slot(mesh, slot, slot_data, owner_of, trans, drive_map and drive_map[slot]) end
             end
         end
         -- 预览盖在正常结果之上,否则会被 resolve 的输出压回去
@@ -830,6 +863,60 @@ function Main.start(ctx)
         end
     end
 
+    -- ============================================================
+    -- 溶解过渡(Dissolve.lua)
+    --
+    -- 每个目标记住各层上一帧的选择。某一层的选择变了,就按"引起变化的那条规则"定这一层的过渡,
+    -- 这一层写出的材质都用它,直到下一次变化:
+    --   * 进入一条规则的状态:用这条规则的渐入时间。新状态的优先级比原来的高(在状态列表里更靠上,
+    --     或原来是手动选的)= 正向(中心向外);否则反向(外向中心)
+    --   * 规则不再成立、回到手动选择:用这条规则的渐出时间,反向
+    --   * 两边都不是规则(在面板上手动切换):用全局的「界面切换溶解」设置,正向
+    -- 首次应用、mesh 换了实例时一律瞬间,不播过渡。
+    --
+    -- 血量驱动:层里勾了「按血量驱动」的规则组成一条链(见 TransformManager 的 hp_chain)。
+    -- 进度按目标 + 层平滑;这一段起点与终点两种外观里开关不同的材质交给 Dissolve.drive_material,
+    -- 其余材质照常。驱动期间每帧都重写。
+    -- ============================================================
+    local dissolve_state = {}   -- target.id -> { picks = { [层键] = { name, rule } }, trans = {}, owner = {}, drives = {} }
+
+    local function layer_of(config, key)
+        if key == "base" then return config.base end
+        return (config.axes or {})[key:sub(6)]
+    end
+
+    -- 状态在层里的优先级位置(越小越优先);手动选择 / 无 = 最低
+    local function layer_pos(layer, name)
+        if not layer or not name then return math.huge end
+        local order = layer.order
+        if type(order) ~= "table" or #order == 0 then
+            order = {}
+            for n, _ in pairs(layer.presets or {}) do table.insert(order, n) end
+            table.sort(order)
+        end
+        for i, n in ipairs(order) do if n == name then return i end end
+        return math.huge
+    end
+
+    local function choose_transition(layer, old, new)
+        if new.rule then
+            if new.rule.dissolve_enabled ~= true then return nil end
+            local forward = (not old.rule) or layer_pos(layer, new.name) < layer_pos(layer, old.name)
+            return { enabled = true, dur = tonumber(new.rule.dissolve_hide_time) or 0.5, forward = forward }
+        elseif old.rule then
+            if old.rule.dissolve_enabled ~= true then return nil end
+            return { enabled = true, dur = tonumber(old.rule.dissolve_show_time) or 0.5, forward = false }
+        end
+        return { enabled = global_config.ui_dissolve_enabled ~= false,
+                 dur = math.max(0, math.min(30, tonumber(global_config.ui_dissolve_time) or 1.0)), forward = true }
+    end
+
+    local function copy_picks(t)
+        local o = {}
+        for k, v in pairs(t) do o[k] = v end
+        return o
+    end
+
     -- 一个目标一帧的活。玩家和 CG 傀儡走的是**同一条**路径 —— 区别只在 target.source
     -- 是 BodyUpdater 还是一张 mesh 表,而那个区别整个封在 Utils.get_mesh 里。
     local function apply_target(target, preview_active)
@@ -858,12 +945,72 @@ function Main.start(ctx)
         -- resolve 的第一个参数只是变化检测的缓存键,必须**按目标**唯一:
         -- 同一个 kind 的两具傀儡同时在场时,用 kind_id 当键会让它俩互相顶掉签名,
         -- 表现成 changed 乱跳。
-        local resolved, changed = TransformManager.resolve(target.id, config, target.context, source)
+        local resolved, changed, info = TransformManager.resolve(target.id, config, target.context, source)
 
         -- 一:mesh 实例被换掉 —— 之前写的开关必然全丢,无条件重新应用。每帧四次指针比较,很便宜。
         local identity = Utils.get_mesh_identity(source)
         local mesh_swapped = (last_mesh_identity[target.id] ~= identity)
         last_mesh_identity[target.id] = identity
+
+        -- 溶解:各层选择的变化 → 这一层的过渡;首次 / mesh 换实例时清空(瞬间应用)
+        local ds = dissolve_state[target.id]
+        local fresh = mesh_swapped or not ds
+        if fresh then
+            for dkey, _ in pairs(ds and ds.drives or {}) do Dissolve.drive_end(dkey) end
+            ds = { picks = {}, trans = {}, owner = {}, drives = {} }
+            dissolve_state[target.id] = ds
+        end
+        for key, cur in pairs(info.layers) do
+            local old = ds.picks[key]
+            if not fresh and old and old.name ~= cur.name then
+                ds.trans[key] = choose_transition(layer_of(config, key), old, cur)
+            end
+            ds.picks[key] = cur
+        end
+
+        -- 血量驱动:起点外观(各驱动层取本段起点)照常应用,和本段终点不同的材质按进度溶解
+        local drive_map, drive_stopped = nil, false
+        local now_drives = {}
+        if next(info.drives) then
+            local from_picks, segments = copy_picks(info.picks), {}
+            for key, d in pairs(info.drives) do
+                local dkey = target.id .. "|" .. key
+                now_drives[dkey] = true
+                local chain = Dissolve.drive_progress(dkey, d.chain)
+                local k = math.max(1, math.min(#d.names, math.ceil(chain)))
+                from_picks[key] = (k > 1) and d.names[k - 1] or d.base_name
+                segments[key] = { to = d.names[k], p = math.max(0, math.min(1, chain - (k - 1))) }
+            end
+            local from_owner
+            resolved, from_owner = info.build(from_picks)
+            info.owner = from_owner
+            drive_map = {}
+            for key, seg in pairs(segments) do
+                local to_picks = copy_picks(from_picks)
+                to_picks[key] = seg.to
+                for slot, data in pairs((info.build(to_picks))) do
+                    for m, v in pairs(data.materials) do
+                        local f = resolved[slot] and resolved[slot].materials[m]
+                        if f ~= nil and f ~= v then
+                            drive_map[slot] = drive_map[slot] or {}
+                            drive_map[slot][m] = { on = v, p = seg.p }
+                        end
+                    end
+                end
+            end
+        end
+        for dkey, _ in pairs(ds.drives) do
+            if not now_drives[dkey] then Dissolve.drive_end(dkey); drive_stopped = true end
+        end
+        ds.drives = now_drives
+        -- 材质归属:这一帧写出它的层;基线(全启用)写出的,沿用上一次写它的层(那一层刚放手)
+        local owner, prev_owner = info.owner, ds.owner
+        local function owner_of(slot, mat)
+            local o = owner[slot] and owner[slot][mat]
+            if o then return o end
+            return prev_owner[slot] and prev_owner[slot][mat]
+        end
+        local trans = (not fresh) and ds.trans or nil
 
         -- 二:mesh 没换但开关被游戏重置了 —— 每帧全量核对太浪费,隔几十帧抽一次。
         -- 预览期间要跳过:那时 mesh 上的状态是故意和 resolved 不一致的,不是漂移。
@@ -882,12 +1029,19 @@ function Main.start(ctx)
         -- 预览期间每帧都重写:否则任何一次 resolve 输出或游戏自己的重置都会把它盖掉。
         -- 预览只作用在面板当前选中的那个目标上,不能糊到同 kind 的其它目标身上。
         local use_preview = preview_active and (preview.target_id == target.id) and preview or nil
-        if changed or mesh_swapped or drifted or force_reapply or use_preview then
-            apply_resolved(source, resolved, use_preview)
+        if changed or mesh_swapped or drifted or force_reapply or use_preview or drive_map or drive_stopped then
+            apply_resolved(source, resolved, use_preview, owner_of, trans, drive_map)
+            -- 记住这次谁写了哪个材质;没写到的沿用旧的,好让"放手"那一帧还找得到是哪一层
+            for slot, mats in pairs(owner) do
+                prev_owner[slot] = prev_owner[slot] or {}
+                for m, k in pairs(mats) do prev_owner[slot][m] = k end
+            end
         end
     end
 
     local function frame_logic()
+        -- 推进正在跑的溶解过渡(和有没有目标无关:目标消失时动画自己会清掉)
+        Dissolve.update()
         local targets = Targets.collect()
         if #targets == 0 then return end
 
@@ -1010,6 +1164,11 @@ function Main.start(ctx)
     end
 
     local function rule_to_string(rule)
+        if rule.dissolve_hp_driven == true then
+            -- 血量驱动的规则不看条件,概览里写它的血量范围
+            return string.format(T("hp_drive_rule"), tonumber(rule.dissolve_hp_upper) or 100,
+                tonumber(rule.dissolve_hp_lower) or 0) .. "  ->  " .. tostring(rule.preset or "")
+        end
         local parts = {}
         for _, c in ipairs(rule.conditions or {}) do table.insert(parts, cond_to_string(c)) end
         if #parts == 0 then return T("cond_none") end
@@ -1332,7 +1491,7 @@ function Main.start(ctx)
                         end
                         -- 用带闩锁的判定,否则"保持中"的那两秒会显示成没命中,
                         -- 而画面上明明是它在生效 —— 概览和实际打脸比不显示更糟
-                        if TransformManager.rule_hits(rule, context) then
+                        if rule.dissolve_hp_driven ~= true and TransformManager.rule_hits(rule, context) then
                             line = line .. ((eff_name == pname)
                                 and ("  (" .. T("rule_effective") .. ")")
                                 or  ("  (" .. T("rule_shadowed") .. ")"))
@@ -1402,7 +1561,8 @@ function Main.start(ctx)
             if to_delete then
                 table.remove(conds, to_delete)
                 -- 最后一个条件被删掉 = 这条规则不该继续存在(空条件永远不命中)
-                if #conds == 0 and rule_idx then table.remove(layer.rules, rule_idx) end
+                -- (血量驱动的规则不靠条件,删光条件也保留)
+                if #conds == 0 and rule_idx and rule.dissolve_hp_driven ~= true then table.remove(layer.rules, rule_idx) end
                 save_config(kind_id); request_reapply()
                 return
             end
@@ -1426,6 +1586,75 @@ function Main.start(ctx)
                 save_config(kind_id); request_reapply()
             end
             imgui.text("  " .. T("hold_hint"))
+        end
+
+        -- 溶解(Dissolve.lua),只作用于溶解模板的材质。
+        --   溶解过渡:进入 / 离开这个状态时按时长溶解,而不是瞬间开关
+        --   按血量驱动:不看条件,溶解进度直接跟血量走;没有规则时也给勾选框,勾上就建一条空条件的规则
+        imgui.separator()
+        if rule then
+            local ch_de, de = imgui.checkbox(T("dissolve_transition") .. "###dis_" .. id_prefix, rule.dissolve_enabled == true)
+            if ch_de then
+                rule.dissolve_enabled = de or nil
+                if de then
+                    rule.dissolve_hide_time = rule.dissolve_hide_time or 0.5
+                    rule.dissolve_show_time = rule.dissolve_show_time or 0.5
+                end
+                save_config(kind_id)
+            end
+            if rule.dissolve_enabled == true and rule.dissolve_hp_driven ~= true then
+                for _, field in ipairs({ "dissolve_hide_time", "dissolve_show_time" }) do
+                    ui_w()
+                    local ch_t, tv = imgui.slider_float(T(field) .. "###" .. field .. "_" .. id_prefix,
+                        tonumber(rule[field]) or 0.5, 0.0, 10.0)
+                    if ch_t then
+                        rule[field] = math.floor(tv * 10 + 0.5) / 10
+                        save_config(kind_id)
+                    end
+                end
+            end
+        end
+        local driven = rule ~= nil and rule.dissolve_hp_driven == true
+        local ch_hd, hd = imgui.checkbox(T("dissolve_hp_driven") .. "###hpd_" .. id_prefix, driven)
+        if ch_hd then
+            if hd then
+                if not rule then
+                    rule = { conditions = {}, logic = "AND", preset = target }
+                    table.insert(layer.rules, rule)
+                end
+                rule.dissolve_hp_driven = true
+                rule.dissolve_hp_upper = rule.dissolve_hp_upper or 100
+                rule.dissolve_hp_lower = rule.dissolve_hp_lower or 0
+            elseif rule then
+                rule.dissolve_hp_driven = nil
+                -- 只为血量驱动建的空规则,取消后一并删掉(空条件永远不命中)
+                if #(rule.conditions or {}) == 0 then
+                    for i, r in ipairs(layer.rules) do
+                        if r == rule then table.remove(layer.rules, i); break end
+                    end
+                end
+            end
+            save_config(kind_id); request_reapply()
+            return
+        end
+        if driven then
+            for _, field in ipairs({ "dissolve_hp_upper", "dissolve_hp_lower" }) do
+                ui_w()
+                local ch_v, v = imgui.slider_float(T(field) .. "###" .. field .. "_" .. id_prefix,
+                    tonumber(rule[field]) or (field == "dissolve_hp_upper" and 100 or 0), 0.0, 100.0)
+                if ch_v then
+                    rule[field] = math.floor(v + 0.5)
+                    save_config(kind_id)
+                end
+            end
+            ui_w()
+            local ch_dir, dir = imgui.combo(T("dissolve_hp_dir") .. "###hpdir_" .. id_prefix,
+                rule.dissolve_hp_invert == true and 2 or 1, { T("dissolve_hp_dir_low"), T("dissolve_hp_dir_high") })
+            if ch_dir then
+                rule.dissolve_hp_invert = (dir == 2) or nil
+                save_config(kind_id)
+            end
+            imgui.text("  " .. T("dissolve_hp_hint"))
         end
 
         -- 五、加条件。表单默认收起:大部分时间是来看/删的,不是来加的。
@@ -1889,6 +2118,22 @@ function Main.start(ctx)
         if ch_st then
             global_config.weapon_hide_storage = st
             save_global_settings()
+        end
+        -- 界面切换溶解:在面板上手动切状态 / 预设时播放溶解(只作用于溶解模板的材质)
+        local ch_ud, ud = imgui.checkbox(T("ui_dissolve_enabled") .. "###ui_dissolve",
+            global_config.ui_dissolve_enabled ~= false)
+        if ch_ud then
+            global_config.ui_dissolve_enabled = ud
+            save_global_settings()
+        end
+        if global_config.ui_dissolve_enabled ~= false then
+            ui_w()
+            local ch_ut, ut = imgui.slider_float(T("ui_dissolve_time") .. "###ui_dissolve_time",
+                tonumber(global_config.ui_dissolve_time) or 1.0, 0.0, 30.0)
+            if ch_ut then
+                global_config.ui_dissolve_time = math.floor(ut * 10 + 0.5) / 10
+                save_global_settings()
+            end
         end
 
         -- ============================================================

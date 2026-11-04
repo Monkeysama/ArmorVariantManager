@@ -105,6 +105,7 @@ end
 -- 所以开关只管"规则跑不跑",不新增第三种语义。
 --
 -- **nil 当 true**(老配置没这个字段),只有显式 false 才算关。
+-- 第三个返回值:命中的那条规则(溶解过渡要读它的设置);手动选择时为 nil。
 local function pick_active_preset(layer, context)
     if not layer then return nil, false end
     local presets = layer.presets or {}
@@ -116,11 +117,12 @@ local function pick_active_preset(layer, context)
     end
 
     -- 先把 rules 按目标状态归拢:一个状态理论上可以有多条规则(老配置/手改 json),
-    -- 任一条命中就算这个状态成立
+    -- 任一条命中就算这个状态成立。
+    -- 血量驱动的规则(dissolve_hp_driven)不按条件命中,由 resolve 里的血量链单独处理
     local by_preset = {}
     for _, rule in ipairs(layer.rules or {}) do
         local p = rule.preset
-        if p and p ~= "" then
+        if p and p ~= "" and rule.dissolve_hp_driven ~= true then
             if not by_preset[p] then by_preset[p] = {} end
             table.insert(by_preset[p], rule)
         end
@@ -131,7 +133,7 @@ local function pick_active_preset(layer, context)
             for _, rule in ipairs(by_preset[name]) do
                 -- 保持中的状态**算命中**,所以照常参与优先级竞争
                 -- (受伤保持那两秒里压住低血量,这正是想要的)
-                if TransformManager.rule_hits(rule, context) then return name, true end
+                if TransformManager.rule_hits(rule, context) then return name, true, rule end
             end
         end
     end
@@ -299,80 +301,173 @@ function TransformManager.is_base_preset_usable(source, preset)
     return next(TransformManager.usable_slots(source, preset)) ~= nil
 end
 
+-- 血量驱动(溶解):一层里勾了 dissolve_hp_driven 的规则组成一条链。每条把血量在自己的上限 / 下限之间
+-- 映射成进度 0..1;第 k 段从第 k-1 条的状态(k = 1 时是没有血量驱动时这一层原本的选择)溶解到第 k 条的状态。
+-- 链的顺序跟着血量走:上限从高到低(全部反向时按下限从低到高;方向混用时按规则列表顺序)。
+-- 返回 { chain = (k-1) + 最后一条已开始的进度(0..条数), names = 链上各状态名 },不驱动时返回 nil。
+-- 不驱动的情形:这一层关了自动;读不到血量;或者有条**优先级更高**的普通规则命中(受伤这类瞬时状态照常压住)。
+local function hp_chain(layer, context, normal_name, normal_rule)
+    if not layer or layer.auto == false then return nil end
+    local presets = layer.presets or {}
+    local items, inverted, normal = {}, 0, 0
+    for index, rule in ipairs(layer.rules or {}) do
+        if rule.dissolve_hp_driven == true and rule.preset and presets[rule.preset] then
+            table.insert(items, { rule = rule, index = index,
+                upper = tonumber(rule.dissolve_hp_upper) or 100, lower = tonumber(rule.dissolve_hp_lower) or 0 })
+            if rule.dissolve_hp_invert == true then inverted = inverted + 1 else normal = normal + 1 end
+        end
+    end
+    if #items == 0 then return nil end
+    if normal_rule then
+        local pos = {}
+        for i, n in ipairs(ordered_names(layer)) do pos[n] = i end
+        local first = math.huge
+        for _, it in ipairs(items) do first = math.min(first, pos[it.rule.preset] or math.huge) end
+        if (pos[normal_name] or math.huge) < first then return nil end
+    end
+    local hp = Condition_HP.get(context)
+    if type(hp) ~= "number" then return nil end
+    if inverted == 0 then
+        table.sort(items, function(a, b)
+            if a.upper ~= b.upper then return a.upper > b.upper end
+            return a.index < b.index
+        end)
+    elseif normal == 0 then
+        table.sort(items, function(a, b)
+            if a.lower ~= b.lower then return a.lower < b.lower end
+            return a.index < b.index
+        end)
+    end
+    local chain, names = 0, {}
+    for k, it in ipairs(items) do names[k] = it.rule.preset end
+    for k = #items, 1, -1 do
+        local it = items[k]
+        local p
+        if it.upper > it.lower then
+            p = math.max(0, math.min(1, (it.upper - hp) / (it.upper - it.lower)))
+        else
+            p = hp <= it.upper and 1 or 0
+        end
+        if it.rule.dissolve_hp_invert == true then p = 1 - p end
+        if p > 0 then chain = (k - 1) + p; break end
+    end
+    return { chain = chain, names = names }
+end
+
 -- 解算最终状态。
 -- 返回:
 --   resolved  { [slot] = { materials = { [mat] = bool } } }   最终要写进 mesh 的
 --   changed   跟上次相比状态变了没(用来省掉无谓的重写)
+--   info      溶解要用的:{ layers = { [层键] = { name, rule } }, owner = { [slot] = { [mat] = 层键 } },
+--             picks = { [层键] = 状态名 }, drives = { [层键] = hp_chain 的结果 + base_name }, build = function(picks) }
+--             层键:"base" 或 "axis:<状态组名>"。build 按给定的各层选择重算一份 resolved, owner
 --
 -- 曾经还返回一份 provenance(每个材质是哪一层决定的)给溯源面板用,已删 —— 理由见 AGENTS.md:
 -- 作用域唯一归属 ⇒ "谁决定的"没有歧义可言,面板只能告诉你已经知道的事。
+-- (info.owner 是给溶解选过渡用的:一个材质由哪一层写出,就用那一层的过渡设置。)
 function TransformManager.resolve(char_addr, config, context, body_updater)
-    local resolved = {}
-
-    local function write(slot, mat, val)
-        if val == nil then return end
-        resolved[slot] = resolved[slot] or { materials = {} }
-        resolved[slot].materials[mat] = val
-    end
-
-    -- 基线。
-    -- 选了整套造型预设、且它跟当前模型的材质对得上,就用它;否则全启用兜底
-    -- (= 模型作者原本的样子)。对不上时**宁可什么都不做,也不要套出个半残的**。
     local base = config.base or {}
-    local base_name = pick_active_preset(base, context)
-    -- **逐槛位**判可用,不再是一个整份的布尔。见 usable_slots 的注释。
-    local usable = base_name and TransformManager.usable_slots(body_updater, base.presets[base_name]) or {}
-
-    -- 全启用先铺一层:预设里没提到的材质(modder 后来新加的)才有确定值,
-    -- 而不是保留游戏当时的残留状态。
-    --
-    -- 这一层**刻意保持对所有槛位无条件铺开**,没跟着改成逐槛位。它保证的是
-    -- "没被预设点名的材质有确定值"这个不变量,和"预设在这个槛位上可不可用"是两件事;
-    -- 而且预设整个不可用时(含选了「(无)」)全启用就是既定的兜底行为。
-    -- 只把**预设的覆盖**改成逐槛位,改动面最小。
-    for slot, data in pairs(Utils.all_enabled_preset(body_updater)) do
-        for m, v in pairs(data.materials) do write(slot, m, v) end
-    end
-    if base_name then
-        for slot, data in pairs(base.presets[base_name]) do
-            if usable[slot] and type(data) == "table" then
-                for m, v in pairs(data.materials or {}) do write(slot, m, v) end
-            end
-        end
-    end
-
-    -- 轴:稀疏叠加。作用域不重叠时,顺序不影响结果。
-    -- **应用顺序**,不是优先级顺序(见上面那段注释)
     local axis_names = TransformManager.axis_apply_order(config)
-    for _, name in ipairs(axis_names) do
-        local axis = config.axes[name]
-        local pname = pick_active_preset(axis, context)
-        if pname then
-            for slot, data in pairs(axis.presets[pname]) do
-                if type(data) == "table" then
-                    for m, v in pairs(data.materials or {}) do write(slot, m, v) end
+
+    -- 全启用那一层和逐槛位可用判定都要读 mesh,一次解算里只读一次
+    local baseline = Utils.all_enabled_preset(body_updater)
+    local usable_cache = {}
+    local function usable_of(name)
+        if not name or not (base.presets or {})[name] then return {} end
+        if not usable_cache[name] then
+            usable_cache[name] = TransformManager.usable_slots(body_updater, base.presets[name])
+        end
+        return usable_cache[name]
+    end
+
+    local function build(picks)
+        local resolved, owner = {}, {}
+        local function write(slot, mat, val, key)
+            if val == nil then return end
+            resolved[slot] = resolved[slot] or { materials = {} }
+            resolved[slot].materials[mat] = val
+            owner[slot] = owner[slot] or {}
+            owner[slot][mat] = key
+        end
+
+        -- 基线。
+        -- 选了整套造型预设、且它跟当前模型的材质对得上,就用它;否则全启用兜底
+        -- (= 模型作者原本的样子)。对不上时**宁可什么都不做,也不要套出个半残的**。
+        --
+        -- 全启用先铺一层:预设里没提到的材质(modder 后来新加的)才有确定值,
+        -- 而不是保留游戏当时的残留状态。
+        --
+        -- 这一层**刻意保持对所有槛位无条件铺开**,没跟着改成逐槛位。它保证的是
+        -- "没被预设点名的材质有确定值"这个不变量,和"预设在这个槛位上可不可用"是两件事;
+        -- 而且预设整个不可用时(含选了「(无)」)全启用就是既定的兜底行为。
+        -- 只把**预设的覆盖**改成逐槛位,改动面最小。
+        for slot, data in pairs(baseline) do
+            for m, v in pairs(data.materials) do write(slot, m, v, nil) end
+        end
+        local base_name = picks.base
+        -- **逐槛位**判可用,不再是一个整份的布尔。见 usable_slots 的注释。
+        local usable = usable_of(base_name)
+        if base_name and (base.presets or {})[base_name] then
+            for slot, data in pairs(base.presets[base_name]) do
+                if usable[slot] and type(data) == "table" then
+                    for m, v in pairs(data.materials or {}) do write(slot, m, v, "base") end
                 end
             end
         end
+
+        -- 轴:稀疏叠加。作用域不重叠时,顺序不影响结果。
+        -- **应用顺序**,不是优先级顺序(见上面那段注释)
+        for _, name in ipairs(axis_names) do
+            local axis = config.axes[name]
+            local key = "axis:" .. name
+            local pname = picks[key]
+            if pname and axis.presets[pname] then
+                for slot, data in pairs(axis.presets[pname]) do
+                    if type(data) == "table" then
+                        for m, v in pairs(data.materials or {}) do write(slot, m, v, key) end
+                    end
+                end
+            end
+        end
+
+        -- 护甲镜像:把 body 的最终结果整份复制给 armor,按材质名对应。
+        --
+        -- 放在这里(base + 轴都合并完之后)是因为要跟随**任何来源**算出的 body 结果 ——
+        -- 不管是整套造型给的,还是某个状态组、某条规则算出来的,armor 都自动跟着走,
+        -- 用户开了这个开关之后,以后新建什么都不用再管 armor。
+        --
+        -- **完全覆盖,不是"填默认值"**:armor 上此前(base 或轴)单独写过的材质全部作废,
+        -- 直接换成 body 的整份结果。不做"body 填底、armor 自己配置的材质名可以盖回来"
+        -- 那种合并 —— 半镜像半自定义的状态没法一眼看出哪块是镜像的、哪块是手动的,
+        -- 想给 armor 单独配点什么,必须先关掉这个开关。
+        if config.armor_mirrors_body then
+            local mirrored, mirrored_owner = { materials = {} }, {}
+            for m, v in pairs((resolved.body and resolved.body.materials) or {}) do
+                mirrored.materials[m] = v
+                mirrored_owner[m] = owner.body and owner.body[m]
+            end
+            resolved.armor = mirrored
+            owner.armor = mirrored_owner
+        end
+        return resolved, owner, usable
     end
 
-    -- 护甲镜像:把 body 的最终结果整份复制给 armor,按材质名对应。
-    --
-    -- 放在这里(base + 轴都合并完之后)是因为要跟随**任何来源**算出的 body 结果 ——
-    -- 不管是整套造型给的,还是某个状态组、某条规则算出来的,armor 都自动跟着走,
-    -- 用户开了这个开关之后,以后新建什么都不用再管 armor。
-    --
-    -- **完全覆盖,不是"填默认值"**:armor 上此前(base 或轴)单独写过的材质全部作废,
-    -- 直接换成 body 的整份结果。不做"body 填底、armor 自己配置的材质名可以盖回来"
-    -- 那种合并 —— 半镜像半自定义的状态没法一眼看出哪块是镜像的、哪块是手动的,
-    -- 想给 armor 单独配点什么,必须先关掉这个开关。
-    if config.armor_mirrors_body then
-        local mirrored = { materials = {} }
-        for m, v in pairs((resolved.body and resolved.body.materials) or {}) do
-            mirrored.materials[m] = v
+    -- 各层这一帧的选择(血量驱动的规则不参与,见 pick_active_preset)
+    local layers, picks, drives = {}, {}, {}
+    local function pick_layer(key, layer)
+        local name, _, rule = pick_active_preset(layer, context)
+        layers[key] = { name = name, rule = rule }
+        picks[key] = name
+        local d = hp_chain(layer, context, name, rule)
+        if d then
+            d.base_name = name
+            drives[key] = d
         end
-        resolved.armor = mirrored
     end
+    pick_layer("base", base)
+    for _, name in ipairs(axis_names) do pick_layer("axis:" .. name, config.axes[name]) end
+
+    local resolved, owner, usable = build(picks)
 
     -- 变化检测:**只记决策结果,不记条件原始值**。
     -- 输出完全由"各层最终选了哪个预设"决定,条件只是喂给 pick_active_preset 的输入,
@@ -381,20 +476,20 @@ function TransformManager.resolve(char_addr, config, context, body_updater)
     -- 签名里要带**哪些槛位生效了**,不只是选了哪个预设:
     -- 穿脱护甲会让 usable 的集合变化而 base_name 不变,只记名字的话 changed 恒为假,
     -- 那一次变化就永远不会被重写。
+    -- (血量驱动的进度不进签名:驱动期间调用方每帧都会重写。)
     local usable_sig = ""
     for _, slot in ipairs(Utils.MESH_SLOTS) do
         if usable[slot] then usable_sig = usable_sig .. slot .. "," end
     end
-    local sig = "base=" .. tostring(base_name) .. "[" .. usable_sig .. "]"
+    local sig = "base=" .. tostring(picks.base) .. "[" .. usable_sig .. "]"
     for _, name in ipairs(axis_names) do
-        local pname = pick_active_preset(config.axes[name], context)
-        sig = sig .. "|" .. name .. "=" .. tostring(pname)
+        sig = sig .. "|" .. name .. "=" .. tostring(picks["axis:" .. name])
     end
     local cache_key = char_addr .. "_" .. tostring(config)
     local changed = (last_state_cache[cache_key] ~= sig)
     last_state_cache[cache_key] = sig
 
-    return resolved, changed
+    return resolved, changed, { layers = layers, owner = owner, picks = picks, drives = drives, build = build }
 end
 
 return TransformManager

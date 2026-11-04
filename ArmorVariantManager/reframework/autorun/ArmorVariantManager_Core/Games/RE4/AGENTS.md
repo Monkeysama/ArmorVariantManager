@@ -75,7 +75,8 @@ ArmorVariantManager/reframework/autorun/
     Utils.lua              角色/BodyUpdater 查找、材质开关(mesh 来源抽象:BodyUpdater 或 mesh 表)
     Targets.lua            目标枚举:本地玩家 + 当前在场的 CG 傀儡
     CharacterId.lua        角色识别(配置键 = 角色名,指纹为辅)
-    TransformManager.lua   条件求值 -> 差分覆盖层合并
+    TransformManager.lua   条件求值 -> 差分覆盖层合并(含血量驱动的溶解链 hp_chain)
+    Dissolve.lua           溶解过渡:只作用于带 Dissolve_Rate 的溶解模板材质,其余材质瞬间开关
     Localization.lua
     Conditions/
       Registry.lua           条件注册表 + 规则求值(加条件从这里入口)

@@ -90,7 +90,8 @@ local function run(scenario)
     for name in pairs(package.loaded) do
         if name:match("^ArmorVariantManager") then package.loaded[name] = nil end
     end
-    local files = {[GLOBAL_PATH] = {language = "zh", extra = {keep = true}}}
+    local files = {[GLOBAL_PATH] = {language = "zh", ui_dissolve_enabled = false, ui_dissolve_time = 2.5,
+        extra = {keep = true}}}
     if scenario.config then files[CONFIG_PATH] = S.copy(scenario.config) end
     local frames, draws, errors, imports = {}, {}, {}, {}
 
@@ -154,7 +155,7 @@ local function run(scenario)
             and not name:match("^ArmorVariantManager_Core%.Games%.Rise") and name ~= "reff.sdk",
             "RE4 must not load shared application module " .. name)
     end
-    assert(imports["ArmorVariantManager_Core.Games.RE4.Main"])
+    assert(imports["ArmorVariantManager_Core.Games.RE4.Main"] and imports["ArmorVariantManager_Core.Games.RE4.Dissolve"])
 
     for _ = 1, 40 do frames[1]() end
     for _ = 1, 3 do draws[1]() end
@@ -170,7 +171,10 @@ S.equal(meshes.hair.state(), {Hair = false, Clip = true})
 assert(files[CONFIG_PATH].extra.keep == true, "unknown config fields survive")
 assert(files[CONFIG_PATH].axes["Hide Hair"].presets.On.hair.materials.Hair == false)
 assert(files[GLOBAL_PATH].language == "zh", "global language is preserved")
-print("PASS: RE4 standalone entry, no shared app/REFF modules, v2 base + sparse axis applied, unknown fields kept")
+-- 0.4.3 的界面溶解设置要原样留住：全局设置保存时整表写回，漏读的字段会被清掉。
+assert(files[GLOBAL_PATH].ui_dissolve_enabled == false and files[GLOBAL_PATH].ui_dissolve_time == 2.5,
+    "global dissolve settings are preserved")
+print("PASS: RE4 standalone entry, no shared app/REFF modules, v2 base + sparse axis applied, unknown fields and dissolve settings kept")
 
 -- 没有玩家（标题画面、读盘中）：回调照常运行，不报错、不碰配置。
 files = run({player = false, config = leon})
