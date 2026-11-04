@@ -1,6 +1,6 @@
 # 开发与发布
 
-本项目是同时支持《怪物猎人：荒野》和《怪物猎人：崛起》的 REFramework MOD。REF 原生菜单独立可用；REFF 是可选网页界面，荒野全身预览使用其原生预览接口。
+本项目是同时支持《怪物猎人：荒野》《怪物猎人：崛起》和《生化危机 4 重制版》的 REFramework MOD。REF 原生菜单独立可用；REFF 是可选网页界面，荒野全身预览使用其原生预览接口。
 
 安装与操作见 [README.md](README.md)，版本变化见 [CHANGELOG.md](CHANGELOG.md)，协作和兼容规则见 [AGENTS.md](AGENTS.md)。
 
@@ -24,6 +24,7 @@ ArmorVariantManager/
         Presets/                       分组、选择、合成、捕获与编辑
         Conditions/、Rules/、Runtime/  条件、规则与角色状态
         Games/Wilds/、Games/Rise/      各游戏 SDK、装备、材质和能力适配
+        Games/RE4/                     RE4 独立适配：Main.start、规则、条件与 REF 面板（见目录内 AGENTS.md）
         UI/Workspace.lua              当前编辑配置与选择状态
         UI/ImGui/、UI/Reff/            REF 绘制、REFF 序列化与 RPC 适配
         Documentation.lua             游戏内中英文帮助与历史记录
@@ -36,11 +37,12 @@ ArmorVariantManager/
   natives/STM/ArmorVariantManager/Portrait/  相机、资源与 RT 资产
 web/                                  Vue 页面、构建脚本与网页测试夹具
 tests/                                Lua 回归、共享测试工具与发布测试
+tools/re4/                            RE4 调试脚本与探针存档，不进发布包
 build_release.py                      发布目录、ZIP 与库存检查
 .github/workflows/release.yml          tag 发布与同版本日志提取
 ```
 
-共享业务不直接依赖游戏 SDK；游戏适配层处理托管对象和专属能力。界面通过 `App` 操作配置，角色活动状态不能混入界面选择状态。旧 JSON 与公开业务 `require` 转接仍有兼容用途，不按文件名批量删除。
+共享业务不直接依赖游戏 SDK；游戏适配层处理托管对象和专属能力。`Game.detect` 标记为 `standalone` 的游戏（目前是 RE4）由入口直接调用 `Games/<游戏>/Main.lua` 的 `start({game, version, author})`，不装配共享 `App`、REFF 与预览；它的配置模型与 MH 的 groups 不同，迁入共享界面前先证明旧配置行为不变。界面通过 `App` 操作配置，角色活动状态不能混入界面选择状态。旧 JSON 与公开业务 `require` 转接仍有兼容用途，不按文件名批量删除。
 
 ## 开发环境
 
@@ -121,7 +123,7 @@ release/release-notes.md
 
 tag 的版本会写入产物中的 Lua 入口和 REFF 清单，源码不改。省略 `--tag` 时沿用 Lua 入口版本，也可用 `--version` 指定本地候选版本；`--release-notes` 提取该版本日志到包外。
 
-通用包供两款游戏使用，清单声明 `MHWILDS` 和 `MHRISE`。包内只有 Lua、独立预览 DLL、预览资产和 REFF 插件页面；不包含独立许可证、说明、更新日志、源码、测试、用户数据或 REFramework/REFF 本体。必要许可合并到页面的 `avm-notices` 元数据，源码许可文件继续保留。Lua、JavaScript、CSS 和 HTML 注释在打包副本中移除，字符串与游戏内帮助内容不变。
+通用包同时供 RE4 使用；REFF 清单只声明 `MHWILDS` 和 `MHRISE`，RE4 只有 REF 原生面板，预览 DLL 在非荒野游戏中加载后不工作。`tools/re4/` 的调试脚本不进包。包内只有 Lua、独立预览 DLL、预览资产和 REFF 插件页面；不包含独立许可证、说明、更新日志、源码、测试、用户数据或 REFramework/REFF 本体。必要许可合并到页面的 `avm-notices` 元数据，源码许可文件继续保留。Lua、JavaScript、CSS 和 HTML 注释在打包副本中移除，字符串与游戏内帮助内容不变。
 
 同名产物已存在时默认拒绝覆盖，确认目标后才能用 `--overwrite`。旧自动化显式使用的 `--game wilds`、`--game rise`、`--game all` 仍保留原输出含义，日常构建不需要这些参数。
 

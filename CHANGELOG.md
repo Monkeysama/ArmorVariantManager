@@ -4,6 +4,7 @@
 
 ### 新增
 
+- 支持《生化危机 4 重制版》：识别 `re4` 后使用独立的 RE4 适配（按角色配置、整套造型 + 状态组、条件规则与 REF 原生面板），沿用原 RE4 版的配置文件，不需要迁移。
 - 荒野与崛起共用一个通用安装包，保留各自的装备 ID、JSON 字段和游戏专属条件。
 - 可选 REFF 网页界面：分组与预设排序、材质编辑、条件变换、设置、帮助、备份恢复，以及崛起手动导入配置。
 - 荒野通过 REFF 显示全身预览，支持镜头、位置、光照与姿态刷新率设置。
@@ -11,6 +12,7 @@
 ### 调整
 
 - REF 原生菜单继续独立可用，REFF 不是必装依赖。
+- 从旧 RE4 版（0.4.x）升级：直接覆盖安装，`reframework/data/ArmorVariantManager/` 下的角色配置与备份原样沿用。旧版留在 `ArmorVariantManager_Core/` 根下的 `Utils.lua`、`Targets.lua`、`CharacterId.lua` 与 `Conditions/` 中的 RE4 条件文件不再加载，可以删除。
 - 移除旧 Home 弹窗及专属 D2D/输入框架。升级时移出旧 `ArmorVariantManager_UI`、`ArmorVariantManager_UI.dll` 和 `AVM_InputBridge.dll`，保留用户配置与其他 MOD 的共享依赖。
 - 镜头默认及重置距离统一为 1.5，保留已保存的自定义距离。
 - 使用说明明确区分必需的 REFramework 与可选 REFF，开发流程和版本记录分别维护。
