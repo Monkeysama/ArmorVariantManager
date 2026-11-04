@@ -4,6 +4,7 @@
 #include <cwctype>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <d2d1helper.h>
@@ -39,6 +40,7 @@ struct Plugin {
 };
 
 Plugin* g_plugin{};
+HMODULE g_ui_module{};
 
 // 枚举当前进程已加载的模块，兼容 reframework-d2d.dll、reframework-d2d(-xxxxx).dll 等变体。
 bool is_external_d2d_loaded() {
@@ -88,11 +90,10 @@ bool disable_embedded_backend_if_external() {
 
 BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
     if (reason == DLL_PROCESS_ATTACH) {
-        g_plugin = new Plugin{};
+        g_ui_module = module;
         DisableThreadLibraryCalls(module);
-        avm_bridge_initialize(module);
     } else if (reason == DLL_PROCESS_DETACH) {
-        avm_bridge_shutdown();
+        if (g_plugin) avm_bridge_shutdown();
         delete g_plugin;
         g_plugin = nullptr;
     }
@@ -567,13 +568,18 @@ extern "C" __declspec(dllexport) void reframework_plugin_required_version(REFram
     version->major = REFRAMEWORK_PLUGIN_VERSION_MAJOR;
     version->minor = REFRAMEWORK_PLUGIN_VERSION_MINOR;
     version->patch = REFRAMEWORK_PLUGIN_VERSION_PATCH;
+    version->game_name = nullptr;
 }
 
 extern "C" __declspec(dllexport) bool reframework_plugin_initialize(const REFrameworkPluginInitializeParam* param) {
-    if (param->renderer_data->renderer_type != REFRAMEWORK_RENDERER_D3D12) {
+    if (!param || !param->version || !param->version->game_name) return false;
+    // 通用包保留荒野旧弹窗；其他游戏成功加载但不创建渲染、输入桥接或回调。
+    if (std::string_view{param->version->game_name} != "MHWILDS") return true;
+    if (!param->renderer_data || param->renderer_data->renderer_type != REFRAMEWORK_RENDERER_D3D12) {
         return false;
     }
 
+    g_plugin = new Plugin{};
     reframework::API::initialize(param);
 
     param->functions->on_lua_state_created(on_ref_lua_state_created);
@@ -581,6 +587,7 @@ extern "C" __declspec(dllexport) bool reframework_plugin_initialize(const REFram
     param->functions->on_present(on_ref_frame);
     param->functions->on_device_reset(on_ref_device_reset);
     param->functions->on_pre_application_entry("BeginRendering", on_begin_rendering);
+    avm_bridge_initialize(g_ui_module);
 
     return true;
 }

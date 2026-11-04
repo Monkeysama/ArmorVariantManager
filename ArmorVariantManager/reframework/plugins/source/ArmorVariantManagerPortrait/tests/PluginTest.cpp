@@ -38,7 +38,10 @@ int main(int argc, char** argv) {
     functions.log_info = log_info;
     functions.log_error = log_error;
     REFrameworkRendererData renderer{REFRAMEWORK_RENDERER_D3D12};
+    REFrameworkPluginVersion version{};
+    version.game_name = "MHWILDS";
     REFrameworkPluginInitializeParam param{};
+    param.version = &version;
     param.functions = &functions;
     param.renderer_data = &renderer;
     assert(initialize(&param));

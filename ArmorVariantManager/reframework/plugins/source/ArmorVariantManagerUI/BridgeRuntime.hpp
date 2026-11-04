@@ -4,7 +4,7 @@
 
 #include <string>
 
-// 启动和停止光标、原生输入桥接；由 UI Runtime 的唯一 DLL 入口调用。
+// 荒野插件初始化后启动输入桥接；DLL 入口仅在已启动时停止。
 void avm_bridge_initialize(HMODULE module);
 void avm_bridge_shutdown();
 

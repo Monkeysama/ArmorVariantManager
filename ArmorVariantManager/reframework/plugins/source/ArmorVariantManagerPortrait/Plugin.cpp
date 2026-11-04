@@ -1,5 +1,6 @@
 #include "reframework/API.hpp"
 #include "sol/sol.hpp"
+#include <string_view>
 #include "PortraitPreview.hpp"
 #include "PortraitPose.hpp"
 
@@ -56,7 +57,10 @@ extern "C" __declspec(dllexport) void reframework_plugin_required_version(REFram
 }
 
 extern "C" __declspec(dllexport) bool reframework_plugin_initialize(const REFrameworkPluginInitializeParam* param) {
-    if (!param || !param->renderer_data || param->renderer_data->renderer_type != REFRAMEWORK_RENDERER_D3D12) return false;
+    if (!param || !param->version || !param->version->game_name) return false;
+    // 与旧弹窗一起随通用包分发，崛起不注册预览能力和 GPU 回调。
+    if (std::string_view{param->version->game_name} != "MHWILDS") return true;
+    if (!param->renderer_data || param->renderer_data->renderer_type != REFRAMEWORK_RENDERER_D3D12) return false;
     reframework::API::initialize(param);
     if (!avm_portrait_initialize(param)) return false;
     return param->functions->on_lua_state_created(on_lua_state_created)

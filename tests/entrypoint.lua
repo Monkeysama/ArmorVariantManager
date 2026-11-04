@@ -1,5 +1,7 @@
-package.path = "ArmorVariantManager/reframework/autorun/?.lua;" .. package.path
-local main = "ArmorVariantManager/reframework/autorun/ArmorVariantManager.lua"
+-- 可传入已解压发布包的 autorun 目录，默认仍验证开发源码。
+local autorun = arg[1] or "ArmorVariantManager/reframework/autorun"
+package.path = autorun .. "/?.lua;" .. package.path
+local main = autorun .. "/ArmorVariantManager.lua"
 local Game = require("ArmorVariantManager_Core.Game")
 assert(Game.detect("MHWILDS").name == "Wilds")
 assert(Game.detect("MHRise").name == "Rise")

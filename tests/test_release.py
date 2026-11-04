@@ -45,10 +45,11 @@ def release_inputs(root):
         "PORTRAIT_DLL": root / "source/reframework/plugins/ArmorVariantManager_Portrait.dll",
         "PORTRAIT_ASSETS": root / "source/natives/STM/ArmorVariantManager/Portrait",
         "LICENSE": root / "source/LICENSE",
+        "README": root / "source/README.md",
         "NATIVE_LICENSES": root / "source/reframework/plugins/source/THIRD_PARTY_LICENSES.txt",
         "D2D_LICENSE": root / "source/reframework/plugins/source/d2d/LICENSE",
     }
-    for key in ("UI_DLL", "PORTRAIT_DLL", "LICENSE", "NATIVE_LICENSES", "D2D_LICENSE"):
+    for key in ("UI_DLL", "PORTRAIT_DLL", "LICENSE", "README", "NATIVE_LICENSES", "D2D_LICENSE"):
         paths[key].parent.mkdir(parents=True, exist_ok=True)
         paths[key].write_bytes(key.encode())
     paths["PORTRAIT_ASSETS"].mkdir(parents=True)
@@ -69,24 +70,25 @@ def release_inputs(root):
 
 class ReleaseTests(unittest.TestCase):
     def assert_inventory(self, directory, archive_path, game):
-        expected = {"LICENSE"}
+        expected = {"LICENSE", release.GUIDE_NAME}
         expected.update("reframework/autorun/" + path.relative_to(release.AUTORUN_SOURCE).as_posix()
                         for path in release.AUTORUN_SOURCE.rglob("*.lua"))
         expected.update("reframework/reff/plugins/monkeysama.avm/" + path.relative_to(release.REFF_PLUGIN).as_posix()
                         for path in release.REFF_PLUGIN.rglob("*") if path.is_file())
-        if game == "wilds":
+        if game in ("universal", "wilds"):
             expected.update("reframework/plugins/" + path.name for path in (release.UI_DLL, release.PORTRAIT_DLL))
             expected.update("natives/STM/ArmorVariantManager/Portrait/" + name for name in release.PORTRAIT_FILES)
             expected.update(("licenses/THIRD_PARTY_LICENSES.txt", "licenses/reframework-d2d-LICENSE.txt"))
         actual = {path.relative_to(directory).as_posix() for path in directory.rglob("*") if path.is_file()}
         self.assertEqual(actual, expected)
+        self.assertEqual((directory / release.GUIDE_NAME).read_bytes(), release.README.read_bytes())
         with release.zipfile.ZipFile(archive_path) as archive:
             self.assertEqual(set(archive.namelist()), expected)
             for name in expected:
                 self.assertEqual(archive.read(name), (directory / name).read_bytes())
         manifest_path = directory / "reframework/reff/plugins/monkeysama.avm/manifest.json"
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        self.assertEqual(manifest["games"], [release.GAMES[game]])
+        self.assertEqual(manifest["games"], list(release.GAMES.values()) if game == "universal" else [release.GAMES[game]])
         self.assertEqual(manifest["extra"], {"keep": True})
 
     def test_all_games_have_complete_separate_inventories_and_manifests(self):
@@ -104,13 +106,15 @@ class ReleaseTests(unittest.TestCase):
                 manifest = json.loads((release.REFF_PLUGIN / "manifest.json").read_text(encoding="utf-8"))
                 self.assertEqual(manifest["games"], ["MHWILDS", "MHRISE"])
 
-    def test_default_cli_retains_old_output_names_and_version_detection(self):
+    def test_default_and_explicit_universal_build_one_shared_package(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             with release_inputs(root):
-                release.main(["--output-dir", str(root / "out")])
-                self.assert_inventory(root / "out/ArmorVariantManager_v1.2.3", root / "out/差分管理器_v1.2.3.zip", "wilds")
-                self.assertFalse((root / "out/ArmorVariantManager_Rise_v1.2.3").exists())
+                for name, args in (("default", []), ("explicit", ["--game", "universal"])):
+                    out = root / name
+                    release.main([*args, "--output-dir", str(out)])
+                    self.assert_inventory(out / "ArmorVariantManager_v1.2.3", out / "差分管理器_v1.2.3.zip", "universal")
+                    self.assertEqual(len(list(out.iterdir())), 2)
 
     def test_rise_does_not_require_any_wilds_native_input(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -136,7 +140,7 @@ class ReleaseTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             with release_inputs(root):
-                for path in (release.LICENSE, release.REFF_PLUGIN / "manifest.json",
+                for path in (release.LICENSE, release.README, release.REFF_PLUGIN / "manifest.json",
                              release.REFF_PLUGIN / "ui/dist/index.html", release.REFF_PLUGIN / "ui/dist/REFF-LICENSE.txt"):
                     with self.subTest(path=path):
                         content = path.read_bytes()
@@ -187,11 +191,25 @@ class ReleaseTests(unittest.TestCase):
             with release_inputs(root):
                 release.main(["--game", "rise", "--output-dir", str(root / "out")])
                 directory, _ = release.release_paths(root / "out", "1.2.3", "rise")
-                with self.assertRaisesRegex(RuntimeError, "does not target wilds"):
+                with self.assertRaisesRegex(RuntimeError, "does not target universal"):
                     release.verify_release(directory)
                 release.copy_native_plugins(directory)
                 with self.assertRaisesRegex(RuntimeError, "development content"):
                     release.verify_release(directory, "rise")
+
+    def test_verify_rejects_missing_or_stale_user_guide(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            with release_inputs(root):
+                release.main(["--output-dir", str(root / "out")])
+                directory, _ = release.release_paths(root / "out", "1.2.3")
+                guide = directory / release.GUIDE_NAME
+                guide.unlink()
+                with self.assertRaisesRegex(RuntimeError, "user guide is missing or changed"):
+                    release.verify_release(directory)
+                guide.write_bytes(b"outdated guide")
+                with self.assertRaisesRegex(RuntimeError, "user guide is missing or changed"):
+                    release.verify_release(directory)
 
     @unittest.skipUnless(LUA, "Set LUA to a Lua 5.4 executable for runtime semantics checks")
     def test_package_literals_and_legacy_require_entrypoints_execute_unchanged(self):
@@ -236,6 +254,7 @@ io.write(result, "\n")
             with patch.object(release, "UI_DLL", ui), patch.object(release, "PORTRAIT_DLL", portrait), \
                     patch.object(release, "PORTRAIT_FILES", ()), patch.object(release, "verify_reff_plugin"):
                 release.copy_native_plugins(root / "out")
+                shutil.copy2(release.README, root / "out" / release.GUIDE_NAME)
                 release.verify_release(root / "out")
                 target = root / "out/reframework/plugins"
                 self.assertEqual((target / ui.name).read_bytes(), b"legacy-ui")
