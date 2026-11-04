@@ -4,6 +4,13 @@
 
 安装与操作见 [README.md](README.md)，版本变化见 [CHANGELOG.md](CHANGELOG.md)，协作和兼容规则见 [AGENTS.md](AGENTS.md)。
 
+## 代码分支
+
+main：主分支
+dev：开发版本
+MHWS-Beta：旧版本荒野开发分支，仅作保留
+MHR：旧版本崛起开发分支，仅作保留
+
 ## 项目结构
 
 ```text
