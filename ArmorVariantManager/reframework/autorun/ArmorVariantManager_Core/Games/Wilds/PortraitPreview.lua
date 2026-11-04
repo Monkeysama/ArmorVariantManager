@@ -231,7 +231,9 @@ function PortraitPreview.new(deps)
             if native.portrait_state() == -1 then error(native.portrait_error()) end
             local hdr, color = adapter.output()
             if native.portrait_output(hdr, color) ~= 0 then self.stop("preview_output_unsupported"); return end
-            if adapter.configure then adapter.configure(self.camera_settings) end
+            if adapter.configure then
+                adapter.configure(self.camera_settings, requested_host == "reff" and rect.w / rect.h or nil)
+            end
             local system = adapter.current()
             if not system then
                 -- 构建仍每次最多两个网格，但不再在每批之间人为等待100ms。

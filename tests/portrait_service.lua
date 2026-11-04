@@ -52,6 +52,8 @@ local shared,web=Portrait.connect(config,{
 })
 assert(shared==preview and created==3 and not preview.deps.should_show())
 assert(web.action({visible=true}).available and host=="reff" and rectangle.w==330)
+web.action({visible=true,width=280,height=680})
+assert(rectangle.w==280 and rectangle.h==680,"Web canvas dimensions were discarded")
 assert(preview.deps.should_show())
 suspended=true;assert(not preview.deps.should_show());suspended=false
 now=.4;web.action({visible=true});now=.8;assert(preview.deps.should_show(),"heartbeat did not renew camera lease")

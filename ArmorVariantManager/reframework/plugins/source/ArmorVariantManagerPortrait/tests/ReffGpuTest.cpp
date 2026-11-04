@@ -72,7 +72,7 @@ int main(int argc,char** argv) {
                 commands->CopyTextureRegion(&dst,0,0,0,&src,nullptr);
                 D3D12_RESOURCE_BARRIER barrier{};barrier.Type=D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
                 barrier.Transition={image.Get(),0,D3D12_RESOURCE_STATE_COPY_DEST,D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE};commands->ResourceBarrier(1,&barrier);
-                auto output=input;output.Width=output.Height=256;output.Format=format;output.Flags=D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+                auto output=input;output.Width=256;output.Height=512;output.Format=format;output.Flags=D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
                 const float background[]{.1f,.2f,.3f,1};D3D12_CLEAR_VALUE clear{};clear.Format=format;std::copy(background,background+4,clear.Color);
                 ComPtr<ID3D12Resource> target;ok(device->CreateCommittedResource(&gpu,D3D12_HEAP_FLAG_NONE,&output,D3D12_RESOURCE_STATE_RENDER_TARGET,&clear,IID_PPV_ARGS(&target)),"target");
                 D3D12_DESCRIPTOR_HEAP_DESC hd{};hd.Type=D3D12_DESCRIPTOR_HEAP_TYPE_RTV;hd.NumDescriptors=1;
@@ -83,7 +83,7 @@ int main(int argc,char** argv) {
                 auto* first=active()->user;
                 require(portrait_reff::update(image.Get(),queue.Get(),premult,true)==0 && active()->user==first && retired()==0,"same texture must renew without replacing provider");
                 REFFPreviewDrawContext context{sizeof(context),REFF_PREVIEW_ABI_V1,device.Get(),queue.Get(),commands.Get(),target.Get(),fence.Get(),serial+1,42,
-                    static_cast<uint32_t>(format),256,256,{12,10,220,240},{82,25,130,200}};
+                    static_cast<uint32_t>(format),256,512,{12,10,220,480},{28,25,202,440}};
                 active()->draw(active()->user,&context);
                 require(!portrait_reff::failed(),"provider draw failed");
                 require(portrait_reff::update(image.Get(),queue.Get(),!premult,true)==0 && active()->user!=first && retired()==1,"replacement did not retain in-flight provider");
@@ -107,12 +107,13 @@ int main(int argc,char** argv) {
                     return value;
                 };
                 // 独立的标准曲线期望值；在带边界之外采样，检测裁剪而不是缩放剩余区域。
-                for(auto point:{std::array<unsigned,3>{90,100,1},{180,100,2},{20,100,0},{100,235,0}}) {
+                for(auto point:{std::array<unsigned,3>{32,100,3},{100,300,1},{210,400,2},{20,100,0},{100,490,0}}) {
                     const double alpha=point[2]==1?128./255:point[2]==2?1:0;const double color[]{.25,.5,.75};const auto actual=pixel(point[0],point[1]);
-                    for(unsigned c=0;c<3;++c)require(std::abs(actual[c]-(encode(color[c])*alpha+background[c]*(1-alpha)))<.015,"SDR/alpha/clip pixel mismatch");
+                    const double studio[]{17./255,24./255,25./255};
+                    for(unsigned c=0;c<3;++c)require(std::abs(actual[c]-(encode(color[c])*alpha+(point[2]?studio[c]:background[c])*(1-alpha)))<.015,"SDR/opaque background/tall clip pixel mismatch");
                 }
-                if(cases==0) {std::ofstream file(argv[2],std::ios::binary);file<<"P6\n256 256\n255\n";
-                    for(unsigned y=0;y<256;++y)for(unsigned x=0;x<256;++x)for(double c:pixel(x,y))file.put(static_cast<char>(channel_byte(c)));}
+                if(cases==0) {std::ofstream file(argv[2],std::ios::binary);file<<"P6\n256 512\n255\n";
+                    for(unsigned y=0;y<512;++y)for(unsigned x=0;x<256;++x)for(double c:pixel(x,y))file.put(static_cast<char>(channel_byte(c)));}
                 read->Unmap(0,nullptr);
                 require(portrait_reff::update(image.Get(),queue.Get(),premult,true)==0,"restart after failure");
                 context.queue=other_queue.Get();active()->draw(active()->user,&context);

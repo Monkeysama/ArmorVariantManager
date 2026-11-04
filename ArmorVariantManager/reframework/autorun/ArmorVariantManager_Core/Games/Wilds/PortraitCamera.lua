@@ -191,6 +191,13 @@ function PortraitCamera.game_adapter()
         camera:call("set_AspectRatio", 220 / 240)
         camera:call("set_FarClipPlane", 10.0)
     end
+    function adapter.framing(object, aspect)
+        -- 引擎会恢复 RT 的 11:12 投影；扩大 FOV 后再等比裁边，补足长/宽画布的视野。
+        local ratio = aspect and (220 / 240) / aspect or 1
+        local scale = math.max(ratio, 1 / ratio)
+        local fov = scale == 1 and 40.0 or math.deg(2 * math.atan(math.tan(math.rad(20)) * scale))
+        component(object, "via.Camera"):call("set_FOV", fov)
+    end
     function adapter.follow(object, context, settings)
         settings = settings or LEGACY_VIEW
         local anchor = not context.menu and model and model.camera_anchor()
@@ -274,7 +281,7 @@ function PortraitCamera.new(deps)
     local adapter, clock = deps.adapter or PortraitCamera.game_adapter(), deps.clock or os.clock
     local self = { independent = true, state = "idle" }
     local resource, prefab, object, context_key, deadline, next_inventory, retry_at
-    local settings
+    local settings, viewport_aspect, applied_aspect
     local pending_destroy, cleanup_failed, activated = false, false, false
     local function note(message) if deps.log then deps.log(message) end end
 
@@ -332,8 +339,8 @@ function PortraitCamera.new(deps)
         return result
     end
     -- 控制器在游戏更新中交付设置；调整镜头不需要重新创建相机或网格副本。
-    function self.configure(value)
-        settings = value
+    function self.configure(value, aspect)
+        settings, viewport_aspect = value, aspect
     end
     function self.current()
         if cleanup_failed then error("Portrait cleanup failed; reload required") end
@@ -360,9 +367,14 @@ function PortraitCamera.new(deps)
             if not adapter.channel_free(nil) then self.stop(); retry_at = clock() + 2; return nil end
             object = assert(adapter.instantiate(prefab))
             adapter.prepare(object)
+            applied_aspect = nil
             self.state, next_inventory = "building", clock() + 2
         end
         assert(adapter.valid(object), "Portrait camera invalidated")
+        if adapter.framing and viewport_aspect ~= applied_aspect then
+            adapter.framing(object, viewport_aspect)
+            applied_aspect = viewport_aspect
+        end
         if clock() >= next_inventory then
             next_inventory = clock() + 2
             if not adapter.channel_free(object) then self.stop(); retry_at = clock() + 2; return nil end

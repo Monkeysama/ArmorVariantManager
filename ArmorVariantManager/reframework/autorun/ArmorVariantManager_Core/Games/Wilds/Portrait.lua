@@ -39,8 +39,8 @@ function Portrait.connect(config, environment)
         if request.visible and reff_visible() and preview.reff_available() then
             deadline, reff_selected = clock() + 0.5, true
             preview.set_host("reff")
-            -- 这里只续租相机；最终屏幕矩形和裁剪完全由 REFF 的正式槽位提供。
-            preview.set_rectangle({x=0,y=0,w=330,h=360})
+            -- CSS 尺寸只用于相机取景；最终屏幕位置和裁剪仍由正式槽位提供。
+            preview.set_rectangle({x=0,y=0,w=request.width or 330,h=request.height or 360})
         else
             deadline, reff_selected = 0, false
             preview.set_host("legacy")

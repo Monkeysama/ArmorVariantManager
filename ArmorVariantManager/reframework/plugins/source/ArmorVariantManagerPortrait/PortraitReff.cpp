@@ -88,6 +88,7 @@ struct Surface {
             format==DXGI_FORMAT_R10G10B10A2_UNORM?2:3;
         if(index==3)throw std::runtime_error("REFF preview output is not supported SDR");
         auto& result=pipelines[index];if(result)return result.Get();
+        // 实底与人物一起合成在网页下层，不能用不透明网页背景遮住整个原生槽。
         constexpr char shader[]=R"(
 cbuffer Settings:register(b0){float4 crop;float premult;}
 Texture2D<float4> image:register(t0);SamplerState linearClamp:register(s0);
@@ -96,7 +97,8 @@ Vertex vs(uint id:SV_VertexID){float2 uv=float2((id<<1)&2,id&2);Vertex v;
 v.position=float4(uv.x*2-1,1-uv.y*2,0,1);v.uv=crop.xy+uv*crop.zw;return v;}
 float3 encode(float3 x){x=max(x,0);return lerp(12.92*x,1.055*pow(x,1.0/2.4)-.055,step(.0031308,x));}
 float4 ps(Vertex v):SV_Target{float4 c=image.Sample(linearClamp,v.uv);float a=saturate(c.a);
-float3 rgb=premult>.5?(a>0?c.rgb/a:0):c.rgb;return float4(encode(rgb)*a,a);}
+float3 rgb=premult>.5?(a>0?c.rgb/a:0):c.rgb;
+return float4(encode(rgb)*a+float3(17,24,25)/255*(1-a),1);}
 )";
         auto compile=[&](const char* entry,const char* target,ComPtr<ID3DBlob>& output) {
             ComPtr<ID3DBlob> errors;

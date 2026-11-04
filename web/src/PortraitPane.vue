@@ -27,7 +27,11 @@ async function heartbeat() {
   if (pending || disposed) return;
   pending = true;
   try {
-    const value = await props.client.call<Preview>('monkeysama.avm.preview', { visible: !document.hidden });
+    const bounds = viewport.value?.getBoundingClientRect();
+    const value = await props.client.call<Preview>('monkeysama.avm.preview', {
+      visible: !document.hidden && !!bounds && bounds.width > 0 && bounds.height > 0,
+      width: bounds?.width, height: bounds?.height,
+    });
     if (!disposed) { current.value = value; error.value = ''; }
   } catch (reason) {
     if (!disposed) error.value = reason instanceof Error ? reason.message : String(reason);
@@ -58,7 +62,9 @@ onBeforeUnmount(() => {
 <template>
   <aside class="portrait-pane" :aria-label="t('preview')">
     <h2 class="portrait-heading">{{ t('preview') }}</h2>
-    <div class="portrait-stage"><div ref="viewport" class="portrait-viewport" :aria-label="t('preview')"></div></div>
+    <div class="portrait-stage"><div ref="viewport" class="portrait-viewport"
+      :class="{ 'portrait-pending': state.status !== 'preview_live' || error || state.error }"
+      :aria-label="t('preview')"></div></div>
     <p class="portrait-status" :class="{ 'portrait-error': error || state.error }" role="status">{{ message }}</p>
   </aside>
 </template>
@@ -66,9 +72,10 @@ onBeforeUnmount(() => {
 <style scoped>
 .portrait-pane { flex: 0 0 clamp(190px, 23%, 330px); display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--avm-line); }
 .portrait-heading { margin: 0; padding: 10px 16px; font-size: inherit; font-weight: 400; color: var(--avm-muted); background: var(--avm-bg); }
-.portrait-stage { flex: 1; min-height: 0; display: grid; place-items: center; container-type: size; }
-/* 保留 330×360 相机画幅，窗口比例变化不裁掉人物。 */
-.portrait-viewport { width: min(100cqw, calc(100cqh * 11 / 12)); aspect-ratio: 11 / 12; }
+.portrait-stage { flex: 1; min-height: 0; display: flex; }
+/* 原生层填实底；网页保持透明，整列高度交给相机与等比合成。 */
+.portrait-viewport { flex: 1; min-width: 0; min-height: 0; }
+.portrait-pending { background: #111819; }
 .portrait-status { margin: 0; padding: 10px 16px; font-size: inherit; color: var(--avm-muted); background: var(--avm-bg); overflow-wrap: anywhere; }
 .portrait-error { color: var(--el-color-danger, #f29898); }
 @media (max-width: 760px) {

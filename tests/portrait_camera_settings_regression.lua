@@ -66,5 +66,61 @@ same(configured.settings.refresh_fps, 30)
 phase = "render"; preview.set_camera_settings({ distance = 1.8 })
 phase = "game"; now = 0.02; preview.tick()
 same(configured.settings.distance, 1.8); same(queried, 2, "Live edits do not wait for a restart")
+-- 新网页使用整列画布，只在游戏更新中交付取景比例；旧宿主仍不改固定 RT 的投影。
+native.portrait_reff_ready = function() return 1 end
+native.portrait_reff = function() game_only(); return 0 end
+native.portrait_drawn = function() return 1 end
+phase = "render"; preview.set_host("reff")
+preview.set_rectangle({x=0,y=0,w=330,h=720})
+phase = "game"; now = .2; preview.tick()
+same(configured.aspect, 330 / 720, "Web camera must use the entire preview column")
+same(configured.settings.distance, 1.8)
+for _, distance in ipairs({1.0,1.25}) do
+    phase="render"; preview.set_camera_settings({distance=distance})
+    phase="game"; preview.tick(); same(configured.settings.distance,distance)
+    same(configured.aspect,330/720)
+end
+phase = "render"; preview.set_host("legacy")
+phase = "game"; now = .4; preview.tick()
+same(configured.aspect, nil, "Legacy camera keeps the original framing")
 preview.shutdown()
-print("PASS: camera defaults/clamps, old and unknown JSON fields, live intent and game-thread lens settings without projection overrides")
+
+-- 真正的游戏适配器只调 FOV；RT 的投影比例不变，长画布保留水平取景，宽画布保留垂直取景。
+sdk = {find_type_definition=function() return {} end, typeof=function(name) return name end}
+local fov, created, framed = 40, 0, 0
+local component = {call=function(_, method, value) same(method, "set_FOV"); fov=value end}
+local object = {call=function(_, method, name)
+    same(method, "getComponent(System.Type)"); same(name, "via.Camera"); return component
+end}
+local game = Camera.game_adapter()
+for _, aspect in ipairs({330/720,256/608,220/240,2.0}) do
+    game.framing(object, aspect)
+    local tangent, original = math.tan(math.rad(fov)/2), math.tan(math.rad(40)/2)
+    local actual = aspect < 220/240 and tangent * math.min(1,aspect/(220/240))
+        or tangent * math.min(1,(220/240)/aspect)
+    assert(math.abs(actual-original)<1e-9,"Viewport framing changed the original magnification")
+    if aspect == 330/720 then
+        for _, distance in ipairs({1.0,1.25}) do
+            assert(.6/(distance*original)>1 and .6/(distance*tangent)<1,
+                "Near-camera content clipped by the old square must fit the expanded vertical view")
+        end
+    end
+end
+game.framing(object); same(fov,40)
+local valid = true
+local camera = Camera.new({clock=function() return 0 end,adapter={
+    context=function() return {key="scene"} end, channel_free=function() return true end,
+    load=function() return {} end, prefab=function() return {} end, ready=function() return true end,
+    instantiate=function() created=created+1; valid=true; return object end, prepare=function() end,
+    valid=function() return valid end, follow=function() end, enable=function() end, disable=function() end,
+    destroy=function() valid=false end,
+    framing=function(value,aspect) framed=framed+1; game.framing(value,aspect) end,
+}})
+camera.configure({},330/720); camera.current(); camera.current()
+same(framed,1); camera.current(); same(framed,1,"Do not rewrite unchanged framing")
+camera.configure({},256/608); camera.current(); same(framed,2)
+camera.configure({}); camera.current(); same(fov,40); same(framed,3); same(created,1,"Resize must reuse the camera")
+camera.stop(); camera.configure({},330/720); camera.current(); camera.current()
+same(created,2); same(framed,4,"Replacement camera must receive the viewport FOV again")
+camera.shutdown()
+print("PASS: camera settings/JSON compatibility, game-thread intent, full-column framing, live resize without RT aspect changes and legacy restore")
