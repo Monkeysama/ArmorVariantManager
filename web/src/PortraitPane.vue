@@ -76,7 +76,8 @@ onBeforeUnmount(() => {
 /* 原生层填实底；网页保持透明，整列高度交给相机与等比合成。 */
 .portrait-viewport { flex: 1; min-width: 0; min-height: 0; }
 .portrait-pending { background: #111819; }
-.portrait-status { margin: 0; padding: 10px 16px; font-size: inherit; color: var(--avm-muted); background: var(--avm-bg); overflow-wrap: anywhere; }
+/* 下缘重叠覆盖整数裁剪留下的亚像素缝，画布尺寸与文字位置不变。 */
+.portrait-status { margin: 0; padding: 10px 16px; box-shadow: 0 -2px 0 #111819; font-size: inherit; color: var(--avm-muted); background: var(--avm-bg); overflow-wrap: anywhere; }
 .portrait-error { color: var(--el-color-danger, #f29898); }
 @media (max-width: 760px) {
   .portrait-pane { flex-basis: 330px; border-right: 0; border-bottom: 1px solid var(--avm-line); }

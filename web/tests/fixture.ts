@@ -69,7 +69,8 @@ const initial: Snapshot = {
 };
 let state = structuredClone(initial);
 const previewFixture = new URLSearchParams(location.search).has('preview');
-if (previewFixture) state.preview = { available: true, enabled: true, status: 'preview_waiting' };
+const previewSeam = new URLSearchParams(location.search).has('preview-seam');
+if (previewFixture) state.preview = { available: true, enabled: true, status: previewSeam ? 'preview_live' : 'preview_waiting' };
 const catalogFixture = new URLSearchParams(location.search).has('catalog');
 if (catalogFixture) state.group = '';
 if (new URLSearchParams(location.search).has('workspace')) {
@@ -111,8 +112,23 @@ const calls: Record<string, unknown>[] = [];
 const layouts: Record<string, unknown>[] = [];
 const previewCalls: Record<string, unknown>[] = [];
 let previewRegistrations = 0, previewRemovals = 0;
+// 模拟原生向内取整的裁剪与白色游戏底，暴露状态栏交界的亚像素缝。
+const previewUnderlay = previewSeam ? document.createElement('div') : undefined;
+if (previewUnderlay) {
+  document.body.style.background = '#fff';
+  previewUnderlay.style.cssText = 'position:fixed;z-index:-1;background:#111819;pointer-events:none';
+  document.body.append(previewUnderlay);
+}
 window.addEventListener('message', event => {
-  if (event.data?.type === 'reff:preview-layout') { layouts.push(event.data); if (layouts.length > 50) layouts.shift(); renderStatus(); }
+  if (event.data?.type === 'reff:preview-layout') {
+    layouts.push(event.data); if (layouts.length > 50) layouts.shift(); renderStatus();
+    if (previewUnderlay) {
+      const clip = event.data.slots[0]?.clip;
+      previewUnderlay.style.display = clip ? 'block' : 'none';
+      if (clip) Object.assign(previewUnderlay.style, { left: `${Math.ceil(clip[0])}px`, top: `${Math.ceil(clip[1])}px`,
+        width: `${Math.floor(clip[0] + clip[2]) - Math.ceil(clip[0])}px`, height: `${Math.floor(clip[1] + clip[3]) - Math.ceil(clip[1])}px` });
+    }
+  }
 });
 const documents: { game: Snapshot['game']; language: string }[] = [];
 const imports: { bodyId: string; weapon: boolean }[] = [];
