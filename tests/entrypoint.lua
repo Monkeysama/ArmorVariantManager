@@ -19,6 +19,7 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
     local expected_errors = 0
     local action, writes, applied, captures = nil, {}, {}, 0
     local native_file_index = 1
+    local checkbox_labels = {}
     local weapon_id, applied_weapons = nil, {}
     local injected_preview
     local handlers, unregistered, write_failed, write_failed_path
@@ -132,7 +133,10 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
         end
         return {}
     end}
-    _G.imgui = setmetatable({tree_node=function() return true end, checkbox=function(_,v) return false,v end,
+    _G.imgui = setmetatable({tree_node=function() return true end, checkbox=function(label,v)
+            checkbox_labels[label]=true
+            return false,v
+        end,
         text_colored=function(message) assert(not tostring(message):find("Error:"),message) end},
         {__index=function() return function() end end})
     if populated then
@@ -212,7 +216,16 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
                 for _,item in ipairs(section.fields) do if item.id==id then return item end end
             end
         end
+        local function assert_auto_default_label(expected)
+            local key="auto_set_selected_preset_as_default"
+            assert(field(key).label==expected,"REFF auto-default label must use the current language")
+            checkbox_labels={}
+            draws[1]()
+            assert(checkbox_labels[expected] and not checkbox_labels[key],
+                "native auto-default checkbox must use the current language")
+        end
         assert(field("language").value=="en")
+        assert_auto_default_label("Automatically set selected preset as default")
         if game=="mhwilds" then
             assert(field("scan_interval").value==0.5)
             assert(injected_preview and not field("portrait_enabled").disabled,
@@ -234,8 +247,10 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
         write_failed=false
         assert(send("setting",{id="language",value="zh"}).language=="zh")
         assert(_G.__AVM_LANGUAGE=="zh")
+        assert_auto_default_label("自动将选中预设设为默认")
         assert(documentation().sections[1].title=="如何配置","help reads the current language instead of a startup copy")
         send("setting",{id="language",value="en"})
+        assert_auto_default_label("Automatically set selected preset as default")
         local sorting_selected=snapshot().selectedPreset
         local sorting_applied=#applied
         current=send("reorder-preset",{name="Captured",offset=-1})
