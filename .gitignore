@@ -39,14 +39,12 @@ sync_main_release.py
 !/tests/preset_capture.lua
 !/tests/preset_finder.lua
 !/tests/manual_import.lua
-!/tests/visibility.lua
 !/tests/condition_ui.lua
 !/tests/material_ui.lua
 !/tests/parts_ui.lua
 !/tests/runtime_state.lua
 !/tests/wilds_equipment.lua
 !/tests/wilds_actors.lua
-!/tests/wilds_runtime.lua
 !/tests/rise_equipment.lua
 !/tests/rise_actors.lua
 !/tests/rise_materials.lua
@@ -57,7 +55,6 @@ sync_main_release.py
 !/tests/appearance.lua
 !/tests/rules_compatibility.lua
 !/tests/test_release.py
-!/tests/fixtures/
 !/tests/ground_clipping_targets_regression.lua
 !/tests/high_heel_height_regression.lua
 !/tests/scanner_ui_regression.lua

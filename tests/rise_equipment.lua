@@ -28,22 +28,10 @@ local env = setmetatable({os={clock=function() return now end},
 }, {__index=_G})
 modules.Weapons = assert(loadfile(root .. "Weapons.lua", "t", env))()
 local Equipment = assert(loadfile(root .. "Equipment.lua", "t", env))()
-local function old_equipment()
-    local legacy_env = setmetatable({SceneObject=scene, os=env.os,
-        resolve_player=signals.resolve_player, get_current_weapon_type=signals.get_current_weapon_type,
-        safe_object_alive=scene.is_alive,
-        safe_object_name=function(obj) return scene.call(obj, "get_Name") end,
-        get_type=env.sdk.find_type_definition, Profiler={count=function() end},
-    }, {__index=_G})
-    legacy_env.Utils = dofile("tests/fixtures/legacy/rise_weapons.lua")(legacy_env)
-    return dofile("tests/fixtures/legacy/rise_equipment.lua")(legacy_env), legacy_env.Utils
-end
-local current = Equipment.new()
-local old, old_weapons = old_equipment()
+local current=Equipment.new()
 local function frame(delta)
     now, epoch = now + (delta or .03), epoch + 1
     current.begin_frame(epoch)
-    old.state.epoch = epoch
 end
 local function node(name, children, mesh)
     local obj = {name=name, children=children or {}, mesh=mesh, reads={}}
@@ -73,35 +61,34 @@ local function player(go, kind)
     go.player = value
     return value
 end
-local function refs_equal(a, b, first, last)
-    assert((a == nil) == (b == nil))
-    if a then for i=first,last do assert(a[i] == b[i], "different part " .. i) end end
-end
-local function compare(character, handle)
-    assert(current.body_id(character) == old.body_id(character))
-    local parts, legacy = current.parts(character), old.parts(character)
-    refs_equal(parts, legacy, 0, 4)
-    if parts then assert(parts.sig == legacy.sig and parts.changed == legacy.changed) end
-    refs_equal(current.weapons(character, handle), old.weapons(character, handle), 1, 2)
-    assert(current.weapon_id(character, handle) == old.weapon_id(character, handle))
-end
-
--- 十四种武器保持前缀、主攻击部件、零起始界面编号与原分支一致。
-S.equal(modules.Weapons.WEAPON_PARTS_MAP, old_weapons.WEAPON_PARTS_MAP)
+local expected={
+    [0]={{prefix="G_Swd",name="Blade"}}, {{prefix="S_Axe",name="Axe"}},
+    {{prefix="LS_Saya",name="Sheath"},{prefix="LS_Swd",name="Blade"}},
+    {{prefix="L_Bg",name="Bowgun"}}, {{prefix="H_Bg",name="Bowgun"}}, {{prefix="Ham",name="Hammer"}},
+    {{prefix="GL_Sld",name="Shield"},{prefix="GL_Lan",name="Lance"}},
+    {{prefix="L_Sld",name="Shield"},{prefix="L_Lan",name="Lance"}},
+    {{prefix="SS_Sld",name="Shield"},{prefix="SS_Swd",name="Sword"}},
+    {{prefix="DB_L",name="Left"},{prefix="DB_R",name="Right"}}, {{prefix="Hrn",name="Horn"}},
+    {{prefix="CA_Sld",name="Shield"},{prefix="CA_Swd",name="Sword"}},
+    {{prefix="IG_Ins",name="Insect"},{prefix="IG_Gla",name="Glaive"}},
+    {{prefix="B_Bow",name="Bow"},{prefix="B_Ydt",name="Quiver"}},
+}
+local main={[2]=2,[6]=2,[7]=2,[8]=2,[11]=2,[12]=2}
+S.equal(modules.Weapons.WEAPON_PARTS_MAP,expected)
 for kind=0,13 do
-    local children = {}
-    for _, part in ipairs(old_weapons.WEAPON_PARTS_MAP[kind]) do
-        children[#children+1] = node(part.prefix .. "_custom")
-    end
-    local go = node("player03", {node("weapons", children), node("custom_body")})
-    local handle = player(go, kind)
-    master = player(node("player00"), 0)
+    local children={}
+    for _,part in ipairs(expected[kind]) do children[#children+1]=node(part.prefix.."_custom") end
+    local go=node("player03",{node("weapons",children),node("custom_body")})
+    local handle=player(go,kind)
+    master=player(node("player00"),0)
     frame()
-    compare(go, handle)
-    refs_equal(modules.Weapons.get_current_weapon_parts(handle), old_weapons.get_current_weapon_parts(handle), 1, 2)
-    for i, part in ipairs(old_weapons.WEAPON_PARTS_MAP[kind]) do
-        assert(modules.Weapons.part_name(kind, i-1) == part.name)
+    local parts=current.weapons(go,handle)
+    local direct=modules.Weapons.get_current_weapon_parts(handle)
+    for index,part in ipairs(expected[kind]) do
+        assert(parts[index]==children[index] and direct[index]==children[index])
+        assert(modules.Weapons.part_name(kind,index-1)==part.name)
     end
+    assert(current.weapon_id(go,handle)==expected[kind][main[kind] or 1].prefix.."_custom")
 end
 assert(modules.Weapons.part_name(99, 3) == "Part 3")
 
@@ -112,7 +99,7 @@ local parts = {node("mod_helm"), body, node("mod_arm"), node("mod_wst"), node("m
 local character = node("player01", {native, node("nested", parts)})
 player(character, 0)
 frame()
-compare(character)
+current.body_id(character)
 assert(current.parts(character)[1] == body)
 assert(current.body_id(character) == "ch00_body")
 local cached = current.parts(character)
@@ -123,39 +110,39 @@ local new_body = node("replacement_body")
 parts[2] = new_body
 character.children[2]:set_children(parts)
 frame()
-compare(character)
+current.body_id(character)
 assert(current.parts(character)[1] == new_body)
 
 -- 不完整模型短暂重试，身体生成后更新 ID；同帧保持已取得的值。
 local incomplete = node("female_preview")
 frame()
-compare(incomplete)
+current.body_id(incomplete)
 incomplete:set_children({node("preview_body")})
 assert(current.body_id(incomplete) == "female_preview")
 frame(.01)
-compare(incomplete)
+current.body_id(incomplete)
 assert(current.body_id(incomplete) == "female_preview")
 frame(.02)
-compare(incomplete)
+current.body_id(incomplete)
 assert(current.body_id(incomplete) == "preview_body")
 incomplete.children[1].name = "renamed_body"
 frame()
-compare(incomplete)
+current.body_id(incomplete)
 assert(current.body_id(incomplete) == "renamed_body")
 
 -- 网格只查自身和直接子物体，缓存 TTL 与失效绑定都影响下一次读取。
 local mesh1, mesh2 = {}, {}
 local mesh_node = node("part", {node("child", nil, mesh1)})
-assert(current.mesh(mesh_node) == old.mesh(mesh_node))
+assert(current.mesh(mesh_node) == mesh1)
 mesh_node.children[1].mesh = mesh2
 frame(.1)
-assert(current.mesh(mesh_node) == mesh1 and old.mesh(mesh_node) == mesh1)
+assert(current.mesh(mesh_node) == mesh1)
 mesh1.dead = true
-assert(current.mesh(mesh_node) == mesh2 and old.mesh(mesh_node) == mesh2)
+assert(current.mesh(mesh_node) == mesh2)
 local mesh3 = {}
 mesh_node.children[1].mesh = mesh3
 frame(2.1)
-assert(current.mesh(mesh_node) == mesh3 and old.mesh(mesh_node) == mesh3)
+assert(current.mesh(mesh_node) == mesh3)
 assert(current.mesh(node("deep", {node("middle", {node("bottom", nil, {})})})) == nil)
 
 -- 同名装备不同角色不能共享部件；换武器与旧对象销毁触发重查。
@@ -163,30 +150,30 @@ local a = node("player01", {node("LS_Saya_a"), node("LS_Swd_a")})
 local b = node("player02", {node("LS_Saya_b"), node("LS_Swd_b")})
 local pa, pb = player(a, 2), player(b, 2)
 frame()
-compare(a, pa); compare(b, pb)
+
 assert(current.weapon_id(a, pa) == "LS_Swd_a" and current.weapon_id(b, pb) == "LS_Swd_b")
 a.children[2].dead = true
 a:set_children({a.children[1], node("LS_Swd_new")})
 frame()
-compare(a, pa)
+current.weapons(a,pa)
 assert(current.weapon_id(a, pa) == "LS_Swd_new")
 pa.weapon_type = 5
 a:set_children({node("Ham_new")})
 frame()
-compare(a, pa)
+current.weapons(a,pa)
 assert(current.weapon_id(a, pa) == "Ham_new")
 
 -- 武器未生成时的 20ms 重试与缺少首部件的稀疏数组。
 local pending = node("player00")
 local pp = player(pending, 2)
 frame()
-compare(pending, pp)
+current.weapons(pending,pp)
 pending:set_children({node("LS_Swd_only")})
 frame(.01)
-compare(pending, pp)
+current.weapons(pending,pp)
 assert(current.weapons(pending, pp) == nil)
 frame(.02)
-compare(pending, pp)
+current.weapons(pending,pp)
 assert(current.weapon_id(pending, pp) == "LS_Swd_only")
 
 -- 新实例和生命周期清理必须释放旧引用，不能继承其他会话的装备。
@@ -202,4 +189,4 @@ assert(current.weapon_id(pending, pp) == "LS_Swd_new_scene")
 assert(Equipment.new().weapon_id(pending, pp) == "LS_Swd_new_scene")
 pending.dead = true
 assert(current.body_id(pending) == nil and current.weapons(pending, pp) == nil)
-print("PASS: Rise equipment and weapon discovery match legacy behavior")
+print("PASS: Rise equipment and weapon discovery preserve IDs, slot mappings, TTLs and lifecycle isolation")

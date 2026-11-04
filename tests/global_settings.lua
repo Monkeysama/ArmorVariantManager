@@ -21,14 +21,6 @@ local cases = {
 }
 for _, game in ipairs({"Wilds", "Rise"}) do
     local schema = require("ArmorVariantManager_Core.Games." .. game .. ".Settings")
-    local factory = dofile("tests/fixtures/legacy/" .. game:lower() .. "_settings.lua")
-    local function legacy(input)
-        local env = {global_config_path=path, safe_json_load=function() return input end,
-            json={load_file=function() return input end}}
-        local old = factory(setmetatable(env, {__index=_G}))
-        old.load()
-        return old.value
-    end
     for index=0,#cases do
         local input = index > 0 and S.copy(cases[index]) or nil
         local original = S.copy(input)
@@ -37,15 +29,22 @@ for _, game in ipairs({"Wilds", "Rise"}) do
             load=function(p) S.equal(p,path); reads=reads+1; return input end,
             save=function(p,v) S.equal(p,path); writes=writes+1; saved=S.copy(v); return success end,
         })
-        S.equal(session.value, legacy(nil), game .. " defaults")
+        local defaults=schema.new()
+        S.equal(session.value,defaults,game.." defaults")
+        assert(defaults.language=="zh" and defaults.scan_interval==.5 and defaults.body_id_ttl==1)
+        assert(defaults.scanner_batch_size==(game=="Wilds" and 200 or 100))
         local identity = session.value
         session.load()
         assert(session.value == identity and reads == 1 and writes == 0)
-        local expected = legacy(input)
-        -- 崛起原加载器丢弃不认识的字段；共享读写需按兼容约定保留它们。
-        if input then
-            local known=schema.new()
-            for k,v in pairs(input) do if known[k]==nil then expected[k]=v end end
+        local expected=S.copy(defaults)
+        for k,v in pairs(input or {}) do expected[k]=v end
+        if game=="Rise" then
+            local clamped={
+                [7]={multiplayer_players_per_tick=0,multiplayer_weapon_scan_interval=.2,scene_scan_batch=4},
+                [8]={multiplayer_players_per_tick=8,multiplayer_weapon_scan_interval=30,scene_scan_batch=128},
+                [9]={multiplayer_players_per_tick=2,multiplayer_weapon_scan_interval=1.25,scene_scan_batch=32},
+            }
+            for k,v in pairs(clamped[index] or {}) do expected[k]=v end
         end
         S.equal(session.value, expected, game .. " case " .. index)
         S.equal(input, original, "input unchanged")
@@ -81,4 +80,4 @@ local config=app.global_config
 S.equal(calls,{"load"}); assert(config.new_ui_enabled==false and config.language=="en")
 assert(app.save_global_settings()==false and saved==config); S.equal(calls,{"load","save"})
 Store.load,Store.save=old_load,old_save
-print("PASS: dual-game global defaults, legacy load, unknown fields, roundtrip and entry wiring")
+print("PASS: dual-game global defaults, numeric limits, unknown fields, roundtrip and entry wiring")

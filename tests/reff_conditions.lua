@@ -271,8 +271,8 @@ for _, game in ipairs({ "Wilds", "Rise" }) do
 
     test(game .. " legacy-loaded rule order, target extensions and defaults survive editing", function()
         local f = fixture(game)
-        local legacy = dofile("tests/fixtures/legacy/" .. game:lower() .. "_config.lua")
-        f.config = legacy({ presets = { Base = {}, Other = {} }, default_preset = "Base",
+        local normalize=function(data) return require("ArmorVariantManager_Core.Config.Normalize").apply(data,require("ArmorVariantManager_Core.Games."..game..".Config")) end
+        f.config = normalize({ presets = { Base = {}, Other = {} }, default_preset = "Base",
             weapon_transform_rules = { { state = "drawn", targets = { { group = "", preset = "Base", extra = 9 } }, extra = 7 },
                 { state = "sheathed", targets = {} } },
             transform_rules = { { threshold = 80, targets = {} }, { threshold = 20, targets = {} } },
@@ -293,7 +293,7 @@ for _, game in ipairs({ "Wilds", "Rise" }) do
         before.weapon_transform_rules[1].targets[1].preset = "Other"
         S.equal(f.config, before)
         local saved = S.copy(f.config)
-        f.config = legacy(S.copy(saved)); f.context.config = f.config
+        f.config = normalize(S.copy(saved)); f.context.config = f.config
         S.equal(f.config, saved)
     end)
 end

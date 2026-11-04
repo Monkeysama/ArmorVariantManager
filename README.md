@@ -2,19 +2,15 @@
 
 基于 REFramework 的装备差分管理工具，支持《怪物猎人：荒野》和《怪物猎人：崛起》。将多个外观差分合进一个 MOD，在游戏内切换网格、材质和预设，只占用一套装备的位置。
 
-两款游戏使用同一个通用包。**只安装 REFramework 即可使用；REFF 网页界面是可选项。**
-
+两款游戏使用同一个通用包。
 ## 安装
 
 1. 为当前游戏安装 [REFramework](https://github.com/praydog/REFramework)。
-2. 退出游戏，将通用包解压到游戏根目录，即 `MonsterHunterWilds.exe` 或 `MonsterHunterRise.exe` 所在目录。不要多套一层发布目录。
-3. 确认 `reframework/autorun/ArmorVariantManager.lua` 存在。
-
-包内含荒野独立预览 DLL、预览资源和可选 REFF 页面的文件，无需为崛起手动删减。包内不含 REFramework 或 REFF 本体。
+2. 退出游戏，将通用包解压到游戏根目录。
 
 ## 打开与使用
 
-### REF 原生菜单（无需 REFF）
+### REF 原生菜单
 
 打开 REFramework 菜单，在 **Script Generated UI** 中展开 **差分管理器**。
 
@@ -25,47 +21,8 @@
 
 ### REFF 网页界面（可选）
 
-需要独立网页界面时，另行安装 [REFF](https://github.com/Monkeysama/REFF) 1.x，并使用 D3D12 模式。保留通用包中的 `reframework/reff/plugins/monkeysama.avm/`。
-
-关闭 REFramework 菜单后，按 REFF 打开快捷键（默认 **F8**），在插件列表选择 **差分管理器**。
-
-- 页面底部可切换 **部件材质**、**条件变换**、**设置** 和 **帮助**；没有角色时也能阅读帮助。
-- 列表行右侧抓手支持拖动排序；键盘聚焦列表项后可用 **Alt+↑ / Alt+↓**。主预设和全局组不参与分组拖动，所有预设均可排序；排序失败会恢复原顺序，保留选中项与外观。
-- **主预设** 显示全部材质及普通组归属、全局组和隐藏状态。已划入普通组的材质在主预设中只读，切换到所属组后编辑。
-- 崛起可在预设列表底部 **手动导入配置**，选择其他装备 JSON 或备份，确认后替换当前装备配置并立即应用。
-- 全局设置直接保存；材质显隐和荒野 **陷地修复** 属于预设草稿，调整后需新建或覆盖预设。高度控件位于 **部件材质** 底部，信息按钮支持悬停和键盘聚焦。
-- 数值既可拖动滑动条，也可在输入框精确填写。受击时间、次数的滑动条范围只用于快调，不限制原配置可保存的数值；保存失败时保留输入供重试。
-- 在 **设置** 中选择 **自有主题** 或 **跟随 REFF**；两者都遵循 REFF 的字号和缩放设置。
-
-#### 荒野全身预览
-
-勾选网页顶部 **全身预览**，在左侧深色画布查看当前人物。画布随可用高度调整；在 **设置** 中调整镜头，默认及重置距离为 **1.5**。关闭页面、切换插件或隐藏 REFF 后停止预览并释放相机。
-
-网页预览需要支持 **原生预览接口 v1、预览布局协议 2** 的 REFF，以及本包的 `ArmorVariantManager_Portrait.dll`，仅支持游戏 SDR 输出。升级时成套更新 REFF 的 DLL 与宿主 EXE，并同步本包网页文件。旧版或未安装 REFF 不影响 REF 原生菜单和预设管理。
-
-## 备份、升级与卸载
-
-预设保存在当前游戏的 `reframework/data/ArmorVariantManager/`，备份在其 `backup/` 子目录。主配置与备份不同时会提示 **恢复备份** 或 **忽略**；恢复失败保留提示与当前配置。忽略只关闭本次会话提示，后续成功保存会更新备份。
-
-升级前退出游戏，备份上述数据目录及当前 AVM 程序。旧 JSON 无需转换，不要将两款游戏的数据目录互相覆盖。
-
-将以下 AVM 程序项移到游戏加载目录之外，再解压新包；不要把 `.bak.lua` 等副本留在 `autorun` 中：
-
-```text
-reframework/autorun/ArmorVariantManager.lua
-reframework/autorun/ArmorVariantManager_Core/
-reframework/autorun/ArmorVariantManager_UI/          # 旧版本
-reframework/plugins/ArmorVariantManager_UI.dll      # 旧版本
-reframework/plugins/ArmorVariantManager_Portrait.dll
-reframework/plugins/AVM_InputBridge.dll             # 旧崛起版本
-reframework/reff/plugins/monkeysama.avm/
-natives/STM/ArmorVariantManager/Portrait/
-```
-
-旧 Home 弹窗已移除。保留用户数据、REFramework、可选 REFF 及其他 MOD，尤其不要删除其他 MOD 使用的 `reframework-d2d`。许可证应随程序保留。
-
-- **回退**：退出游戏，移出新版本的上述程序项，恢复备份的程序；需要恢复旧配置时再使用数据备份。
-- **卸载**：退出游戏，移出上述 AVM 程序项。数据目录可保留供以后重装，或自行归档。
+需要独立网页界面时，另行安装 [REFF](https://github.com/Monkeysama/REFF) 。
+关闭 REFramework 菜单后，按 REFF 打开快捷键（默认 **HOME**），在插件列表选择 **差分管理器**。
 
 ## 常见问题
 

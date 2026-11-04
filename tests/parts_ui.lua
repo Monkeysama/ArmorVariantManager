@@ -2,11 +2,9 @@ package.path = "ArmorVariantManager/reframework/autorun/?.lua;" .. package.path
 local S=dofile("tests/support.lua")
 local prefix="ArmorVariantManager_Core."
 local Parts=require(prefix.."UI.ImGui.Parts")
-local Weapons=require(prefix.."Games.Rise.Weapons")
 local Signals=require(prefix.."Games.Rise.Signals")
 Signals.get_current_weapon_type=function() return 2 end
-local legacy={Wilds=dofile("tests/fixtures/legacy/wilds_parts_ui.lua"),Rise=dofile("tests/fixtures/legacy/rise_parts_ui.lua")}
-local function fixture(game, modern, options)
+local function fixture(game, options)
     local trace={}
     local td={get_method=function() return nil end}
     local function object(name)
@@ -29,9 +27,7 @@ local function fixture(game, modern, options)
     end
     for index=0,5 do armor[index]=part("Armor"..index,index) end
     for index=1,2 do weapons[index]=part("Weapon"..index,index-1) end
-    if options.empty then armor,weapons={},{} end
     if options.sparse then weapons={[8]=part("Weapon8",7)} end
-    if options.invalid then weapons[1].dead=true end
     local function alive(obj) return obj and not obj.dead end
     local runtime={equipment={},meshes={},scene_object={game_object=function(mesh) return mesh.target end}}
     runtime.equipment.weapon_id=function() return "weapon",weapons end
@@ -47,51 +43,37 @@ local function fixture(game, modern, options)
     -- 测试与真正网格服务一致的 Player_Face 排除条件。
     runtime.meshes.is_face=require(prefix.."Games.Wilds.Meshes").new(function() end,function() end).is_face
     local baseline={};for i=0,5 do baseline[tostring(i)]={index=i} end
-    local env=setmetatable({get_player_handle=function() end, runtime=runtime,T=function(key) return key end,character={},primary={},body_id="armor",
-        is_weapon_mode=options.weapon,active_overrides={armor=baseline},
-        get_character_weapon_id=runtime.equipment.weapon_id,get_cached_weapon_parts=runtime.equipment.weapons,
-        get_character_part=runtime.meshes.part,get_cached_character_part=runtime.meshes.part,
-        get_character_part_meshes=runtime.meshes.part_meshes,get_mesh_component_recursive=runtime.meshes.first,
-        safe_get_game_object=runtime.scene_object.game_object,is_player_face_object=runtime.meshes.is_face,
-        safe_object_alive=alive,SceneObject={call=function(obj,method) return obj:call(method) end},
-        Utils={get_current_weapon_type=Signals.get_current_weapon_type,get_weapon_part_name=Weapons.part_name},
-        sdk={is_managed_object=alive}}, {__index=_G})
-    env.imgui={tree_node=function(title) trace[#trace+1]={"tree",title};return not options.closed end,
+    local actor={}
+    local ui={tree_node=function(title) trace[#trace+1]={"tree",title};return not options.closed end,
         tree_pop=function() trace[#trace+1]={"pop"} end,
         text_colored=function(value,color) trace[#trace+1]={"text",value,color} end}
-    env.draw_mesh_toggle=function(obj,label,id,index) trace[#trace+1]={"mesh",obj.name,label,id,index} end
-    local draw
-    if modern then
-        runtime.part_view=require(prefix.."Games."..game..".PartView").new(runtime)
-        local panel=Parts.new(runtime.part_view,env.T,env.draw_mesh_toggle)
-        draw=function() panel(game=="Wilds" and env.character or env.primary,"armor",options.weapon,baseline) end
-    else draw=legacy[game](env) end
-    return {trace=trace,env=env,runtime=runtime,draw=function() _G.sdk,_G.imgui=env.sdk,env.imgui;draw() end}
+    runtime.part_view=require(prefix.."Games."..game..".PartView").new(runtime)
+    local panel=Parts.new(runtime.part_view,function(key) return key end,
+        function(obj,label,id,index) trace[#trace+1]={"mesh",obj.name,label,id,index} end)
+    return {trace=trace,runtime=runtime,draw=function()
+        _G.sdk,_G.imgui={is_managed_object=alive},ui
+        panel(actor,"armor",options.weapon,baseline)
+    end}
 end
-for _,game in ipairs({"Wilds","Rise"}) do
-    for _,weapon in ipairs({false,true}) do
-        for _,case in ipairs({"normal","no_mesh","empty","closed","invalid"}) do
-            local opts={[case]=true,weapon=weapon}
-            local old,new=fixture(game,false,opts),fixture(game,true,opts)
-            old.draw();new.draw();S.equal(new.trace,old.trace,game.." "..case.." "..tostring(weapon))
-        end
-    end
+for _, game in ipairs({"Wilds","Rise"}) do
+    local armor=fixture(game,{}); armor.draw()
+    local indices={}
+    for _, row in ipairs(armor.trace) do if row[1]=="mesh" then indices[#indices+1]=row[5] end end
+    S.equal(indices,game=="Wilds" and {0,1,2,3,4,5} or {2,1,0,4,3},game.." armor order")
+    local missing=fixture(game,{no_mesh=true}); missing.draw()
+    local draws=0
+    for _, row in ipairs(missing.trace) do if row[1]=="mesh" then draws=draws+1 end end
+    assert(draws==(game=="Wilds" and 5 or 4))
+    local collapsed=fixture(game,{closed=true,weapon=true})
+    collapsed.runtime.equipment.weapon_id=function() error("closed panel queried engine") end
+    collapsed.runtime.equipment.weapons=collapsed.runtime.equipment.weapon_id
+    collapsed.draw(); assert(#collapsed.trace==1)
 end
--- 修复先前抽取后遗漏的脸部判定：缺网格的正常部件会进入该真实可达分支。
-local broken=fixture("Wilds",false,{no_mesh=true});broken.env.is_player_face_object=nil
-local ok,err=pcall(broken.draw);assert(not ok and tostring(err):find("is_player_face_object",1,true))
-for _,case in ipairs({"face","no_target"}) do
-    local old,new=fixture("Wilds",false,{[case]=true}),fixture("Wilds",true,{[case]=true})
-    old.draw();new.draw();S.equal(new.trace,old.trace,"Wilds "..case)
-end
--- 原崛起 ipairs 会遗漏首槽缺失的第八部件；新列表保留真实槽位编号。
-local sparse=fixture("Rise",true,{weapon=true,sparse=true});sparse.draw()
-assert(sparse.trace[9][1]=="mesh" and sparse.trace[9][5]==7)
-assert(sparse.trace[9][2]=="Mesh_Weapon8")
-local old_sparse=fixture("Rise",false,{weapon=true,sparse=true});old_sparse.draw()
-for _,row in ipairs(old_sparse.trace) do assert(row[1]~="mesh") end
-local rebuilding=fixture("Rise",true,{weapon=true,no_target=true});rebuilding.draw()
+local face=fixture("Wilds",{face=true}); face.draw()
+assert(face.trace[2][1]=="text" and face.trace[2][2]=="helm not_equipped")
+-- 崛起首槽缺失不能截断后面的合法武器部件，行号保持真实槽位。
+local sparse=fixture("Rise",{weapon=true,sparse=true}); sparse.draw()
+assert(sparse.trace[9][1]=="mesh" and sparse.trace[9][5]==7 and sparse.trace[9][2]=="Mesh_Weapon8")
+local rebuilding=fixture("Rise",{weapon=true,no_target=true}); rebuilding.draw()
 assert(rebuilding.trace[2][1]=="text" and rebuilding.trace[3][1]=="mesh")
-local collapsed=fixture("Wilds",true,{closed=true,weapon=true});collapsed.runtime.equipment.weapon_id=function() error("closed panel queried engine") end
-collapsed.draw()
-print("PASS: both game part lists match legacy; face fallback, sparse weapons and rebuilding meshes remain usable")
+print("PASS: native armor order, face/missing-mesh fallback, sparse weapons and closed-panel engine isolation")

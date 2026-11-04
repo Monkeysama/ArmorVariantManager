@@ -4,7 +4,6 @@ local S = dofile("tests/support.lua")
 local prefix = "ArmorVariantManager_Core."
 local Defaults = require(prefix .. "Presets.Defaults")
 local Height = require(prefix .. "GroundClippingFix")
-local legacy = dofile("tests/fixtures/legacy/defaults.lua")
 local function preset(value) return {["0"] = {materials = {cloth = value}}} end
 
 -- 默认初始化比较完整结果及选择表；保留缺省、空字符串和无效名称的旧区别。
@@ -16,28 +15,11 @@ for _, game in ipairs({"Wilds", "Rise"}) do
                 Normal={default_preset="Chosen", presets={Chosen={["1"]={mesh_enabled=false}}}},
                 Global={is_global=true, default_preset=default or nil, preset_order=order,
                     presets={Hide=preset(false), Show=preset(true)}}}}
-            local expected, selected, normal, base_selected = {}, {old="kept"}
-            local env = setmetatable({active_overrides={id=expected}, active_group_presets={id=selected},
-                load_config_data=function() return config end,
-                bump_overrides_version=function() end,
-                Applied={invalidate_body=function() end},
-                ground_clipping_presets={reset=function() end},
-                GroundClippingFix=Height,
-            }, {__index=_G})
-            env.merge_preset_into_overrides=function(id, value) policy.merge_into(env.active_overrides[id], value) end
-            env.merge_global_preset_into_overrides=function(id, value) policy.merge_global_into(env.active_overrides[id], value) end
-            env.TransformManager={
-                set_model_base=function(_, value, names)
-                    normal, base_selected = S.copy(value), S.copy(names)
-                    return S.copy(value)
-                end,
-                update_base_preset=function(_, _, group, name) base_selected[group]=name end,
-            }
-            legacy[game](env)("id")
             local actual = game == "Wilds" and {ground_clipping_fix=Height.default_settings(config)} or {}
             local names = game == "Wilds" and {old="kept"} or {}
             Defaults.normal(config, policy, actual, names)
-            if game == "Rise" then S.equal(actual, normal, "normal baseline before global lock") end
+            assert(actual["0"].materials.cloth and actual["1"].mesh_enabled==false)
+            assert(names[""]=="Base" and names.Normal=="Chosen")
             Defaults.globals(config, policy, actual, names, policy.default_global)
             if game == "Wilds" then
                 local app = require(prefix .. "Games.Wilds.Appearance").new({load=function() return config end})
@@ -46,13 +28,22 @@ for _, game in ipairs({"Wilds", "Rise"}) do
                 S.equal(app.overrides.id, actual, "Wilds appearance default composition")
                 S.equal(app.groups.id, names, "Wilds appearance default selections")
             end
-            S.equal(actual, env.active_overrides.id, game .. " defaults")
-            S.equal(names, env.active_group_presets.id, game .. " selections")
-            if game == "Rise" then S.equal(names, base_selected, "rule baseline selections") end
+            local fallback
+            if default=="Hide" then fallback="Hide"
+            elseif (not default or default=="") and game=="Rise" then
+                if order[1]=="Show" then fallback="Show"
+                elseif not default then fallback=next(config.groups.Global.presets) end
+            end
+            assert(actual["0"].materials.cloth==(fallback~="Hide"))
+            assert(names.Global==fallback)
+            if game=="Wilds" then
+                assert(names.old=="kept")
+                S.equal(actual.ground_clipping_fix,Height.default_settings(config))
+            else assert(names.old==nil) end
         end
     end
 end
-print("PASS: both legacy default initializers, global fallback and selections")
+print("PASS: dual-game defaults, global fallback and selections")
 
 -- 运行正式入口的会话装配，确认别名、过滤与场景清理连接到同一状态所有者。
 do

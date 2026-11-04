@@ -59,7 +59,7 @@ $env:LUA = "lua"
 python -m unittest discover -s tests -p test_release.py
 ```
 
-`tests/entrypoint.lua` 加载真实入口，覆盖两款游戏、缺少 REFF、脚本重置、保存失败及主要应用操作。其他用例覆盖配置、条件、多人角色状态与预览生命周期。离线测试不替代真实 SDK、多人时序和游戏画面；有相同候选的有效结果时复用，不反复全量运行。
+`tests/entrypoint.lua` 加载真实入口，覆盖两款游戏、缺少 REFF、脚本重置、保存失败及主要应用操作。其他用例直接断言配置、条件、多人角色状态与预览生命周期；不携带旧版本源码作对照。语法检查在一个 Lua 进程中完成，每个回归仍使用独立进程。离线测试不替代真实 SDK、多人时序和游戏画面；有相同候选的有效结果时复用，不反复全量运行。
 
 ### 网页
 
@@ -88,7 +88,7 @@ ctest --test-dir release/build/portrait -C Release --output-on-failure
 Copy-Item release/build/portrait/Release/ArmorVariantManager_Portrait.dll ArmorVariantManager/reframework/plugins/
 ```
 
-原生测试检查桥接加载顺序、双游戏隔离、姿态与 REFF 借用命令的像素/裁剪/资源租约。只有通过相关检查的 DLL 才更新到运行源码目录；同时维护 `source/THIRD_PARTY_LICENSES.txt`。
+原生测试检查桥接加载顺序、双游戏隔离、姿态、公开独立预览及 REFF 借用命令的像素/裁剪/资源租约。只有通过相关检查的 DLL 才更新到运行源码目录；同时维护 `source/THIRD_PARTY_LICENSES.txt`。
 
 ## 生成发布包
 

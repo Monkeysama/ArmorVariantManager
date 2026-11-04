@@ -1,7 +1,6 @@
 package.path = "ArmorVariantManager/reframework/autorun/?.lua;" .. package.path
 local S = dofile("tests/support.lua")
 local Weapons = require("ArmorVariantManager_Core.Games.Rise.Weapons")
-local legacy = dofile("tests/fixtures/legacy/rise_manual_import.lua")
 
 local patterns = {
     "reframework/data/ArmorVariantManager/.*\\.json",
@@ -26,19 +25,6 @@ local function files_for(results, responses)
             return response
         end,
     }, trace
-end
-
-local function old_import(files, weapon)
-    local env = setmetatable({
-        fs=files.fs, json={load_file=files.load}, is_weapon_mode=weapon,
-        Utils=Weapons, T=function(key) return key end,
-        save_current_config_to_file=function() end,
-        update_preset_names_list=function() end,
-        update_group_names_list=function() end,
-        apply_all_defaults=function() end,
-        get_primary_player=function() return nil end,
-    }, {__index=_G})
-    return legacy(env), env
 end
 
 local results = {
@@ -100,24 +86,17 @@ local function loading(factory, scenario)
     if scenario.value ~= nil then responses[scenario.path] = scenario.value end
     if scenario.success then responses[scenario.success] = candidate end
     local files, trace = files_for(nil, responses)
-    local service, env = factory(files, false)
-    local data, reason
-    if env then
-        local ok
-        ok, reason = service.load(scenario.path, "armor")
-        if ok then data = env.current_config end
-    else
-        data, reason = service.load(scenario.path)
-    end
+    local data,reason=factory(files,false).load(scenario.path)
     return data, trace, reason
 end
 
--- 冻结旧函数先建立列表、路径回退和未知字段的可达行为基线。
-check_list(old_import, "legacy")
+local ManualImport=require("ArmorVariantManager_Core.Games.Rise.ManualImport")
+local function modern(files) return ManualImport.new(files) end
+check_list(modern,"manual")
 for _, scenario in ipairs(loads) do
-    local data, trace = loading(old_import, scenario)
+    local data, trace = loading(modern, scenario)
     local expected = scenario.success and candidate or type(scenario.value) == "table" and scenario.value or nil
-    S.equal(data, expected, "legacy load " .. scenario.path)
+    S.equal(data, expected,  "manual load " .. scenario.path)
     local paths = {scenario.path, "reframework/data/" .. scenario.path,
         (scenario.path:gsub("^[Aa]rmor[Vv]ariant[Mm]anager[/\\]", ""))}
     local count = 3
@@ -126,20 +105,8 @@ for _, scenario in ipairs(loads) do
     end
     local expected_trace = {}
     for index = 1, count do expected_trace[#expected_trace + 1] = {"load", paths[index]} end
-    S.equal(trace, expected_trace, "legacy fallback " .. scenario.path)
+    S.equal(trace, expected_trace,  "fallback " .. scenario.path)
 end
-print("PASS: legacy manual import baseline")
-
-local ManualImport = require("ArmorVariantManager_Core.Games.Rise.ManualImport")
-local function modern(files) return ManualImport.new(files) end
-check_list(modern, "modern")
-for _, scenario in ipairs(loads) do
-    local actual, trace = loading(modern, scenario)
-    local expected, old_trace = loading(old_import, scenario)
-    S.equal(actual, expected, "manual load " .. scenario.path)
-    S.equal(trace, old_trace, "manual load paths " .. scenario.path)
-end
-
 -- 文件读取只返回候选；不复制或补齐数据，空 table 保持旧 JSON 的接受条件。
 local files = files_for(nil, {[loads[1].path]=candidate})
 assert(modern(files).load(loads[1].path) == candidate)

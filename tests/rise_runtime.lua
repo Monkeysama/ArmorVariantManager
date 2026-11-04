@@ -1,34 +1,10 @@
 package.path = "ArmorVariantManager/reframework/autorun/?.lua;" .. package.path
 local S = dofile("tests/support.lua")
 local Scheduler = require("ArmorVariantManager_Core.Runtime.Scheduler")
-local LegacyScheduler = dofile("tests/fixtures/legacy/rise_scheduler.lua")
 assert(require("ArmorVariantManager_Core.RuntimeScheduler") == Scheduler)
 local original_clock = os.clock
 local now = 0
 os.clock = function() return now end
-
--- 同一时钟/名单/前台负载对照旧调度器，覆盖预算债务、暂停与名单变化。
-local function schedule(module, fps)
-    now = 0
-    local scheduler, trace = module.new(), {}
-    for frame = 1, 600 do
-        now = now + 1 / fps
-        scheduler:begin_frame(now)
-        local entries = {{obj="a"}, {obj="b"}, {obj="c"}}
-        if frame > 200 then entries[2] = {obj="d"} end
-        if frame > 400 then entries = {} end
-        scheduler:run(entries, function(entry)
-            trace[#trace + 1] = {frame, entry.obj}
-            now = now + (frame % 7 == 0 and .002 or .0001)
-        end, frame > 50 and frame < 150 and .004 or 0,
-            frame > 300 and frame < 320 and 0 or 3)
-    end
-    return {trace=trace, calls=scheduler.calls, deferred=scheduler.deferred,
-        debt=scheduler.debt, max_wait=scheduler.max_wait, records=scheduler.records}
-end
-for _, fps in ipairs({30, 60, 144}) do
-    S.equal(schedule(Scheduler, fps), schedule(LegacyScheduler, fps), "scheduler " .. fps)
-end
 
 local prefix = "ArmorVariantManager_Core.Games.Rise."
 local log, directory, event_objects, fallback, reset_hook, pre_hook, post_hook

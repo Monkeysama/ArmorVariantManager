@@ -55,13 +55,6 @@ local env = setmetatable({sdk=sdk, os={clock=function() return now end},
 }, {__index=_G})
 local Actors = assert(loadfile("ArmorVariantManager/reframework/autorun/ArmorVariantManager_Core/Games/Rise/Actors.lua", "t", env))()
 local actors = Actors.new(config)
-local legacy_env = setmetatable({sdk=sdk, os=env.os, SceneObject=SceneObject,
-    global_config=config, type_cache={via_transform="via.Transform"},
-    method_cache={Component_get_GameObject=get_go}, playerListGetItem=get_item,
-    get_player_manager=function() return manager end,
-    Profiler={begin=function() end,finish=function() end,count=function() end,max_value=function() end},
-}, {__index=_G})
-local old = dofile("tests/fixtures/legacy/rise_actors.lua")(legacy_env)
 local function go(name, has_body)
     local obj = {name=name}
     local body = {call=function(_, method) assert(method == "get_Name"); return "custom_body" end}
@@ -85,30 +78,30 @@ local function player(obj, index)
         error(method)
     end}
 end
-local function compare()
-    local actual, expected = actors.get(), old.get()
-    assert(#actual.entries == #expected.entries and #actual.others == #expected.others)
-    assert(actual.local_index == expected.local_index)
-    for i, entry in ipairs(actual.entries) do
-        local prior = expected.entries[i]
-        for _, key in ipairs({"player","obj","index","is_local","name","from_scan","from_master"}) do
-            assert(entry[key] == prior[key], "entry " .. i .. " " .. key)
+local function directory()
+    local actual=actors.get()
+    local seen,locals={},0
+    for _,entry in ipairs(actual.entries) do
+        assert(entry.obj and not seen[entry.obj],"actor appears only once")
+        seen[entry.obj]=true
+        if entry.is_local then
+            locals=locals+1
+            assert(actual.local_entry==entry and actual.local_index==entry.index)
+            assert(actors.local_player()==entry.obj)
         end
     end
-    assert(actors.local_player() == old.local_player())
+    assert(locals<=1 and #actual.others==#actual.entries-locals)
+    for _,entry in ipairs(actual.others) do assert(not entry.is_local and seen[entry.obj]) end
     return actual
 end
-local function reset() actors.reset(); old.reset() end
-local function tick()
-    actors.tick()
-    if not old.state.local_entry or not SceneObject.is_alive(old.state.local_entry.obj) then old.state.scan_tick() end
-end
+local function reset() actors.reset() end
+local function tick() actors.tick() end
 
 -- 本地主角可排在列表末尾；名字与加入顺序不改变身份。
 local local_go, remote = go("player03", true), go("player00", true)
 master = player(local_go, 3)
 players = {player(remote, 0), master}
-local dir = compare()
+local dir = directory()
 assert(dir.local_entry.obj == local_go and dir.others[1].obj == remote)
 local scans_before = scan_starts
 tick()
@@ -116,9 +109,9 @@ assert(scan_starts == scans_before, "master present: do not scan scene")
 
 -- 不同包装对象以索引识别；主角不在 PlayerList 时仍可从管理器取得。
 master = player(local_go, 3)
-reset(); compare()
+reset(); directory()
 players = {player(remote, 0)}
-reset(); dir = compare()
+reset(); dir = directory()
 assert(dir.local_entry.from_master and dir.entries[1].obj == local_go)
 
 -- 列表标准调用失败时使用缓存方法，不把队友当主角。
@@ -127,31 +120,31 @@ list.call = function(_, method)
     error("standard list item unavailable")
 end
 players = {player(remote, 0), master}
-reset(); compare()
+reset(); directory()
 list.call = function(_, method, i)
     if method == "get_Count" then return #players end
     if method == "get_Item" then return players[i+1] end
     error(method)
 end
 master, players = nil, {player(remote, 0), player(local_go, 3)}
-reset(); dir = compare()
+reset(); dir = directory()
 assert(dir.local_entry == nil and #dir.others == 2)
 
 -- 已确认主角短暂失联保留一秒，销毁则立即停止使用。
 master, players = player(local_go, 3), {}
-reset(); compare()
+reset(); directory()
 master = nil
 now = now + .6
-compare()
+directory()
 assert(actors.local_player() == local_go)
 now = now + .5
-compare()
+directory()
 assert(actors.local_player() == nil)
 master = player(local_go, 3)
-reset(); compare()
+reset(); directory()
 local_go.dead = true
 master = nil
-compare()
+directory()
 assert(actors.local_player() == nil)
 local_go.dead = nil
 
@@ -160,28 +153,28 @@ local preview = go("FemalePreview", true)
 transforms = {}
 for i=1,7 do transforms[i] = {go=go("prop" .. i)} end
 transforms[8] = {go=preview}
-reset(); dir = compare()
+reset(); dir = directory()
 assert(dir.local_entry == nil)
 local reads_before = component_reads
 tick()
-assert(component_reads - reads_before == 8, "each directory handles only four objects per batch")
-tick(); dir = compare()
+assert(component_reads - reads_before == 4, "each directory handles only four objects per batch")
+tick(); dir = directory()
 assert(dir.local_entry.from_scan and actors.local_player() == preview)
 local previous_scans = scan_starts
-tick(); compare()
+tick(); directory()
 assert(scan_starts == previous_scans)
 
 -- 场景切换后失效的数组下标也要丢弃，不能永远停在同一批。
 transforms = setmetatable({}, {__len=function() return 1 end,
     __index=function() error("stale Transform array") end})
-reset(); compare(); tick()
-assert(actors.get().scan.transforms == nil and old.state.scan.transforms == nil)
+reset(); directory(); tick()
+assert(actors.get().scan.transforms == nil)
 local attempts = scan_starts
 tick()
 assert(scan_starts == attempts)
 transforms = {{go=preview}}
 now = now + .11
-tick(); tick(); compare()
+tick(); tick(); directory()
 assert(actors.local_player() == preview)
 
 -- 单元素 REF 栈不能漏首项；两种事件列表路径都保留。
@@ -200,17 +193,12 @@ local function handler(items)
 end
 local handlers = {handler(event_list({player(event_a, 0)}, false))}
 event_manager = {call=function(_, method) assert(method == "get_LoadHandlerStack"); return array(handlers) end}
-local function compare_events()
-    local actual, expected = actors.events(), old.events()
-    assert(#actual == #expected)
-    for i, value in ipairs(actual) do assert(value == expected[i]) end
-    return actual
-end
-assert(compare_events()[1] == event_a)
-handlers[2] = handler(event_list({player(event_b, 1)}, true))
-assert(compare_events()[2] == event_b)
-event_manager = nil
-assert(#compare_events() == 0)
+assert(actors.events()[1]==event_a and #actors.events()==1)
+handlers[2]=handler(event_list({player(event_b,1)},true))
+local events=actors.events()
+assert(#events==2 and events[1]==event_a and events[2]==event_b)
+event_manager=nil
+assert(#actors.events()==0)
 reset()
-assert(old.state.last_local_obj == nil)
-print("PASS: Rise actor directory, fallback scanner and event actors match legacy behavior")
+assert(actors.get().last_local_obj==nil)
+print("PASS: Rise actor identity, fallback scan budget, stale scene and event list paths")

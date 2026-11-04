@@ -1,7 +1,6 @@
 package.path = "ArmorVariantManager/reframework/autorun/?.lua;" .. package.path
 local S = dofile("tests/support.lua")
 local Editor = require("ArmorVariantManager_Core.Presets.Editor")
-local legacy = dofile("tests/fixtures/legacy/preset_edits.lua")
 local initial = {
     presets = { A = { ["1"] = { materials = { Body = false } } }, B = {} },
     default_preset = "A", preset_order = { "A", "B" },
@@ -45,18 +44,12 @@ for _, game in ipairs({ "Wilds", "Rise" }) do
         assert(target.preset_order == order and target.presets.A == preset)
         fail = false
 
-        -- 旧应用与新编辑层的成功删除/排序生成完全相同的 JSON。
-        local old_env = setmetatable({ current_config = S.copy(config), current_group_name = group,
-            get_body_id = function() return "armor" end,
-            update_group_names_list = function() end, update_preset_names_list = function() end,
-            save_current_config_to_file = function() return true end
-        }, { __index = _G })
-        local old = legacy(old_env)
-        assert(old.delete_preset("New") and Editor.delete(config, group, "New", persist))
-        old.reorder_presets({ "B", "A" }); assert(Editor.reorder(config, group, { "B", "A" }, persist))
-        old.reorder_groups({ { name = "Global" }, { name = "Normal" } })
-        assert(Editor.reorder_groups(config, { "Global", "Normal" }, persist))
-        S.equal(config, old_env.current_config, game .. " legacy editing results")
+        assert(Editor.delete(config,group,"New",persist))
+        assert(target.presets.New==nil and target.default_preset=="")
+        assert(Editor.reorder(config,group,{"B","A"},persist))
+        S.equal(target.preset_order,{"B","A"})
+        assert(Editor.reorder_groups(config,{"Global","Normal"},persist))
+        S.equal(config.group_order,{"Global","Normal"})
         S.equal(config.extension, baseline.extension)
         assert(config.groups.Normal.custom == 7)
         local before = calls
@@ -104,4 +97,4 @@ assert(not app.delete_preset("B","armor"))
 assert(not app.reorder_presets({ "B" },"armor"))
 assert(not app.reorder_groups({ "Normal" },"armor"))
 assert(writes == 4 and refreshed == 4)
-print("PASS: shared preset writes/defaults/delete/order, legacy JSON equality, failed-save rollback and application operations")
+print("PASS: shared preset writes/defaults/delete/order, JSON preservation, failed-save rollback and application operations")

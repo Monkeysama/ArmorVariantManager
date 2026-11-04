@@ -19,7 +19,7 @@ local function preset(part, names)
     for _, name in ipairs(names) do materials[name] = false end
     return {presets={one={[tostring(part)]={materials=materials}}}, custom={keep=9}}
 end
-local function fixture(modern, game, scenario)
+local function fixture(game, scenario)
     local disk, files, io_trace = {}, {}, {}
     for _, candidate in ipairs(scenario.files or {}) do
         files[#files + 1] = candidate[1]
@@ -53,33 +53,11 @@ local function fixture(modern, game, scenario)
         weapons=function(actual, handle) assert(actual==character and handle==player); return weapons end,
     }
     local meshes = {first=equipment.mesh,part=function(_, index) return ({[0]=head,[1]=body})[index] end}
-    local env = setmetatable({
-        fs=storage.fs, safe_json_load=storage.load, json={load_file=storage.load},
-        get_local_player_character=function() return character end,
-        get_primary_player=function() return character end,
-        get_character_part=meshes.part, get_mesh_component_recursive=equipment.mesh,
-        get_character_weapon_id=equipment.weapon_id,
-        is_weapon_id=function(id) return id:match("^wp%d%d") or id:match("^it%d%d%d%d") end,
-        is_weapon_mode=scenario.weapon, SceneObject=SceneObject,
-        Utils={get_current_weapon_parts=function() return weapons end},
-        Profiler={begin=function() end,finish=function() end},
-        PresetAutoFinder=dofile("tests/fixtures/legacy/rise_preset_search.lua"),
-        save_current_config_to_file=function() end,
-        update_preset_names_list=function() end, update_group_names_list=function() end,
-        apply_all_defaults=function() end,
-    }, {__index=_G})
-    local data, message
-    if modern then
-        if game=="wilds" then
-            data,message=require("ArmorVariantManager_Core.Games.Wilds.Finder").new(meshes,equipment,storage)(scenario.id,character)
-        else
-            data,message=require("ArmorVariantManager_Core.Games.Rise.Finder").new(equipment,storage)(scenario.id,character,player,scenario.weapon)
-        end
-        assert(env.current_config==nil, "Lookup must not install a configuration")
+    local data,message
+    if game=="wilds" then
+        data,message=require("ArmorVariantManager_Core.Games.Wilds.Finder").new(meshes,equipment,storage)(scenario.id,character)
     else
-        local ok
-        ok,message=dofile("tests/fixtures/legacy/"..game.."_finder.lua")(env)(scenario.id)
-        if ok then data=env.current_config end
+        data,message=require("ArmorVariantManager_Core.Games.Rise.Finder").new(equipment,storage)(scenario.id,character,player,scenario.weapon)
     end
     return {data=data,message=message,trace=io_trace}
 end
@@ -102,22 +80,45 @@ local scenarios = {
     {id="wp00_current",weapon=true,no_weapon=true},
     {id="wp00_current",weapon=true,wrong_weapon=true},
 }
-for _, game in ipairs({"wilds","rise"}) do
+local winners={
+    wilds={1,1,1,false,false,false,false,1,false,false,false,false,false,false,1,false,false,false,false},
+    rise={1,1,1,false,1,1,1,2,false,false,false,false,false,false,1,1,1,false,false},
+}
+local reads={
+    wilds={6,6,7,6,5,0,6,6,0,5,0,0,0,0,6,6,6,0,0},
+    rise={9,9,9,8,9,9,9,10,0,7,7,7,0,0,9,9,9,7,7},
+}
+local failures={
+    wilds={[4]="No matching preset found",[5]="No matching preset found",[6]="No materials on Body",
+        [7]="No matching preset found",[9]="fs.glob missing",[10]="No preset files found",
+        [11]="Body part not found",[12]="Mesh not found",[13]="No Character",[14]="No Body ID",
+        [16]="No matching preset found",[17]="No matching preset found",[18]="Weapon not found",[19]="Weapon not found"},
+    rise={[4]="没有匹配的预设",[9]="未读取到任何预设文件",[10]="未读取到任何预设文件",
+        [11]="未读取到任何预设文件",[12]="未读取到任何预设文件",[13]="No Character",[14]="No Body ID",
+        [18]="未找到武器部件",[19]="未读取到任何预设文件"},
+}
+for _,game in ipairs({"wilds","rise"}) do
     for index,scenario in ipairs(scenarios) do
-        S.equal(fixture(true,game,scenario),fixture(false,game,scenario),game.." lookup "..index)
+        local actual=fixture(game,scenario)
+        local winner=winners[game][index]
+        S.equal(actual.data,winner and scenario.files[winner][2] or nil,game.." lookup "..index)
+        assert(#actual.trace==reads[game][index],game.." lookup I/O "..index)
+        if winner then
+            local matched=scenario.files[winner][1]
+            assert(actual.message:find(game=="wilds" and matched or (matched:match("([^/\\]+)%.json$")),1,true))
+        else assert(actual.message:find(failures[game][index],1,true)) end
     end
 end
 
 -- 缺少首部件的武器是受支持输入；第八槽仍应参与查找，而非退化成同名匹配。
 local sparse={id="weapon",weapon=true,sparse=true,files={{"ArmorVariantManager/other.json",preset(7,{"special"})}}}
-assert(fixture(false,"rise",sparse).data==nil, "Old sparse-slot omission must reproduce")
-assert(fixture(true,"rise",sparse).data.custom.keep==9)
+assert(fixture("rise",sparse).data.custom.keep==9)
 
 -- 评分以材质命中为先；同分才考虑当前编号、覆盖率、非备份和路径顺序。
 local rank={id="armor",files={{"ArmorVariantManager/armor.json",preset(1,{"A"})},{"ArmorVariantManager/better.json",preset(1,{"A","B"})}}}
-assert(fixture(true,"rise",rank).message:find("已匹配: better",1,true))
+assert(fixture("rise",rank).message:find("已匹配: better",1,true))
 rank.files[2][2]=preset(1,{"A"})
-assert(fixture(true,"rise",rank).message:find("已匹配: armor",1,true))
+assert(fixture("rise",rank).message:find("已匹配: armor",1,true))
 
 -- 正式入口导入成功才刷新列表；主文件保存失败恢复当前配置及会话缓存。
 local Fixture=dofile("tests/app_fixture.lua")

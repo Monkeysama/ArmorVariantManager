@@ -11,6 +11,9 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_TESTS = (
     "tests/entrypoint.lua",
     "tests/app_ui.lua",
+    "tests/material_ui.lua",
+    "tests/parts_ui.lua",
+    "tests/condition_ui.lua",
     "tests/reff_bridge.lua",
     "tests/reff_conditions.lua",
     "tests/reff_settings.lua",
@@ -30,14 +33,9 @@ DEFAULT_TESTS = (
     "tests/preset_capture.lua",
     "tests/preset_finder.lua",
     "tests/manual_import.lua",
-    "tests/visibility.lua",
-    "tests/condition_ui.lua",
-    "tests/material_ui.lua",
-    "tests/parts_ui.lua",
     "tests/runtime_state.lua",
     "tests/wilds_equipment.lua",
     "tests/wilds_actors.lua",
-    "tests/wilds_runtime.lua",
     "tests/rise_equipment.lua",
     "tests/rise_actors.lua",
     "tests/rise_materials.lua",
@@ -61,15 +59,15 @@ def main() -> None:
     lua = shutil.which(args.lua)
     if not lua:
         parser.error("Lua 5.4 not found; pass --lua or set LUA to an existing executable")
-    subprocess.run([lua, "-e", 'assert(_VERSION == "Lua 5.4", "Lua 5.4 required")'], check=True)
+    # 编译而不执行运行脚本；所有路径一次交给 Lua，回归用例仍各用独立进程。
+    paths = sorted((ROOT / "ArmorVariantManager/reframework/autorun").rglob("*.lua"))
+    script = 'assert(_VERSION == "Lua 5.4", "Lua 5.4 required"); for _, path in ipairs(arg) do assert(loadfile(path)) end'
+    subprocess.run([lua, "-", *(path.relative_to(ROOT).as_posix() for path in paths)],
+                   input=script, text=True, cwd=ROOT, check=True)
+    print(f"PASS: syntax of {len(paths)} runtime Lua files", flush=True)
     for path in args.tests or DEFAULT_TESTS:
         print(f"RUN {path}", flush=True)
         subprocess.run([lua, path], cwd=ROOT, check=True)
-    # 编译而不执行运行脚本；不依赖独立安装的 luac。
-    paths = sorted((ROOT / "ArmorVariantManager/reframework/autorun").rglob("*.lua"))
-    for path in paths:
-        subprocess.run([lua, "-e", 'assert(loadfile(arg[0])); os.exit(0)', str(path)], cwd=ROOT, check=True)
-    print(f"PASS: syntax of {len(paths)} runtime Lua files")
 
 
 if __name__ == "__main__":

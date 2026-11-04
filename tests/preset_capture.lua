@@ -36,30 +36,33 @@ local wilds = require("ArmorVariantManager_Core.Games.Wilds.Capture").new(meshes
 local rise = require("ArmorVariantManager_Core.Games.Rise.Capture").new(equipment)
 local SceneObject = require("ArmorVariantManager_Core.Games.Rise.SceneObject")
 
--- 对照两款游戏的旧捕获路径，覆盖普通/全局、意图值、多网格和空部件。
-for _, game in ipairs({"wilds", "rise"}) do
-    for _, weapon in ipairs({false, true}) do
-        for _, group in ipairs({"", "ordinary", "global"}) do
-            local env = setmetatable({
-                current_group_name=group, current_config=config, is_weapon_mode=weapon, type_mesh=true,
-                get_body_id=function() return "armor" end,
-                get_primary_body_id=function() return "armor" end,
-                get_local_player_character=function() return {} end,
-                get_primary_player=function() return {} end,
-                is_weapon_id=function() return weapon end,
-                get_character_weapon_id=equipment.weapon_id,
-                get_character_part=function(_, index) return parts[index] end,
-                get_character_part_meshes=meshes.part_meshes,
-                get_mesh_component_recursive=equipment.mesh,
-                is_material_in_current_context=accepts,
-                active_overrides={armor=baseline},
-                SceneObject=SceneObject, Utils={get_current_weapon_parts=equipment.weapons},
-            }, {__index=_G})
-            local old = dofile("tests/fixtures/legacy/" .. game .. "_capture.lua")(env)("preset", "armor")
+-- 明确捕获结果，独立覆盖多网格、草稿意图、空部件和全局组策略。
+local normal_a={mesh_enabled=false,materials={hide=false,show=true,intent=false}}
+local normal_b={mesh_enabled=true,materials={show=false,extra=true}}
+local wilds_union={mesh_enabled=false,materials={hide=false,show=false,intent=true,extra=true}}
+for _,game in ipairs({"wilds","rise"}) do
+    for _,weapon in ipairs({false,true}) do
+        for _,group in ipairs({"","ordinary","global"}) do
+            local expected={["0"]=S.copy(normal_a),["1"]=S.copy(normal_b),["2"]={mesh_enabled=true,materials={}}}
+            if not weapon then
+                expected["4"]=S.copy(normal_a)
+                if game=="wilds" then expected["0"]=S.copy(wilds_union); expected["5"]=S.copy(normal_b) end
+            elseif game=="wilds" then expected["0"].materials.intent=true end
+            if group=="global" then
+                expected["2"]=nil
+                for _,part in pairs(expected) do
+                    if game=="wilds" then part.mesh_enabled=nil
+                    else
+                        for name,visible in pairs(part.materials) do
+                            if visible then part.materials[name]=nil end
+                        end
+                    end
+                end
+            elseif game=="wilds" and group=="ordinary" then expected["2"]=nil end
             local actual
-            if game == "wilds" then actual = wilds({}, config, group, baseline, weapon, accepts)
-            else actual = rise({}, {}, config, group, weapon, accepts) end
-            S.equal(actual, old, game .. " " .. group .. " weapon=" .. tostring(weapon))
+            if game=="wilds" then actual=wilds({},config,group,baseline,weapon,accepts)
+            else actual=rise({},{},config,group,weapon,accepts) end
+            S.equal(actual,expected,game.." "..group.." weapon="..tostring(weapon))
         end
     end
 end
@@ -76,4 +79,4 @@ assert(wilds({}, config, "global", nil, true, accepts)["0"].mesh_enabled == nil)
 SceneObject.material_transition = {active={one=true}, get_material_enabled=function() return false end}
 assert(rise({}, {}, config, "global", true, accepts)["0"].materials.show == false)
 SceneObject.material_transition = nil
-print("PASS: dual-game legacy preset capture, sparse weapon slots and dissolve intent")
+print("PASS: dual-game preset capture, sparse weapon slots and dissolve intent")
