@@ -1463,6 +1463,8 @@ do
             return global_options.action(request,current)
         end,
     }
+    -- 启动时固定帮助依赖，REFF 回调期间宿主可能已恢复默认模块搜索路径。
+    local reff_help = require("ArmorVariantManager_Core.UI.Reff.Help")
     local controller = require("ArmorVariantManager_Core.UI.Reff.Controller").new({
         game=game.name,version=version,context=context,parts=reff_parts.snapshot,conditions=conditions,settings=settings,
         main_label=function() return T("main_list") end,
@@ -1470,7 +1472,7 @@ do
         backup_pending=config_session.pending,
         imports=manual_import and function(current) return manual_import.list(current.weapon) end or nil,
         documentation=function()
-            return require("ArmorVariantManager_Core.UI.Reff.Help").snapshot(global_config.language,game.name)
+            return reff_help.snapshot(global_config.language,game.name)
         end,
         theme=function() return global_config.reff_theme == "reff" and "reff" or "custom" end,
         set_theme=function(value)

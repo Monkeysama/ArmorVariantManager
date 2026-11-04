@@ -1,6 +1,8 @@
 -- 可传入已解压发布包的 autorun 目录，默认仍验证开发源码。
 local autorun = arg[1] or "ArmorVariantManager/reframework/autorun"
+local host_package_path = package.path
 package.path = autorun .. "/?.lua;" .. package.path
+local startup_package_path = package.path
 local main = autorun .. "/ArmorVariantManager.lua"
 local Game = require("ArmorVariantManager_Core.Game")
 assert(Game.detect("MHWILDS").name == "Wilds")
@@ -154,6 +156,8 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
         imgui.slider_int=imgui.slider_float
     end
     assert(loadfile(main))()
+    -- 模拟启动后宿主恢复搜索路径，后续 REFF 回调不能依赖 autorun 路径。
+    package.path = host_package_path
     for i=1,6 do for _, fn in ipairs(frames) do fn() end end
     for _, fn in ipairs(draws) do fn() end
     if populated then
@@ -505,5 +509,6 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
     end
     if populated then assert(unregistered,"reset unregisters REFF methods") end
     _G.require = native_require
+    package.path = startup_package_path
 end
-print("PASS: actual dual-game entry, conditions/settings/sorting, backup/help, manual armor/weapon import and stale/empty-scene/reset guards")
+print("PASS: actual dual-game entry, conditions/settings/sorting, backup/help after host search-path reset, manual armor/weapon import and stale/empty-scene/reset guards")
