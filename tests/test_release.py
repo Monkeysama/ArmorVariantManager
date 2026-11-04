@@ -2,6 +2,7 @@
 from pathlib import Path
 from contextlib import ExitStack, contextmanager, redirect_stdout
 import io
+import base64
 import json
 import os
 import shutil
@@ -36,21 +37,27 @@ def release_inputs(root):
         "id": "monkeysama.avm", "games": ["MHWILDS", "MHRISE"],
         "ui": {"entry": "ui/dist/index.html"}, "extra": {"keep": True},
     }), encoding="utf-8")
-    for name in ("index.html", "REFF-LICENSE.txt", "assets/page.js", "assets/page.css"):
-        (plugin / "ui/dist" / name).write_text(name, encoding="utf-8")
+    for name, content in {
+        "index.html": '<!doctype html><html><head><!-- HTML comment --></head><body></body></html>',
+        "REFF-LICENSE.txt": 'MIT License\nCopyright REFF',
+        "assets/page.js": '/*! JS license */\n// JS comment\nexport const text = "/* literal */ -- kept";',
+        "assets/page.css": '/*! CSS license */\n/* CSS comment */\na { color: red; }',
+        "assets/page.js.map": '{"sourcesContent":["development source"]}',
+    }.items():
+        (plugin / "ui/dist" / name).write_text(content, encoding="utf-8")
     paths = {
         "AUTORUN_SOURCE": autorun,
         "REFF_PLUGIN": plugin,
         "PORTRAIT_DLL": root / "source/reframework/plugins/ArmorVariantManager_Portrait.dll",
         "PORTRAIT_ASSETS": root / "source/natives/STM/ArmorVariantManager/Portrait",
         "LICENSE": root / "source/LICENSE",
-        "README": root / "source/README.md",
         "CHANGELOG": root / "source/CHANGELOG.md",
         "NATIVE_LICENSES": root / "source/reframework/plugins/source/THIRD_PARTY_LICENSES.txt",
     }
-    for key in ("PORTRAIT_DLL", "LICENSE", "README", "CHANGELOG", "NATIVE_LICENSES"):
+    for key in ("PORTRAIT_DLL", "LICENSE", "CHANGELOG", "NATIVE_LICENSES"):
         paths[key].parent.mkdir(parents=True, exist_ok=True)
         paths[key].write_bytes(key.encode())
+    paths["CHANGELOG"].write_text('# 更新日志\n\n## 未发布\n\nFuture\n\n## V1.2.3\n\n### 修复\n\n- Exact release.\n\n## V1.2.2\n\nOld\n', encoding="utf-8")
     paths["PORTRAIT_ASSETS"].mkdir(parents=True)
     for name in release.PORTRAIT_FILES:
         (paths["PORTRAIT_ASSETS"] / name).write_bytes(name.encode())
@@ -69,19 +76,26 @@ def release_inputs(root):
 
 class ReleaseTests(unittest.TestCase):
     def assert_inventory(self, directory, archive_path, game):
-        expected = {"LICENSE", release.GUIDE_NAME, "CHANGELOG.md"}
+        expected = set()
         expected.update("reframework/autorun/" + path.relative_to(release.AUTORUN_SOURCE).as_posix()
                         for path in release.AUTORUN_SOURCE.rglob("*.lua"))
         expected.update("reframework/reff/plugins/monkeysama.avm/" + path.relative_to(release.REFF_PLUGIN).as_posix()
-                        for path in release.REFF_PLUGIN.rglob("*") if path.is_file())
+                        for path in release.reff_files())
         if game in ("universal", "wilds"):
             expected.add("reframework/plugins/" + release.PORTRAIT_DLL.name)
             expected.update("natives/STM/ArmorVariantManager/Portrait/" + name for name in release.PORTRAIT_FILES)
-            expected.add("licenses/THIRD_PARTY_LICENSES.txt")
         actual = {path.relative_to(directory).as_posix() for path in directory.rglob("*") if path.is_file()}
         self.assertEqual(actual, expected)
-        self.assertEqual((directory / release.GUIDE_NAME).read_bytes(), release.README.read_bytes())
-        self.assertEqual((directory / "CHANGELOG.md").read_bytes(), release.CHANGELOG.read_bytes())
+        page = (directory / 'reframework/reff/plugins/monkeysama.avm/ui/dist/index.html').read_text(encoding='utf-8')
+        self.assertIn('name="avm-notices"', page)
+        self.assertIn('Copyright REFF', page)
+        self.assertIn('LICENSE', page)
+        self.assertNotIn('HTML comment', page)
+        for path in directory.rglob('*'):
+            if path.suffix in ('.js', '.css'):
+                text = path.read_text(encoding='utf-8')
+                self.assertNotIn('license */', text)
+                self.assertNotIn(' comment', text)
         with release.zipfile.ZipFile(archive_path) as archive:
             self.assertEqual(set(archive.namelist()), expected)
             for name in expected:
@@ -140,7 +154,7 @@ class ReleaseTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             with release_inputs(root):
-                for path in (release.LICENSE, release.README, release.CHANGELOG, release.REFF_PLUGIN / "manifest.json",
+                for path in (release.LICENSE, release.REFF_PLUGIN / "manifest.json",
                              release.REFF_PLUGIN / "ui/dist/index.html", release.REFF_PLUGIN / "ui/dist/REFF-LICENSE.txt"):
                     with self.subTest(path=path):
                         content = path.read_bytes()
@@ -197,22 +211,19 @@ class ReleaseTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "development content"):
                     release.verify_release(directory, "rise")
 
-    def test_verify_rejects_missing_or_stale_user_documents(self):
+    def test_verify_rejects_documents_licenses_and_other_non_plugin_files(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             with release_inputs(root):
                 release.main(["--output-dir", str(root / "out")])
                 directory, _ = release.release_paths(root / "out", "1.2.3")
-                for name, reason in ((release.GUIDE_NAME, "user guide"), ("CHANGELOG.md", "changelog")):
+                for name in ('README.md', 'CHANGELOG.md', 'LICENSE', 'licenses/notice.txt', 'reframework/notes.txt'):
                     document = directory / name
-                    original = document.read_bytes()
+                    document.parent.mkdir(parents=True, exist_ok=True)
+                    document.write_bytes(b'not a plugin')
+                    with self.assertRaisesRegex(RuntimeError, 'inventory'):
+                        release.verify_release(directory)
                     document.unlink()
-                    with self.assertRaisesRegex(RuntimeError, reason + " is missing or changed"):
-                        release.verify_release(directory)
-                    document.write_bytes(b"outdated document")
-                    with self.assertRaisesRegex(RuntimeError, reason + " is missing or changed"):
-                        release.verify_release(directory)
-                    document.write_bytes(original)
 
     @unittest.skipUnless(LUA, "Set LUA to a Lua 5.4 executable for runtime semantics checks")
     def test_package_literals_and_legacy_require_entrypoints_execute_unchanged(self):
@@ -273,7 +284,7 @@ io.write(result, "\n")
             source = root / "monkeysama.avm"
             (source / "ui/assets").mkdir(parents=True)
             (source / "manifest.json").write_text(json.dumps({"ui":{"entry":"ui/index.html"}}))
-            (source / "ui/index.html").write_text('<script src="./assets/page.js"></script>')
+            (source / "ui/index.html").write_text('<html><head></head><body><script src="./assets/page.js"></script></body></html>')
             (source / "ui/assets/page.js").write_text("export {}")
             (source / "ui/REFF-LICENSE.txt").write_text("MIT License\nCopyright (c) 2026 MK\n")
             (root / "node_modules").mkdir()
@@ -282,10 +293,81 @@ io.write(result, "\n")
                 release.verify_reff_plugin(root / "out")
                 target = root / "out/reframework/reff/plugins/monkeysama.avm"
                 self.assertFalse((target / "node_modules").exists())
-                self.assertEqual((target / "ui/REFF-LICENSE.txt").read_text(), "MIT License\nCopyright (c) 2026 MK\n")
+                self.assertFalse((target / "ui/REFF-LICENSE.txt").exists())
+                self.assertIn('Copyright (c) 2026 MK', (target / 'ui/index.html').read_text())
                 (target / "ui/assets/page.js").unlink()
                 with self.assertRaisesRegex(RuntimeError, "incomplete"):
                     release.verify_reff_plugin(root / "out")
+
+    def test_tag_versions_and_matching_notes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with release_inputs(root):
+                out = root / 'out'
+                notes = root / 'notes.md'
+                release.main(['--tag', 'v1.2.3', '--release-notes', str(notes), '--output-dir', str(out)])
+                self.assertEqual(notes.read_text(encoding='utf-8'), '### 修复\n\n- Exact release.\n')
+                package, _ = release.release_paths(out, '1.2.3')
+                manifest = json.loads((package / 'reframework/reff/plugins/monkeysama.avm/manifest.json').read_text())
+                self.assertEqual(manifest['version'], '1.2.3')
+                release.CHANGELOG.write_text('## V9.8.7\n\n- Next release.\n', encoding='utf-8')
+                release.main(['--tag', 'v9.8.7', '--output-dir', str(root / 'next')])
+                package, _ = release.release_paths(root / 'next', '9.8.7')
+                entry = (package / 'reframework/autorun/ArmorVariantManager.lua').read_text()
+                self.assertIn('local version = "9.8.7"', entry)
+                manifest = json.loads((package / 'reframework/reff/plugins/monkeysama.avm/manifest.json').read_text())
+                self.assertEqual(manifest['version'], '9.8.7')
+                self.assertIn('local version = "1.2.3"', (release.AUTORUN_SOURCE / 'ArmorVariantManager.lua').read_text())
+
+    def test_missing_or_empty_tag_notes_and_invalid_versions_do_not_build(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with release_inputs(root):
+                for tag in ('v1.2.4', '../escape', 'v1.2.3/other', 'main'):
+                    with self.subTest(tag=tag), self.assertRaisesRegex(RuntimeError, 'version|changelog'):
+                        release.main(['--tag', tag, '--output-dir', str(root / 'out')])
+                    self.assertFalse((root / 'out').exists())
+                release.CHANGELOG.write_text('## V1.2.3\n\n## V1.2.2\n\nOld\n')
+                with self.assertRaisesRegex(RuntimeError, 'changelog'):
+                    release.main(['--tag', 'v1.2.3', '--output-dir', str(root / 'out')])
+
+    def test_comment_literals_and_runtime_documents_remain_data(self):
+        html = '<head><!-- removed --><script>const text = "<!-- literal -->";</script></head>'
+        stripped = release.strip_html_comments(html)
+        self.assertNotIn('<!-- removed -->', stripped)
+        self.assertIn('"<!-- literal -->"', stripped)
+
+    def test_web_stripping_preserves_literals_and_pure_annotated_calls(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with release_inputs(root):
+                source = release.REFF_PLUGIN / 'ui/dist/assets/page.js'
+                source.write_text('''/*! remove license comment */
+export const text = "/* literal */ // literal";
+export const template = `first\n// template`;
+export const regex = /\\/\\*literal\\*\\//.source;
+export const calls = [];
+function call() { calls.push('kept'); }
+/* @__PURE__ */ call(); // remove ordinary comment
+''')
+                css = release.REFF_PLUGIN / 'ui/dist/assets/page.css'
+                css.write_text('/* remove CSS comment */ a::after { content: "/* literal */"; }')
+                release.main(['--output-dir', str(root / 'out')])
+                package, _ = release.release_paths(root / 'out', '1.2.3')
+                web = package / 'reframework/reff/plugins/monkeysama.avm/ui/dist/assets'
+                code = (web / 'page.js').read_text()
+                self.assertNotIn('@__PURE__', code)
+                self.assertNotIn('remove ', code)
+                encoded = base64.b64encode(code.encode()).decode()
+                result = subprocess.run(['node', '--input-type=module', '-e',
+                    f'const m=await import("data:text/javascript;base64,{encoded}"); console.log(JSON.stringify(m));'],
+                    check=True, capture_output=True, text=True)
+                values = json.loads(result.stdout)
+                self.assertEqual(values['text'], '/* literal */ // literal')
+                self.assertEqual(values['template'], 'first\n// template')
+                self.assertEqual(values['regex'], r'\/\*literal\*\/')
+                self.assertEqual(values['calls'], ['kept'])
+                self.assertIn('/* literal */', (web / 'page.css').read_text())
 
     def test_comments_preserve_runtime_text(self):
         source = 'local name = "-- not a comment" -- comment\nreturn [=[first\n\nlast]=]\n'

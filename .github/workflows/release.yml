@@ -1,0 +1,49 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '已存在的 Git tag（例如 v4.4.0）'
+        required: true
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - name: 检出 tag 源码
+        uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ inputs.tag || github.ref_name }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: 安装打包依赖
+        run: npm ci --prefix web
+      - name: 打包插件与提取同版本日志
+        id: package
+        run: |
+          python build_release.py --tag "$RELEASE_TAG" --release-notes release/release-notes.md
+          VERSION="${RELEASE_TAG#v}"
+          mv "release/差分管理器_v${VERSION}.zip" "release/ArmorVariantManager-v${VERSION}.zip"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+      - name: 创建并发布 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: ArmorVariantManager v${{ steps.package.outputs.version }}
+          body_path: release/release-notes.md
+          files: release/ArmorVariantManager-v${{ steps.package.outputs.version }}.zip
+          fail_on_unmatched_files: true

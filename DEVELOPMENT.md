@@ -30,6 +30,7 @@ ArmorVariantManager/
 web/                                  Vue 页面、构建脚本与网页测试夹具
 tests/                                Lua 回归、共享测试工具与发布测试
 build_release.py                      发布目录、ZIP 与库存检查
+.github/workflows/release.yml          tag 发布与同版本日志提取
 ```
 
 共享业务不直接依赖游戏 SDK；游戏适配层处理托管对象和专属能力。界面通过 `App` 操作配置，角色活动状态不能混入界面选择状态。旧 JSON 与公开业务 `require` 转接仍有兼容用途，不按文件名批量删除。
@@ -38,7 +39,7 @@ build_release.py                      发布目录、ZIP 与库存检查
 
 - **Lua 5.4**：运行离线回归与语法检查。
 - **Python 3.10+**：运行测试入口和发布脚本，无需额外 Python 包。
-- **Node.js 22.12+、npm**：仅修改或构建网页时需要；依赖由 `web/package-lock.json` 锁定。
+- **Node.js 22.12+、npm**：网页开发及发布打包需要；依赖由 `web/package-lock.json` 锁定。
 - **Windows x64、MSVC C++20、Windows SDK、CMake 3.25+**：仅修改预览原生代码时需要，GPU 测试使用 D3D12 WARP。
 - **REFF 源码**：网页构建需要其 `web/sdk` 与共享 UI；运行可选预览时需要原生预览 ABI v1、网页布局协议 2。REFF 的 DLL 与宿主 EXE 必须成套更新。
 
@@ -92,22 +93,28 @@ Copy-Item release/build/portrait/Release/ArmorVariantManager_Portrait.dll ArmorV
 
 ## 生成发布包
 
-发布脚本不会替你构建 DLL 或网页。准备新版本时，同步 Lua 入口的 `local version`、REFF `manifest.json`、`web/package.json` 与锁文件中的项目版本，将更新日志的“未发布”内容归入实际版本。`--version` 只改变发布产物的版本名，不修改这些源文件。
+`dev` 与 `main` 都保存完整源码，不再将去注释产物反向覆盖到 `main`。发布脚本不会替你构建 DLL 或网页；原生或网页变化时，先提交对应的已构建产物。
 
-完成受影响检查，将对应源码、DLL、网页产物与用户文档提交，再指定一个新的输出目录：
+发布前，将 `CHANGELOG.md` 的“未发布”内容归入实际版本，例如 `## V4.4.0`。推送 `v4.4.0` tag 后，原有 Release 工作流会检出该 tag，生成通用包，并只截取对应版本标题下的正文作为发布日志；缺少或空的版本段会中止。Release 标题保持 `ArmorVariantManager v4.4.0`，附件保持 `ArmorVariantManager-v4.4.0.zip`。手动运行工作流时同样填写已存在的 tag。
+
+本地检查同一打包路径，不会创建 tag 或发布 Release：
 
 ```powershell
-python build_release.py --output-dir release/candidate
+npm --prefix web ci
+python build_release.py --tag v4.4.0 --output-dir release/candidate --release-notes release/release-notes.md
 ```
 
-默认从 Lua 入口读取版本，生成：
+上例生成：
 
 ```text
-release/candidate/ArmorVariantManager_v<版本>/
-release/candidate/差分管理器_v<版本>.zip
+release/candidate/ArmorVariantManager_v4.4.0/
+release/candidate/差分管理器_v4.4.0.zip
+release/release-notes.md
 ```
 
-默认通用包供两款游戏使用，清单声明 `MHWILDS` 和 `MHRISE`。包内包括去注释 Lua、已构建独立预览 DLL、预览资产、REFF 插件页面、用户说明、更新日志及许可；不含 REFramework/REFF 本体、用户配置、开发文档、测试或源码目录。源码中的注释不受影响。
+tag 的版本会写入产物中的 Lua 入口和 REFF 清单，源码不改。省略 `--tag` 时沿用 Lua 入口版本，也可用 `--version` 指定本地候选版本；`--release-notes` 提取该版本日志到包外。
+
+通用包供两款游戏使用，清单声明 `MHWILDS` 和 `MHRISE`。包内只有 Lua、独立预览 DLL、预览资产和 REFF 插件页面；不包含独立许可证、说明、更新日志、源码、测试、用户数据或 REFramework/REFF 本体。必要许可合并到页面的 `avm-notices` 元数据，源码许可文件继续保留。Lua、JavaScript、CSS 和 HTML 注释在打包副本中移除，字符串与游戏内帮助内容不变。
 
 同名产物已存在时默认拒绝覆盖，确认目标后才能用 `--overwrite`。旧自动化显式使用的 `--game wilds`、`--game rise`、`--game all` 仍保留原输出含义，日常构建不需要这些参数。
 
