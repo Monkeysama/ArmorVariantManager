@@ -1,0 +1,70 @@
+-- 【已从插件里移除的代码,仅存档,不会被 REFramework 加载】
+--
+-- `hp_drop_elapsed`(上次掉血距今多少秒)。它被 `hp_decreased` / `hp_increased`
+-- 这两个布尔条件取代了 —— 有了规则上的「命中后保持 N 秒」之后,
+-- "发生了"和"亮多久"就该分开表达,不该揉在一个数值条件里。
+--
+-- **它唯一还独有的能力是反向表达**:`hp_drop_elapsed > 10` = "已经 10 秒没被打了"
+-- (布尔条件表达不了"很久没发生")。真要用就把这个文件放回
+-- ArmorVariantManager_Core/Conditions/,在 Registry.lua 底部 register 一下,
+-- 再把 Localization 里的 cond_hp_drop_elapsed 文案加回来(zh + en)。
+--
+-- 注意:它的 tick 签名是 tick(context),现在 Registry 会多传一个帧号进来 ——
+-- 多一个参数不影响它,但如果要照它写新模块,记得看 Condition_HPChange.lua 里的帧号去重。
+
+-- 「上次掉血距今多少秒」—— 时间维度条件的第一个。
+--
+-- 为什么做成数值而不是"布尔 + 持续时长参数":
+-- 规则的数据结构是 { type, op, value },数值条件天然能表达"掉血后 N 秒内"——
+-- 写成 `上次掉血距今 <= 3` 就行,不用给条件加 duration 字段、不用改 UI。
+-- 而且白送了反向表达:`> 10` = 已经 10 秒没被打了。
+--
+-- 这是第一个**有状态**的条件:它是历史的函数,不是当前值的函数。
+-- 所以它实现了 tick(),由 Registry.tick() 每帧调一次维护状态;get() 仍是纯读。
+-- (状态更新绝不能塞进 get() —— get() 每帧会被调用多次〔规则求值、UI 显示〕,
+--  塞进去就会重复计数。)
+
+local Condition_HP = require("ArmorVariantManager_Core.Conditions.Condition_HP")
+
+local M = {
+    id = "hp_drop_elapsed",
+    kind = "number",
+    label_key = "cond_hp_drop_elapsed",
+}
+
+-- 从没掉过血时返回一个很大的数,而不是 nil:
+-- nil 会让所有比较都判 false,但"从没掉血"对 `> 10` 这种问法应该是 true。
+local NEVER = 999999
+
+-- HitPoint 是整数、DefaultHitPoint 也是整数,比值不会有浮点噪声,
+-- 所以 eps 只需要挡住"完全相等"的情形。
+local EPS = 0.001
+
+local last_ratio = nil
+local last_ctx_key = nil
+local last_drop_clock = nil
+
+function M.tick(context)
+    local cur = Condition_HP.get(context)
+    if cur == nil then return end
+
+    local key = context and tostring(context) or nil
+    if key ~= last_ctx_key then
+        -- 换角色 / 重新拿到 context:重建基线,**不能**算成一次掉血
+        last_ctx_key = key
+        last_ratio = cur
+        return
+    end
+
+    if last_ratio ~= nil and cur < last_ratio - EPS then
+        last_drop_clock = os.clock()
+    end
+    last_ratio = cur
+end
+
+function M.get(context)
+    if not last_drop_clock then return NEVER end
+    return os.clock() - last_drop_clock
+end
+
+return M
