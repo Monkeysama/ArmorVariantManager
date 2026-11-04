@@ -178,7 +178,7 @@ function applyCondition(request: ConditionAction) {
 (window as Window & { reffNativeCall?: (method: string, params: Record<string, unknown>) => Promise<unknown> }).reffNativeCall = async (method, params) => {
   if (method === 'ui.status') return { ready: true, epoch: 1 };
   if (method === 'ui.layout.set') { layouts.push(params); renderStatus(); return { padding: 0, override: 0, defaultPadding: 24 }; }
-  if (method === 'ui.preview.capabilities') return { version: 1, maxSlots: 4, composition: 'underlay-alpha', color: 'sdr-unorm8' };
+  if (method === 'ui.preview.capabilities') return { version: 1, layoutProtocol: new URLSearchParams(location.search).has('legacy-preview') ? undefined : 2, maxSlots: 4, composition: 'underlay-alpha', color: 'sdr-unorm8' };
   if (method === 'ui.preview.register') { previewRegistrations++; renderStatus(); return { pageId: 'avm-preview-fixture' }; }
   if (method === 'ui.preview.remove') { previewRemovals++; renderStatus(); return {}; }
   if (method === 'monkeysama.avm.preview') {
