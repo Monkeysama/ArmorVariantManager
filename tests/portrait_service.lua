@@ -38,4 +38,29 @@ assert(settings.action({kind="setting",id="portrait_camera.distance",value=4}, {
 assert(received.distance == 4 and received.extension == "keep" and created == 1)
 local standalone = UI.new({ config = config })
 assert(standalone.portrait_preview == service and created == 2)
+
+local now, suspended, available, host, rectangle = 0, false, true
+local reff_visible=true
+reff_native={is_visible=function() return reff_visible end}
+preview.reff_available=function() return available end
+preview.set_host=function(value) host=value end
+preview.set_rectangle=function(value) rectangle=value end
+preview.enabled,preview.status=true,"preview_live"
+visible=false
+local shared,web=Portrait.connect(config,{
+    clock=function() return now end,suspended=function() return suspended end,legacy_visible=function() return visible end,
+})
+assert(shared==preview and created==3 and not preview.deps.should_show())
+assert(web.action({visible=true}).available and host=="reff" and rectangle.w==330)
+assert(preview.deps.should_show())
+suspended=true;assert(not preview.deps.should_show());suspended=false
+now=.4;web.action({visible=true});now=.8;assert(preview.deps.should_show(),"heartbeat did not renew camera lease")
+reff_visible=false;assert(not preview.deps.should_show() and host=="legacy","hidden REFF kept camera active")
+reff_visible=true;web.action({visible=true})
+now=1.4;assert(not preview.deps.should_show() and host=="legacy","closed page retained REFF camera ownership")
+visible=true;assert(preview.deps.should_show(),"old preview cannot resume after page closes")
+web.action({visible=true});web.action({visible=false})
+assert(host=="legacy" and rectangle==nil and preview.deps.should_show())
+available=false;assert(not web.action({visible=true}).available and host=="legacy")
+assert(not pcall(web.action,{visible="yes"}),"invalid visibility intent was accepted")
 print("PASS: application-owned portrait, injected legacy host, independent settings and old standalone constructor")

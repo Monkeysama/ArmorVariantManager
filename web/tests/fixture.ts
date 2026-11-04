@@ -68,6 +68,8 @@ const initial: Snapshot = {
   })), theme: 'custom', language: 'zh-CN', selectionMode: false, pending: {}, conditions: wildsConditions(), settings: settingsFor('Wilds'),
 };
 let state = structuredClone(initial);
+const previewFixture = new URLSearchParams(location.search).has('preview');
+if (previewFixture) state.preview = { available: true, enabled: true, status: 'preview_waiting' };
 const catalogFixture = new URLSearchParams(location.search).has('catalog');
 if (catalogFixture) state.group = '';
 if (new URLSearchParams(location.search).has('workspace')) {
@@ -107,6 +109,11 @@ let peak = 0;
 let polls = 0;
 const calls: Record<string, unknown>[] = [];
 const layouts: Record<string, unknown>[] = [];
+const previewCalls: Record<string, unknown>[] = [];
+let previewRegistrations = 0, previewRemovals = 0;
+window.addEventListener('message', event => {
+  if (event.data?.type === 'reff:preview-layout') { layouts.push(event.data); if (layouts.length > 50) layouts.shift(); renderStatus(); }
+});
 const documents: { game: Snapshot['game']; language: string }[] = [];
 const imports: { bodyId: string; weapon: boolean }[] = [];
 const importFiles: ImportFile[] = [
@@ -116,7 +123,7 @@ const importFiles: ImportFile[] = [
 ];
 let status: HTMLOutputElement | undefined;
 const sortInput = { nativeDragStarts: 0, captures: 0, releases: 0 };
-function renderStatus() { if (status) status.textContent = JSON.stringify({ polls, peak, calls, documents, imports, layouts, sortInput }); }
+function renderStatus() { if (status) status.textContent = JSON.stringify({ polls, peak, calls, documents, imports, layouts, sortInput, previewCalls, previewRegistrations, previewRemovals }); }
 for (const [type, counter] of [['dragstart', 'nativeDragStarts'], ['gotpointercapture', 'captures'], ['lostpointercapture', 'releases']] as const) {
   document.addEventListener(type, event => {
     if (!(event.target instanceof Element) || !event.target.closest('.catalog-list')) return;
@@ -171,6 +178,13 @@ function applyCondition(request: ConditionAction) {
 (window as Window & { reffNativeCall?: (method: string, params: Record<string, unknown>) => Promise<unknown> }).reffNativeCall = async (method, params) => {
   if (method === 'ui.status') return { ready: true, epoch: 1 };
   if (method === 'ui.layout.set') { layouts.push(params); renderStatus(); return { padding: 0, override: 0, defaultPadding: 24 }; }
+  if (method === 'ui.preview.capabilities') return { version: 1, maxSlots: 4, composition: 'underlay-alpha', color: 'sdr-unorm8' };
+  if (method === 'ui.preview.register') { previewRegistrations++; renderStatus(); return { pageId: 'avm-preview-fixture' }; }
+  if (method === 'ui.preview.remove') { previewRemovals++; renderStatus(); return {}; }
+  if (method === 'monkeysama.avm.preview') {
+    previewCalls.push(params); if (previewCalls.length > 50) previewCalls.shift(); renderStatus();
+    return { ...state.preview, status: params.visible ? 'preview_waiting' : 'preview_disabled' };
+  }
   if (!['monkeysama.avm.snapshot', 'monkeysama.avm.action', 'monkeysama.avm.documentation', 'monkeysama.avm.imports'].includes(method)) throw new Error(`Fixture: unknown method ${method}`);
   active += 1; peak = Math.max(active, peak);
   try {
@@ -215,6 +229,7 @@ function applyCondition(request: ConditionAction) {
         section.fields.find(item => item.id === 'ground_clipping_height_cm')!.value = 0;
       } else field.value = params.value as typeof field.value;
       if (field.id === 'language') state.language = field.value === 'en' ? 'en-US' : 'zh-CN';
+      if (field.id === 'portrait_enabled' && state.preview) state.preview.enabled = field.value === true;
     } else if (kind === 'reorder-group' || kind === 'reorder-preset') {
       const direct = params.target !== undefined;
       const items: Array<Snapshot['groups'][number] | Snapshot['presets'][number]> = kind === 'reorder-group'
@@ -291,7 +306,7 @@ if (new URLSearchParams(location.search).has('controls')) {
     state.parts.forEach((part, index) => { part.label = part.label.replace(/^[^[]+/, ['Head armor ', 'Body and inner lining ', 'Arm equipment ', 'Waist decorations ', 'Leg armor ', 'Slinger attachment '][index]); });
   });
   add('Rise only', () => { state.game = 'Rise'; state.canImport = true; state.conditions = riseConditions(); state.settings = settingsFor('Rise'); });
-  add('Preview unavailable', () => { state.settings!.sections.find(section => section.id === 'preview')?.fields.forEach(field => { field.disabled = true; field.reason = '预览模块未加载'; }); });
+  add('Preview unavailable', () => { if (state.preview) state.preview.available = false; state.settings!.sections.find(section => section.id === 'preview')?.fields.forEach(field => { field.disabled = true; field.reason = '预览模块未加载'; }); });
   add('Condition warning', () => { state.conditions!.definitions[0].warning = '生命值模块尚未初始化'; });
   add('REFF amber', () => window.postMessage({ type: 'reff:preferences', preferences: { language: 'zh-CN', appearance: { preset: 'amber', accent: '#f1ba68', background: '#201c17', surface: '#2b251d', backgroundOpacity: .94, cornerRadius: 6, surfaceBlur: 8, textScale: 1 } } }, '*'));
   add('REFF violet / 140%', () => window.postMessage({ type: 'reff:preferences', preferences: { language: 'zh-CN', appearance: { preset: 'violet', accent: '#c8a0ef', background: '#1b1823', surface: '#272031', backgroundOpacity: .94, cornerRadius: 6, surfaceBlur: 8, textScale: 1.4 } } }, '*'));

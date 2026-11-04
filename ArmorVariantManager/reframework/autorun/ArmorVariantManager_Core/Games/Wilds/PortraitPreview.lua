@@ -83,13 +83,27 @@ function PortraitPreview.new(deps)
     local adapter = deps.adapter or PortraitPreview.game_adapter()
     local clock = deps.clock or os.clock
     local bridge = deps.bridge or function() return rawget(_G, "avm_portrait") or rawget(_G, "avm_bridge") end
-    local self = { enabled = false, status = "preview_off", error = nil,
+    local self = { enabled = false, status = "preview_off", error = nil, host = "legacy",
         camera_settings = PortraitCamera.settings(deps.camera_settings) }
     local snapshot, context, rect, rect_at, next_tick, alive, failed = nil, nil, nil, 0, 0, true, false
     local pending_change = false
     local restore_attempts = 0
     local gpu_owned = false
     local frame_error
+    local requested_host, applied_host = "legacy", nil
+
+    function self.reff_available()
+        local native = bridge()
+        if not native or not native.portrait_reff or not native.portrait_reff_ready then return false end
+        local ok, ready = pcall(native.portrait_reff_ready)
+        return ok and ready == 1
+    end
+
+    function self.set_host(value)
+        assert(value == "legacy" or value == "reff", "Invalid preview host")
+        self.host = value
+        if requested_host ~= value then requested_host, next_tick = value, 0 end
+    end
 
     -- 两字段独立还原并精确回读；失败保留原快照，不能让下一次启用覆盖它。
     local function restore()
@@ -204,6 +218,14 @@ function PortraitPreview.new(deps)
             local required_version = adapter.independent and 4 or 3
             if not native or not native.portrait_version or native.portrait_version() < required_version or native.portrait_ready() ~= 1 then
                 self.stop("preview_native_missing"); return
+            end
+            if applied_host ~= requested_host then
+                if not self.stop("preview_waiting") then return end
+                if requested_host == "reff" and not self.reff_available() then self.status = "preview_native_missing"; return end
+                if native.portrait_reff then
+                    assert(native.portrait_reff(requested_host == "reff" and 1 or 0) == 0, "Preview host unavailable")
+                end
+                applied_host = requested_host
             end
             if native.portrait_state() == -1 then error(native.portrait_error()) end
             local hdr, color = adapter.output()

@@ -2138,7 +2138,7 @@ function VariantManagerUI:draw_settings_panel(x, y, w, h)
         self:set_portrait_enabled(not self.portrait_preview.enabled)
         if self.portrait_preview.enabled then self.settings_section = "camera" end
     end
-    if self.portrait_preview and self.portrait_preview.enabled and not self.preview_has_space then
+    if self.portrait_preview and self.portrait_preview.enabled and self.portrait_preview.host ~= "reff" and not self.preview_has_space then
         self:draw_wrapped_text(self:T("preview_no_space"), x + 12, y + h - 42, w - 24,
             self.fonts.tiny, 18, COLORS.muted)
     end
@@ -2360,7 +2360,7 @@ function VariantManagerUI:draw()
     local raw_mx, raw_my = Runtime.raw_mouse_position()
 
     local preview = self.portrait_preview
-    local panel_w, preview_w = PortraitPreview.widths(sw, preview and preview.enabled)
+    local panel_w, preview_w = PortraitPreview.widths(sw, preview and preview.enabled and preview.host ~= "reff")
     self.preview_has_space = preview_w > 0
     local panel_h = math.min(700, sh - 70)
     if not self.window_x then self.window_x = math.max(24, sw - panel_w - 48) end
@@ -2449,7 +2449,7 @@ function VariantManagerUI:draw()
 
     self.d2d.fill_rect(0, 0, raw_sw, raw_sh, 0x66000000)
     self.d2d.push_transform(0, 0, scale)
-    if preview and preview.enabled then
+    if preview and preview.enabled and preview.host ~= "reff" then
         if preview_w > 0 and panel_x >= preview_w + 24 then
             self:draw_portrait_preview(panel_x - preview_w, panel_y, preview_w, panel_h, scale)
         else

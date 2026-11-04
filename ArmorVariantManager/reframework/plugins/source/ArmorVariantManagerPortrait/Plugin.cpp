@@ -16,6 +16,8 @@ void register_portrait(sol::table table) {
     table["portrait_error"] = [] { return std::string(portrait_gpu_error()); };
     table["portrait_drawn"] = &portrait_gpu_drawn;
     table["portrait_present_mode"] = &portrait_gpu_present_mode;
+    table["portrait_reff_ready"] = &portrait_gpu_reff_ready;
+    table["portrait_reff"] = &portrait_gpu_set_reff;
     table["portrait_pose_version"] = &avm_portrait_pose_version;
     table["portrait_mesh_copy"] = &avm_portrait_mesh_copy;
     using Addresses = sol::as_table_t<std::vector<uintptr_t>>;
@@ -45,6 +47,7 @@ void on_lua_state_created(lua_State* state) try {
 
 void on_lua_state_destroyed(lua_State*) {
     portrait_gpu_update(0, 0, 0, 0, 0, 0);
+    portrait_gpu_set_reff(0);
     avm_portrait_pose_clear();
 }
 }

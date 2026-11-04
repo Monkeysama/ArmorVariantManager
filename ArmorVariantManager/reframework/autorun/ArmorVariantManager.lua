@@ -121,6 +121,13 @@ local app = require("ArmorVariantManager_Core.App").new({
 })
 if game.wilds then
     app.height = require(game.prefix .. "HeightEditor").new(app)
+    app.portrait, app.preview = require(game.prefix .. "Portrait").connect(global_config, {
+        suspended=runtime.is_suspended,
+        legacy_visible=function()
+            local ui=variant_manager_ui
+            return ui and ui.visible and ui.ready and global_config.new_ui_enabled and not ui.suspended
+        end,
+    })
     variant_manager_ui = require("ArmorVariantManager_Core.UI.Legacy").new(app)
 else
     app.game_options = require(game.prefix .. "Options").new(global_config, runtime, T, app.save_global_settings)

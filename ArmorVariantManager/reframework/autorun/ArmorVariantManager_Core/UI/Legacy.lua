@@ -23,7 +23,7 @@ function Legacy.new(app)
         hidden = workspace.is_globally_hidden,
     })
 
-    local portrait_preview = require("ArmorVariantManager_Core.Games.Wilds.Portrait").new(global_config, function()
+    local portrait_preview = app.portrait or require("ArmorVariantManager_Core.Games.Wilds.Portrait").new(global_config, function()
         local ui = variant_manager_ui
         return ui and ui.visible and ui.ready and global_config.new_ui_enabled and not ui.suspended
             and not runtime.is_suspended()

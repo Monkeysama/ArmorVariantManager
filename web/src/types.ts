@@ -34,6 +34,7 @@ export interface DocumentationSection { id: string; title: string; entries: Docu
 export interface Documentation { sections: DocumentationSection[] }
 export interface ImportFile { path: string; name: string }
 export interface Imports { bodyId: string; files: ImportFile[] }
+export interface Preview { available: boolean; enabled: boolean; status: string; error?: string }
 export interface Snapshot {
   game: 'Wilds' | 'Rise'; version: string; bodyId: string; weapon: boolean; suspended: boolean;
   backupPending: boolean; canImport: boolean;
@@ -43,6 +44,7 @@ export interface Snapshot {
   pending: Record<string, Record<string, boolean>>;
   conditions: Conditions | null;
   settings?: Settings;
+  preview?: Preview;
 }
 export interface ConditionAction {
   kind: 'condition';

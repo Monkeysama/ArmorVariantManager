@@ -104,6 +104,16 @@ for _, language in ipairs({ "zh", "en" }) do
             "Moved image must use the current physical rectangle")
     end
 end
+-- 网页宿主不能被同时打开的旧弹窗覆盖相机租约。
+local web_rectangle = {x=0,y=0,w=330,h=360}
+rectangle, drawn_backgrounds = web_rectangle, {}
+ui.portrait_preview.set_host("reff")
+ui:draw()
+assert(rectangle == web_rectangle and drawn_backgrounds[1].color == ui.colors.background,
+    "Legacy window must not overwrite the REFF camera lease or draw a second preview card")
+ui.portrait_preview.set_host("legacy")
+ui:draw()
+assert(rectangle ~= web_rectangle, "Legacy card must resume after REFF releases the preview")
 -- 长状态按完整文本块居中，最窄预览也不能越过底边。
 for _, language in ipairs({ "zh", "en" }) do
     lang = language

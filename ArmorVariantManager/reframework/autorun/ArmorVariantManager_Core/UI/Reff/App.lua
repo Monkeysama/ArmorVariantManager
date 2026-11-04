@@ -174,6 +174,7 @@ function ReffApp.new(app)
         language=function() return global_config.language end,
         backup_pending=config_session.pending,
         imports=manual_import and function(current) return manual_import.list(current.weapon) end or nil,
+        preview=app.preview,
         documentation=function()
             return reff_help.snapshot(global_config.language,game.name)
         end,

@@ -633,11 +633,24 @@ test("isolated SDK registers controller methods and unregisters on reset", funct
             assert(id == "monkeysama.avm")
             S.equal(definition.events,{})
             local methods=definition.methods
+            local manifest_file=assert(io.open("ArmorVariantManager/reframework/reff/plugins/monkeysama.avm/manifest.json"))
+            local manifest=manifest_file:read("a");manifest_file:close()
+            local declared={}
+            for method in assert(manifest:match('"methods"%s*:%s*(%b[])')):gmatch('"([^"]+)"') do
+                declared[method]=true
+            end
+            for method in pairs(methods) do
+                assert(declared[method],"registered method missing from manifest: " .. method)
+                declared[method]=nil
+            end
+            assert(next(declared) == nil,"manifest exposes an unregistered method")
             assert(methods["monkeysama.avm.snapshot"] == f.controller.snapshot)
             assert(methods["monkeysama.avm.action"] == f.controller.action)
             assert(methods["monkeysama.avm.documentation"] == f.controller.documentation,"documentation method was not forwarded")
             assert(methods["monkeysama.avm.imports"] == f.controller.imports,"manual import list method was not forwarded")
-            local count=0;for _ in pairs(methods) do count=count+1 end;assert(count == 4,"expected four registered methods")
+            assert(methods["monkeysama.avm.preview"] == f.controller.preview,"preview intent method was not forwarded")
+            local count=0;for _ in pairs(methods) do count=count+1 end;assert(count == 5,"expected five registered methods")
+            S.equal(methods["monkeysama.avm.preview"]({visible=true}), {available=false,enabled=false,status="preview_native_missing"})
             serializable(methods["monkeysama.avm.snapshot"](),f.forbidden)
             assert(methods["monkeysama.avm.action"]({kind="theme",value="reff"}).theme == "reff")
             assert(documentation_reads == 0 and import_reads == 0)
@@ -659,6 +672,20 @@ test("isolated SDK registers controller methods and unregisters on reset", funct
         table.concat(errors,"\n"))
     resets[1]()
     assert(unregistered == 1)
+end)
+
+test("preview intent and scalar state are independent of equipment and configuration writes", function()
+    local f = controller_fixture("Wilds")
+    local requests = {}
+    f.deps.preview = {
+        snapshot=function() return {available=true,enabled=true,status="preview_live"} end,
+        action=function(request) requests[#requests+1]=request.visible;return f.deps.preview.snapshot() end,
+    }
+    f.context.id=nil
+    S.equal(f.controller.snapshot().preview,f.deps.preview.snapshot())
+    serializable(f.controller.preview({visible=true}),f.forbidden)
+    f.controller.preview({visible=false})
+    S.equal(requests,{true,false})
 end)
 
 assert(#failures == 0, table.concat(failures,"\n"))

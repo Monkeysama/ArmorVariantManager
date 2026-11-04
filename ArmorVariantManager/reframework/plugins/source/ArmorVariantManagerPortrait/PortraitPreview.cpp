@@ -9,8 +9,10 @@
 #include <cstdio>
 #include <cmath>
 #include <algorithm>
+#include <atomic>
 #include "reframework/API.h"
 #include "PortraitPreview.hpp"
+#include "PortraitReff.hpp"
 
 using Microsoft::WRL::ComPtr;
 namespace {
@@ -21,6 +23,7 @@ ULONGLONG heartbeat{};
 bool drawing{}, faulted{};
 std::string last_error;
 bool output_sdr_confirmed{};
+std::atomic<bool> reff_host{};
 // 源透明约定尚待实机对照，默认直通 alpha；可显式选择线性预乘输入作比较。
 enum class AlphaMode { Straight, Premultiplied };
 AlphaMode alpha_mode{AlphaMode::Straight};
@@ -281,6 +284,7 @@ void present(bool submit) {
     std::scoped_lock lock(gate);
     if (overlay) overlay->reclaim();
     if (drawing && GetTickCount64()-heartbeat>500) { drawing=false; source.Reset(); }
+    if (reff_host) { if(!drawing)portrait_reff::stop();return; }
     if (!submit || !host || !output_sdr_confirmed || faulted || !drawing || !source || GetTickCount64()-heartbeat>500) return;
     try {
         if (!overlay) overlay=std::make_unique<Overlay>(*host->renderer_data);
@@ -290,13 +294,14 @@ void present(bool submit) {
 // 内嵌 D2D 显式提交后绘制，外部 D2D 和独立使用沿用自动回调。
 void on_present() { present(portrait_gpu_present_mode() == 0); }
 void on_reset() {
-    std::scoped_lock lock(gate); drawing=false; source.Reset(); heartbeat=0;
+    std::scoped_lock lock(gate); drawing=false; source.Reset(); heartbeat=0;portrait_reff::stop();
     if (overlay && !overlay->drain()) { faulted=true; last_error="RESET GPU timeout; keeping resources alive, no more drawing"; note(last_error.c_str()); return; }
     overlay.reset(); faulted=false; last_error.clear(); note("DEVICE RESET: preview disabled");
 }
 }
 
 extern "C" __declspec(dllexport) int portrait_gpu_present_mode() {
+    if(reff_host)return 2;
     const auto ui = GetModuleHandleW(L"ArmorVariantManager_UI.dll");
     const auto hosted = ui ? reinterpret_cast<int (*)()>(GetProcAddress(ui, "avm_ui_portrait_hosted")) : nullptr;
     return hosted && hosted() ? 1 : 0;
@@ -320,12 +325,17 @@ extern "C" __declspec(dllexport) int portrait_gpu_inspect(uintptr_t holder,char*
 // 主线程刷新已验证 holder 与短心跳；默认不开启，stop 和失活只清理本模块引用。
 extern "C" __declspec(dllexport) int portrait_gpu_update(uintptr_t holder,int enabled,float x,float y,float w,float h) {
     std::scoped_lock lock(gate);
-    if (!enabled) { drawing=false; source.Reset(); heartbeat=0; return 0; }
+    if (!enabled) { drawing=false; source.Reset(); heartbeat=0;portrait_reff::stop();return 0; }
     if (!host) return int(E_PENDING);
     if (!output_sdr_confirmed) return int(E_PENDING);
     if (faulted) return int(E_FAIL);
     if (!std::isfinite(x)||!std::isfinite(y)||!std::isfinite(w)||!std::isfinite(h)||w<1||h<1||w>4096||h>4096) return int(E_INVALIDARG);
     ComPtr<ID3D12Resource> image; auto hr=portrait_gpu::resolve(holder,image); if (FAILED(hr)) { drawing=false; source.Reset(); return int(hr); }
+    if(reff_host) {
+        const auto result=portrait_reff::update(image.Get(),static_cast<ID3D12CommandQueue*>(host->renderer_data->command_queue),
+            alpha_mode==AlphaMode::Premultiplied,true);
+        if(result!=0){drawing=false;source.Reset();return result;}
+    }
     source=std::move(image); heartbeat=GetTickCount64(); drawing=true; rectangle[0]=x;rectangle[1]=y;rectangle[2]=w;rectangle[3]=h; return 0;
 }
 // 绘制线程仅更新矩形，不解析引擎对象、不延长资源心跳；与面板同帧移动。
@@ -335,17 +345,17 @@ extern "C" __declspec(dllexport) int portrait_gpu_rectangle(float x,float y,floa
     if(drawing){rectangle[0]=x;rectangle[1]=y;rectangle[2]=w;rectangle[3]=h;}
     return 0;
 }
-extern "C" __declspec(dllexport) unsigned long long portrait_gpu_drawn() { std::scoped_lock lock(gate); return drawn; }
+extern "C" __declspec(dllexport) unsigned long long portrait_gpu_drawn() { std::scoped_lock lock(gate); return drawn+portrait_reff::drawn(); }
 extern "C" __declspec(dllexport) int portrait_gpu_ready() { return host?1:0; }
 extern "C" __declspec(dllexport) int portrait_gpu_color_version() { return 4; }
 // Lua 只读取可复制的状态；错误字符串为当前线程副本，不向脚本暴露资源指针。
 extern "C" __declspec(dllexport) int portrait_gpu_state() {
     std::scoped_lock lock(gate);
-    return faulted?-1:!host?0:!output_sdr_confirmed?3:drawing?2:1;
+    return faulted||(reff_host&&portrait_reff::failed())?-1:!host?0:!output_sdr_confirmed?3:drawing?2:1;
 }
 extern "C" __declspec(dllexport) const char* portrait_gpu_error() {
     thread_local std::string copy;
-    std::scoped_lock lock(gate); copy=last_error; return copy.c_str();
+    std::scoped_lock lock(gate);copy=reff_host&&portrait_reff::failed()?portrait_reff::error():last_error;return copy.c_str();
 }
 
 // 来自游戏 Renderer 的只读 getter；HDR 显示器与游戏输出模式必须分开，未知或真正 HDR 停绘。
@@ -354,7 +364,7 @@ extern "C" __declspec(dllexport) int portrait_gpu_set_output_contract(int hdr,in
     const bool supported=hdr==0 && color_space==1;
     if(output_sdr_confirmed!=supported)note(supported?"ENGINE OUTPUT confirmed SDR sRGB":"ENGINE OUTPUT unsupported/unknown; preview disabled");
     output_sdr_confirmed=supported;
-    if(!supported){drawing=false;source.Reset();heartbeat=0;return int(E_NOTIMPL);}
+    if(!supported){drawing=false;source.Reset();heartbeat=0;portrait_reff::stop();return int(E_NOTIMPL);}
     return 0;
 }
 
@@ -366,6 +376,19 @@ extern "C" __declspec(dllexport) int portrait_gpu_set_alpha_mode(int mode) {
     if(alpha_mode!=next) {
         alpha_mode=next;
         note(mode==0?"ALPHA straight":"ALPHA linear-premultiplied (explicit comparison)");
+    }
+    return 0;
+}
+
+// 仅新网页预览选择 REFF；旧 D2D/独立入口默认模式及其使用条件不变。
+extern "C" __declspec(dllexport) int portrait_gpu_reff_ready() {
+    std::scoped_lock lock(gate);return host&&portrait_reff::available()?1:0;
+}
+extern "C" __declspec(dllexport) int portrait_gpu_set_reff(int enabled) {
+    std::scoped_lock lock(gate);
+    if(enabled && !portrait_reff::available())return int(E_NOTIMPL);
+    if(reff_host!=(enabled!=0)) {
+        drawing=false;source.Reset();heartbeat=0;portrait_reff::stop();reff_host=enabled!=0;
     }
     return 0;
 }

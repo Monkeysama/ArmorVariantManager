@@ -12,6 +12,7 @@ function Controller.new(deps)
             selectionMode=context.selecting, pending={}, backupPending=false, canImport=deps.imports ~= nil,
         }
         if deps.settings then snapshot.settings = deps.settings.snapshot(context) end
+        if deps.preview then snapshot.preview = deps.preview.snapshot() end
         if not context.id then return snapshot end
         snapshot.backupPending = deps.backup_pending and deps.backup_pending(context.id) == true or false
         snapshot.groups[1] = {name="", label=deps.main_label(), global=false}
@@ -37,6 +38,10 @@ function Controller.new(deps)
             snapshot.pending[tostring(part)] = copy
         end
         return snapshot
+    end
+
+    function controller.preview(request)
+        return deps.preview and deps.preview.action(request) or {available=false,enabled=false,status="preview_native_missing"}
     end
 
     -- 长文档按需读取，不随每秒装备快照重复传输。

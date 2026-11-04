@@ -13,6 +13,7 @@ function Bridge.register(controller)
         ["monkeysama.avm.action"]=controller.action,
         ["monkeysama.avm.documentation"]=controller.documentation,
         ["monkeysama.avm.imports"]=controller.imports,
+        ["monkeysama.avm.preview"]=controller.preview,
     },events={}}, reff_native)
     if not registered then
         log.error("[ArmorVariantManager] REFF 注册失败: " .. tostring(handle))

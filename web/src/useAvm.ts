@@ -115,5 +115,5 @@ export function useAvm(helpOpen: Readonly<Ref<boolean>>) {
     document.removeEventListener('visibilitychange', visible);
     stopInput(); client.dispose();
   });
-  return { snapshot, busy, loading, error, notice, perform, connect, documentation, documentationLoading, documentationError, retryDocumentation: () => loadDocumentation(true), loadImports };
+  return { client, snapshot, busy, loading, error, notice, perform, connect, documentation, documentationLoading, documentationError, retryDocumentation: () => loadDocumentation(true), loadImports };
 }
