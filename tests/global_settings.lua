@@ -69,16 +69,16 @@ for _, game in ipairs({"Wilds", "Rise"}) do
 end
 
 -- 执行正式入口的构造和包装，检查存储、加载顺序及配置引用没有旁路。
-local source=S.read("ArmorVariantManager/reframework/autorun/ArmorVariantManager.lua")
 local saved, calls=nil,{}
 local Store=require("ArmorVariantManager_Core.Config.Store")
 local old_load,old_save=Store.load,Store.save
 Store.load=function(p) S.equal(p,path); calls[#calls+1]="load"; return {new_ui_enabled=false,language="en"} end
 Store.save=function(p,v) S.equal(p,path); calls[#calls+1]="save"; saved=v; return false end
-local construct=S.section(source,"local global_settings =", "-- 本地化字典")
-local wrappers=S.section(source,"local function load_global_settings()", "-- =============================================================================")
-local config,save=assert(load(construct..wrappers.."\nreturn global_config,save_global_settings"))()
+local session=require("ArmorVariantManager_Core.Config.Global").new(require("ArmorVariantManager_Core.Games.Wilds.Settings"))
+local app=dofile("tests/app_fixture.lua").new("Wilds", {global_settings=session})
+session.load()
+local config=app.global_config
 S.equal(calls,{"load"}); assert(config.new_ui_enabled==false and config.language=="en")
-assert(save()==false and saved==config); S.equal(calls,{"load","save"})
+assert(app.save_global_settings()==false and saved==config); S.equal(calls,{"load","save"})
 Store.load,Store.save=old_load,old_save
 print("PASS: dual-game global defaults, legacy load, unknown fields, roundtrip and entry wiring")

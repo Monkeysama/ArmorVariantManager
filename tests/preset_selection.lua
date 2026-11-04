@@ -3,8 +3,7 @@ local S = dofile("tests/support.lua")
 local Selection = require("ArmorVariantManager_Core.Presets.Selection")
 local Height = require("ArmorVariantManager_Core.GroundClippingFix")
 local legacy = dofile("tests/fixtures/legacy/preset_selection.lua")
-local source = S.read("ArmorVariantManager/reframework/autorun/ArmorVariantManager.lua")
-local actual_source = S.section(source, "local function apply_preset(preset_name)", "-- 辅助函数：加载指定 Body ID")
+local Fixture=dofile("tests/app_fixture.lua")
 local function preset(materials) return {["0"]={materials=materials}} end
 local config = {default_preset="Base", presets={Base=preset({cloth=true, ribbon=true}), Alt=preset({cloth=false})},
     groups={
@@ -54,7 +53,14 @@ for _, game in ipairs({"Wilds", "Rise"}) do
         local old = legacy[game](before)
         local new
         if game == "Wilds" then
-            new = assert(load(actual_source .. "\nreturn apply_preset", "actual-select", "t", after))()
+            local app=Fixture.new(game, {backend=after.application})
+            app.workspace.config=after.current_config
+            app.workspace.applied=after.temp_applied_presets
+            app.workspace.get_body_id=after.get_body_id
+            new=function(name)
+                app.workspace.state.group=after.current_group_name
+                return app.apply_preset(name)
+            end
         else
             new = function(name)
                 local result=Selection.apply(after.current_config, after.active_group_presets.id,

@@ -1,4 +1,4 @@
-local Settings = require("ArmorVariantManager_Core.UI.Reff.Settings")
+local Settings = require("ArmorVariantManager_Core.Config.Settings")
 local Defaults = require("ArmorVariantManager_Core.Games.Wilds.Settings")
 local PortraitCamera = require("ArmorVariantManager_Core.PortraitCamera")
 local Model = {}

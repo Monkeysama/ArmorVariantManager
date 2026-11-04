@@ -23,10 +23,6 @@ end
 same(Camera.settings({ distance = -2 }).distance, 1)
 
 -- 执行主入口的真实全局读写函数，确保新增设置与旧字段、未知字段一起往返。
-local handle = assert(io.open("ArmorVariantManager/reframework/autorun/ArmorVariantManager.lua", "r"))
-local source = handle:read("a"); handle:close()
-local first = assert(source:find("local function load_global_settings()", 1, true))
-local last = assert(source:find("-- 初始化加载", first, true))
 local loaded, saved
 local session = require("ArmorVariantManager_Core.Config.Global").new(
     require("ArmorVariantManager_Core.Games.Wilds.Settings"), {
@@ -35,10 +31,9 @@ local session = require("ArmorVariantManager_Core.Config.Global").new(
             same(path, "ArmorVariantManager/GlobalSettings.json"); saved = value; return true
         end,
     })
-local env = {global_config=session.value, global_settings=session}
-setmetatable(env, { __index = _G })
-local load_settings, save_settings = assert(load(source:sub(first, last - 1)
-    .. "\nreturn load_global_settings, save_global_settings", "global settings", "t", env))()
+local env = {global_config=session.value}
+local app = dofile("tests/app_fixture.lua").new("Wilds", {global_settings=session})
+local load_settings, save_settings = session.load, app.save_global_settings
 loaded = { language = "en", new_ui_enabled = false, auto_set_selected_preset_as_default = false,
     portrait_camera = { distance = 2.15, horizontal = 0.35, vertical = -0.1, refresh_fps = 0, extension = "keep" },
     unknown_global = { retain = 77 } }

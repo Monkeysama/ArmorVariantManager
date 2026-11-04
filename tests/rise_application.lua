@@ -39,8 +39,8 @@ loaded[rise .. "Signals"] = {
     sample_condition=function(_, handler, actor, player) return handler.get_state(actor, player) end,
 }
 local env = setmetatable({os={clock=function() return now end},
-    sdk={find_type_definition=function() return {get_method=function() return {} end} end,
-        hook=function(_, before) hooks.scene=before end},
+    sdk={find_type_definition=function() return {get_method=function(_, name) return name end} end,
+        hook=function(method, before) if method=="onChangedGameStatus" then hooks.scene=before end end},
     re={on_script_reset=function(callback) hooks.reset=callback end},
 }, {__index=_G})
 env.require=function(name)

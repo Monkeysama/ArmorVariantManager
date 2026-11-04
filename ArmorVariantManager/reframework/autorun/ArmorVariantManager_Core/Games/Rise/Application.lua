@@ -35,6 +35,26 @@ function Application.new(settings, session)
     _G.__AVM_LANGUAGE = settings.language
     refresh_monster_hp_gate()
 
+    function app.player_handle(character)
+        for _, entry in ipairs(app.runtime.actors.get().entries) do
+            if entry.obj == character then return entry.player end
+        end
+    end
+
+    function app.weapon_id(character)
+        local player = app.player_handle(character)
+        return app.runtime.equipment.weapon_id(character, player), app.runtime.equipment.weapons(character, player)
+    end
+
+    local type_mesh
+    function app.capture(config, group, id, weapon, contains)
+        local character = app.runtime.actors.local_player()
+        if not character then return nil end
+        type_mesh = type_mesh or sdk.find_type_definition("via.render.Mesh")
+        if not type_mesh then return nil end
+        return app.runtime.capture(character, app.player_handle(character), config, group, weapon, contains)
+    end
+
     -- 规则编辑可保持同一战斗信号，仍必须废弃该装备的编译结果和材质快路径。
     function app.refresh(id, config, character)
         if not id or not config then return false end

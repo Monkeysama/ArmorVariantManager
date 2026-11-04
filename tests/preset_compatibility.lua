@@ -79,26 +79,26 @@ for _, game in ipairs({ "Wilds", "Rise" }) do
 end
 
 -- 实际荒野入口继续负责保存、UI 选择和活动表；纯模块不接管这些副作用。
-local file = assert(io.open("ArmorVariantManager/reframework/autorun/ArmorVariantManager.lua", "r"))
-local source = file:read("a"); file:close()
 local env, old_env = environment(config), environment(config)
-env.PresetGroups = Groups
-env.deep_copy_table = S.copy
-env.TransformManager = {}
-env.GamePresets = require("ArmorVariantManager_Core.Games.Wilds.Presets")
 local old = legacy_factories.Wilds(old_env)
-local current = {}
-for _, name in ipairs({ "create_new_group", "delete_group" }) do
-    local first = assert(source:find("local function " .. name .. "(", 1, true))
-    local last = assert(source:find("\nend", first, true)) + 3
-    current[name] = assert(load(source:sub(first, last) .. "\nreturn " .. name, name, "t", env))()
-end
+local app=dofile("tests/app_fixture.lua").new("Wilds")
+local ws=app.workspace
+ws.config=env.current_config
+ws.update_group_names_list=env.update_group_names_list
+ws.update_preset_names_list=env.update_preset_names_list
+app.backend.save=function(id) env.save_current_config_to_file(id); return true end
+local current=app
 env.pending_material_selections, old_env.pending_material_selections = { ["1"] = { Cape = true } }, { ["1"] = { Cape = true } }
+ws.state.pending=env.pending_material_selections
+ws.state.selecting=true; ws.state.group_index=2
 for _, args in ipairs({ { "", "armor" }, { "Overlay", false }, { "Overlay", "armor" }, { "Overlay", "armor" } }) do
     assert(current.create_new_group(table.unpack(args)) == old.create_new_group(table.unpack(args)))
 end
 env.current_group_name, old_env.current_group_name = "Overlay", "Overlay"
+ws.state.group="Overlay"
 assert(current.delete_group("Overlay", "armor") == old.delete_group("Overlay", "armor"))
+env.current_config=ws.config
+env.current_group_name,env.pending_material_selections,env.is_selection_mode,env.selected_group_index=ws.state.group,ws.state.pending,ws.state.selecting,ws.state.group_index
 for _, key in ipairs({ "current_config", "active_overrides", "current_group_name", "pending_material_selections", "is_selection_mode", "selected_group_index" }) do
     S.equal(env[key], old_env[key], "Entry " .. key)
 end

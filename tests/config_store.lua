@@ -3,7 +3,6 @@ local S = dofile("tests/support.lua")
 local Store = require("ArmorVariantManager_Core.Config.Store")
 local Normalize = require("ArmorVariantManager_Core.Config.Normalize")
 local Schema = require("ArmorVariantManager_Core.Games.Wilds.Config")
-local source = S.read("ArmorVariantManager/reframework/autorun/ArmorVariantManager.lua")
 
 assert(Store.config_path("ch03_001_0000") == "ArmorVariantManager/ch03_001_0000.json")
 assert(Store.backup_path("ch03_001_0000") == "ArmorVariantManager/backup/ch03_001_0000.json")
@@ -75,9 +74,7 @@ local session = Session.new(Schema, function() refreshes = refreshes + 1 end, {
     load = function(name) reads = reads + 1; return S.copy(disk[name]) end,
     save = function(name, value) disk[name] = S.copy(value); return true end
 })
-local env = setmetatable({ config_session = session, application = {load=session.load} }, { __index = _G })
-local loading = S.section(source, "local function load_config_data", "-- 辅助函数：返回合并后的新复合状态表")
-local load_config = assert(load(loading .. "\nreturn load_config_data", "entry-config", "t", env))()
+local load_config = session.load
 disk[Store.config_path("armor")] = S.copy(original)
 disk[Store.backup_path("armor")] = S.copy(original)
 local config = load_config("armor")

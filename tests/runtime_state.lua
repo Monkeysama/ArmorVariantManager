@@ -43,9 +43,7 @@ env.appearance = require("ArmorVariantManager_Core.Games.Wilds.Appearance").new(
 env.appearance.overrides, env.appearance.groups = env.active_overrides, env.active_group_presets
 env.appearance.state, env.appearance.height = env.actor_runtime, env.ground_clipping_presets
 env.appearance.transform = function(...) return env.apply_transform_rules_for_character(...) end
-local helpers = S.section(source, "-- 辅助函数：变身规则激活", "-- 辅助函数：获取当前分组的预设数据")
-local helper_name = "resolve_character_overrides"
-env[helper_name] = assert(load(helpers .. "\nreturn " .. helper_name, "actual-resolve", "t", env))()
+env.resolve_character_overrides=env.appearance.resolve
 env.appearance.defaults = env.apply_all_defaults
 env.application = require("ArmorVariantManager_Core.Games.Wilds.Application").new({
     equipment={body_id=function(...) return env.get_character_body_id(...) end,
@@ -53,8 +51,7 @@ env.application = require("ArmorVariantManager_Core.Games.Wilds.Application").ne
     materials={armor=function(...) return env.apply_preset_to_armor(...) end,
         weapon=function(...) return env.apply_preset_to_weapon(...) end},
 }, env.appearance, {load=env.load_config_data}, {}, function() return false end)
-local processor_source = S.section(source, "local process_character = application.process", "re.on_frame(function()")
-env.process_character = assert(load(processor_source .. "\nreturn process_character", "actual-processor", "t", env))()
+env.process_character=env.application.process
 local runtime_source = S.read("ArmorVariantManager/reframework/autorun/ArmorVariantManager_Core/Games/Wilds/Runtime.lua")
 local body = S.section(runtime_source, "    function runtime.tick(frame)", "    return runtime")
 env.runtime = {
@@ -137,8 +134,11 @@ assert(runtime:peek(tostring(b), "weapon", "wp01", config) == nil)
 -- 界面读取本地角色快照而不是最后处理的远端角色；配置替换后退回手动选择。
 env.loaded_configs = { armor = config }
 env.is_weapon_id = function(id) return id:sub(1, 2) == "wp" end
-local display_source = S.section(source, "local function get_effective_group_presets", "-- =============================================================================\n-- 预设和分组 UI")
-local display = assert(load(display_source .. "\nreturn get_effective_group_presets", "actual-display", "t", env))()
+env.application.runtime.actors={local_player=env.get_local_player_character}
+env.application.is_weapon_id=env.is_weapon_id
+local app=dofile("tests/app_fixture.lua").new("Wilds", {backend=env.application, session={cache=env.loaded_configs}})
+local ws=app.workspace
+local display=ws.get_effective_group_presets
 a.body = nil
 local a_context = runtime:get(tostring(a), "armor", "armor", config)
 a_context.groups = { Lock = "Off" }
@@ -164,11 +164,10 @@ local render_env = setmetatable({
 }, { __index = _G })
 render_env.materials = assert(loadfile("ArmorVariantManager/reframework/autorun/ArmorVariantManager_Core/Games/Wilds/Materials.lua", "t", render_env))()
     .new({ part_meshes = render_env.get_character_part_meshes }, render_env.safe_get_game_object)
-local render_source = S.section(source, "local function apply_preset_to_armor", "-- 辅助函数：应用指定预设到指定角色的武器")
-local render = assert(load(render_source .. "\nreturn apply_preset_to_armor", "actual-render", "t", render_env))()
-render(b, config.presets.Base, true, true)
+local render=render_env.materials.armor
+render(b, config.presets.Base)
 assert(material, "Actor result must not use local UI hide lock")
-render(b, config.presets.Base, false, true)
+render(b, config.presets.Base, render_env.is_material_in_current_context, render_env.is_globally_hidden)
 assert(not material, "Local UI edits still respect hide lock")
 print("PASS: ordinary/global precedence, weapon removal, local display and actual material write")
 
@@ -201,21 +200,27 @@ env.preset_names_list, env.group_names_list = { "On", "Off" }, { "Lock" }
 env.selected_preset_index = 1
 env.config_session = require("ArmorVariantManager_Core.Config.Session").new(
     require("ArmorVariantManager_Core.Games.Wilds.Config"))
-local ui_source = S.section(source, "    get_context = function()", "    -- 判断配置中是否已有任意预设")
-local ui_context = assert(load("return {" .. ui_source .. "}", "actual-ui-context", "t", env))().get_context
-assert(ui_context().selected_preset_name == "Off")
-assert(env.selected_preset_index == 2)
-local group_source = S.section(source, "    select_group = function(group_name)", "    select_preset = function(index)")
-env.variant_manager_ui = {}
-env.update_preset_names_list = function() end
-env.selected_preset_index = 1
-local select_group = assert(load("return {" .. group_source .. "}", "actual-ui-group", "t", env))().select_group
-select_group("Lock")
-assert(env.selected_preset_index == 2)
+ws.config=config
+ws.state.group="Lock"; ws.state.presets={"On","Off"}; ws.state.groups={"Lock"}
+ws.get_body_id=env.get_body_id
+app.session=env.config_session
+app.runtime.scene_object={}; app.runtime.meshes={}
+sdk=env.sdk
+local ui=dofile("tests/app_fixture.lua").legacy(app)
+assert(ui.get_context().selected_preset_name=="Off")
+assert(ws.state.presets[ws.state.preset_index]=="Off")
+ws.state.preset_index=1
+ui.select_group("Lock")
+assert(ws.state.presets[ws.state.preset_index]=="Off")
 print("PASS: shared game policies and actual UI context/group selection")
 
 local editor_selection
-local editor_source = S.section(source, "get_ground_clipping_settings = function()", "set_ground_clipping_settings = function")
 env.ground_clipping_presets.get_editor = function(_, _, _, selected) editor_selection = selected end
-assert(load(editor_source .. "\nreturn get_ground_clipping_settings", "actual-height-editor", "t", env))()()
+local Height=require("ArmorVariantManager_Core.GroundClippingFix")
+local old_new=Height.new
+Height.new=function() return {} end
+app.runtime.guard={}; sdk.find_type_definition=function() end
+app.height=require("ArmorVariantManager_Core.Games.Wilds.HeightEditor").new(app)
+Height.new=old_new
+app.height.get()
 assert(editor_selection == "Off", "Height editor follows displayed local preset")

@@ -6,7 +6,6 @@ local Weapons=require(prefix.."Games.Rise.Weapons")
 local Signals=require(prefix.."Games.Rise.Signals")
 Signals.get_current_weapon_type=function() return 2 end
 local legacy={Wilds=dofile("tests/fixtures/legacy/wilds_parts_ui.lua"),Rise=dofile("tests/fixtures/legacy/rise_parts_ui.lua")}
-local source=S.read("ArmorVariantManager/reframework/autorun/ArmorVariantManager.lua")
 local function fixture(game, modern, options)
     local trace={}
     local td={get_method=function() return nil end}
@@ -64,14 +63,8 @@ local function fixture(game, modern, options)
     local draw
     if modern then
         runtime.part_view=require(prefix.."Games."..game..".PartView").new(runtime)
-        if game=="Wilds" then
-            draw=assert(load(S.section(source,"local draw_part_list =","-- =============================================================================\n-- 新UI")
-                .."\nreturn function() "..S.section(source,"                    draw_part_list(character,","\n                    imgui.separator()").." end",
-                "parts-entry","t",env))()
-        else
-            local panel=Parts.new(runtime.part_view,env.T,env.draw_mesh_toggle)
-            draw=function() panel(env.primary,"armor",options.weapon,baseline) end
-        end
+        local panel=Parts.new(runtime.part_view,env.T,env.draw_mesh_toggle)
+        draw=function() panel(game=="Wilds" and env.character or env.primary,"armor",options.weapon,baseline) end
     else draw=legacy[game](env) end
     return {trace=trace,env=env,runtime=runtime,draw=function() _G.sdk,_G.imgui=env.sdk,env.imgui;draw() end}
 end

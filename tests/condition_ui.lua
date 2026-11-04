@@ -130,20 +130,5 @@ for _, game in ipairs({"Wilds", "Rise"}) do
     end
 end
 
--- 检查正式入口传入实际依赖，并把当前配置/装备/角色交给面板。
-local source=S.read("ArmorVariantManager/reframework/autorun/ArmorVariantManager.lua")
-local wiring=S.section(source,"local draw_game_conditions = ","-- UI 绘制回调")
-local env={game={wilds=true,prefix="ArmorVariantManager_Core.Games.Wilds."},application={},T={},TransformManager={},save_current_config_to_file={},draw_targets_ui={},
-    can_use_transform={},safe_get_game_object={}}
-local received
-env.require=function(name)
-    assert(name == "ArmorVariantManager_Core.Games.Wilds.ImGuiConditions")
-    return {new=function(deps) received=deps; return function(...) return table.pack(...) end end}
-end
-local draw=assert(load(wiring.."return draw_game_conditions","entry-conditions","t",env))()
-assert(received.translate == env.T and received.rules == env.TransformManager
-    and received.save == env.save_current_config_to_file and received.draw_targets == env.draw_targets_ui
-    and received.can_transform == env.can_use_transform and received.game_object == env.safe_get_game_object)
-assert(source:find("draw_game_conditions(current_config, body_id, character)",1,true))
-S.equal(draw("config","id","actor"),{n=3,"config","id","actor"},"Entry panel arguments")
+-- 完整菜单接线由 entrypoint.lua 的双游戏入口场景覆盖。
 print("PASS: native condition panels, "..comparisons.." individual control edits and second-frame state")

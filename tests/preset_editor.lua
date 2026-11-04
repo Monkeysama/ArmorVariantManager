@@ -2,7 +2,6 @@ package.path = "ArmorVariantManager/reframework/autorun/?.lua;" .. package.path
 local S = dofile("tests/support.lua")
 local Editor = require("ArmorVariantManager_Core.Presets.Editor")
 local legacy = dofile("tests/fixtures/legacy/preset_edits.lua")
-local source = S.read("ArmorVariantManager/reframework/autorun/ArmorVariantManager.lua")
 local initial = {
     presets = { A = { ["1"] = { materials = { Body = false } } }, B = {} },
     default_preset = "A", preset_order = { "A", "B" },
@@ -87,14 +86,13 @@ local env = setmetatable({ current_config = config, current_group_name = "Normal
     update_preset_names_list = function() refreshed = refreshed + 1 end,
     update_group_names_list = function() refreshed = refreshed + 1 end
 }, { __index = _G })
-local wrappers = S.section(source, "local function delete_preset(", "-- 开启自动保存时")
-local methods = assert(load(wrappers .. "\nreturn { delete_preset = delete_preset, reorder_presets = reorder_presets, reorder_groups = reorder_groups }", "entry-editor", "t", env))()
-for name, fn in pairs(methods) do env[name] = fn end
-local blocks = {}
-for _, spec in ipairs({ { "reorder_groups", "-- 新 UI 创建分组" }, { "reorder_presets", "-- 新 UI 新增预设" }, { "delete_preset", "-- 新 UI 设置当前" } }) do
-    blocks[#blocks + 1] = S.section(source, "    " .. spec[1] .. " = function", "    " .. spec[2])
-end
-local ui = assert(load("return {\n" .. table.concat(blocks) .. "\n}", "ui-editor", "t", env))()
+local app=dofile("tests/app_fixture.lua").new("Wilds")
+app.workspace.config, app.workspace.state.group=config,"Normal"
+app.workspace.update_preset_names_list=env.update_preset_names_list
+app.workspace.update_group_names_list=env.update_group_names_list
+app.backend.save=function(id, data, keep) return env.save_current_config_to_file(id, keep) end
+sdk={is_managed_object=function() return true end}
+local ui=dofile("tests/app_fixture.lua").legacy(app)
 fail = true
 assert(not ui.delete_preset("A") and config.groups.Normal.presets.A)
 fail = false
@@ -103,12 +101,9 @@ assert(ui.reorder_presets({ "B" }))
 assert(ui.reorder_groups({ { name = "Global" }, { name = "" }, { name = "Normal" } }))
 S.equal(config.group_order, { "Global", "Normal" })
 assert(writes == 4 and refreshed == 4)
-env.current_config = nil
+app.workspace.config = nil
 assert(not ui.delete_preset("B"))
 assert(not ui.reorder_presets({ "B" }))
 assert(not ui.reorder_groups({ { name = "Normal" } }))
 assert(writes == 4 and refreshed == 4)
-assert(source:find("delete_preset(current_preset_name, body_id)", 1, true))
-assert(source:find("saved = reorder_groups(sort_temp_list, body_id)", 1, true))
-assert(source:find("saved = reorder_presets(sort_temp_list, body_id)", 1, true))
 print("PASS: shared preset writes/defaults/delete/order, legacy JSON equality, failed-save rollback and actual UI operation wiring")

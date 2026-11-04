@@ -94,8 +94,24 @@ local function session(modern, scenario)
             and runtime.capture == capture and runtime.scene_object == scene_object)
         runtime.install_hooks()
         reset_callback(); assert(reset_count == 1)
-        local body=S.section(main,"local frame_callbacks =", "re.on_frame(function()")
-        local callbacks=assert(load(body.."\nreturn frame_callbacks","actual-frame-wiring","t",env))()
+        local ws=require("ArmorVariantManager_Core.UI.Workspace").new(
+            {wilds=true}, {runtime=runtime,appearance={overrides=env.active_overrides,groups=env.active_group_presets},load=env.load_config_data},
+            {cache={}}, {new=function() return {} end})
+        ws.config=env.current_config; ws.applied=env.temp_applied_presets
+        ws.state.body_id=env.last_body_id; ws.state.group=env.current_group_name
+        ws.state.restore_group=env.pending_mode_group_restore; ws.state.mode_groups=env.mode_group_selection
+        ws.state.groups=env.group_names_list
+        ws.get_body_id=env.get_body_id
+        ws.update_group_names_list=env.update_group_names_list
+        ws.update_preset_names_list=env.update_preset_names_list
+        ws.load_body_config=function(id) env.load_body_config(id); ws.config=env.current_config end
+        local callbacks={suspended=function(v) env.variant_manager_ui:set_suspended(v) end,
+            process=env.process_character,retain=function(seen) env.actor_runtime:retain(seen) end,
+            update=function()
+                env.variant_manager_ui:update(); ws.update()
+                env.current_config,env.last_body_id,env.current_group_name=ws.config,ws.state.body_id,ws.state.group
+                env.pending_mode_group_restore,env.selected_group_index=ws.state.restore_group,ws.state.group_index
+            end}
         frame=function() runtime.tick(callbacks) end
     else
         guard:install_hooks()

@@ -120,8 +120,7 @@ rank.files[2][2]=preset(1,{"A"})
 assert(fixture(true,"rise",rank).message:find("已匹配: armor",1,true))
 
 -- 正式入口导入成功才刷新列表；主文件保存失败恢复当前配置及会话缓存。
-local main=S.read("ArmorVariantManager/reframework/autorun/ArmorVariantManager.lua")
-local wrapper=S.section(main,"local function find_auto_preset(","local draw_material_panel =")
+local Fixture=dofile("tests/app_fixture.lua")
 for _,failure in ipairs({"none","find","save"}) do
     local previous,cache,candidate={old=true},{old_cache=true},{presets={},unknown=true}
     local events={}
@@ -140,7 +139,17 @@ for _,failure in ipairs({"none","find","save"}) do
         events[#events+1]="save"
         return failure~="save"
     end
-    local ok,message=assert(load(wrapper.."\nreturn find_auto_preset", "entry-import","t",env))()("armor")
+    local app=Fixture.new("Wilds", {session={cache=env.loaded_configs}})
+    app.runtime.find_preset=env.runtime.find_preset
+    app.runtime.actors.local_player=env.get_local_player_character
+    app.workspace.config=previous
+    app.workspace.update_preset_names_list=env.update_preset_names_list
+    app.backend.save=function(id, data)
+        env.current_config=data
+        return env.save_current_config_to_file(id)
+    end
+    local ok,message=app.find_auto_preset("armor")
+    env.current_config=app.workspace.config
     assert(ok==(failure=="none"))
     if ok then
         assert(env.current_config==candidate and env.loaded_configs.armor==candidate)

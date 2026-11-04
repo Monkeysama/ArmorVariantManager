@@ -3,7 +3,6 @@ local S = dofile("tests/support.lua")
 local Application = require("ArmorVariantManager_Core.Games.Wilds.Application")
 local schema = require("ArmorVariantManager_Core.Games.Wilds.Config")
 local Appearance = require("ArmorVariantManager_Core.Games.Wilds.Appearance")
-local main = S.read("ArmorVariantManager/reframework/autorun/ArmorVariantManager.lua")
 local config = {default_preset="Base", presets={
     Base={["0"]={materials={cloth=true}}}, Hide={["0"]={materials={cloth=false}}},
 }}
@@ -61,10 +60,5 @@ writes={}; app.process(primary)
 assert(appearance.overrides.armor["0"].materials.cloth==true)
 assert(#writes==2 and writes[1][2]=="armor" and writes[2][2]=="weapon")
 
--- 正式入口绑定真实服务，而不是测试专用的另一套协调路径。
-local env = setmetatable({runtime=runtime,appearance=appearance,config_session=session,
-    TransformManager=rules,is_weapon_id=weapon}, {__index=_G})
-local constructor=S.section(main,'application = require("ArmorVariantManager_Core.Games.Wilds.Application")', 'end\nlocal active_overrides, active_group_presets')
-local bound=assert(load(constructor.."\nreturn application", "main-application", "t", env))()
-assert(bound.runtime==runtime and bound.appearance==appearance and bound.load==session.load)
-print("PASS: Wilds application immediate actor/slot refresh, primary inclusion, invalid selection, save failure/preserve/reset and main wiring")
+assert(app.runtime==runtime and app.appearance==appearance and app.load==session.load)
+print("PASS: Wilds application immediate actor/slot refresh, primary inclusion, invalid selection, save failure/preserve/reset")

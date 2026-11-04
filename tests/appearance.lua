@@ -73,14 +73,11 @@ do
             clear_last_state_cache=function() resets=resets+1 end,
         },
     }, {__index=_G})
-    local main = S.read("ArmorVariantManager/reframework/autorun/ArmorVariantManager.lua")
-    local body = S.section(main, "-- 只接受本轮 PlayerManager 提供的真实玩家。", "-- 当前 Body 的配置数据结构")
-    local app, overrides, groups, state, height, transform, weapon = assert(load(body .. [[
-return appearance, active_overrides, active_group_presets, actor_runtime, ground_clipping_presets,
-    apply_transform_rules_for_character, is_weapon_id
-]], "actual-appearance-wiring", "t", env))()
-    assert(app.overrides == overrides and app.groups == groups and app.state == state and app.height == height)
-    assert(weapon("wp03_custom") and weapon("it1234_custom") and not weapon("armor"))
+    local weapon=function(id) return id and (id:match("^wp%d%d") or id:match("^it%d%d%d%d")) end
+    local app=require(prefix .. "Games.Wilds.Appearance").new({load=env.config_session.load,
+        rules=env.TransformManager, can_transform=env.actors.can_transform,
+        game_object=env.safe_get_game_object, is_weapon_id=weapon})
+    local overrides, groups, state, height, transform = app.overrides, app.groups, app.state, app.height, app.transform
     app.defaults("armor")
     local baseline = overrides.armor
     transform(cfg, character, baseline, function() error("Unexpected merge") end)

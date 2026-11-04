@@ -3,7 +3,6 @@ package.path = "ArmorVariantManager/reframework/autorun/?.lua;" .. package.path
 local S = dofile("tests/support.lua")
 local prefix = "ArmorVariantManager_Core."
 local legacy = dofile("tests/fixtures/legacy/visibility.lua")
-local source = S.read("ArmorVariantManager/reframework/autorun/ArmorVariantManager.lua")
 
 local function fixture(action, modern, selection)
     local trace = {}
@@ -47,11 +46,19 @@ local function fixture(action, modern, selection)
     _G.sdk, _G.imgui = env.sdk, env.imgui
     local draw, callbacks
     if modern then
-        draw=assert(load(S.section(source, "local draw_material_panel =", "local draw_part_list =")
-            .. "\nreturn draw_mesh_toggle", "native-visibility", "t", env))()
-        callbacks=assert(load(S.section(source, "local visibility_editor =", "variant_manager_ui =")
-            .. "\nreturn {" .. S.section(source, "    set_mesh_enabled =", "    is_material_in_context =") .. "}",
-            "visibility-wiring", "t", env))()
+        local context=dofile("tests/app_fixture.lua").new("Wilds")
+        context.appearance=app
+        local ws=context.workspace
+        ws.config=env.current_config
+        ws.is_globally_hidden=env.is_globally_hidden
+        draw=require(prefix .. "UI.ImGui.Materials").new({
+            access=require(prefix .. "Games.Wilds.MaterialView").new(), translate=env.T, edit=app.edit,
+            owner=env.get_material_group_owner, global_groups=env.get_material_global_groups,
+            in_context=env.is_material_in_current_context, hidden=env.is_globally_hidden,
+            context=function() return {filters=env.mat_filter_text,pending=env.pending_material_selections,
+                selecting=selection,overrides=app.overrides,config=env.current_config,group=""} end,
+        })
+        callbacks=dofile("tests/app_fixture.lua").legacy(context)
     else draw, callbacks=legacy(env) end
     local object={call=function(_, method) assert(method == "getComponent(System.Type)"); return mesh end}
     return {app=app, env=env, mesh=mesh, trace=trace, draw=function() draw(object, "Body", "armor", 0) end,

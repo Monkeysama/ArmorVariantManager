@@ -131,7 +131,8 @@ env.runtime_guard:mark_load_end(false); assert(env.runtime_guard:update(), "Fast
 env.runtime_guard:mark_load_end(true); assert(not env.runtime_guard:update())
 assert(invalidations == 3)
 assert(equipment_clears == 3 and mesh_clears == 3, "Scene cleanup releases adapter-owned object caches")
-local ui_start = assert(main_source:find("re.on_draw_ui(function()", 1, true))
+main_source = assert(io.open("ArmorVariantManager/reframework/autorun/ArmorVariantManager_Core/UI/ImGui/Main.lua")):read("a")
+local ui_start = 1
 local tree = assert(main_source:find('imgui.tree_node(T("mod_name"))', ui_start, true))
 local pause = assert(main_source:find("if runtime.is_suspended() then", ui_start, true))
 assert(tree < pause, "Legacy UI entry remains present while suspended")

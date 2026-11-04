@@ -5,6 +5,23 @@ local Application = {}
 function Application.new(runtime, appearance, session, rules, is_weapon_id)
     local app = {runtime=runtime, appearance=appearance, load=session.load}
     local equipment, materials = runtime.equipment, runtime.materials
+    app.is_weapon_id, app.weapon_id = is_weapon_id, equipment.weapon_id
+    function app.player_handle() return nil end
+
+    local type_mesh
+    function app.capture(config, group_name, id, weapon, contains, selected)
+        local character = runtime.actors.local_player()
+        if not character then return nil end
+        type_mesh = type_mesh or sdk.find_type_definition("via.render.Mesh")
+        if not type_mesh then return nil end
+        local data = runtime.capture(character, config, group_name, appearance.overrides[id], is_weapon_id(id), contains)
+        if not is_weapon_id(id) then
+            local group = group_name == "" and config or config.groups[group_name]
+            data.ground_clipping_fix = appearance.height.get_editor(config, id, group_name,
+                selected[group_name] or group and group.default_preset)
+        end
+        return data
+    end
     app.process = Processor.new({
         identify = function(character, slot)
             if slot == "armor" then return equipment.body_id(character) end
@@ -59,6 +76,16 @@ function Application.new(runtime, appearance, session, rules, is_weapon_id)
         if not saved then return false, reason end
         if preserve then return true end
         appearance.overrides[id], appearance.groups[id] = nil, nil
+        if rules.clear_last_state_cache then rules.clear_last_state_cache() end
+        return true
+    end
+
+    function app.restore(id)
+        local restored, reason = session.restore(id)
+        if not restored then return false, reason end
+        appearance.overrides[id], appearance.groups[id] = nil, nil
+        local config = app.load(id)
+        if config then appearance.defaults(id, config) end
         if rules.clear_last_state_cache then rules.clear_last_state_cache() end
         return true
     end

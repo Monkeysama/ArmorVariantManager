@@ -28,6 +28,8 @@ sync_main_release.py
 !/tests/portrait_camera_settings_regression.lua
 !/tests/rise_options.lua
 !/tests/support.lua
+!/tests/app_fixture.lua
+!/tests/app_ui.lua
 !/tests/config_compatibility.lua
 !/tests/config_store.lua
 !/tests/config_session.lua

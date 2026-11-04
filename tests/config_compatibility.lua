@@ -61,8 +61,7 @@ S.equal(current.Rise(S.copy(names)).preset_order, { "A", "Z" })
 print("PASS: per-game legacy fields/defaults/order, damage migration, unknown fields and table save/reload")
 
 -- 新装备草稿不是已加载 JSON：不提前添加旧入口没有保存的字段。
-local source = S.read("ArmorVariantManager/reframework/autorun/ArmorVariantManager.lua")
-local load_body = S.section(source, "local function load_body_config(", "save_current_config_to_file = function(")
+local Fixture = dofile("tests/app_fixture.lua")
 for _, game in ipairs({ "Wilds", "Rise" }) do
     local schema = require("ArmorVariantManager_Core.Games." .. game .. ".Config")
     local legacy_factory = dofile("tests/fixtures/legacy/" .. game:lower() .. "_config_draft.lua")
@@ -85,7 +84,22 @@ for _, game in ipairs({ "Wilds", "Rise" }) do
             env.apply_all_defaults = function(id) trace[#trace + 1] = "defaults:" .. id end
             local load
             if old then local _; _, load = legacy_factory(env)
-            else load = assert(_G.load(load_body .. "\nreturn load_body_config", "entry", "t", env))() end
+            else
+                local app=Fixture.new(game)
+                local ws=app.workspace
+                ws.config=env.current_config
+                env.loaded_configs=app.session.cache
+                app.backend.load=env.load_config_data
+                ws.update_group_names_list=env.update_group_names_list
+                ws.update_preset_names_list=env.update_preset_names_list
+                ws.apply_all_defaults=env.apply_all_defaults
+                load=function(id)
+                    local ok=ws.load_body_config(id)
+                    env.current_config=ws.config
+                    env.loaded_configs=app.session.cache
+                    return ok
+                end
+            end
             local ok = load(input ~= "nil" and "armor" or nil)
             if data then assert(env.current_config == data and env.loaded_configs.armor == data) end
             return { ok = ok, current = env.current_config, cache = env.loaded_configs, trace = trace }
@@ -95,5 +109,5 @@ for _, game in ipairs({ "Wilds", "Rise" }) do
     local saved = current[game](schema.new())
     S.equal(current[game](S.copy(saved)), saved, game .. " first save/reload")
 end
-assert(source:find("local current_config = GameConfig.new()", 1, true), "entry uses game draft factory")
+
 print("PASS: both games' initial/reset drafts, independent defaults, missing/loaded/nil equipment and first save/reload")

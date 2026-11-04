@@ -209,14 +209,7 @@ broken.shutdown(); sdk.hook = normal_hook
 print("PASS: 1000 frames, duplicate callbacks, world-Y, animation ownership, riding, transition, scene/joint replacement, equipment switch, faults, reload/reset and prototype ownership")
 print("PASS: real Lua callback ordering, post-IK timing, paused status recovery, NPC filtering, hunter replacement and hook failure")
 
--- 提取主脚本中实际使用的保存函数，验证新增选项没有改变旧预设数据与备份保护。
-local handle = assert(io.open("ArmorVariantManager/reframework/autorun/ArmorVariantManager.lua", "r"))
-local source = handle:read("a"); handle:close()
-local function extract(name, following)
-    local first = assert(source:find("local function " .. name .. "(", 1, true) or source:find(name .. " = function(", 1, true))
-    local last = assert(source:find(following, first + 1, true))
-    return source:sub(first, last - 1)
-end
+-- 使用正式应用、工作区与高度编辑器验证持久化和备份保护。
 local stored, fail_save = {}, false
 local preset = { ["1"] = { mesh_enabled = true, materials = { Face = false } } }
 local editor = Height.new_preset_state()
@@ -281,31 +274,34 @@ env.application = require("ArmorVariantManager_Core.Games.Wilds.Application").ne
     actors={all=env.get_all_characters, local_player=env.get_local_player_character},
     equipment={body_id=function(...) return env.get_character_body_id(...) end,
         weapon_id=function(...) return env.get_character_weapon_id(...) end},
-    materials={},
+    materials={}, capture=env.capture_materials, guard={}, scene_object={},
 }, env.appearance, env.config_session, env.TransformManager, env.is_weapon_id)
 env.loaded_configs = env.config_session.cache
 env.config_restored = env.config_session.restored
 env.config_restore_handled = env.config_session.handled
 env.get_effective_group_presets = function(id) return env.active_group_presets[id] or {} end
-local save_source = extract("save_current_config_to_file", "\n-- 将指定预设写为")
-env.save_current_config_to_file = assert(load(save_source .. "\nreturn save_current_config_to_file", "save", "t", env))()
-local set_source = extract("set_ground_clipping_settings", "\nlocal visibility_editor =")
-local set = assert(load(set_source .. "\nreturn set_ground_clipping_settings", "settings", "t", env))()
-local capture_source = extract("save_preset", "\nlocal function find_auto_preset")
-local capture = assert(load(capture_source .. "\nreturn save_preset", "capture", "t", env))()
-env.PresetDefaults = require("ArmorVariantManager_Core.Presets.Defaults")
-local defaults_source = extract("apply_all_defaults", "\n-- 辅助函数：变身规则激活")
-env.load_config_data = function() return env.current_config end
-local defaults = assert(load(defaults_source .. "\nreturn apply_all_defaults", "defaults", "t", env))()
-local merges_source = extract("merge_overrides", "\n-- 辅助函数：应用一个 Body ID")
-env.merge_overrides = assert(load(merges_source .. "\nreturn merge_overrides", "merge", "t", env))()
-local apply_source = extract("get_current_preset_data", "\n-- 辅助函数：加载指定 Body ID")
-local apply
-apply, env.get_current_preset_data = assert(load(apply_source .. "\nreturn apply_preset, get_current_preset_data", "apply", "t", env))()
-local set_default_source = extract("set_preset_as_default", "\n-- 开启自动保存时")
-local set_default = assert(load(set_default_source .. "\nreturn set_preset_as_default", "default", "t", env))()
+local app=dofile("tests/app_fixture.lua").new("Wilds", {backend=env.application,
+    session=env.config_session,rules=env.TransformManager})
+local workspace=app.workspace
+workspace.config=env.current_config
+workspace.state.body_id="armor_a"
+workspace.get_body_id=env.get_body_id
+workspace.get_effective_group_presets=env.get_effective_group_presets
+local old_height_new=Height.new
+Height.new=function() return env.ground_clipping_fix end
+sdk.find_type_definition=function() end
+local height_editor=require("ArmorVariantManager_Core.Games.Wilds.HeightEditor").new(app)
+Height.new=old_height_new
+local set,capture=height_editor.set,app.save_preset
+local defaults=workspace.apply_all_defaults
+local apply,set_default=app.apply_preset,app.set_preset_as_default
+env.load_config_data=function() return workspace.config end
+env.application.load=env.load_config_data
+env.merge_overrides=env.GamePresets.merge
+env.save_current_config_to_file=app.save_current_config_to_file
+sdk.find_type_definition=function() return true end
 assert(set({ enabled = true, height_cm = 12.5 }, "armor_a"))
-assert(next(stored) == nil and env.current_config.ground_clipping_fix == nil, "Preview must not write armor JSON")
+assert(next(stored) == nil and workspace.config.ground_clipping_fix == nil, "Preview must not write armor JSON")
 assert(env.active_group_presets.armor_a[""] == "A" and env.active_overrides.armor_a.temporary)
 assert(capture("A", "armor_a"))
 assert(stored["armor_a.json"].ground_clipping_fix == nil)
@@ -325,14 +321,14 @@ assert(not env.save_current_config_to_file("armor_a", true))
 assert(stored["armor_a.json"].presets.A.ground_clipping_fix.height_cm == 14, "Failed write must preserve disk contents")
 assert(set({ height_cm = 40 }, "armor_a"))
 assert(not capture("A", "armor_a"))
-near(env.current_config.presets.A.ground_clipping_fix.height_cm, 14, "Failed overwrite must restore prior preset")
+near(workspace.config.presets.A.ground_clipping_fix.height_cm, 14, "Failed overwrite must restore prior preset")
 assert(not capture("FailedNew", "armor_a"))
-assert(env.current_config.presets.FailedNew == nil, "Failed create must not leave phantom preset")
+assert(workspace.config.presets.FailedNew == nil, "Failed create must not leave phantom preset")
 fail_save = false
 assert(not set({ enabled = true }, "armor_b"), "Reject stale equipment context")
-env.is_weapon_mode = true
+workspace.state.weapon = true
 assert(not set({ enabled = true }, "armor_a"), "Do not write height into weapon JSON")
-env.is_weapon_mode = false
+workspace.state.weapon = false
 local preview_height = env.active_overrides.armor_a.ground_clipping_fix.height_cm
 assert(set({ enabled = false, height_cm = 0 }, "armor_a"))
 near(env.active_overrides.armor_a.ground_clipping_fix.height_cm, preview_height, "Unchecking in the editor must not revoke an applied height")
@@ -346,49 +342,49 @@ defaults("armor_a")
 near(env.active_overrides.armor_a.ground_clipping_fix.height_cm, 14, "Load armor default height")
 apply("B"); near(env.active_overrides.armor_a.ground_clipping_fix.height_cm, 14, "Unchecked preset must keep the current height")
 assert(env.active_overrides.armor_a.ground_clipping_fix.enabled)
-env.current_config.presets.Zero = { ground_clipping_fix = { enabled = true, height_cm = 0 } }
+workspace.config.presets.Zero = { ground_clipping_fix = { enabled = true, height_cm = 0 } }
 apply("Zero"); near(env.active_overrides.armor_a.ground_clipping_fix.height_cm, 0, "Checked zero must reset height")
 assert(env.active_overrides.armor_a.ground_clipping_fix.enabled)
 apply("B"); near(env.active_overrides.armor_a.ground_clipping_fix.height_cm, 0, "Unchecked preset must preserve checked zero")
 apply("A"); near(env.active_overrides.armor_a.ground_clipping_fix.height_cm, 14)
 assert(set({ height_cm = 25 }, "armor_a"))
 apply("B"); apply("A")
-near(editor.get_editor(env.current_config, "armor_a", "", "A").height_cm, 14, "Selecting presets discards unsaved draft")
-env.current_config.groups.Boots = { default_preset = "High", presets = {
+near(editor.get_editor(workspace.config, "armor_a", "", "A").height_cm, 14, "Selecting presets discards unsaved draft")
+workspace.config.groups.Boots = { default_preset = "High", presets = {
     High = { ground_clipping_fix = { enabled = true, height_cm = 30 } },
     Low = { ground_clipping_fix = { enabled = true, height_cm = 5 } }
 } }
-env.current_config.group_order = { "Boots" }
+workspace.config.group_order = { "Boots" }
 defaults("armor_a"); near(env.active_overrides.armor_a.ground_clipping_fix.height_cm, 30)
-env.current_group_name = "Boots"
+workspace.state.group = "Boots"
 apply("Low"); near(env.active_overrides.armor_a.ground_clipping_fix.height_cm, 5)
 assert(set({ height_cm = 7 }, "armor_a")); assert(capture("Low", "armor_a"))
 near(stored["armor_a.json"].groups.Boots.presets.Low.ground_clipping_fix.height_cm, 7)
 near(stored["armor_a.json"].presets.A.ground_clipping_fix.height_cm, 14, "Group saves must not modify other presets")
-env.current_config.ground_clipping_fix = { enabled = true, height_cm = 11 }
-env.current_config.presets.Legacy = clone(preset)
-env.current_group_name = ""
+workspace.config.ground_clipping_fix = { enabled = true, height_cm = 11 }
+workspace.config.presets.Legacy = clone(preset)
+workspace.state.group = ""
 apply("Legacy"); near(env.active_overrides.armor_a.ground_clipping_fix.height_cm, 11, "Legacy armor setting fallback")
 apply("B"); near(env.active_overrides.armor_a.ground_clipping_fix.height_cm, 11, "Explicit unchecked must skip legacy fallback and preserve height")
-env.current_config.ground_clipping_fix = nil
+workspace.config.ground_clipping_fix = nil
 apply("Legacy"); near(env.active_overrides.armor_a.ground_clipping_fix.height_cm, 11, "Old preset without settings does not control height")
 assert(not Height.default_settings({ presets = { Legacy = {} }, default_preset = "Legacy" }).enabled, "Old JSON initially defaults off")
-env.current_group_name = "Boots"
+workspace.state.group = "Boots"
 apply("High")
-env.current_config.groups.Global = { is_global = true, default_preset = "Off", presets = { Off = {
+workspace.config.groups.Global = { is_global = true, default_preset = "Off", presets = { Off = {
     ground_clipping_fix = { enabled = false, height_cm = 0 }, ["1"] = { materials = { Face = false } }
 } } }
-env.current_group_name = "Global"
+workspace.state.group = "Global"
 apply("Off"); near(env.active_overrides.armor_a.ground_clipping_fix.height_cm, 30, "Global material rebuild must preserve height for unchecked presets")
-near(Height.default_settings(env.current_config).height_cm, 30, "Unchecked global default must not override checked ordinary default")
-env.current_config.groups.Global.presets.Zero = { ground_clipping_fix = { enabled = true, height_cm = 0 } }
-local zero_defaults = clone(env.current_config)
+near(Height.default_settings(workspace.config).height_cm, 30, "Unchecked global default must not override checked ordinary default")
+workspace.config.groups.Global.presets.Zero = { ground_clipping_fix = { enabled = true, height_cm = 0 } }
+local zero_defaults = clone(workspace.config)
 zero_defaults.groups.Global.default_preset = "Zero"
 near(Height.default_settings(zero_defaults).height_cm, 0, "Checked zero global default must override height")
 assert(Height.default_settings(zero_defaults).enabled)
 apply("Zero"); near(env.active_overrides.armor_a.ground_clipping_fix.height_cm, 0, "Checked global zero must reset height")
 apply("Off"); near(env.active_overrides.armor_a.ground_clipping_fix.height_cm, 0, "Global rebuild must retain zero")
-env.current_group_name = "Boots"
+workspace.state.group = "Boots"
 apply("High"); near(env.active_overrides.armor_a.ground_clipping_fix.height_cm, 30, "Other global material locks must not override manual height")
 assert(not env.active_overrides.armor_a["1"].materials.Face)
 assert(set_default("High", "armor_a"))
@@ -396,25 +392,25 @@ near(env.active_overrides.armor_a.ground_clipping_fix.height_cm, 30, "Automatic 
 assert(env.active_group_presets.armor_a.Boots == "High", "Automatic default saving must preserve active preset selections")
 fail_save = true
 assert(not set_default("Low", "armor_a"))
-assert(env.current_config.groups.Boots.default_preset == "High", "Failed default save must roll back")
+assert(workspace.config.groups.Boots.default_preset == "High", "Failed default save must roll back")
 fail_save = false
-env.current_config.groups.config = { presets = {} }
-env.current_group_name = "config"
+workspace.config.groups.config = { presets = {} }
+workspace.state.group = "config"
 assert(set({ enabled = true, height_cm = 19 }, "armor_a"))
-near(editor.get_editor(env.current_config, "armor_a", "config", nil).height_cm, 19, "User group names must not collide with state metadata")
-env.current_group_name = "Boots"
+near(editor.get_editor(workspace.config, "armor_a", "config", nil).height_cm, 19, "User group names must not collide with state metadata")
+workspace.state.group = "Boots"
 apply("High")
 local hunter_a, hunter_b = {}, {}
-editor.set_runtime(hunter_a, env.current_config, { enabled = true, height_cm = 35 })
-near(editor.get_runtime(hunter_a, env.current_config).height_cm, 35)
-near(editor.get_runtime(hunter_b, env.current_config, { height_cm = 3 }).height_cm, 3, "Characters must not share transformed height")
+editor.set_runtime(hunter_a, workspace.config, { enabled = true, height_cm = 35 })
+near(editor.get_runtime(hunter_a, workspace.config).height_cm, 35)
+near(editor.get_runtime(hunter_b, workspace.config, { height_cm = 3 }).height_cm, 3, "Characters must not share transformed height")
 near(editor.get_runtime(hunter_a, {}, { height_cm = 4 }).height_cm, 4, "Reload must reject stale runtime configuration")
 local weapon_config = {}
 editor.set_runtime(hunter_a, weapon_config, { height_cm = 50 })
-near(editor.get_runtime(hunter_a, env.current_config).height_cm, 35, "Weapon rules must not overwrite armor runtime")
+near(editor.get_runtime(hunter_a, workspace.config).height_cm, 35, "Weapon rules must not overwrite armor runtime")
 local function hunter_wrapper() return setmetatable({}, { __tostring = function() return "ManagedObject: 0x12345" end }) end
-editor.set_runtime(hunter_wrapper(), env.current_config, { enabled = true, height_cm = 22 })
-near(editor.get_runtime(hunter_wrapper(), env.current_config).height_cm, 22, "SDK wrappers of the same hunter share runtime settings")
+editor.set_runtime(hunter_wrapper(), workspace.config, { enabled = true, height_cm = 22 })
+near(editor.get_runtime(hunter_wrapper(), workspace.config).height_cm, 22, "SDK wrappers of the same hunter share runtime settings")
 
 -- 使用真实变身引擎及主脚本包装器验证条件激活、优先级、关闭和回退，条件取值离线注入。
 local condition_names = { "HP", "Damage", "Weapon", "LongSword", "DualBlades", "SwitchAxe",
@@ -437,9 +433,8 @@ end
 env.TransformManager = engine
 env.can_use_transform = function() return true end
 env.safe_get_game_object = function(character) return character end
-local wrapper_source = extract("apply_transform_rules_for_character", "\n-- 当前 Body 的配置数据结构")
-local transform = assert(load(wrapper_source .. "\nreturn apply_transform_rules_for_character", "transform", "t", env))()
-local config = env.current_config
+local transform=env.appearance.transform
+local config = workspace.config
 config.transform_type, config.is_parallel = "hp", true
 config.parallel_settings = { hp = { enabled = true, priority = 1 }, weapon = { enabled = true, priority = 2 } }
 config.transform_rules = { { targets = { { group = "Boots", preset = "Low" } } } }
@@ -484,13 +479,14 @@ for key in pairs(languages.zh) do
     if key:match("^heel_") then assert(type(languages.en[key]) == "string", key) end
 end
 print("PASS: checked-only height control, checked zero reset, unchecked preview/manual/global/default/transform isolation, preset persistence, backups, legacy fallback, priority/rollback and per-character runtime")
-local preset_ui = assert(source:find('if imgui.tree_node(T("presets_manager")', 1, true))
+local source=assert(io.open("ArmorVariantManager/reframework/autorun/ArmorVariantManager_Core/UI/ImGui/Presets.lua")):read("a")
+local preset_ui = 1
 local correction_ui = assert(source:find('imgui.checkbox(T("heel_title")', preset_ui, true))
 local preset_table = assert(source:find('imgui.begin_table("PresetsLayout"', preset_ui, true))
 local preset_table_end = assert(source:find('imgui.end_table()', preset_table, true))
 local group_preview = assert(source:find('-- 分组材质预览', preset_table_end, true))
 local auto_find_button = assert(source:find('imgui.button(T("auto_find_preset"))', group_preview, true))
-local auto_find_result = assert(source:find('if auto_find_log ~= "" then imgui.text_colored', auto_find_button, true))
+local auto_find_result = assert(source:find('if view.auto_find_log ~= "" then imgui.text_colored', auto_find_button, true))
 local preset_ui_end = assert(source:find('-- 排序面板', auto_find_result, true))
 assert(correction_ui > auto_find_result and correction_ui < preset_ui_end,
     "Legacy correction controls must follow preset/group controls, auto-find button and results inside preset management")

@@ -4,7 +4,6 @@ local S = dofile("tests/support.lua")
 local Session = require("ArmorVariantManager_Core.Config.Session")
 local Store = require("ArmorVariantManager_Core.Config.Store")
 local Normalize = require("ArmorVariantManager_Core.Config.Normalize")
-local source = S.read("ArmorVariantManager/reframework/autorun/ArmorVariantManager.lua")
 
 for _, game in ipairs({ "Wilds", "Rise" }) do
     local schema = require("ArmorVariantManager_Core.Games." .. game .. ".Config")
@@ -53,8 +52,14 @@ for _, game in ipairs({ "Wilds", "Rise" }) do
         apply_all_defaults = function(id) assert(id == "armor"); defaults = defaults + 1 end,
         TransformManager = { clear_last_state_cache = function() cleared = cleared + 1 end }
     }, { __index = _G })
-    local restore_source = S.section(source, "local function restore_config_from_backup", "-- 辅助函数：捕获当前状态为新预设")
-    local restore = assert(load(restore_source .. "\nreturn restore_config_from_backup", "restore", "t", env))()
+    local appearance={overrides=env.active_overrides, groups=env.active_group_presets,
+        defaults=env.apply_all_defaults}
+    local backend=require("ArmorVariantManager_Core.Games.Wilds.Application").new(
+        {equipment={}, materials={}}, appearance, session, env.TransformManager, function() return false end)
+    local app=dofile("tests/app_fixture.lua").new(game, {backend=backend,session=session})
+    app.workspace.update_group_names_list=env.update_group_names_list
+    app.workspace.update_preset_names_list=env.update_preset_names_list
+    local restore=app.restore_config_from_backup
     fail = true
     restored,reason=restore("armor")
     assert(not restored and reason=="disk full" and env.active_overrides.armor.old and updated == 0)
@@ -62,8 +67,8 @@ for _, game in ipairs({ "Wilds", "Rise" }) do
     assert(restore("armor"))
     S.equal(disk[main], player, "Restore writes original backup, not normalized defaults")
     S.equal(disk[backup], player)
-    S.equal(env.current_config, Normalize.apply(S.copy(player), schema))
-    assert(env.current_config == session.cache.armor and prepared == 2)
+    S.equal(app.workspace.config, Normalize.apply(S.copy(player), schema))
+    assert(app.workspace.config == session.cache.armor and prepared == 2)
     assert(not env.active_overrides.armor and not env.active_group_presets.armor)
     assert(updated == 2 and defaults == 1 and cleared == 1 and not session.pending("armor"))
 
