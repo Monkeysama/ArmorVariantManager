@@ -19,19 +19,34 @@ w = M.stage_pose(yaw90, { pos = { 0, 1, 3 }, rot = { 1, 0, 0, 0 } })
 assert(near(w.pos[1], 3, 1e-6) and near(w.pos[2], M.STAGE_Y + 1) and near(w.pos[3], 0, 1e-6), "camera follows root yaw")
 assert(near(w.rot[1], h) and near(w.rot[3], h), "camera rotation composes with root yaw")
 
--- 副本的 LIL_LightDir:从头部(舞台原点上方)指向补光,单位向量 + 权重 1
-local d = M.lil_light_dir({ 0, M.STAGE_Y + 1.45, 2 })
-assert(near(d[1], 0) and near(d[2], 0) and near(d[3], 1) and d[4] == 1, "light in front of the head")
-d = M.lil_light_dir({ 3, M.STAGE_Y + 1.45 + 4, 0 })
-assert(near(d[1], 0.6) and near(d[2], 0.8) and near(d[3], 0), "normalized toward the light")
+-- 灯组照搬模型鉴赏 set00:5 盏聚光,每盏的 rot 是单位四元数,且 -Z(照射方向)和实测一致
+local function rotate(q, v)
+    local w, x, y, z = q[1], q[2], q[3], q[4]
+    local tx, ty, tz = 2 * (y * v[3] - z * v[2]), 2 * (z * v[1] - x * v[3]), 2 * (x * v[2] - y * v[1])
+    return { v[1] + w * tx + (y * tz - z * ty), v[2] + w * ty + (z * tx - x * tz), v[3] + w * tz + (x * ty - y * tx) }
+end
+assert(#M.RIG == 5, "five spotlights")
+local aims = { KeyMain = { -0.162, -0.588, -0.792 }, KeySub = { -0.283, -0.871, -0.401 }, Fill = { 0.728, 0.664, -0.171 },
+    BackL = { 0.437, -0.208, 0.875 }, BackR = { -0.926, -0.27, 0.264 } }
+for _, spec in ipairs(M.RIG) do
+    local q = spec.rot
+    assert(near(q[1] ^ 2 + q[2] ^ 2 + q[3] ^ 2 + q[4] ^ 2, 1, 1e-3), spec.name .. " rotation is unit")
+    local f, a = rotate(q, { 0, 0, -1 }), aims[spec.name]
+    assert(a and near(f[1], a[1], 2e-3) and near(f[2], a[2], 2e-3) and near(f[3], a[3], 2e-3), spec.name .. " aims as measured")
+end
 
--- 舞台主光相对角色固定:根不转时在角色上方偏一侧,角色转身主光跟着转;LIL_LightDir 指向它
-local key = M.key_light({ 1, 0, 0, 0 })
-assert(key[2] > M.STAGE_Y + 3 and key[1] > 0, "key light above and to the side")
-local kd = M.lil_light_dir(key)
-assert(kd[2] > 0.8 and kd[4] == 1, "LIL_LightDir points at the key light")
-local turned = M.key_light(yaw90)   -- 根绕 Y 转 90°:本地 +X 转到世界 -Z
-assert(near(turned[2], key[2]) and near(turned[3], -key[1], 1e-6) and near(turned[1], key[3], 1e-6), "key light turns with the character")
+-- 根不转:灯在舞台原点 + 本地偏移;根转 90°:跟着转
+local poses = M.rig_poses({ 1, 0, 0, 0 })
+assert(near(poses[1].pos[1], M.RIG[1].pos[1]) and near(poses[1].pos[2], M.STAGE_Y + M.RIG[1].pos[2]), "identity root keeps rig offsets")
+local turned = M.rig_poses(yaw90)
+assert(near(turned[1].pos[1], M.RIG[1].pos[3], 1e-6) and near(turned[1].pos[3], -M.RIG[1].pos[1], 1e-6), "rig turns with the character")
+
+-- 副本的 LIL_LightDir:鉴赏默认 (0.4, 0.8, 0.45) 归一化,随角色转身;权重 1
+local d = M.lil_light_dir({ 1, 0, 0, 0 })
+local n = math.sqrt(0.4 ^ 2 + 0.8 ^ 2 + 0.45 ^ 2)
+assert(near(d[1], 0.4 / n) and near(d[2], 0.8 / n) and near(d[3], 0.45 / n) and d[4] == 1, "viewer default light dir")
+local dt = M.lil_light_dir(yaw90)
+assert(near(dt[1], 0.45 / n, 1e-6) and near(dt[3], -0.4 / n, 1e-6) and near(dt[2], d[2]), "light dir turns with the character")
 
 -- 状态机:两个网格,每次 current 最多建两个,建完绑定、同步;key 变了先销毁再重建
 local log = {}
@@ -68,7 +83,20 @@ assert(model.sync({ key = "leon" }) == true, "per-frame sync")
 api.portrait_blend_sync = nil
 assert(model.sync({ key = "leon" }) == true, "old DLL without blend sync still syncs")
 
--- 换人:旧副本(1 盏灯 + 2 个网格)先销毁,模型回到 idle 后再建新的
+-- 调色盘改了值(revision 变了):下一次同步重抄材质参数;没变就不抄
+do
+    local rev, refreshed = 0, 0
+    local a2 = setmetatable({ refresh_params = function() refreshed = refreshed + 1 end }, { __index = adapter })
+    local m2 = M.new({ adapter = a2, bridge = function() return api end, clock = function() return 0 end, revision = function() return rev end })
+    assert(m2.current({ key = "leon" }) == true and refreshed == 0, "fresh copy already has the current params")
+    assert(m2.sync({ key = "leon" }) and refreshed == 0, "unchanged revision: no recopy")
+    rev = 3
+    assert(m2.sync({ key = "leon" }) and refreshed == 1, "palette edit: recopy once")
+    assert(m2.sync({ key = "leon" }) and refreshed == 1, "same revision: no second recopy")
+    m2.shutdown()
+end
+
+-- 换人:旧副本(灯组 + 2 个网格)先销毁,模型回到 idle 后再建新的
 assert(model.current({ key = "ashley" }) == false, "subject change stops first")
 assert(next(live) == nil, "old copies destroyed")
 assert(model.state == "idle")

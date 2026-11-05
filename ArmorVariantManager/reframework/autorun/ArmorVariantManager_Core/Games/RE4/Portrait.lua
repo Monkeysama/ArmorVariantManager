@@ -10,7 +10,7 @@
 --     会在渲染器里留下孤立输出。所以这里**从不销毁**相机。
 --   * RenderOutput 先设成自己的输出位、再设渲染目标,永远不会变成主相机。
 --   * 输出位用 Quateary(8):SKS 表情镜占 Tertiary(4),各改各的位,互不干扰。
---   * 曝光固定(STAGE_EV,舞台只有自己的补光),调色每隔一阵从主相机复制。
+--   * 曝光固定(STAGE_EV,舞台只有自己的灯组),调色每隔一阵从主相机复制。
 --   * RE4 相机纹理的 alpha 不是覆盖率(网页里整张图被当成透明),合成时按不透明处理。
 -- 相机按角色根的朝向摆在舞台原点周围(不跟骨骼),全身取景不随动作晃动。
 local Portrait = {}
@@ -20,9 +20,9 @@ local CAMERA = "AVM_PortraitCamera"
 local TARGET = "ArmorVariantManager/Portrait/portrait.rtex"
 local CHANNEL = 8                      -- via.render.RenderOutputID.Quateary
 local ASPECT = 660 / 720               -- rtex 尺寸,DLL 只接受 660×720
--- 舞台只有自己的补光,曝光固定(跟主相机走的话,暗处主相机提曝光,补光一照就整片发白)。
--- 2026-11-05 和用户在游戏里调的,配 PortraitModel 的补光强度
-local STAGE_EV = 3.5
+-- 舞台只有自己的灯组,曝光固定(跟主相机走的话,暗处主相机提曝光,灯一照就整片发白)。
+-- 和游戏「模型鉴赏」一样用 EV 4(2026-11-05 实测),配 PortraitModel.RIG 照搬的鉴赏灯组
+local STAGE_EV = 4.0
 local COMPONENTS = { "via.Camera", "via.render.RenderOutput", "via.render.ToneMapping", "via.render.LDRPostProcess" }
 
 local COMMON_SKIP = { Enabled = true, GameObject = true, InjectingGameObject = true, Valid = true, UpdateTiming = true, DrawTiming = true }
@@ -171,8 +171,6 @@ function Portrait.new(deps)
         local world = PortraitModel.stage_pose({ q.w, q.x, q.y, q.z }, R.local_pose)
         R.tr:call("set_Position", Vector3f.new(world.pos[1], world.pos[2], world.pos[3]))
         R.tr:call("set_Rotation", Quaternion.new(world.rot[1], world.rot[2], world.rot[3], world.rot[4]))
-        -- 补光放在相机上方一点,转到哪边哪边亮
-        if context then context.light = { world.pos[1], world.pos[2] + 0.6, world.pos[3] } end
     end
     local function props_of(obj, skip)
         local td = obj:get_type_definition()

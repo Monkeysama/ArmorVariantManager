@@ -9,25 +9,43 @@
 --   * 副本网格只放预览通道位(新建网格默认 RenderOutputID = 31,会被主镜头看到,必须改);
 --   * 姿态、材质开关、部件开关由 ArmorVariantManager_Portrait.dll 的 portrait_pose_* 逐帧同步(代码不分游戏)。
 local PortraitModel = {}
+-- 调色盘(Palette.lua)每往原网格写一次材质参数就把 revision 加一;副本据此重抄参数。
+-- 必须在脚本加载时 require:REFramework 只在加载 autorun 期间把 autorun 放进 package.path。
+local ok_palette, Palette = pcall(require, "ArmorVariantManager_Core.Games.RE4.Palette")
+local palette_revision = ok_palette and type(Palette) == "table" and Palette.revision or nil
 -- 舞台高度。不能太远:float32 在 ±10000 附近的最小间隔约 0.001 m,副本每个关节的高度被各自取整到毫米格子上,
 -- 预览里人物会微微抖(2026-11-05 实测:原角色头部高度平滑变化,副本在 1.4648 / 1.4658 / 1.4668 之间跳)。
 -- -1000 处间隔约 0.00006 m,看不出来;地图底下 1 km 也不会有场景物体进到预览相机里。
 PortraitModel.STAGE_Y = -1000
 PortraitModel.CHANNEL = 8           -- 和 Portrait.lua 的相机输出位一致(via.render.RenderOutputID.Quateary)
--- 舞台打光是固定的"摄影棚":不跟世界的灯,也不跟预览相机,只相对角色固定,在哪里、什么环境预览都一个样子。
---   主光:从角色的上方偏一侧照下来。方向取自 2026-11-05 用户选的基准场景(雨夜林子,月光):
---         lil_toon_light_re4.lua 在那里算出的主光方向,换算到角色根的本地空间约 (0.43, 0.88, 0.19)。
---   补光:很弱,跟着预览相机,只是不让转到暗面时一片死黑。
--- 强度在固定曝光 EV 3.5(见 Portrait.lua STAGE_EV)下和用户在游戏里调;荒野的 60000 在 RE4 会整个发白。
-local KEY_DIR = { 0.43, 0.88, 0.19 }   -- 角色根本地空间,指向主光(未归一化)
-local KEY_DISTANCE = 3.0
-local KEY_INTENSITY = 300.0
-local FILL_INTENSITY = 60.0
+-- 舞台打光照搬游戏「模型鉴赏」的灯组 FigureWindow_Light_set00(2026-11-05 用 FigureStageProbe.cs 实测):
+-- 5 盏带软阴影的聚光(两盏主光、一盏下方补光、两盏冷色轮廓光),固定曝光 EV 4(见 Portrait.lua STAGE_EV)。
+-- 位置 / 朝向都是角色根本地空间(脚底为原点,角色面向 +Z),随角色转身一起转;在哪里、什么环境预览都一个样子。
+-- 鉴赏里的模型脚底在灯组原点下方 1 m,下面的 pos 已经换算到脚底。rot = { w, x, y, z },聚光沿 -Z 照射。
+-- 强度单位跟鉴赏一样用 Unit = 2;阴影参数原样照抄(ShadowVariance 让阴影边缘柔和,是鉴赏里阴影顺滑的主因之一)。
+-- 鉴赏另外还有一个 IBL 环境光(Exposure 7),这里还没有搬(贴图路径未知,也要先确认它不影响主画面)。
+PortraitModel.RIG = {
+    { name = "KeyMain", pos = { 1.254, 6.491, 8.088 }, rot = { 0.9467, -0.3107, 0.0854, -0.0005 },
+      intensity = 6000, cone = 30, color = { 1, 1, 1 }, range = 15, ao = 0.1, detail = 1,
+      variance = 0.006, depth_bias = 0.004, slope_bias = 0.004, bias = 0.001, near = 3.5 },
+    { name = "KeySub", pos = { 1.584, 6.276, 2.647 }, rot = { 0.8364, -0.5138, 0.1884, 0.0312 },
+      intensity = 1500, cone = 30, color = { 1, 1, 1 }, range = 10, ao = 0.08, detail = 1,
+      variance = 0.006, depth_bias = 0.04, slope_bias = 0.04, bias = 0.001, near = 2 },
+    { name = "Fill", pos = { -8.958, -7.502, 2.129 }, rot = { 0.7312, 0.2745, -0.5824, 0.2253 },
+      intensity = 2000, cone = 40, color = { 1, 1, 1 }, range = 15, ao = 0.24, detail = 1,
+      variance = 0.006, depth_bias = 0.04, slope_bias = 0.04, bias = 0, near = 4 },
+    { name = "BackL", pos = { -4.198, 2.385, -7.023 }, rot = { 0.2114, 0.1146, -0.9615, -0.1334 },
+      intensity = 3000, cone = 60, color = { 0.842, 0.961, 0.973 }, range = 10, ao = 0.19, detail = 0.5,
+      variance = 0.006, depth_bias = 0.04, slope_bias = 0.04, bias = 0, near = 5 },
+    { name = "BackR", pos = { 5.339, 2.737, -1.423 }, rot = { 0.5980, -0.0911, 0.7897, 0.1019 },
+      intensity = 1500, cone = 45, color = { 0.572, 0.762, 1 }, range = 10, ao = 0.26, detail = 0.06,
+      variance = 0.004, depth_bias = 0.04, slope_bias = 0.04, bias = 0.001, near = 5 },
+}
 -- lilToon(用户的 RE4 自定义材质)的阴影、阴影边缘色、背光、边缘阴影都看 LIL_LightDir =(指向光源的方向, 权重)。
--- 世界里的角色由 lil_toon_light_re4.lua 每帧按场景灯光写;副本没人写就退回与光无关的样子(暗部发灰),
--- 所以副本自己写一份,指向舞台主光。
+-- 世界里的角色由 lil_toon_light_re4.lua 每帧按场景灯光写,副本绑定时会抄到那个值,所以副本要自己写一份。
+-- 鉴赏里没人写它,材质保持默认 (0.4, 0.8, 0.45):这里也用这个方向(角色根本地空间,随角色转身)。
 local LIL_VAR, LIL_HASH = "LIL_LightDir", 486944339
-local LIL_HEAD = 1.45               -- 估算的头部高度(角色根在舞台原点)
+PortraitModel.LIL_DIR = { 0.4, 0.8, 0.45 }
 
 local function identity(value) return tostring(value:get_address()) end
 
@@ -38,8 +56,7 @@ local function require_native(bridge)
     return api
 end
 
--- context = { key = 角色标识, root = 角色根 Transform, anchor = 骨架的 root 关节(没有时为 nil),
---             light = { x, y, z } | nil(补光的世界位置) }
+-- context = { key = 角色标识, root = 角色根 Transform, anchor = 骨架的 root 关节(没有时为 nil) }
 -- 摆副本、相机、主光都读 anchor:同步在帧开头,关节是上一帧的最终姿态,而角色根变换在算完关节之后
 -- 还会被角色控制器 / 贴地挪一点,用根变换算偏移的话,角色一走动副本就在舞台上抖(2026-11-05 用户发现)。
 -- root 关节和其他关节同一时刻算出,静止时和根变换重合。
@@ -59,7 +76,6 @@ function PortraitModel.game_adapter(deps)
     end
     local skip = deps.skip or {}   -- 不复制的对象名(预览相机等)
     local lil_entries, lil_key = nil, nil
-    local fill_object = nil
 
     -- 只收集当前画得出来的网格(对象 Draw 为真、网格已就绪);收起的武器、隐藏的瞄准线不复制,
     -- 拿出来时签名变了就整体重建。
@@ -122,33 +138,52 @@ function PortraitModel.game_adapter(deps)
         local api = require_native(bridge)
         assert(api.portrait_mesh_copy(entry.source:get_address(), mesh:get_address()) == 0, api.portrait_pose_error())
         mesh:call("set_RenderOutputID", PortraitModel.CHANNEL)
-        mesh:call("set_DrawShadowCast", false)
+        -- 鉴赏里模型自投影(衣服、头发落在身上的阴影);舞台灯只照预览通道,远在地图下方,不会投到世界里
+        mesh:call("set_DrawShadowCast", true)
         entry.copy, entry.copy_mesh = object, mesh
     end
-    -- 远处舞台没有场景光,放两盏只照预览通道的点光(有限光源,不会照到世界):key 主光、fill 补光
-    local function point_light(object, intensity)
-        local light = component(object, "via.render.PointLight")
-        light:call("set_RenderOutputID", PortraitModel.CHANNEL)
-        light:call("set_Color", Vector3f.new(1, 1, 1))
-        -- System.Single 必须传 Lua 浮点数,整数会按整数打包成 0
-        light:call("set_Intensity", intensity + 0.0)
-        light:call("set_Radius", 8.0)
-        light:call("set_ShadowEnable", false)
-        object:call("get_Transform"):call("set_Position", Vector3f.new(0, PortraitModel.STAGE_Y + 2.0, 2.0))
+    -- 舞台灯组:每盏一个对象 + SpotLight,只照预览通道(有限光源,不会照到世界)
+    local rig_lights = {}
+    local function try(light, method, value) pcall(light.call, light, method, value) end
+    function adapter.light(objects)
+        rig_lights = {}
+        for i, spec in ipairs(PortraitModel.RIG) do
+            local light = component(objects[i], "via.render.SpotLight")
+            light:call("set_RenderOutputID", PortraitModel.CHANNEL)
+            light:call("set_Color", Vector3f.new(spec.color[1], spec.color[2], spec.color[3]))
+            -- System.Single 必须传 Lua 浮点数,整数会按整数打包成 0
+            try(light, "set_Unit", 2)
+            try(light, "set_UsingSameIntensity", true)
+            try(light, "set_BlackBodyRadiation", false)
+            light:call("set_Intensity", spec.intensity + 0.0)
+            light:call("set_Cone", spec.cone + 0.0)
+            try(light, "set_Spread", 10.0)
+            try(light, "set_Falloff", 1.0)
+            try(light, "set_Radius", 1.0)
+            try(light, "set_ReferenceEffectiveRange", spec.range + 0.0)
+            try(light, "set_AOEfficiency", spec.ao + 0.0)
+            try(light, "set_DetailShadow", spec.detail + 0.0)
+            light:call("set_ShadowEnable", true)
+            try(light, "set_ShadowVariance", spec.variance + 0.0)
+            try(light, "set_ShadowDepthBias", spec.depth_bias + 0.0)
+            try(light, "set_ShadowSlopeBias", spec.slope_bias + 0.0)
+            try(light, "set_ShadowBias", spec.bias + 0.0)
+            try(light, "set_ShadowNearPlane", spec.near + 0.0)
+            rig_lights[i] = light
+        end
     end
-    function adapter.light(key, fill)
-        point_light(key, KEY_INTENSITY)
-        if fill then point_light(fill, FILL_INTENSITY); fill_object = fill end
-    end
-    -- 主光按角色朝向摆在固定的相对位置;补光跟着预览相机(Portrait 每帧算好位置放进 context.light)。
-    -- 主光方向变了(角色转身)才重写副本的 LIL_LightDir
-    function adapter.light_follow(object, context)
+    -- 灯组按角色根(anchor)的朝向摆在舞台原点周围;角色转身才重写副本的 LIL_LightDir
+    function adapter.light_follow(objects, context)
         local q = anchor_of(context):call("get_Rotation")
-        local key = PortraitModel.key_light({ q.w, q.x, q.y, q.z })
-        object:call("get_Transform"):call("set_Position", Vector3f.new(key[1], key[2], key[3]))
-        local p = context.light
-        if p and fill_object then fill_object:call("get_Transform"):call("set_Position", Vector3f.new(p[1], p[2], p[3])) end
-        local dir = PortraitModel.lil_light_dir(key)
+        local root = { q.w, q.x, q.y, q.z }
+        for i, pose in ipairs(PortraitModel.rig_poses(root)) do
+            local tr = objects[i] and objects[i]:call("get_Transform")
+            if tr then
+                tr:call("set_Position", Vector3f.new(pose.pos[1], pose.pos[2], pose.pos[3]))
+                tr:call("set_Rotation", Quaternion.new(pose.rot[1], pose.rot[2], pose.rot[3], pose.rot[4]))
+            end
+        end
+        local dir = PortraitModel.lil_light_dir(root)
         local key = string.format("%.3f|%.3f|%.3f", dir[1], dir[2], dir[3])
         if key == lil_key or not lil_entries then return end
         local value = Vector4f.new(dir[1], dir[2], dir[3], dir[4])
@@ -157,17 +192,42 @@ function PortraitModel.game_adapter(deps)
         end
         lil_key = key
     end
-    function adapter.light_intensity(object, value)
-        local light = assert(object:call("getComponent(System.Type)", sdk.typeof("via.render.PointLight")))
-        light:call("set_Intensity", KEY_INTENSITY * value)
+    -- 「灯光强度」设置:整组按比例缩放
+    function adapter.light_intensity(_, value)
+        for i, light in ipairs(rig_lights) do
+            pcall(light.call, light, "set_Intensity", PortraitModel.RIG[i].intensity * value + 0.0)
+        end
     end
-    -- 绑定后把原网格当前的材质参数(float / float4)整份抄到副本:AVM 改的颜色、溶解进度,
+    -- 把原网格当前的材质参数(float / float4)整份抄到副本:AVM 改的颜色、调色盘、溶解进度,
     -- 以及别的脚本写的参数都在原网格的实例上,副本只拿到 mdf2 默认值。顺便记下 LIL_LightDir 的位置。
-    -- 只在建副本时抄一次;之后实时跟着变的参数另外处理。
+    -- 建副本时抄一次;调色盘改了值(Palette.revision 变了)再抄一次,见 refresh_params。
+    local function copy_params(entry)
+        local src, dst = entry.source, entry.copy_mesh
+        entry.lil = {}
+        for m = 0, math.min(src:call("get_MaterialNum"), dst:call("get_MaterialNum")) - 1 do
+            -- 个别材质读写失败只跳过这一个材质,不让整个预览报错
+            pcall(function()
+            local n = src:call("getMaterialVariableNum", m)
+            if n == dst:call("getMaterialVariableNum", m) then
+                for v = 0, n - 1 do
+                    local kind = src:call("getMaterialVariableType", m, v)
+                    if kind == 4 then
+                        dst:call("setMaterialFloat4", m, v, src:call("getMaterialFloat4", m, v))
+                    elseif kind == 1 then
+                        dst:call("setMaterialFloat", m, v, src:call("getMaterialFloat", m, v) + 0.0)
+                    end
+                end
+                local idx = dst:call("getMaterialVariableIndex", m, LIL_HASH)
+                if idx and idx >= 0 and idx < n and dst:call("getMaterialVariableName", m, idx) == LIL_VAR then
+                    entry.lil[#entry.lil + 1] = { m, idx }
+                end
+            end
+            end)
+        end
+    end
     function adapter.after_bind(entries)
         for _, entry in ipairs(entries) do
             local src, dst = entry.source, entry.copy_mesh
-            entry.lil = {}
             -- 新建的网格组件不会按资源分配形态键权重槽(2026-11-05 实测副本 BlendShapeChannelWeightCount = 0,
             -- 原网格头部 513),不设的话 DLL 的权重镜像因两边通道数不同直接跳过
             pcall(function()
@@ -176,28 +236,17 @@ function PortraitModel.game_adapter(deps)
                     dst:call("set_BlendShapeChannelWeightCount", count)
                 end
             end)
-            for m = 0, math.min(src:call("get_MaterialNum"), dst:call("get_MaterialNum")) - 1 do
-                -- 个别材质读写失败只跳过这一个材质,不让整个预览报错
-                pcall(function()
-                local n = src:call("getMaterialVariableNum", m)
-                if n == dst:call("getMaterialVariableNum", m) then
-                    for v = 0, n - 1 do
-                        local kind = src:call("getMaterialVariableType", m, v)
-                        if kind == 4 then
-                            dst:call("setMaterialFloat4", m, v, src:call("getMaterialFloat4", m, v))
-                        elseif kind == 1 then
-                            dst:call("setMaterialFloat", m, v, src:call("getMaterialFloat", m, v) + 0.0)
-                        end
-                    end
-                    local idx = dst:call("getMaterialVariableIndex", m, LIL_HASH)
-                    if idx and idx >= 0 and idx < n and dst:call("getMaterialVariableName", m, idx) == LIL_VAR then
-                        entry.lil[#entry.lil + 1] = { m, idx }
-                    end
-                end
-                end)
-            end
+            copy_params(entry)
         end
         lil_entries, lil_key = entries, nil
+    end
+    -- 调色盘改了原网格的参数:重抄到副本。抄过来的 LIL_LightDir 是世界里的值,清掉 lil_key 让下一次
+    -- light_follow 改回舞台的方向。
+    function adapter.refresh_params(entries)
+        for _, entry in ipairs(entries) do
+            if entry.copy_mesh then pcall(copy_params, entry) end
+        end
+        lil_key = nil
     end
     function adapter.ready(entries)
         for _, entry in ipairs(entries) do
@@ -243,7 +292,10 @@ function PortraitModel.new(deps)
     local objects, entries, signature, key, cursor, next_inventory, deadline = {}, {}, nil, nil, 1, 0, 0
     local bound, rebuild, cleanup_failed, failed_reference = false, false, false, nil
     local light_intensity, applied_intensity = 1.0, nil
+    local rig = {}                       -- 灯组对象(也在 objects 里,随副本一起销毁)
     local refresh_fps, next_sync = 0, nil
+    local revision_of = deps.revision or palette_revision   -- 调色盘版本号(没有调色盘时为 nil)
+    local params_revision = nil
     function self.configure(settings)
         light_intensity = settings and settings.light_intensity or 1.0
         -- 正式入口传入规范化选项；旧的直接调用者未配置刷新率时仍逐帧同步。
@@ -306,11 +358,13 @@ function PortraitModel.new(deps)
             entries, signature = adapter.inventory(context)
             if #entries == 0 then return false end
             key, cursor, self.state, deadline = context.key, 1, "building", clock() + 5
-            adapter.light(own("AVM_PortraitLight"), own("AVM_PortraitFill"))
+            rig = {}
+            for _, spec in ipairs(PortraitModel.RIG) do rig[#rig + 1] = own("AVM_PortraitLight_" .. spec.name) end
+            adapter.light(rig)
             applied_intensity = 1.0
         end
         if applied_intensity ~= light_intensity and adapter.light_intensity then
-            adapter.light_intensity(objects[1], light_intensity)
+            adapter.light_intensity(rig, light_intensity)
             applied_intensity = light_intensity
         end
         if self.state == "building" then
@@ -328,6 +382,7 @@ function PortraitModel.new(deps)
             bound = true
             assert(api.portrait_pose_bind(adapter.batch(entries)) == 0, api.portrait_pose_error())
             if adapter.after_bind then adapter.after_bind(entries) end
+            params_revision = revision_of and revision_of() or nil
             self.state, next_inventory = "ready", clock() + 0.5
             next_sync = nil
             if not self.sync(context) then return false end
@@ -359,7 +414,12 @@ function PortraitModel.new(deps)
         end
         -- 形态键权重(SKS / 游戏 / 其他 MOD 写在原网格实例上)镜像到副本;旧 DLL 没有这个接口就跳过
         if api.portrait_blend_sync then assert(api.portrait_blend_sync() == 0, api.portrait_pose_error()) end
-        if adapter.light_follow then adapter.light_follow(objects[1], context) end
+        -- 调色盘改了值:副本重抄材质参数(只改参数,网格实例不变,不用重建)
+        if revision_of and adapter.refresh_params then
+            local current = revision_of()
+            if current ~= params_revision then adapter.refresh_params(entries); params_revision = current end
+        end
+        if adapter.light_follow then adapter.light_follow(rig, context) end
         return true
     end
     function self.shutdown()
@@ -375,18 +435,18 @@ function PortraitModel.new(deps)
     return self
 end
 
--- 舞台主光的世界坐标:KEY_DIR(角色根本地)按角色根朝向转到世界,从舞台上的头部位置出发 KEY_DISTANCE 米。
--- root_rot = { w, x, y, z }。纯函数,便于离线测试。
-function PortraitModel.key_light(root_rot)
-    local len = math.sqrt(KEY_DIR[1] ^ 2 + KEY_DIR[2] ^ 2 + KEY_DIR[3] ^ 2)
-    local v = { KEY_DIR[1] / len * KEY_DISTANCE, KEY_DIR[2] / len * KEY_DISTANCE + LIL_HEAD, KEY_DIR[3] / len * KEY_DISTANCE }
-    local pose = PortraitModel.stage_pose(root_rot, { pos = v, rot = { 1, 0, 0, 0 } })
-    return pose.pos
+-- 灯组每盏灯的世界姿态:RIG 的 pos / rot(角色根本地)按角色根朝向转到舞台原点。root_rot = { w, x, y, z }。
+-- 纯函数,便于离线测试。
+function PortraitModel.rig_poses(root_rot)
+    local out = {}
+    for i, spec in ipairs(PortraitModel.RIG) do out[i] = PortraitModel.stage_pose(root_rot, spec) end
+    return out
 end
 
--- 副本的 LIL_LightDir:从头部指向主光的单位向量,权重 1(满阴影)。light = 主光世界坐标。
-function PortraitModel.lil_light_dir(light)
-    local x, y, z = light[1], light[2] - (PortraitModel.STAGE_Y + LIL_HEAD), light[3]
+-- 副本的 LIL_LightDir:LIL_DIR(角色根本地)按角色根朝向转到世界,权重 1。
+function PortraitModel.lil_light_dir(root_rot)
+    local pose = PortraitModel.stage_pose(root_rot, { pos = PortraitModel.LIL_DIR, rot = { 1, 0, 0, 0 } })
+    local x, y, z = pose.pos[1], pose.pos[2] - PortraitModel.STAGE_Y, pose.pos[3]
     local len = math.sqrt(x * x + y * y + z * z)
     if len < 1e-4 then return { 0.0, 1.0, 0.0, 1.0 } end
     return { x / len, y / len, z / len, 1.0 }
