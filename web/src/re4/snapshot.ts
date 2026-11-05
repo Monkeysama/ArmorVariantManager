@@ -1,5 +1,6 @@
 import type {
-  Re4BasePreset, Re4Character, Re4ConditionDef, Re4Group, Re4Look, Re4Option, Re4PresetEntry, Re4Slot, Re4Snapshot, Re4State,
+  Re4BasePreset, Re4Character, Re4ConditionDef, Re4Group, Re4Look, Re4Option, Re4Palette, Re4PaletteEntry, Re4PaletteGroup,
+  Re4PaletteMaterial, Re4PaletteOption, Re4PaletteOverride, Re4PaletteProfile, Re4PaletteSection, Re4PaletteValue, Re4PresetEntry, Re4Slot, Re4Snapshot, Re4State,
 } from './types';
 
 // REFramework 把空 Lua 表序列化成 null（有的编码器给 {}）；缺省字段按空处理。
@@ -14,6 +15,30 @@ const record = <T>(value: unknown): Record<string, T> =>
 function state(value: Re4State): Re4State {
   return { ...value, holding: value.holding === true,
     targets: list(value.targets, 'state.targets'), conditions: list(value.conditions, 'state.conditions') };
+}
+
+// 调色数据:Lua 的空表(没有附加映射、没有缺的参数、还没选材质……)到这里是 null 或 {},全部补成空数组 / 空表
+function palette(value: Re4Palette): Re4Palette {
+  const profiles: Re4Palette['profiles'] = {};
+  for (const [id, p] of Object.entries(record<Re4PaletteProfile>(value.profiles))) {
+    const enums: Record<string, Re4PaletteOption[]> = {};
+    for (const [name, opts] of Object.entries(record<Re4PaletteOption[]>(p.enums))) enums[name] = list(opts, 'palette.enum');
+    profiles[id] = { ...p, addon: p.addon === true, enums, sections: list<Re4PaletteSection>(p.sections, 'palette.sections'),
+      groups: list<Re4PaletteGroup>(p.groups, 'palette.groups').map(g => ({ ...g,
+        params: list<Re4PaletteEntry>(g.params, 'palette.params').map(e => ({ ...e,
+          ...(e.options !== undefined ? { options: list(e.options, 'palette.options') } : {}) })) })) };
+  }
+  const values: Re4Palette['values'] = {};
+  for (const [key, v] of Object.entries(record<Record<string, Re4PaletteValue>>(value.values))) values[key] = record(v);
+  const overrides: Re4Palette['overrides'] = {};
+  for (const [key, o] of Object.entries(record<Record<string, Re4PaletteOverride> | false>(value.overrides))) overrides[key] = o === false ? false : record(o);
+  return { ...value, profiles, values, overrides,
+    materials: list<Re4PaletteMaterial>(value.materials, 'palette.materials').map(m => ({ ...m,
+      addons: list<string>(m.addons, 'material.addons'), missing: list<string>(m.missing, 'material.missing'),
+      // 没有主映射的材质走通用兜底:一定给一个列表(没有 *Color 参数时 Lua 发来的是空表 → null)
+      generic: m.main ? undefined : list<string>(m.generic, 'material.generic'),
+      overridden: Number(m.overridden) || 0 })),
+    selected: list<string>(value.selected, 'palette.selected'), errors: list<string>(value.errors, 'palette.errors') };
 }
 
 export function normalizeRe4(value: Re4Snapshot): Re4Snapshot {
@@ -47,6 +72,7 @@ export function normalizeRe4(value: Re4Snapshot): Re4Snapshot {
       options: list<Re4Option>(g.options, 'group.options').map(o => ({ ...o, values: record(o.values) })) }));
   }
   if (value.states !== undefined) out.states = list<Re4State>(value.states, 'states').map(state);
+  if (value.palette) out.palette = palette(value.palette);
   if (value.presets) {
     out.presets = { ...value.presets, dismissed: value.presets.dismissed === true,
       list: list<Re4PresetEntry>(value.presets.list, 'presets.list'),

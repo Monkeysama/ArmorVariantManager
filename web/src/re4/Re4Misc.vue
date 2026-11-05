@@ -1,6 +1,7 @@
 <script setup lang="ts">
+import Re4Num from './Re4Num.vue';
 import { shallowRef } from 'vue';
-import { ElButton, ElInputNumber, ElSwitch } from '@reff/ui';
+import { ElButton, ElSwitch } from '@reff/ui';
 import type { Documentation } from '../types';
 import type { Re4Translate } from './i18n';
 import type { Re4Perform, Re4Snapshot } from './types';
@@ -50,18 +51,18 @@ const setting = (id: 'weapon_hide_storage' | 'ui_dissolve_enabled' | 'ui_dissolv
         <ElSwitch :model-value="snapshot.settings.uiDissolveEnabled" :disabled="busy" size="small" @change="v => setting('ui_dissolve_enabled', v === true)" />
         <span>{{ t('uiDissolve') }}</span>
         <span class="re4-muted re4-small">{{ t('uiDissolveTime') }}</span>
-        <ElInputNumber :model-value="snapshot.settings.uiDissolveTime" :min="0" :max="30" :step="0.1" size="small" :disabled="busy"
-          @change="v => typeof v === 'number' && setting('ui_dissolve_time', v)" />
+        <Re4Num :value="snapshot.settings.uiDissolveTime" :min="0" :max="30" :disabled="busy" :aria-label="t('uiDissolveTime')"
+          @change="v => v !== undefined && setting('ui_dissolve_time', v)" />
         <span class="re4-muted re4-small">{{ t('seconds') }}</span>
       </div>
       <div v-if="snapshot.preview" class="re4-row">
         <span>{{ t('previewDistance') }}</span>
-        <ElInputNumber :model-value="snapshot.settings.previewDistance ?? 3" :min="1.2" :max="8" :step="0.1" size="small" :disabled="busy"
-          @change="v => typeof v === 'number' && setting('portrait_distance', v)" />
+        <Re4Num :value="snapshot.settings.previewDistance ?? 3" :min="1.2" :max="8" :disabled="busy" :aria-label="t('previewDistance')"
+          @change="v => v !== undefined && setting('portrait_distance', v)" />
         <span class="re4-muted re4-small">{{ t('meters') }}</span>
         <span>{{ t('previewHeight') }}</span>
-        <ElInputNumber :model-value="snapshot.settings.previewHeight ?? 0" :min="-1" :max="1" :step="0.05" size="small" :disabled="busy"
-          @change="v => typeof v === 'number' && setting('portrait_height', v)" />
+        <Re4Num :value="snapshot.settings.previewHeight ?? 0" :min="-1" :max="1" :disabled="busy" :aria-label="t('previewHeight')"
+          @change="v => v !== undefined && setting('portrait_height', v)" />
         <span class="re4-muted re4-small">{{ t('meters') }}</span>
       </div>
     </section>

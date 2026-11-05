@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, shallowRef, watch, watchEffect } from 'vue';
+import { computed, onErrorCaptured, shallowRef, watch, watchEffect } from 'vue';
 import { ElButton, ElConfigProvider, ElOption, ElSelect, ElSwitch, REFF_ELEMENT_LOCALES } from '@reff/ui';
 import { useAvmState } from '../avm';
 
@@ -17,21 +17,28 @@ import Re4Quick from './Re4Quick.vue';
 import Re4Layers from './Re4Layers.vue';
 import Re4States from './Re4States.vue';
 import Re4Presets from './Re4Presets.vue';
+import Re4Palette from './Re4Palette.vue';
 import Re4Misc from './Re4Misc.vue';
 import { useRe4Text, type Re4Key } from './i18n';
 import type { Re4Notice, Re4Perform, Re4Snapshot } from './types';
 
 // RE4 的 REFF 页面（v3）：按 RE4 的模型设计，不套用 MH 的分组页面。
 // 左侧常驻游戏状态（和编辑页的最终材质）；右侧六个页签。v2 配置只能先迁移。
-type Tab = 'quick' | 'base' | 'groups' | 'states' | 'presets' | 'misc';
-const TABS: Tab[] = ['quick', 'base', 'groups', 'states', 'presets', 'misc'];
-const TAB_LABEL: Record<Tab, Re4Key> = { quick: 'tabQuick', base: 'tabBase', groups: 'tabGroups', states: 'tabStates', presets: 'tabPresets', misc: 'tabMisc' };
+type Tab = 'quick' | 'base' | 'groups' | 'states' | 'palette' | 'presets' | 'misc';
+const TABS: Tab[] = ['quick', 'base', 'groups', 'states', 'palette', 'presets', 'misc'];
+const TAB_LABEL: Record<Tab, Re4Key> = { quick: 'tabQuick', base: 'tabBase', groups: 'tabGroups', states: 'tabStates', palette: 'tabPalette', presets: 'tabPresets', misc: 'tabMisc' };
 const tab = shallowRef<Tab>('quick');
 const avm = useAvmState();
 watchEffect(() => { avm.helpOpen.value = tab.value === 'misc'; });
 const { busy, loading, error, connect, documentation, documentationLoading, documentationError, retryDocumentation } = avm;
 const snapshot = computed(() => avm.snapshot.value?.game === 'RE4' ? avm.snapshot.value as Re4Snapshot : null);
 const perform: Re4Perform = actions => avm.perform(actions);
+// 某个页签渲染出错时不要整页变空:把错误显示在顶部横幅里,其余页面照常可用
+onErrorCaptured(err => {
+  error.value = err instanceof Error ? `${err.message}` : String(err);
+  console.error(err);
+  return false;
+});
 const { t, english } = useRe4Text(snapshot);
 const hasCharacter = computed(() => !!snapshot.value?.character);
 const v3 = computed(() => snapshot.value?.configVersion === 3);
@@ -102,7 +109,8 @@ watch(() => snapshot.value?.notice, value => { if (value) notice.value = value; 
             <div class="re4-main">
               <Re4Side v-if="hasCharacter && v3 && previewWide" :snapshot="snapshot" :t="t" :show-look="false" inline />
               <div v-if="notice" class="re4-banner ok" role="status">
-                <span>{{ t('migrated') }}<template v-if="notice.presets"> {{ t('migratedPresets', notice.presets) }}</template></span>
+                <span v-if="notice.kind === 'migrated'">{{ t('migrated') }}<template v-if="notice.presets"> {{ t('migratedPresets', notice.presets) }}</template></span>
+                <span v-else>{{ t('paletteExported', notice.path) }}</span>
                 <button class="dismiss-error" :aria-label="t('dismiss')" @click="notice = null">×</button>
               </div>
               <div v-if="!hasCharacter && tab !== 'misc'" class="state-banner" role="status">{{ t('noCharacter') }}</div>
@@ -115,6 +123,7 @@ watch(() => snapshot.value?.notice, value => { if (value) notice.value = value; 
                 <Re4Layers v-else-if="tab === 'base'" :key="'base-' + snapshot.character" mode="base" :snapshot="snapshot" :busy="busy" :perform="perform" :t="t" />
                 <Re4Layers v-else-if="tab === 'groups'" :key="'groups-' + snapshot.character" mode="groups" :snapshot="snapshot" :busy="busy" :perform="perform" :t="t" />
                 <Re4States v-else-if="tab === 'states'" :key="'states-' + snapshot.character" :snapshot="snapshot" :busy="busy" :perform="perform" :t="t" />
+                <Re4Palette v-else-if="tab === 'palette'" :key="'palette-' + snapshot.character" :snapshot="snapshot" :busy="busy" :perform="perform" :t="t" />
                 <Re4Presets v-else-if="tab === 'presets'" :key="'presets-' + snapshot.character" :snapshot="snapshot" :busy="busy" :perform="perform" :t="t" />
                 <Re4Misc v-else :snapshot="snapshot" :busy="busy" :perform="perform" :t="t" :documentation="documentation"
                   :documentation-loading="documentationLoading" :documentation-error="documentationError" @retry-documentation="retryDocumentation" />

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import Re4Num from './Re4Num.vue';
 import { computed, reactive, shallowRef } from 'vue';
 import { ElButton, ElInput, ElSwitch } from '@reff/ui';
 import type { Re4Translate } from './i18n';
@@ -132,17 +133,11 @@ async function commitRename(card: Card, option?: string) {
   if (card.isBase) await props.perform({ kind: 'base-rename', ...c(), preset: option, name });
   else await props.perform({ kind: 'option-rename', ...c(), group: card.name, option, name });
 }
-// 模型高度(厘米,同 Lua 的 ModelV3.HEIGHT_MIN / MAX)。input = null 或留空 → 清除
+// 模型高度(厘米,同 Lua 的 ModelV3.HEIGHT_MIN / MAX)。value = undefined(数值框清空 / 点清除)→ 清除
 const HEIGHT_MIN = -10, HEIGHT_MAX = 50;
 const cmText = (v: number) => (v > 0 ? '+' : '') + v;
-function setHeight(card: Card, option: string, input: HTMLInputElement | null) {
-  const raw = input ? input.value.trim() : '';
-  let cm: number | undefined;
-  if (raw !== '') {
-    cm = Number(raw);
-    if (!Number.isFinite(cm)) { if (input) input.value = ''; return; }
-    cm = Math.max(HEIGHT_MIN, Math.min(HEIGHT_MAX, Math.round(cm * 10) / 10));
-  }
+function setHeight(card: Card, option: string, value: number | undefined) {
+  const cm = value === undefined ? undefined : Math.round(value * 10) / 10;
   return card.isBase ? props.perform({ kind: 'base-height', ...c(), preset: option, cm })
     : props.perform({ kind: 'option-height', ...c(), group: card.name, option, cm });
 }
@@ -323,9 +318,9 @@ function scopeBulk(card: Card, list: { id: string; materials: { name: string }[]
                 </template>
                 <!-- 模型高度:留空 = 这一层不管高度(交给别的层);填了就按叠加顺序覆盖 -->
                 <label class="re4-height" :title="t('heightHint')">{{ t('heightLabel') }}
-                  <input type="number" :min="HEIGHT_MIN" :max="HEIGHT_MAX" step="0.5" :value="opt.height ?? ''" :placeholder="t('heightUnset')"
-                    :disabled="busy" @change="e => setHeight(card, opt.name, (e.target as HTMLInputElement))">cm</label>
-                <button v-if="opt.height !== undefined" class="re4-link" :disabled="busy" @click="setHeight(card, opt.name, null)">{{ t('heightClear') }}</button>
+                  <Re4Num :value="opt.height" :min="HEIGHT_MIN" :max="HEIGHT_MAX" :placeholder="t('heightUnset')" allow-empty
+                    :disabled="busy" @change="v => setHeight(card, opt.name, v)" />cm</label>
+                <button v-if="opt.height !== undefined" class="re4-link" :disabled="busy" @click="setHeight(card, opt.name, undefined)">{{ t('heightClear') }}</button>
               </div>
               <span v-if="!card.scope.length" class="re4-muted re4-small">{{ t('emptyScope') }}</span>
               <div class="re4-mlist" :class="{ notes }">
@@ -383,7 +378,6 @@ function scopeBulk(card: Card, list: { id: string; materials: { name: string }[]
 .re4-oact { display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
 .re4-oact .el-button + .el-button, .re4-mtools .el-button + .el-button { margin-left: 0; }
 .re4-height { display: inline-flex; align-items: center; gap: 4px; margin-left: 8px; font-size: 12.5px; color: var(--avm-muted); }
-.re4-height input { width: 4.5em; border: 1px solid var(--avm-line); border-radius: 4px; background: transparent; color: inherit; padding: 0 4px; }
 .re4-mlist-wrap { padding: 6px 12px 8px 3.2em; background: var(--re4-soft); border-top: 1px dashed var(--avm-line); display: grid; gap: 6px; }
 @media (max-width: 640px) { .re4-mlist-wrap { padding-left: 12px; } }
 .re4-mlist { display: grid; grid-template-columns: repeat(auto-fill, minmax(15em, 1fr)); gap: 2px 16px; }

@@ -1,0 +1,406 @@
+<script setup lang="ts">
+import { computed, onActivated, onBeforeUnmount, onDeactivated, onMounted, reactive, shallowRef, watch } from 'vue';
+import { ElButton, ElColorPicker, ElOption, ElSelect, ElSlider, ElSwitch, ElTooltip } from '@reff/ui';
+import Re4Num from './Re4Num.vue';
+import type { Re4Translate } from './i18n';
+import type {
+  Re4Comp, Re4Palette, Re4PaletteEntry, Re4PaletteGroup, Re4PaletteMaterial, Re4PaletteOption, Re4PaletteOverride,
+  Re4PaletteValue, Re4PaletteWrite, Re4Perform, Re4Snapshot, Re4Text,
+} from './types';
+
+// 调色页。左边选材质（可多选，跨部位），右边按材质映射列出参数：通用含义、拆开的分量、「i」里的注释。
+// 多选时只列所有选中材质都有的项，改一次全部生效；「整体调色」对选中材质的颜色项转色相 / 调饱和度和明度。
+// 值存在角色配置里（cfg.palette），跟着预设走；映射只决定怎么显示。
+const props = defineProps<{ snapshot: Re4Snapshot; busy: boolean; perform: Re4Perform; t: Re4Translate }>();
+const c = () => ({ character: props.snapshot.character });
+const pal = computed<Re4Palette | undefined>(() => props.snapshot.palette);
+const en = computed(() => props.snapshot.language === 'en');
+const text = (v?: Re4Text, fallback = '') => (en.value ? v?.en ?? v?.zh : v?.zh ?? v?.en) ?? fallback;
+const COMP: Re4Comp[] = ['x', 'y', 'z', 'w'];
+const CI: Record<Re4Comp, number> = { x: 0, y: 1, z: 2, w: 3 };
+
+// ---------------------------------------------------------------- 选择
+const selection = shallowRef<string[]>([]);
+function view(open: boolean) { return props.perform({ kind: 'palette-view', ...c(), open, keys: open ? selection.value : [] }); }
+// 页签由 KeepAlive 缓存:切走是 deactivated 而不是卸载。关掉后 Lua 不再在快照里带调色数据
+const close = () => { void props.perform({ kind: 'palette-view', ...c(), open: false, keys: [] }); };
+onMounted(() => { void view(true); });
+onActivated(() => { void view(true); });
+onDeactivated(close);
+onBeforeUnmount(close);
+watch(() => props.snapshot.character, () => { selection.value = []; });
+// 快照里的选择是 Lua 那边记住的；网页刷新后从它恢复
+watch(() => pal.value?.selected, keys => { if (keys && !selection.value.length && keys.length) selection.value = [...keys]; }, { immediate: true });
+function select(keys: string[]) { selection.value = keys; void view(true); }
+const toggle = (key: string) => select(selection.value.includes(key) ? selection.value.filter(k => k !== key) : [...selection.value, key]);
+const only = (key: string) => select([key]);
+
+const materials = computed(() => pal.value?.materials ?? []);
+const bySlot = computed(() => {
+  const out: { slot: string; label: string; rows: Re4PaletteMaterial[] }[] = [];
+  for (const m of materials.value) {
+    let g = out.find(x => x.slot === m.slot);
+    if (!g) { g = { slot: m.slot, label: props.snapshot.slots?.find(s => s.id === m.slot)?.label ?? m.slot, rows: [] }; out.push(g); }
+    g.rows.push(m);
+  }
+  return out;
+});
+const chosen = computed(() => selection.value.map(k => materials.value.find(m => m.key === k)).filter((m): m is Re4PaletteMaterial => !!m));
+
+// ---------------------------------------------------------------- 可编辑的项（所有选中材质都能用的）
+interface Row { group: string; groupLabel: string; groupNote?: string; tier: 'basic' | 'more'; entry: Re4PaletteEntry; options?: Re4PaletteOption[] }
+function profilesOf(m: Re4PaletteMaterial) { return [m.main, ...m.addons].filter((x): x is string => !!x); }
+// 跨映射比较用的签名:同一个参数、同样的拆法就算同一项(比如 lilToon 的「主色」和通用兜底里的 BaseColor)
+const sig = (e: Re4PaletteEntry) => [e.param, e.kind, e.component ?? '', e.kind === 'color' ? e.channels ?? 'rgb' : ''].join('|');
+const genericEntry = (param: string): Re4PaletteEntry => ({ param, kind: 'color', channels: 'rgb', label: { zh: param, en: param } });
+const sigsOf = computed(() => {
+  const out = new Map<string, Set<string>>();
+  for (const m of materials.value) {
+    const set = new Set<string>();
+    for (const id of profilesOf(m)) for (const g of pal.value?.profiles[id]?.groups ?? []) for (const e of g.params) if (!m.missing.includes(e.param)) set.add(sig(e));
+    for (const p of m.generic ?? []) set.add(sig(genericEntry(p)));
+    out.set(m.key, set);
+  }
+  return out;
+});
+const usable = (m: Re4PaletteMaterial, e: Re4PaletteEntry) => sigsOf.value.get(m.key)?.has(sig(e)) ?? false;
+interface Group { key: string; section: string; label: string; note?: string; tier: 'basic' | 'more'; rows: Row[]; extraFrom: number }
+const groups = computed(() => {
+  const first = chosen.value[0];
+  const out: Group[] = [];
+  if (!first || !pal.value) return out;
+  const add = (profileId: string | null, g: Re4PaletteGroup, enums: Record<string, Re4PaletteOption[]>) => {
+    const basic: Row[] = [], extra: Row[] = [];
+    for (const e of g.params) {
+      if (!chosen.value.every(m => usable(m, e))) continue;
+      const row: Row = { group: g.id, groupLabel: text(g.label, g.id), groupNote: text(g.note) || undefined, tier: e.tier ?? g.tier, entry: e,
+        options: e.options ?? (e.enum ? enums[e.enum] : undefined) };
+      // 基本组里的进阶项放在组的末尾(组内有一条「进阶」小标题);进阶组里不再细分
+      (g.tier === 'basic' && row.tier === 'more' ? extra : basic).push(row);
+    }
+    if (basic.length + extra.length) out.push({ key: (profileId ?? 'generic') + ':' + g.id, section: g.section ?? 'other',
+      label: text(g.label, g.id), note: text(g.note) || undefined, tier: g.tier, rows: [...basic, ...extra], extraFrom: extra.length ? basic.length : -1 });
+  };
+  for (const id of profilesOf(first)) {
+    const p = pal.value.profiles[id];
+    for (const g of p?.groups ?? []) add(id, g, p.enums ?? {});
+  }
+  if (!first.main && first.generic?.length) {
+    add(null, { id: 'colors', tier: 'basic', section: 'color', label: { zh: '颜色', en: 'Colours' }, params: first.generic.map(genericEntry) }, {});
+  }
+  return out;
+});
+// 类别名:取第一个声明了它的映射里的名字;通用兜底的颜色归在「颜色层」
+const sectionLabel = (id: string) => {
+  for (const p of Object.values(pal.value?.profiles ?? {})) {
+    const sec = p.sections.find(x => x.id === id);
+    if (sec) return text(sec.label, id);
+  }
+  return id === 'color' ? props.t('paletteSectionColor') : props.t('paletteSectionOther');
+};
+// 版面:基本 / 进阶 两块,每块里按类别(映射里的顺序)排组
+const areas = computed(() => (['basic', 'more'] as const).map(tier => {
+  const sections: { id: string; label: string; groups: Group[] }[] = [];
+  for (const g of groups.value.filter(x => x.tier === tier)) {
+    let sec = sections.find(x => x.id === g.section);
+    if (!sec) { sec = { id: g.section, label: sectionLabel(g.section), groups: [] }; sections.push(sec); }
+    sec.groups.push(g);
+  }
+  return { tier, sections };
+}).filter(a => a.sections.length));
+// 组的展开状态(默认全部收起);换选材质时保留,同一个组还是展开的
+const openGroups = reactive(new Set<string>());
+const toggleGroup = (key: string) => { if (openGroups.has(key)) openGroups.delete(key); else openGroups.add(key); };
+const groupModified = (g: Group) => g.rows.some(r => modified(r.entry));
+
+// ---------------------------------------------------------------- 取值
+const valueOf = (key: string, param: string): Re4PaletteValue | undefined => pal.value?.values[key]?.[param];
+function num(key: string, e: Re4PaletteEntry): number | undefined {
+  const v = valueOf(key, e.param);
+  if (typeof v === 'number') return v;
+  if (Array.isArray(v) && e.component) return v[CI[e.component]];
+  return undefined;
+}
+function rgb(key: string, param: string): [number, number, number] | undefined {
+  const v = valueOf(key, param);
+  return Array.isArray(v) ? [v[0], v[1], v[2]] : undefined;
+}
+const near = (a?: number, b?: number) => a !== undefined && b !== undefined && Math.abs(a - b) < 1e-4;
+const firstKey = computed(() => chosen.value[0]?.key ?? '');
+function mixed(e: Re4PaletteEntry) {
+  const keys = chosen.value.map(m => m.key);
+  if (e.kind === 'color' || e.kind === 'vec') {
+    const a = valueOf(keys[0], e.param);
+    return keys.some(k => { const b = valueOf(k, e.param); return !Array.isArray(a) || !Array.isArray(b) || a.some((x, i) => !near(x, b[i])); });
+  }
+  const a = num(keys[0], e);
+  return keys.some(k => !near(num(k, e), a));
+}
+function overrideOf(key: string, param: string): Re4PaletteOverride | undefined {
+  const o = pal.value?.overrides[key];
+  return o ? o[param] : undefined;
+}
+// 这一项在选中的材质上改过没有（颜色看 xyz，分量看自己那一个）
+function modified(e: Re4PaletteEntry) {
+  return chosen.value.some(m => {
+    const o = overrideOf(m.key, e.param);
+    if (o === undefined) return false;
+    if (typeof o === 'number') return true;
+    const comps = e.kind === 'color' ? (e.channels === 'rgba' ? COMP : ['x', 'y', 'z'] as Re4Comp[]) : e.kind === 'vec' ? COMP : e.component ? [e.component] : [];
+    return comps.some(k => o[k] !== undefined);
+  });
+}
+const anyOverride = computed(() => chosen.value.some(m => m.overridden > 0));
+
+// ---------------------------------------------------------------- 写入
+const targets = () => chosen.value.map(m => ({ slot: m.slot, material: m.material }));
+// 写入队列:拖动取色器 / 滑条时实时写,但同一时间只有一个请求在途;在途期间只记下最新的一次,
+// 上一个完成后立刻补发,所以松手时最后的值一定会送到。页面正忙(别的操作在途)时稍后重试。
+let inflight = false;
+// live 的写入只改内存、不存盘;最后一次(松手 / 确定)不带 live,由 Lua 存盘
+let pending: { writes: Re4PaletteWrite[]; live: boolean } | null = null;
+function pump() {
+  if (inflight || !pending) return;
+  const job = pending;
+  pending = null;
+  inflight = true;
+  void props.perform({ kind: 'palette-set', ...c(), writes: job.writes, live: job.live || undefined }).then(ok => {
+    if (!ok && !pending) { pending = job; window.setTimeout(pump, 60); }
+  }).finally(() => { inflight = false; pump(); });
+}
+function write(list: Omit<Re4PaletteWrite, 'slot' | 'material'>[], live = false) {
+  const writes: Re4PaletteWrite[] = [];
+  for (const t of targets()) for (const w of list) writes.push({ ...t, ...w });
+  if (!writes.length) return;
+  pending = { writes, live };
+  pump();
+}
+// 拖动中的本地显示值(滑条位置 / 取色器颜色)。快照比拖动慢,直接用快照的值滑块会被拽回去;
+// 松手后清掉,回到快照里的实际值
+const local = reactive(new Map<string, number | string>());
+const localKey = (e: Re4PaletteEntry) => e.param + '|' + (e.component ?? '');
+watch(selection, () => local.clear());
+function reset(e: Re4PaletteEntry) {
+  const comps: (Re4Comp | undefined)[] = e.kind === 'color' ? (e.channels === 'rgba' ? COMP : ['x', 'y', 'z']) : e.kind === 'vec' ? [undefined] : [e.component];
+  void (async () => {
+    for (const component of comps) await props.perform({ kind: 'palette-reset', ...c(), targets: targets(), param: e.param, component });
+  })();
+}
+const resetAll = () => props.perform({ kind: 'palette-reset', ...c(), targets: targets() });
+const setNumber = (e: Re4PaletteEntry, v: number | undefined | null) => {
+  if (typeof v !== 'number' || !Number.isFinite(v)) return;
+  return write([e.component ? { param: e.param, component: e.component, value: v } : { param: e.param, value: v }]);
+};
+const setVec = (e: Re4PaletteEntry, i: number, v: number | undefined | null) => {
+  if (typeof v === 'number' && Number.isFinite(v)) return write([{ param: e.param, component: COMP[i], value: v }]);
+};
+
+// 颜色：材质里是线性的 0~1(可以超过 1)，取色器只显示 0~1；按显示值改
+const to255 = (v: number) => Math.round(Math.max(0, Math.min(1, v)) * 255);
+const hex = (c3?: [number, number, number]) => c3 ? '#' + c3.map(v => to255(v).toString(16).padStart(2, '0')).join('') : '';
+// live = 取色面板里拖动中(active-change):实时写并记住本地颜色;确定(change)时写最终值并清掉本地
+function setColor(e: Re4PaletteEntry, value: string | null, live = false) {
+  const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})/i.exec(value ?? '') ?? /rgba?\((\d+),\s*(\d+),\s*(\d+)/i.exec(value ?? '');
+  if (!m) return;
+  const hexInput = m[0].startsWith('#') || /^[0-9a-f]{6}/i.test(m[0]);
+  const [r, g, b] = [m[1], m[2], m[3]].map(x => (hexInput ? parseInt(x, 16) : Number(x)) / 255);
+  if (live) local.set(localKey(e), '#' + [r, g, b].map(v => to255(v).toString(16).padStart(2, '0')).join(''));
+  else local.delete(localKey(e));
+  write([{ param: e.param, component: 'x', value: r }, { param: e.param, component: 'y', value: g }, { param: e.param, component: 'z', value: b }], live);
+}
+// 悬停时显示实际数值(线性 0~1,可以超过 1;色块只能显示到 1)
+const colorTitle = (e: Re4PaletteEntry) => rgb(firstKey.value, e.param)?.map(v => String(Number(v.toFixed(3)))).join(' / ') ?? '';
+const colorShown = (e: Re4PaletteEntry) => (local.get(localKey(e)) as string | undefined) ?? hex(rgb(firstKey.value, e.param));
+// 滑条:拖动中(input)实时写,松手(change)写最终值
+function slide(e: Re4PaletteEntry, v: number | number[], live: boolean) {
+  const n = Array.isArray(v) ? v[0] : v;
+  if (live) local.set(localKey(e), n); else local.delete(localKey(e));
+  if (Number.isFinite(n)) write([e.component ? { param: e.param, component: e.component, value: n } : { param: e.param, value: n }], live);
+}
+const sliderShown = (e: Re4PaletteEntry) => (local.get(localKey(e)) as number | undefined) ?? clampSlider(e, num(firstKey.value, e));
+
+// ---------------------------------------------------------------- 整体调色
+const batch = reactive({ hue: 0, sat: 100, val: 100 });
+function hsv([r, g, b]: [number, number, number]) {
+  const max = Math.max(r, g, b), min = Math.min(r, g, b), d = max - min;
+  let h = 0;
+  if (d > 0) h = max === r ? ((g - b) / d) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  return [h * 60 < 0 ? h * 60 + 360 : h * 60, max > 0 ? d / max : 0, max];
+}
+function fromHsv(h: number, s: number, v: number): [number, number, number] {
+  const f = (n: number) => { const k = (n + h / 60) % 6; return v - v * s * Math.max(0, Math.min(k, 4 - k, 1)); };
+  return [f(5), f(3), f(1)];
+}
+// 整体调色作用于「基本」里的颜色项(颜色层、阴影、边缘光、自发光……),进阶里的不动
+const colorRows = computed(() => groups.value.filter(g => g.tier === 'basic').flatMap(g => g.rows).filter(r => r.tier === 'basic' && r.entry.kind === 'color'));
+function applyBatch() {
+  const writes: Re4PaletteWrite[] = [];
+  for (const m of chosen.value) {
+    for (const r of colorRows.value) {
+      const cur = rgb(m.key, r.entry.param);
+      if (!cur) continue;
+      const [h, s, v] = hsv(cur);
+      const out = fromHsv((h + batch.hue + 360) % 360, Math.max(0, Math.min(1, s * batch.sat / 100)), v * batch.val / 100);
+      // 没变化的颜色(比如白色转色相)不写,免得平白多出一条覆盖
+      if (out.every((x, i) => near(x, cur[i]))) continue;
+      COMP.slice(0, 3).forEach((k, i) => writes.push({ slot: m.slot, material: m.material, param: r.entry.param, component: k, value: out[i] }));
+    }
+  }
+  if (writes.length) void props.perform({ kind: 'palette-set', ...c(), writes }).then(ok => { if (ok) Object.assign(batch, { hue: 0, sat: 100, val: 100 }); });
+}
+
+const labels = (e: Re4PaletteEntry) => (en.value ? e.labels?.en : e.labels?.zh) ?? COMP.map(k => k.toUpperCase());
+const sliderMin = (e: Re4PaletteEntry) => e.min ?? 0;
+const sliderMax = (e: Re4PaletteEntry) => e.max ?? 1;
+const step = (e: Re4PaletteEntry) => e.step ?? (sliderMax(e) - sliderMin(e) > 20 ? 0.1 : 0.01);
+// 数值框不受滑条范围限制；只有映射写了硬范围时才限制
+const clampSlider = (e: Re4PaletteEntry, v?: number) => Math.max(sliderMin(e), Math.min(sliderMax(e), v ?? sliderMin(e)));
+</script>
+
+<template>
+  <div class="re4-main re4-pal">
+    <div v-if="pal?.error" class="re4-banner" role="alert">{{ pal.error }}</div>
+    <div v-if="pal?.errors?.length" class="re4-banner" role="status">{{ t('paletteBadFiles', pal.errors.join('、')) }}</div>
+    <div v-if="!pal" class="re4-muted re4-small">{{ t('loading') }}</div>
+    <div v-else class="re4-pal-layout">
+      <section class="re4-panel re4-pal-list" :aria-label="t('paletteMaterials')">
+        <div class="re4-panel-head">
+          <span class="re4-panel-title">{{ t('paletteMaterials') }}</span>
+          <span class="re4-spacer"></span>
+          <button class="re4-link" :disabled="!selection.length" @click="select([])">{{ t('paletteClear') }}</button>
+        </div>
+        <div class="re4-panel-body">
+          <div v-for="g in bySlot" :key="g.slot" class="re4-pal-slot">
+            <span class="re4-muted re4-small">{{ g.label }}</span>
+            <div v-for="m in g.rows" :key="m.key" class="re4-pal-mat" :class="{ on: selection.includes(m.key) }">
+              <input type="checkbox" :checked="selection.includes(m.key)" :aria-label="m.material" @change="toggle(m.key)">
+              <button class="re4-pal-name" :title="t('paletteOnly')" @click="only(m.key)">
+                <span class="re4-mono">{{ m.material }}</span><span v-if="m.note" class="re4-muted re4-small">{{ m.note }}</span>
+              </button>
+              <span v-if="m.overridden" class="re4-tag partial">{{ t('paletteChanged', m.overridden) }}</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="re4-panel re4-pal-edit">
+        <div class="re4-panel-head">
+          <span class="re4-panel-title">{{ chosen.length ? t('paletteSelected', chosen.length) : t('paletteNothing') }}</span>
+          <span class="re4-spacer"></span>
+          <ElButton v-if="chosen.length === 1" size="small" :disabled="busy"
+            @click="perform({ kind: 'palette-export', ...c(), slot: chosen[0].slot, material: chosen[0].material })">{{ t('paletteExport') }}</ElButton>
+          <ElButton size="small" :disabled="busy" @click="perform({ kind: 'palette-reload', ...c() })">{{ t('paletteReload') }}</ElButton>
+          <ElButton v-if="anyOverride" size="small" type="danger" plain :disabled="busy" @click="resetAll">{{ t('paletteResetAll') }}</ElButton>
+        </div>
+        <div v-if="!chosen.length" class="re4-panel-body re4-muted re4-small">{{ t('paletteHint') }}</div>
+        <template v-else>
+          <div v-if="chosen.length > 1" class="re4-panel-body re4-muted re4-small">{{ t('paletteCommon') }}</div>
+          <div v-if="colorRows.length" class="re4-panel-body re4-pal-batch">
+            <span class="re4-pal-glabel">{{ t('paletteBatch') }}</span>
+            <label>{{ t('paletteHue') }}<ElSlider v-model="batch.hue" :min="-180" :max="180" :step="1" size="small" /></label>
+            <label>{{ t('paletteSat') }}<ElSlider v-model="batch.sat" :min="0" :max="200" :step="1" size="small" /></label>
+            <label>{{ t('paletteVal') }}<ElSlider v-model="batch.val" :min="0" :max="200" :step="1" size="small" /></label>
+            <ElButton size="small" type="primary" :disabled="busy || (batch.hue === 0 && batch.sat === 100 && batch.val === 100)" @click="applyBatch">{{ t('paletteApply') }}</ElButton>
+          </div>
+          <div v-for="area in areas" :key="area.tier" class="re4-pal-area">
+            <div class="re4-pal-areahead">{{ area.tier === 'basic' ? t('paletteBasic') : t('paletteAdvanced') }}</div>
+            <div v-for="sec in area.sections" :key="sec.id" class="re4-pal-section">
+              <div class="re4-pal-sechead">{{ sec.label }}</div>
+              <div v-for="g in sec.groups" :key="g.key" class="re4-pal-group" :class="{ open: openGroups.has(g.key) }">
+                <button class="re4-pal-ghead" :aria-expanded="openGroups.has(g.key)" @click="toggleGroup(g.key)">
+                  <span class="re4-caret">{{ openGroups.has(g.key) ? '▾' : '▸' }}</span>
+                  <span v-if="groupModified(g)" class="re4-pal-dot" :title="t('paletteModified')"></span>
+                  <span class="re4-pal-gname">{{ g.label }}</span>
+                  <span class="re4-muted re4-small">{{ g.rows.length }}</span>
+                </button>
+                <ElTooltip v-if="g.note" :content="g.note" placement="top"><span class="re4-pal-i re4-pal-gi" tabindex="0">i</span></ElTooltip>
+                <div v-if="openGroups.has(g.key)" class="re4-pal-gbody">
+                <template v-for="(r, ri) in g.rows" :key="r.entry.param + (r.entry.component ?? '') + r.entry.kind">
+                <div v-if="ri === g.extraFrom" class="re4-pal-sub">{{ t('paletteAdvanced') }}</div>
+                <div class="re4-pal-row">
+                  <span class="re4-pal-label">
+                    <span v-if="modified(r.entry)" class="re4-pal-dot" :title="t('paletteModified')"></span>{{ text(r.entry.label, r.entry.param) }}
+                    <ElTooltip v-if="r.entry.note" :content="text(r.entry.note)" placement="top"><span class="re4-pal-i" tabindex="0">i</span></ElTooltip>
+                  </span>
+                  <span class="re4-pal-ctl">
+                    <span v-if="r.entry.kind === 'color'" class="re4-pal-color" :title="colorTitle(r.entry)">
+                      <ElColorPicker :model-value="colorShown(r.entry)" @active-change="v => setColor(r.entry, v, true)" @change="v => setColor(r.entry, v)" />
+                    </span>
+                    <template v-else-if="r.entry.kind === 'float'">
+                      <ElSlider class="re4-pal-slider" :model-value="sliderShown(r.entry)" :min="sliderMin(r.entry)" :max="sliderMax(r.entry)"
+                        :step="step(r.entry)" size="small" @input="v => slide(r.entry, v, true)" @change="v => slide(r.entry, v, false)" />
+                      <Re4Num :value="num(firstKey, r.entry)" :min="r.entry.hard_min" :max="r.entry.hard_max" :aria-label="text(r.entry.label, r.entry.param)"
+                        @change="v => setNumber(r.entry, v)" />
+                    </template>
+                    <ElSelect v-else-if="r.entry.kind === 'enum'" :model-value="num(firstKey, r.entry)" size="small" @change="v => setNumber(r.entry, Number(v))">
+                      <ElOption v-for="o in r.options ?? []" :key="o.value" :value="o.value" :label="text(o.label, String(o.value))" />
+                    </ElSelect>
+                    <ElSwitch v-else-if="r.entry.kind === 'bool'" :model-value="(num(firstKey, r.entry) ?? 0) >= 0.5" size="small"
+                      @change="v => setNumber(r.entry, v === true ? 1 : 0)" />
+                    <span v-else class="re4-pal-vec">
+                      <label v-for="(name, i) in labels(r.entry)" :key="i">{{ name }}
+                        <Re4Num :value="(valueOf(firstKey, r.entry.param) as number[] | undefined)?.[i]" :aria-label="name" @change="v => setVec(r.entry, i, v)" />
+                      </label>
+                    </span>
+                    <span v-if="chosen.length > 1 && mixed(r.entry)" class="re4-small re4-muted">{{ t('paletteMixed') }}</span>
+                    <button v-if="modified(r.entry)" class="re4-link" :disabled="busy" @click="reset(r.entry)">{{ t('paletteRestore') }}</button>
+                  </span>
+                </div>
+                </template>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div v-if="!groups.length" class="re4-panel-body re4-muted re4-small">{{ t('paletteNoEntries') }}</div>
+        </template>
+      </section>
+    </div>
+  </div>
+</template>
+
+<style>
+.re4-pal-layout { display: grid; grid-template-columns: minmax(0, 18em) minmax(0, 1fr); gap: 10px; align-items: start; }
+@media (max-width: 760px) { .re4-pal-layout { grid-template-columns: minmax(0, 1fr); } }
+.re4-pal-list .re4-panel-body { gap: 8px; }
+.re4-pal-slot { display: grid; gap: 1px; }
+.re4-pal-mat { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 1px 4px; border-radius: 4px; }
+.re4-pal-mat.on { background: var(--re4-soft); }
+.re4-pal-mat input { margin: 0; flex: none; }
+.re4-pal-name { border: 0; background: none; color: inherit; padding: 0; cursor: pointer; display: inline-flex; gap: 6px; align-items: baseline; min-width: 0; flex: 1; text-align: left; overflow-wrap: anywhere; }
+.re4-pal-mat .re4-tag { border: 0; cursor: pointer; flex: none; }
+.re4-pal-area { display: grid; gap: 8px; padding: 8px 12px 10px; border-top: 1px solid var(--avm-line); }
+.re4-pal-areahead { font-size: 11px; letter-spacing: .1em; color: var(--avm-muted); }
+.re4-pal-section { display: grid; gap: 4px; }
+.re4-pal-sechead { font-weight: 600; font-size: 13px; }
+.re4-pal-group { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; border: 1px solid var(--avm-line); border-radius: 6px; }
+.re4-pal-group.open { background: var(--el-bg-color, transparent); }
+.re4-pal-ghead { display: flex; align-items: center; gap: 6px; border: 0; background: none; color: inherit; padding: 4px 8px; cursor: pointer; text-align: left; min-width: 0; }
+.re4-pal-ghead .re4-caret { width: 1em; }
+.re4-pal-gname { font-weight: 500; }
+.re4-pal-gi { margin-right: 8px; }
+.re4-pal-gbody { grid-column: 1 / -1; display: grid; gap: 2px; padding: 4px 10px 8px 26px; border-top: 1px dashed var(--avm-line); }
+@media (max-width: 560px) { .re4-pal-gbody { padding-left: 10px; } }
+.re4-pal-sub { font-size: 11px; letter-spacing: .08em; color: var(--avm-muted); margin-top: 4px; padding-top: 4px; border-top: 1px dashed var(--avm-line); }
+.re4-pal-glabel { font-weight: 600; display: flex; align-items: center; gap: 6px; margin-bottom: 2px; }
+.re4-pal-row { display: grid; grid-template-columns: minmax(7em, 12em) minmax(0, 1fr); gap: 4px 12px; align-items: center; min-height: 30px; }
+@media (max-width: 560px) { .re4-pal-row { grid-template-columns: minmax(0, 1fr); } }
+.re4-pal-label { display: inline-flex; align-items: center; gap: 5px; min-width: 0; overflow-wrap: anywhere; }
+.re4-pal-ctl { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; min-width: 0; }
+.re4-pal-color { display: inline-flex; width: min(14em, 100%); }
+.re4-pal-color .el-color-picker { width: 100%; height: 24px; }
+.re4-pal-color .el-color-picker__trigger { width: 100%; height: 24px; padding: 2px; border-radius: 5px; }
+.re4-pal-color .el-color-picker__color { border-radius: 3px; border: 0; }
+.re4-pal-color .el-color-picker__color-inner { border-radius: 3px; }
+.re4-pal-color .el-color-picker__icon { display: none; }
+.re4-pal-ctl .el-select { width: 9em; }
+.re4-pal-slider { flex: 1 1 10em; min-width: 8em; max-width: 20em; }
+.re4-pal-vec { display: flex; flex-wrap: wrap; gap: 4px 10px; }
+.re4-pal-vec label { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--avm-muted); }
+.re4-pal-i { display: inline-grid; place-items: center; width: 15px; height: 15px; border-radius: 50%; border: 1px solid var(--avm-muted); color: var(--avm-muted);
+  font: italic 600 10px/1 Georgia, serif; cursor: help; flex: none; }
+.re4-pal-i:hover, .re4-pal-i:focus { border-color: var(--avm-accent); color: var(--avm-accent); outline: none; }
+.re4-pal-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--avm-accent); flex: none; }
+.re4-pal-batch { display: grid; grid-template-columns: repeat(auto-fill, minmax(12em, 1fr)); gap: 4px 16px; align-items: center; background: var(--re4-soft); }
+.re4-pal-batch .re4-pal-glabel { grid-column: 1 / -1; margin: 0; }
+.re4-pal-batch label { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px; align-items: center; font-size: 12.5px; color: var(--avm-muted); }
+</style>

@@ -1,0 +1,57 @@
+{
+  "format": 1,
+  "id": "re4_dissolve",
+  "addon": true,
+  "label": { "zh": "溶解", "en": "Dissolve" },
+  "source": "「RE4 溶解流光半透明材质」会话 2026-11-05 的回复（RE4 3.5 片段源码）；四个溶解模板含义一致",
+  "priority": 100,
+  "match": { "all": ["Dissolve_Rate", "Dissolve_Flag"] },
+  "sections": [{"id": "dissolve", "label": {"zh": "溶解", "en": "Dissolve"}}],
+  "groups": [
+    {
+      "id": "dissolve", "section": "dissolve", "tier": "more", "label": { "zh": "溶解", "en": "Dissolve" },
+      "note": { "zh": "溶解进度由 AVM 的过渡控制；这里调的是溶解的方式和发光。像素在进度 ≥ 1 − m 时溶掉，m = (溶解图通道 + 噪声权重 × 噪声) / (1 + 噪声权重)", "en": "AVM's transitions drive the progress; these set how it dissolves and glows. A pixel is gone when progress ≥ 1 − m, m = (map channel + noise weight × noise) / (1 + noise weight)" },
+      "params": [
+        { "param": "Dissolve_Flag", "component": "x", "kind": "bool", "label": { "zh": "启用溶解", "en": "Enable" },
+          "note": { "zh": "关闭后溶解完全不起作用", "en": "Off disables dissolving entirely" } },
+        { "param": "Dissolve_Flag", "component": "z", "kind": "bool", "label": { "zh": "溶解图用 UV2", "en": "Map uses UV2" },
+          "note": { "zh": "关闭时用 UV1；噪声图始终用 UV1", "en": "Off uses UV1; the noise map always uses UV1" } },
+        { "param": "Dissolve_Edge", "component": "x", "kind": "float", "min": 0.02, "max": 0.3, "label": { "zh": "发光带宽度", "en": "Glow width" },
+          "note": { "zh": "以进度为单位，常见 0.12～0.2；0 = 不发光", "en": "In progress units, usually 0.12–0.2; 0 means no glow" } },
+        { "param": "Dissolve_Edge", "component": "z", "kind": "float", "min": 0, "max": 10, "label": { "zh": "发光强度", "en": "Glow intensity" },
+          "note": { "zh": "常见 2.5～5。lilToon 版再乘自发光单位（LIL_Light.z），半透明版再乘发光总强度（LIL_EmissionParam.w）", "en": "Usually 2.5–5. Multiplied by the emissive unit (LIL_Light.z) on lilToon, by the emission total (LIL_EmissionParam.w) on the transparent material" } },
+        { "param": "Dissolve_EdgeColor", "kind": "color", "channels": "rgb", "label": { "zh": "发光颜色", "en": "Glow colour" } },
+        { "param": "Dissolve_Flag", "component": "w", "kind": "float", "min": 0, "max": 1, "label": { "zh": "关闭边缘发光", "en": "Glow off" },
+          "note": { "zh": "lilToon 版按数值连续减弱（1 = 完全关闭）；半透明版 ≥ 0.5 即关闭", "en": "lilToon fades it continuously (1 = off); the transparent material turns it off at ≥ 0.5" } },
+        { "param": "Dissolve_Edge", "component": "y", "kind": "float", "min": 0, "max": 10, "label": { "zh": "噪声权重", "en": "Noise weight" },
+          "note": { "zh": "0 = 只按溶解图推进；越大越碎。常见 0.4", "en": "0 follows the dissolve map only; higher is more broken up. Usually 0.4" } },
+        { "param": "Dissolve_Edge", "component": "w", "kind": "float", "min": 0, "max": 1, "label": { "zh": "轮廓占比", "en": "Outline share" },
+          "note": { "zh": "0 = 整条带发光，1 = 只在噪声格的轮廓上发光。常见 0 或 0.6", "en": "0 lights the whole band, 1 only the noise cell outlines. Usually 0 or 0.6" } },
+        { "param": "Dissolve_Misc", "component": "z", "kind": "float", "min": 1, "max": 8, "label": { "zh": "噪声平铺", "en": "Noise tiling" },
+          "note": { "zh": "UV1 的倍数，常见 4", "en": "Multiple of UV1, usually 4" } },
+        { "param": "Dissolve_Misc", "component": "w", "kind": "float", "min": 0, "max": 5, "label": { "zh": "动画速度", "en": "Animation speed" },
+          "note": { "zh": "Dissolve 模板：噪声沿 U 的滚动速度（UV/秒），常见 0。AnimDissolve 模板：发光动画速度，0 按 1 处理", "en": "Dissolve templates: noise scroll along U (UV/s), usually 0. AnimDissolve templates: glow animation speed, 0 counts as 1" } }
+      ]
+    },
+    {
+      "id": "dissolve_order", "section": "dissolve", "tier": "more", "label": { "zh": "溶解顺序", "en": "Dissolve order" },
+      "note": { "zh": "Dissolve_Map 的 R / G / B 分别是身体 / 手臂 / 腿的先后（值越高越先切换）；B > 0 的像素算腿，否则 G > 0 算手臂，其余算身体。各部分把自己的进度映射到下面的区间里", "en": "Dissolve_Map R / G / B order body / arms / legs (higher switches first); B > 0 is leg, else G > 0 arm, else body. Each part maps its progress into the ranges below" },
+      "params": [
+        { "param": "Dissolve_Body", "component": "x", "kind": "float", "min": 0, "max": 1, "label": { "zh": "身体 起点", "en": "Body start" } },
+        { "param": "Dissolve_Body", "component": "y", "kind": "float", "min": 0, "max": 1, "label": { "zh": "身体 终点", "en": "Body end" } },
+        { "param": "Dissolve_Body", "component": "z", "kind": "float", "min": 0, "max": 1, "label": { "zh": "身体 反向起点", "en": "Body reverse start" },
+          "note": { "zh": "反向溶解时代替起点 / 终点使用", "en": "Used instead of start / end when dissolving in reverse" } },
+        { "param": "Dissolve_Body", "component": "w", "kind": "float", "min": 0, "max": 1, "label": { "zh": "身体 反向终点", "en": "Body reverse end" } },
+        { "param": "Dissolve_Limb", "component": "x", "kind": "float", "min": 0, "max": 1, "label": { "zh": "手臂 起点", "en": "Arm start" } },
+        { "param": "Dissolve_Limb", "component": "y", "kind": "float", "min": 0, "max": 1, "label": { "zh": "手臂 终点", "en": "Arm end" } },
+        { "param": "Dissolve_Limb", "component": "z", "kind": "float", "min": 0, "max": 1, "label": { "zh": "腿 起点", "en": "Leg start" } },
+        { "param": "Dissolve_Limb", "component": "w", "kind": "float", "min": 0, "max": 1, "label": { "zh": "腿 终点", "en": "Leg end" } },
+        { "param": "Dissolve_Misc", "component": "x", "kind": "float", "min": 0, "max": 4, "label": { "zh": "手臂跟随速度", "en": "Arm speed" },
+          "note": { "zh": "手臂进度 = max(身体进度 × 这个值, 手臂自己的区间进度)。常见 1", "en": "Arm progress = max(body progress × this, the arm's own range progress). Usually 1" } },
+        { "param": "Dissolve_Misc", "component": "y", "kind": "float", "min": 0, "max": 4, "label": { "zh": "腿跟随速度", "en": "Leg speed" },
+          "note": { "zh": "同上，作用于腿", "en": "Same, for the legs" } }
+      ]
+    }
+  ],
+  "ignore": ["Dissolve_Rate"]
+}

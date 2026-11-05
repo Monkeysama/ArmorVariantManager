@@ -15,6 +15,7 @@
 --   模型高度(可选):base.heights = { [预设名] = 厘米 },groups[i].heights = { [选项名] = 厘米 }。
 --     不放进快照(快照顶层键都是槛位,预设指纹按它算)。解算见 height_of:按叠加顺序,后写覆盖先写。
 --   height_override = { enabled, cm }:全局覆盖(快速切换页),打开时无视各层,统一用 cm。
+--   palette = { [slot] = { [材质] = { [参数] = 数值 | {x..w} } } }:调色盘的覆盖值,见 Palette.lua。
 --   条件状态 = { name, enabled, exclusive, logic, conditions, hold, fade_in, fade_out,
 --               hp = nil | { upper, lower, invert }, base = nil | "整套造型名",
 --               targets = { { group, option }, ... } }
@@ -26,6 +27,7 @@ M.VERSION = 3
 
 local Registry = require("ArmorVariantManager_Core.Games.RE4.Conditions.Registry")
 local Condition_HP = require("ArmorVariantManager_Core.Games.RE4.Conditions.Condition_HP")
+local Palette = require("ArmorVariantManager_Core.Games.RE4.Palette")
 
 local function is_tbl(v) return type(v) == "table" end
 
@@ -223,6 +225,9 @@ function M.normalize(cfg)
     end
     if not is_tbl(cfg.material_notes) then cfg.material_notes = {} end
     if cfg.armor_mirrors_body ~= false then cfg.armor_mirrors_body = true end
+    -- 调色盘的覆盖值(见 Palette.lua);空表不留,省得每份配置都多一个字段
+    local palette = Palette.clean(cfg.palette)
+    cfg.palette = next(palette) and palette or nil
     if type(cfg.source_preset) ~= "string" then cfg.source_preset = nil end
     return cfg
 end

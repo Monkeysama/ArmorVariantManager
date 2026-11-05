@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import Re4Num from './Re4Num.vue';
 import { computed, shallowRef } from 'vue';
 import { ElSwitch } from '@reff/ui';
 import type { Re4Translate } from './i18n';
@@ -30,11 +31,6 @@ const heightFrom = computed(() => {
   if (s.layer === 'base') return props.t('heightFromBase', s.option ?? '');
   return props.t('heightFromGroup', s.layer, s.option ?? '');
 });
-function setOverrideCm(input: HTMLInputElement) {
-  const v = Number(input.value);
-  if (input.value.trim() === '' || !Number.isFinite(v)) { input.value = String(override.value.cm); return; }
-  return props.perform({ kind: 'height-override', ...c(), cm: Math.max(-10, Math.min(50, Math.round(v * 10) / 10)) });
-}
 const base = computed(() => {
   const b = props.snapshot.base!;
   return { layer: 'base', label: props.t('tabBase'), active: b.active, effective: b.effective, locked: b.fromState, none: false,
@@ -106,8 +102,8 @@ const base = computed(() => {
         <span class="re4-hctl" :class="{ dim: !override.enabled }">
           <ElSwitch :model-value="override.enabled" :disabled="busy" size="small" :aria-label="t('heightOverride')"
             @change="v => perform({ kind: 'height-override', ...c(), enabled: v === true })" />
-          <input type="number" min="-10" max="50" step="0.5" :value="override.cm" :disabled="busy" :aria-label="t('heightOverride')"
-            @change="e => setOverrideCm(e.target as HTMLInputElement)">cm
+          <Re4Num :value="override.cm" :min="-10" :max="50" :disabled="busy" :aria-label="t('heightOverride')"
+            @change="v => v !== undefined && perform({ kind: 'height-override', ...c(), cm: v })" />cm
           <span class="re4-muted re4-small">{{ t('heightOverrideHint') }}</span>
         </span>
       </div>

@@ -122,6 +122,14 @@ function Dissolve.set_material(mesh, j, want, cur)
     mat_anims[key] = n
 end
 
+-- 调色盘改了 Dissolve_Flag 的 x / z / w(启用、UV2、关闭发光)时同步过渡用的底值,
+-- 否则下一次过渡和结束时的恢复会把 mdf2 的旧值写回去。y 由过渡自己管,不动
+function Dissolve.set_flag_base(mesh, j, value)
+    local v = find_var(mesh, j)
+    if not v or not v.flag0 or type(value) ~= "table" then return end
+    v.flag0[1], v.flag0[3], v.flag0[4] = value[1], value[3], value[4]
+end
+
 -- 停掉这个 mesh 上所有溶解(定时过渡和血量驱动),变量恢复成 mdf2 的值。
 -- 定位预览用:预览要的是"只显示这一个材质"的瞬间结果,不能被溶解动画拉扯。
 function Dissolve.reset_mesh(mesh)

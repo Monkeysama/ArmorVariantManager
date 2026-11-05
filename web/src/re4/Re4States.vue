@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import Re4Num from './Re4Num.vue';
 import { computed, reactive, shallowRef } from 'vue';
 import { ElButton, ElOption, ElSelect, ElSwitch } from '@reff/ui';
 import type { Re4Key, Re4Translate } from './i18n';
@@ -103,8 +104,8 @@ const { from: dragFrom, drop: dropAt, start: startDrag } = usePointerReorder('.r
             @change="e => perform({ kind: 'state-rename', ...c(), index: k + 1, name: (e.target as HTMLInputElement).value.trim() })">
           <button class="re4-xbtn" :aria-pressed="st.exclusive" :disabled="busy" :title="t('exclusiveHint')" @click="field(k + 1, 'exclusive', !st.exclusive)">{{ t('exclusive') }}</button>
           <span class="re4-fade">
-            <label>{{ t('fadeIn') }}<input type="number" min="0" step="0.1" :value="st.fadeIn" @change="e => numField(k + 1, 'fade_in', (e.target as HTMLInputElement).value)"></label>
-            <label>{{ t('fadeOut') }}<input type="number" min="0" step="0.1" :value="st.fadeOut" @change="e => numField(k + 1, 'fade_out', (e.target as HTMLInputElement).value)"></label>{{ t('seconds') }}
+            <label>{{ t('fadeIn') }}<Re4Num :value="st.fadeIn" :min="0" :max="30" @change="v => v !== undefined && numField(k + 1, 'fade_in', String(v))" /></label>
+            <label>{{ t('fadeOut') }}<Re4Num :value="st.fadeOut" :min="0" :max="30" @change="v => v !== undefined && numField(k + 1, 'fade_out', String(v))" /></label>{{ t('seconds') }}
           </span>
           <span class="re4-spacer"></span>
         </template>
@@ -124,8 +125,8 @@ const { from: dragFrom, drop: dropAt, start: startDrag } = usePointerReorder('.r
           <label class="re4-row re4-small" :title="t('hpHint')"><input type="checkbox" :checked="!!st.hp" :disabled="busy" @change="e => setHp(k + 1, st, (e.target as HTMLInputElement).checked ? {} : null)">{{ t('hpDrive') }}</label>
           <template v-if="st.hp">
             <div class="re4-fade">
-              <label>{{ t('hpUpper') }}<input type="number" min="0" max="100" :value="st.hp.upper" @change="e => setHp(k + 1, st, { upper: Number((e.target as HTMLInputElement).value) })"></label>
-              <label>{{ t('hpLower') }}<input type="number" min="0" max="100" :value="st.hp.lower" @change="e => setHp(k + 1, st, { lower: Number((e.target as HTMLInputElement).value) })"></label>
+              <label>{{ t('hpUpper') }}<Re4Num :value="st.hp.upper" :min="0" :max="100" @change="v => v !== undefined && setHp(k + 1, st, { upper: v })" /></label>
+              <label>{{ t('hpLower') }}<Re4Num :value="st.hp.lower" :min="0" :max="100" @change="v => v !== undefined && setHp(k + 1, st, { lower: v })" /></label>
               <label><input type="checkbox" :checked="st.hp.invert" @change="e => setHp(k + 1, st, { invert: (e.target as HTMLInputElement).checked })">{{ t('hpInvert') }}</label>
             </div>
           </template>
@@ -150,7 +151,7 @@ const { from: dragFrom, drop: dropAt, start: startDrag } = usePointerReorder('.r
                   <ElSelect class="re4-sel-op" :model-value="cond.op" :disabled="busy" size="small" @change="v => changeOp(k + 1, ci + 1, cond, String(v))">
                     <ElOption v-for="op in defOf(cond.type)?.ops ?? []" :key="op" :value="op" :label="op" />
                   </ElSelect>
-                  <input type="number" :value="cond.value" :disabled="busy" @change="e => changeValue(k + 1, ci + 1, cond, (e.target as HTMLInputElement).value)">
+                  <Re4Num :value="Number(cond.value)" :disabled="busy" @change="v => v !== undefined && changeValue(k + 1, ci + 1, cond, String(v))" />
                 </template>
                 <template v-else-if="defOf(cond.type)?.kind === 'enum'">
                   <ElSelect class="re4-sel-op" :model-value="cond.op" :disabled="busy" size="small" @change="v => changeOp(k + 1, ci + 1, cond, String(v))">
@@ -168,7 +169,7 @@ const { from: dragFrom, drop: dropAt, start: startDrag } = usePointerReorder('.r
               <button class="re4-x" :disabled="busy" :aria-label="t('delete')" @click="perform({ kind: 'condition-delete', ...c(), index: k + 1, condition_index: ci + 1 })">×</button>
             </div>
             <div><ElButton size="small" :disabled="busy" @click="perform({ kind: 'condition-add', ...c(), index: k + 1, condition: defaultCondition(defOf('is_battle')) })">{{ t('addCondition') }}</ElButton></div>
-            <div class="re4-fade">{{ t('holdLabel') }}<input type="number" min="0" step="0.5" :value="st.hold" @change="e => numField(k + 1, 'hold', (e.target as HTMLInputElement).value)">{{ t('seconds') }}</div>
+            <div class="re4-fade">{{ t('holdLabel') }}<Re4Num :value="st.hold" :min="0" :max="3600" @change="v => v !== undefined && numField(k + 1, 'hold', String(v))" />{{ t('seconds') }}</div>
           </template>
         </div>
         <div class="re4-scol">

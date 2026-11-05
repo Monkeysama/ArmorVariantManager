@@ -50,7 +50,35 @@ export interface Re4Presets {
   current?: Re4Fit; source?: { id: string; name: string; own: boolean }; dismissed: boolean;
   list: Re4PresetEntry[]; better: { id: string; name: string }[]; autosaves: { name: string; time: number }[];
 }
-export interface Re4Notice { kind: 'migrated'; presets: number }
+export type Re4Notice = { kind: 'migrated'; presets: number } | { kind: 'palette-exported'; path: string };
+
+// 调色盘（Lua 的 Palette.lua / tools/re4/material_profiles）
+export type Re4Text = { zh?: string; en?: string };
+export type Re4Comp = 'x' | 'y' | 'z' | 'w';
+export interface Re4PaletteOption { value: number; label: Re4Text }
+export interface Re4PaletteEntry {
+  param: string; kind: 'color' | 'float' | 'enum' | 'bool' | 'vec'; component?: Re4Comp; channels?: 'rgb' | 'rgba';
+  min?: number; max?: number; step?: number; hard_min?: number; hard_max?: number;
+  enum?: string; options?: Re4PaletteOption[]; labels?: { zh?: string[]; en?: string[] };
+  tier?: 'basic' | 'more'; label?: Re4Text; note?: Re4Text;
+}
+export interface Re4PaletteGroup { id: string; tier: 'basic' | 'more'; section?: string; label?: Re4Text; note?: Re4Text; params: Re4PaletteEntry[] }
+export interface Re4PaletteSection { id: string; label?: Re4Text }
+export interface Re4PaletteProfile { id: string; label: Re4Text; addon: boolean; enums: Record<string, Re4PaletteOption[]>; groups: Re4PaletteGroup[]; sections: Re4PaletteSection[] }
+export interface Re4PaletteMaterial {
+  key: string; slot: string; material: string; note?: string; main?: string; addons: string[];
+  missing: string[]; generic?: string[]; overridden: number;
+}
+// 当前值：float 是数字，float4 是 [x, y, z, w]；覆盖值：float 是数字，float4 只有改过的分量
+export type Re4PaletteValue = number | [number, number, number, number];
+export type Re4PaletteOverride = number | Partial<Record<Re4Comp, number>>;
+export interface Re4Palette {
+  materials: Re4PaletteMaterial[]; profiles: Record<string, Re4PaletteProfile>;
+  values: Record<string, Record<string, Re4PaletteValue>>;
+  overrides: Record<string, Record<string, Re4PaletteOverride> | false>;
+  selected: string[]; errors: string[]; error?: string;
+}
+export interface Re4PaletteWrite { slot: string; material: string; param: string; component?: Re4Comp; value: number }
 
 export interface Re4Snapshot {
   game: 'RE4'; version: string; language: 'zh' | 'en';
@@ -65,6 +93,7 @@ export interface Re4Snapshot {
   height?: number;   // 这一帧生效的模型高度（厘米）；没有 = 不抬高
   heightSource?: { layer: string; option?: string };   // layer: 'override' / 'base' / 状态组名
   heightOverride?: { enabled: boolean; cm: number };   // 快速切换页的全局覆盖（存在当前配置里）
+  palette?: Re4Palette;   // 只在调色页打开时出现
   locating?: { slot: string; material: string };
   presets?: Re4Presets;
   backups?: { hasBackup: boolean; hasOnload: boolean };
@@ -89,6 +118,11 @@ export type Re4Action =
   | C & { kind: 'base-height'; preset: string; cm?: number }
   | C & { kind: 'option-height'; group: string; option: string; cm?: number }
   | C & { kind: 'height-override'; enabled?: boolean; cm?: number }
+  | C & { kind: 'palette-view'; open: boolean; keys: string[] }
+  | C & { kind: 'palette-set'; writes: Re4PaletteWrite[]; live?: boolean }
+  | C & { kind: 'palette-reset'; targets: { slot: string; material: string }[]; param?: string; component?: Re4Comp }
+  | C & { kind: 'palette-reload' }
+  | C & { kind: 'palette-export'; slot: string; material: string }
   | C & { kind: 'group-new'; name: string }
   | C & { kind: 'group-rename'; group: string; name: string }
   | C & { kind: 'group-move'; group: string; offset: number }

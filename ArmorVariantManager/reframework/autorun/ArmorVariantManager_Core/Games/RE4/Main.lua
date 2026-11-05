@@ -819,6 +819,54 @@ function Main.start(ctx)
     -- 模型高度:应用循环每帧按解算结果收集 { source, cm },循环结束交给 HeightFix(下面安装)
     local height_fix = nil
     local frame_heights = {}
+
+    -- 调色盘(Palette.lua)。映射 = 内置(PaletteProfiles.lua)+ data/ArmorVariantManager/material_profiles/*.json,
+    -- 同 id 的外部文件覆盖内置;按需读一次,网页上「重新读取映射」时重读。
+    -- palette_state[target.id] = Palette.apply_mesh 的状态(各 mesh 的原值与写过的参数)
+    local Palette = require("ArmorVariantManager_Core.Games.RE4.Palette")
+    -- 必须在脚本加载时 require:REFramework 只在加载 autorun 期间把 autorun 目录放进 package.path,
+    -- 之后(网页请求、每帧回调里)再 require 会找不到模块
+    local PaletteProfiles = require("ArmorVariantManager_Core.Games.RE4.PaletteProfiles")
+    local PALETTE_DIR = "ArmorVariantManager/material_profiles/"
+    local palette_profiles, palette_by_id, palette_profile_errors = nil, nil, {}
+    local palette_state = {}
+    local function load_palette_profiles(reload)
+        if palette_profiles and not reload then return palette_profiles, palette_by_id end
+        local extras, errors = {}, {}
+        -- glob 会遍历整个 data 目录,遇到转不成系统代码页的文件名会抛错(见 Presets.lua),必须包 pcall
+        local ok, found = false, nil
+        if fs and fs.glob then ok, found = pcall(fs.glob, "ArmorVariantManager[/\\\\]material_profiles[/\\\\][^/\\\\]*\\.json") end
+        if ok and type(found) == "table" then
+            table.sort(found)
+            for _, raw in ipairs(found) do
+                local file = tostring(raw):match("([^/\\]+%.json)$")
+                local ok_l, data = pcall(json.load_file, PALETTE_DIR .. file)
+                if ok_l and type(data) == "table" and Palette.clean_profile(data) then extras[#extras + 1] = data
+                else errors[#errors + 1] = file end
+            end
+        end
+        palette_profiles, palette_by_id = Palette.load_profiles(PaletteProfiles, extras)
+        palette_profile_errors = errors
+        return palette_profiles, palette_by_id
+    end
+    local function apply_palette(target, source, config)
+        local state = palette_state[target.id]
+        local pal = config.palette
+        if not pal and not state then return end
+        state = state or {}
+        palette_state[target.id] = state
+        local live = {}
+        for _, slot in ipairs(Utils.MESH_SLOTS) do
+            local mesh = Utils.get_mesh(source, slot)
+            if mesh then
+                live[tostring(mesh)] = true
+                Palette.apply_mesh(mesh, pal and pal[slot], state, function(m, j, param, value)
+                    if param == "Dissolve_Flag" then Dissolve.set_flag_base(m, j, value) end
+                end)
+            end
+        end
+        Palette.prune(state, live)
+    end
     local function request_reapply() force_reapply = true end
 
     -- Ops 的返回值 → 存盘 / 重写。ImGui 和 REFF 改配置都走这里。
@@ -1231,6 +1279,11 @@ function Main.start(ctx)
                 prev_owner[slot] = prev_owner[slot] or {}
                 for m, k in pairs(mats) do prev_owner[slot][m] = k end
             end
+        end
+        -- 调色盘:和材质开关同一套时机(换实例 / 配置变了 / 被重置 / 强制重写);预览和血量驱动的
+        -- 每帧重写不带它,调色值不会被那些路径改掉
+        if changed or mesh_swapped or drifted or force_reapply then
+            apply_palette(target, source, config)
         end
     end
 
@@ -2806,6 +2859,9 @@ function Main.start(ctx)
             update_source_preset = update_source_preset, restore_autosave = restore_autosave,
             promote_autosave = promote_autosave, preset_lib = preset_lib,
             preview = portrait_web,
+            -- 调色盘:映射(reload = true 重读 data 目录)、读不了的映射文件名、草稿写盘
+            palette_profiles = load_palette_profiles, palette_profile_errors = function() return palette_profile_errors end,
+            palette_dump = function(path, data) return pcall(json.dump_file, path, data) end, palette_dir = PALETTE_DIR,
         })
     end)
     if not reff_ok then note_error("reff", reff_err) end
