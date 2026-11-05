@@ -122,6 +122,23 @@ function Dissolve.set_material(mesh, j, want, cur)
     mat_anims[key] = n
 end
 
+-- 停掉这个 mesh 上所有溶解(定时过渡和血量驱动),变量恢复成 mdf2 的值。
+-- 定位预览用:预览要的是"只显示这一个材质"的瞬间结果,不能被溶解动画拉扯。
+function Dissolve.reset_mesh(mesh)
+    local prefix = tostring(mesh) .. "_"
+    for key, a in pairs(mat_anims) do
+        if key:sub(1, #prefix) == prefix then restore(a.mesh, a.j, a.v); mat_anims[key] = nil end
+    end
+    for key in pairs(driven) do
+        if key:sub(1, #prefix) == prefix then
+            local j = tonumber(key:sub(#prefix + 1))
+            local v = j and find_var(mesh, j)
+            if v then restore(mesh, j, v) end
+            driven[key] = nil
+        end
+    end
+end
+
 function Dissolve.is_animating(mesh, j)
     local key = tostring(mesh) .. "_" .. tostring(j)
     return mat_anims[key] ~= nil or driven[key] ~= nil

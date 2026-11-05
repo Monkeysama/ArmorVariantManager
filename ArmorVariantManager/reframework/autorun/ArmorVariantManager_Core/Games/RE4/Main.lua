@@ -741,6 +741,7 @@ function Main.start(ctx)
     -- 纯预览,**不写进任何预设**;到时间自动恢复,所以不会留下脏状态。
     local preview = nil            -- { slot=, mat=, until_clock=, target_id= }
     local PREVIEW_SECONDS = 3
+    local preview_restoring = false -- 预览刚过期的那一帧:恢复时不用溶解过渡
 
     -- 面板当前编辑的目标(Targets.collect 给的 id)。nil = 还没选过,取第一个(本地玩家)。
     local selected_target_id = nil
@@ -776,17 +777,23 @@ function Main.start(ctx)
 
     local function apply_resolved(source, resolved, active_preview, owner_of, trans, drive_map)
         if not resolved then return end
+        local preview_slot = active_preview and active_preview.slot
         for _, slot in ipairs(Utils.MESH_SLOTS) do
             local slot_data = resolved[slot]
-            if slot_data then
+            -- 预览中的槛位不走正常应用:正常应用会给被预览关掉 / 打开的材质起溶解过渡,
+            -- 和预览每帧互相拉扯(目标材质被溶掉、其余材质反复"出现"),定位就失效了
+            if slot_data and slot ~= preview_slot then
                 local mesh = Utils.get_mesh(source, slot)
                 if mesh then apply_slot(mesh, slot, slot_data, owner_of, trans, drive_map and drive_map[slot]) end
             end
         end
-        -- 预览盖在正常结果之上,否则会被 resolve 的输出压回去
+        -- 预览:瞬间只显示这一个材质,不用溶解(进行中的溶解先复位成 mdf2 的值)
         if active_preview then
             local mesh = Utils.get_mesh(source, active_preview.slot)
-            if mesh then Utils.isolate_material(mesh, active_preview.mat) end
+            if mesh then
+                Dissolve.reset_mesh(mesh)
+                Utils.isolate_material(mesh, active_preview.mat)
+            end
         end
     end
 
@@ -1178,7 +1185,8 @@ function Main.start(ctx)
         ds.drives = now_drives
         -- 材质归属 → 用哪一层的过渡:见 Dissolve.transition_layer(放手的层也要带过渡)
         local owner, prev_owner = info.owner, ds.owner
-        local trans = (not fresh) and ds.trans or nil
+        -- 预览刚结束的那一次恢复也是瞬间的:被预览关掉的材质不该一个个溶解着"出现"
+        local trans = (not fresh) and (not preview_restoring) and ds.trans or nil
         local function owner_of(slot, mat)
             return Dissolve.transition_layer(owner[slot] and owner[slot][mat],
                 prev_owner[slot] and prev_owner[slot][mat], trans)
@@ -1234,6 +1242,7 @@ function Main.start(ctx)
             else
                 preview = nil
                 force_reapply = true
+                preview_restoring = true
             end
         end
 
@@ -1246,6 +1255,7 @@ function Main.start(ctx)
         end
 
         force_reapply = false
+        preview_restoring = false
     end
 
     re.on_frame(function()

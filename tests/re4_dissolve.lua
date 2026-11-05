@@ -87,4 +87,25 @@ assert(Dissolve.transition_layer("base", "group:脱", nil) == "base", "no transi
 assert(Dissolve.transition_layer(nil, "group:脱", T) == "group:脱", "unowned material falls back to the previous writer")
 assert(Dissolve.transition_layer("base", "group:脱", { base = ON, ["group:脱"] = ON }) == "base", "owner's own transition first")
 
-print("PASS: RE4 dissolve show = reversed hide (fully dissolved before enable, IsMorphed 0), hide disables, mid-way reversal, direction, HP drive, plain materials and released-layer transitions")
+-- 定位预览:reset_mesh 停掉这个 mesh 上的定时过渡和血量驱动,变量恢复成 mdf2 的值
+local r = fake({ "Dissolve_Rate", "Dissolve_Flag" })
+r.enabled[0] = true
+Dissolve.use(ON); Dissolve.set_material(r, 0, false, true); Dissolve.use(nil)
+tick(0.1); tick(0.1); tick(0.1)
+assert(Dissolve.is_animating(r, 0) and near(r.values[0].x, 0.3))
+Dissolve.reset_mesh(r)
+assert(not Dissolve.is_animating(r, 0) and near(r.values[0].x, 0) and r.values[1].y == 0 and r.enabled[0] == true,
+    "reset_mesh stops the timed hide and restores the mdf2 values without toggling the material")
+for _ = 1, 12 do tick(0.1) end
+assert(r.enabled[0] == true, "a reset animation no longer disables the material later")
+local rd = fake({ "Dissolve_Rate", "Dissolve_Flag" })
+Dissolve.drive_material(rd, 0, true, 0.4, false)
+assert(Dissolve.is_animating(rd, 0))
+Dissolve.reset_mesh(rd)
+assert(not Dissolve.is_animating(rd, 0) and near(rd.values[0].x, 0), "reset_mesh also ends HP-driven dissolve")
+local other = fake({ "Dissolve_Rate", "Dissolve_Flag" })
+Dissolve.use(ON); Dissolve.set_material(other, 0, false, true); Dissolve.use(nil)
+Dissolve.reset_mesh(r)
+assert(Dissolve.is_animating(other, 0), "other meshes are untouched")
+
+print("PASS: RE4 dissolve show = reversed hide (fully dissolved before enable, IsMorphed 0), hide disables, mid-way reversal, direction, HP drive, plain materials, released-layer transitions and preview reset")
