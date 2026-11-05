@@ -55,7 +55,13 @@ const zh = {
   help: '帮助', loadingHelp: '正在读取帮助…', retryHelp: '重新读取', noHelp: '暂无帮助内容。',
   preview: '全身预览', previewLive: '预览就绪', previewWaiting: '等待角色与预览相机…', previewWaitingForHost: '等待 REFF 绘制预览…',
   previewUnavailable: '更新 REFF 与预览插件后可使用网页预览。', previewSdr: '当前输出模式不支持预览，请切换为 SDR。',
-  previewControls: '滚轮缩放 · 右键旋转 · 中键（或 Shift+右键）平移 · 双击复位', previewFill: '填满', previewNative: '原比例',
+  previewControls: '滚轮缩放 · 右键旋转 · 中键（或 Shift+右键）平移 · 双击复位', previewFill: '竖屏', previewNative: '原比例',
+  heightLabel: '模型高度', heightUnset: '不设', heightClear: '清除', heightTag: '高度 {0} cm',
+  heightHint: '选中这一项时把整个模型抬高（负数为降低）；只改画面，不影响碰撞。留空 = 这一层不管高度，交给其他层；几层都设了时，靠下的状态组覆盖靠上的，状态组覆盖整套造型',
+  heightEnabled: '模型高度', heightEnabledHint: '关掉后所有角色都不抬高（各预设 / 选项里设的高度保留）', heightNow: '模型高度 {0} cm', heightOff: '（已关闭）',
+  heightQuick: '模型高度', heightNone: '不抬高', heightNoSource: '没有预设或选项设置高度', heightFromOverride: '来自全局覆盖',
+  heightFromBase: '来自整套造型「{0}」', heightFromGroup: '来自状态组「{0}」·{1}', heightOverride: '全局覆盖',
+  heightOverrideHint: '打开后不看各预设 / 选项里的高度，统一用这个值；跟当前配置一起保存',
   previewDistance: '预览镜头距离', previewHeight: '预览镜头高度', meters: '米',
 };
 const en: Record<keyof typeof zh, string> = {
@@ -104,7 +110,13 @@ const en: Record<keyof typeof zh, string> = {
   help: 'Help', loadingHelp: 'Loading help…', retryHelp: 'Reload', noHelp: 'No help yet.',
   preview: 'Full-body preview', previewLive: 'Preview ready', previewWaiting: 'Waiting for character and preview camera…', previewWaitingForHost: 'Waiting for REFF to draw the preview…',
   previewUnavailable: 'Update REFF and the portrait plugin to use this preview.', previewSdr: 'Preview requires SDR output.',
-  previewControls: 'Wheel to zoom · Right-drag to rotate · Middle-drag (or Shift+right-drag) to pan · Double-click to reset', previewFill: 'Fill', previewNative: 'Original',
+  previewControls: 'Wheel to zoom · Right-drag to rotate · Middle-drag (or Shift+right-drag) to pan · Double-click to reset', previewFill: 'Tall', previewNative: 'Original',
+  heightLabel: 'Model height', heightUnset: 'unset', heightClear: 'Clear', heightTag: 'height {0} cm',
+  heightHint: 'Raises the whole model while this is selected (negative lowers it); visual only, collision is unchanged. Empty = this layer leaves height to other layers; when several layers set it, lower state groups override upper ones and state groups override the full outfit',
+  heightEnabled: 'Model height', heightEnabledHint: 'When off, no character is raised (heights set on presets / options are kept)', heightNow: 'Model height {0} cm', heightOff: '(off)',
+  heightQuick: 'Model height', heightNone: 'Not raised', heightNoSource: 'No preset or option sets a height', heightFromOverride: 'from the global override',
+  heightFromBase: 'from full outfit "{0}"', heightFromGroup: 'from state group "{0}" · {1}', heightOverride: 'Global override',
+  heightOverrideHint: 'When on, ignores the heights on presets / options and uses this value; saved with the current configuration',
   previewDistance: 'Preview distance', previewHeight: 'Preview height', meters: 'm',
 };
 export type Re4Key = keyof typeof zh;

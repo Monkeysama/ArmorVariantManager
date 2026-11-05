@@ -187,7 +187,7 @@ function Reff.new(deps)
         snapshot.base = { active = base.active, effective = v3.picks.base, fromState = base_layer.prio, presets = {} }
         for _, name in ipairs(base.order) do
             snapshot.base.presets[#snapshot.base.presets + 1] = { name = name, values = values_of(base.presets[name]),
-                match = base_match(source, base.presets[name]) }
+                match = base_match(source, base.presets[name]), height = (base.heights or {})[name] }
         end
 
         snapshot.groups = {}
@@ -197,10 +197,17 @@ function Reff.new(deps)
                 fromState = (info.layers[key] or {}).prio, options = {} }
             for k, s in ipairs(g.scope) do row.scope[k] = s end
             for _, name in ipairs(g.order) do
-                row.options[#row.options + 1] = { name = name, values = values_of(g.options[name]) }
+                row.options[#row.options + 1] = { name = name, values = values_of(g.options[name]), height = (g.heights or {})[name] }
             end
             snapshot.groups[#snapshot.groups + 1] = row
         end
+
+        -- 这一帧生效的模型高度(厘米,nil = 不抬高;总开关关掉时也照算,界面上另外标出)
+        -- heightSource:来自哪一层("override" / "base" / 状态组名 + 选项名);heightOverride:快速切换页的全局覆盖
+        local cm, src = M3.height_of(config, v3.picks)
+        snapshot.height, snapshot.heightSource = cm, src
+        local o = config.height_override
+        snapshot.heightOverride = { enabled = type(o) == "table" and o.enabled == true, cm = type(o) == "table" and o.cm or 0 }
 
         snapshot.states = {}
         for i, st in ipairs(config.conditions.states) do snapshot.states[i] = state_row(st, i, v3, context) end
@@ -228,6 +235,7 @@ function Reff.new(deps)
         local snapshot = { game = "RE4", version = deps.version, language = language(),
             settings = { weaponHideStorage = g.weapon_hide_storage == true,
                 uiDissolveEnabled = g.ui_dissolve_enabled ~= false, blockGameMouse = g.block_game_mouse ~= false,
+                heightEnabled = g.height_enabled ~= false,
                 uiDissolveTime = tonumber(g.ui_dissolve_time) or 1.0,
                 previewDistance = tonumber(g.portrait_distance) or 3.0, previewHeight = tonumber(g.portrait_height) or 0.0 },
             characters = {}, character = "", notice = notice,
@@ -281,6 +289,14 @@ function Reff.new(deps)
             local source = cur.target.source
             return Ops.replace_preset(cfg.base, p.preset,
                 Utils.capture_preserving_unmatched(source, prev, TM.usable_slots(source, prev)))
+        end,
+        -- 模型高度:cm = nil 清除
+        ["base-height"] = function(p, cfg) return OpsV3.set_height(cfg, "base", p.preset, p.cm) end,
+        ["option-height"] = function(p, cfg) return OpsV3.set_height(cfg, p.group, p.option, p.cm) end,
+        ["height-override"] = function(p, cfg)
+            local enabled = nil
+            if p.enabled ~= nil then enabled = p.enabled == true end
+            return OpsV3.set_height_override(cfg, enabled, p.cm)
         end,
         ["base-material"] = function(p, cfg)
             return Ops.set_material(cfg.base.presets[p.preset], p.slot, p.material, p.value == true, true)

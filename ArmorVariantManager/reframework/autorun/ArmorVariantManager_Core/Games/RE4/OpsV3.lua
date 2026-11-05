@@ -194,6 +194,48 @@ function OpsV3.set_option_material(cfg, group, option, slot, mat, value)
     return true, true
 end
 
+-- ============================================================ 模型高度
+-- layer:"base" 或状态组名;option:预设 / 选项名;cm = nil 清除(这一层不管高度)。
+-- 改了要重写:高度每帧由应用循环按解算结果交给 HeightFix
+function OpsV3.set_height(cfg, layer, option, cm)
+    local holder, names
+    if layer == "base" then
+        holder, names = cfg.base, cfg.base.presets
+    else
+        local g = M3.find_group(cfg, layer)
+        if not g then return false end
+        holder, names = g, g.options
+    end
+    if type(option) ~= "string" or not names[option] then return false end
+    if type(holder.heights) ~= "table" then holder.heights = {} end
+    local v = nil
+    if cm ~= nil then
+        v = M3.clamp_height(cm)
+        if v == nil then return false end
+    end
+    if holder.heights[option] == v then return false end
+    holder.heights[option] = v
+    return true, true
+end
+
+-- 全局覆盖(快速切换页):enabled / cm 给哪个改哪个,另一个保持。关掉时保留数值,下次打开接着用
+function OpsV3.set_height_override(cfg, enabled, cm)
+    local cur = type(cfg.height_override) == "table" and cfg.height_override or { enabled = false, cm = 0 }
+    local nxt = { enabled = cur.enabled == true, cm = cur.cm or 0 }
+    if enabled ~= nil then
+        if type(enabled) ~= "boolean" then return false end
+        nxt.enabled = enabled
+    end
+    if cm ~= nil then
+        local v = M3.clamp_height(cm)
+        if v == nil then return false end
+        nxt.cm = v
+    end
+    if type(cfg.height_override) == "table" and nxt.enabled == cur.enabled and nxt.cm == cur.cm then return false end
+    cfg.height_override = nxt
+    return true, true
+end
+
 -- ============================================================ 条件状态
 local function state_at(cfg, i)
     return cfg.conditions.states[tonumber(i) or -1]

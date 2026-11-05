@@ -176,7 +176,8 @@ function Ops.set_global(global_config, id, value)
     if id == "language" then
         if value ~= "zh" and value ~= "en" then return false end
         global_config.language = value
-    elseif id == "weapon_hide_storage" or id == "ui_dissolve_enabled" or id == "portrait_enabled" or id == "block_game_mouse" then
+    elseif id == "weapon_hide_storage" or id == "ui_dissolve_enabled" or id == "portrait_enabled" or id == "block_game_mouse"
+        or id == "height_enabled" then
         global_config[id] = value == true
     elseif id == "portrait_distance" or id == "portrait_height" then
         local n = tonumber(value)
@@ -235,6 +236,8 @@ function Ops.duplicate_preset(layer, name)
         end
     end
     layer.presets[newn] = dst
+    -- v3 的模型高度(layer.heights,可能没有)跟着预设走
+    if type(layer.heights) == "table" and layer.heights[name] then layer.heights[newn] = layer.heights[name] end
     local at = (order_index(layer, name) or #layer.order) + 1
     table.insert(layer.order, at, newn)
     layer.active = newn
@@ -248,6 +251,7 @@ function Ops.rename_preset(layer, old, new)
     if not layer.presets[old] or layer.presets[new] then return false end
     layer.presets[new] = layer.presets[old]
     layer.presets[old] = nil
+    if type(layer.heights) == "table" then layer.heights[new], layer.heights[old] = layer.heights[old], nil end
     local i = order_index(layer, old)
     if i then layer.order[i] = new end
     if layer.active == old then layer.active = new end
@@ -262,6 +266,7 @@ end
 function Ops.delete_preset(layer, name)
     if not layer.presets[name] then return false end
     layer.presets[name] = nil
+    if type(layer.heights) == "table" then layer.heights[name] = nil end
     local i = order_index(layer, name)
     if i then table.remove(layer.order, i) end
     if layer.active == name then layer.active = "" end

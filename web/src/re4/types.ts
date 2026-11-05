@@ -12,7 +12,7 @@ export interface Re4ConditionDef {
 export interface Re4Character { id: string; label: string; configured: boolean; targets: string[] }
 export interface Re4Settings {
   weaponHideStorage: boolean; uiDissolveEnabled: boolean; uiDissolveTime: number;
-  previewDistance?: number; previewHeight?: number; blockGameMouse?: boolean;
+  previewDistance?: number; previewHeight?: number; blockGameMouse?: boolean; heightEnabled?: boolean;
 }
 // 全身预览(和荒野同一个原生插件);只在装了预览插件和新版 REFF 时可用
 export interface Re4Preview { available: boolean; enabled: boolean; status: string; error?: string }
@@ -34,9 +34,10 @@ export interface Re4State {
 // 材质值：键是 "slot/材质"。整套造型是整份（每个材质都有值）；状态组稀疏，没写 = 不管
 export type Re4Values = Record<string, boolean>;
 export interface Re4Match { status: 'ok' | 'partial' | 'mismatch'; skipped: string[] }
-export interface Re4BasePreset { name: string; values: Re4Values; match: Re4Match }
+// height:这个预设 / 选项设的模型高度（厘米）；没有 = 这一层不管高度
+export interface Re4BasePreset { name: string; values: Re4Values; match: Re4Match; height?: number }
 export interface Re4Base { active: string; effective?: string; fromState?: number; presets: Re4BasePreset[] }
-export interface Re4Option { name: string; values: Re4Values }
+export interface Re4Option { name: string; values: Re4Values; height?: number }
 export interface Re4Group { name: string; scope: string[]; active: string; effective?: string; fromState?: number; options: Re4Option[] }
 
 export interface Re4Material { name: string; note?: string }
@@ -61,6 +62,9 @@ export interface Re4Snapshot {
   auto?: boolean; armorMirror?: boolean;
   slots?: Re4Slot[]; look?: Re4Look[];
   base?: Re4Base; groups?: Re4Group[]; states?: Re4State[];
+  height?: number;   // 这一帧生效的模型高度（厘米）；没有 = 不抬高
+  heightSource?: { layer: string; option?: string };   // layer: 'override' / 'base' / 状态组名
+  heightOverride?: { enabled: boolean; cm: number };   // 快速切换页的全局覆盖（存在当前配置里）
   locating?: { slot: string; material: string };
   presets?: Re4Presets;
   backups?: { hasBackup: boolean; hasOnload: boolean };
@@ -70,7 +74,7 @@ export type Re4ConditionInput = { type: string; op?: Re4Op; value: number | stri
 type C = { character: string };
 export type Re4Action =
   | { kind: 'character'; id: string }
-  | { kind: 'setting'; id: 'weapon_hide_storage' | 'ui_dissolve_enabled' | 'ui_dissolve_time' | 'portrait_enabled' | 'portrait_distance' | 'portrait_height' | 'block_game_mouse'; value: boolean | number }
+  | { kind: 'setting'; id: 'weapon_hide_storage' | 'ui_dissolve_enabled' | 'ui_dissolve_time' | 'portrait_enabled' | 'portrait_distance' | 'portrait_height' | 'block_game_mouse' | 'height_enabled'; value: boolean | number }
   | C & { kind: 'migrate' }
   | C & { kind: 'manual'; layer: string; option: string }
   | C & { kind: 'auto'; enabled: boolean }
@@ -82,6 +86,9 @@ export type Re4Action =
   | C & { kind: 'base-rename'; preset: string; name: string }
   | C & { kind: 'base-move'; preset: string; offset: number }
   | C & { kind: 'base-material'; preset: string; slot: string; material: string; value: boolean }
+  | C & { kind: 'base-height'; preset: string; cm?: number }
+  | C & { kind: 'option-height'; group: string; option: string; cm?: number }
+  | C & { kind: 'height-override'; enabled?: boolean; cm?: number }
   | C & { kind: 'group-new'; name: string }
   | C & { kind: 'group-rename'; group: string; name: string }
   | C & { kind: 'group-move'; group: string; offset: number }

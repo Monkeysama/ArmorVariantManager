@@ -102,6 +102,7 @@ local function run(scenario)
     if scenario.config then files[CONFIG_PATH] = S.copy(scenario.config) end
     for path, value in pairs(scenario.files or {}) do files[path] = S.copy(value) end
     local frames, draws, errors, imports = {}, {}, {}, {}
+    local app_entries = {}
 
     local meshes = {
         body = mesh("_Chainsaw/Character/ch/cha0/cha000/00/cha000_00.mesh", {"Skin", "Jacket"}),
@@ -126,7 +127,10 @@ local function run(scenario)
 
     _G.reframework = {get_game_name = function() return "re4" end}
     _G.re = {on_frame = function(f) frames[#frames + 1] = f end,
-        on_draw_ui = function(f) draws[#draws + 1] = f end, on_script_reset = function() end}
+        on_draw_ui = function(f) draws[#draws + 1] = f end, on_script_reset = function() end,
+        -- 模型高度(HeightFix)按引擎阶段注册;这里只确认能装上,写入时机见 re4_height.lua
+        on_pre_application_entry = function(name) app_entries[name] = true end,
+        on_application_entry = function(name) app_entries[name] = true end}
     -- 是否装了 REFF:共享 Bridge 只在 reff_native 存在时才去加载 reff.sdk
     _G.reff_native = scenario.reff and {} or nil
     local handlers, registered_id

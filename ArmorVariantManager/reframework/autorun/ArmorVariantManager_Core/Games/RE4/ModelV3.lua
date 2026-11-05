@@ -12,6 +12,9 @@
 --     conditions = { auto = true, states = { 条件状态, ... } },   -- 数组顺序就是优先级
 --     material_notes = { [slot] = { [材质] = "备注" } }, armor_mirrors_body = true, source_preset = nil,
 --   }
+--   模型高度(可选):base.heights = { [预设名] = 厘米 },groups[i].heights = { [选项名] = 厘米 }。
+--     不放进快照(快照顶层键都是槛位,预设指纹按它算)。解算见 height_of:按叠加顺序,后写覆盖先写。
+--   height_override = { enabled, cm }:全局覆盖(快速切换页),打开时无视各层,统一用 cm。
 --   条件状态 = { name, enabled, exclusive, logic, conditions, hold, fade_in, fade_out,
 --               hp = nil | { upper, lower, invert }, base = nil | "整套造型名",
 --               targets = { { group, option }, ... } }
@@ -94,6 +97,45 @@ local function num(v, default, lo, hi)
     return v
 end
 
+-- 模型高度(厘米):范围同 Wilds 的陷地修复,0.1 厘米取整
+M.HEIGHT_MIN, M.HEIGHT_MAX = -10, 50
+function M.clamp_height(v)
+    v = tonumber(v)
+    if not v or v ~= v or v == math.huge or v == -math.huge then return nil end
+    v = math.max(M.HEIGHT_MIN, math.min(M.HEIGHT_MAX, v))
+    return math.floor(v * 10 + 0.5) / 10
+end
+
+-- 只留指向现有预设 / 选项的合法数值
+local function clean_heights(h, names)
+    local out = {}
+    for n, v in pairs(is_tbl(h) and h or {}) do
+        local cm = names[n] ~= nil and M.clamp_height(v)
+        if cm then out[n] = cm end
+    end
+    return out
+end
+
+-- 这一帧的模型高度:全局覆盖打开时直接用它;否则整套造型先写,再按状态组顺序覆盖;
+-- 没有任何一层设过 → nil(不抬高)。第二个返回值是来源:
+--   { layer = "override" } / { layer = "base", option = 预设名 } / { layer = 状态组名, option = 选项名 }
+function M.height_of(cfg, picks)
+    if not is_tbl(cfg) then return nil end
+    local o = cfg.height_override
+    if is_tbl(o) and o.enabled == true then return M.clamp_height(o.cm) or 0, { layer = "override" } end
+    if not is_tbl(picks) then return nil end
+    local cm, src = nil, nil
+    local base = cfg.base or {}
+    if picks.base and base.heights and base.heights[picks.base] then
+        cm, src = base.heights[picks.base], { layer = "base", option = picks.base }
+    end
+    for _, g in ipairs(cfg.groups or {}) do
+        local pick = picks[M.layer_key(g.name)]
+        if pick and g.heights and g.heights[pick] then cm, src = g.heights[pick], { layer = g.name, option = pick } end
+    end
+    return cm, src
+end
+
 function M.normalize_state(st)
     st.name = (type(st.name) == "string" and st.name ~= "") and st.name or "?"
     st.enabled = st.enabled ~= false
@@ -139,6 +181,7 @@ function M.normalize(cfg)
     base.order = M.reconcile_order(base.order, presets)
     if type(base.active) ~= "string" or (base.active ~= "" and not presets[base.active]) then base.active = "" end
     base.rules, base.auto = nil, nil
+    base.heights = clean_heights(base.heights, presets)
     cfg.base = base
 
     local groups, names = {}, {}
@@ -157,6 +200,7 @@ function M.normalize(cfg)
                 name = g.name, scope = scope, options = options,
                 order = M.reconcile_order(g.order, options),
                 active = (type(g.active) == "string" and options[g.active]) and g.active or "",
+                heights = clean_heights(g.heights, options),
             }
         end
     end
@@ -172,6 +216,11 @@ function M.normalize(cfg)
     cfg.conditions = cond
 
     cfg.axes, cfg.axis_order = nil, nil
+    if is_tbl(cfg.height_override) then
+        cfg.height_override = { enabled = cfg.height_override.enabled == true, cm = M.clamp_height(cfg.height_override.cm) or 0 }
+    else
+        cfg.height_override = nil
+    end
     if not is_tbl(cfg.material_notes) then cfg.material_notes = {} end
     if cfg.armor_mirrors_body ~= false then cfg.armor_mirrors_body = true end
     if type(cfg.source_preset) ~= "string" then cfg.source_preset = nil end

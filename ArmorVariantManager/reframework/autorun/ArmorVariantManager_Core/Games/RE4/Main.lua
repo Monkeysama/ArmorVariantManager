@@ -24,7 +24,9 @@ function Main.start(ctx)
     -- 默认英文(面板顶部有「中文」勾选框,勾了才切中文)。语言是全局的,不跟角色配置走。
     -- ui_dissolve_*:在面板上手动切状态 / 预设时的溶解过渡(只作用于溶解模板的材质)
     -- block_game_mouse:REFF 面板显示时不让游戏读到鼠标按键(见 InputGuard.lua)
-    local global_config = { language = "en", ui_dissolve_enabled = true, ui_dissolve_time = 1.0, block_game_mouse = true }
+    -- height_enabled:模型高度总开关(高度本身按预设 / 选项存在角色配置里,见 HeightFix.lua)
+    local global_config = { language = "en", ui_dissolve_enabled = true, ui_dissolve_time = 1.0, block_game_mouse = true,
+        height_enabled = true }
     local function load_global_settings()
         local loaded = json.load_file(global_config_path)
         if not loaded then return end
@@ -37,6 +39,7 @@ function Main.start(ctx)
         end
         if type(loaded.ui_dissolve_enabled) == "boolean" then global_config.ui_dissolve_enabled = loaded.ui_dissolve_enabled end
         if type(loaded.block_game_mouse) == "boolean" then global_config.block_game_mouse = loaded.block_game_mouse end
+        if type(loaded.height_enabled) == "boolean" then global_config.height_enabled = loaded.height_enabled end
         if tonumber(loaded.ui_dissolve_time) then global_config.ui_dissolve_time = tonumber(loaded.ui_dissolve_time) end
         -- 全身预览(REFF 页面里显示)
         if type(loaded.portrait_enabled) == "boolean" then global_config.portrait_enabled = loaded.portrait_enabled end
@@ -812,6 +815,10 @@ function Main.start(ctx)
 
     -- UI 改了配置之后置上,下一帧强制重写一次(比如把某个材质从轴里摘掉,要退回基线值)
     local force_reapply = false
+
+    -- 模型高度:应用循环每帧按解算结果收集 { source, cm },循环结束交给 HeightFix(下面安装)
+    local height_fix = nil
+    local frame_heights = {}
     local function request_reapply() force_reapply = true end
 
     -- Ops 的返回值 → 存盘 / 重写。ImGui 和 REFF 改配置都走这里。
@@ -1129,6 +1136,12 @@ function Main.start(ctx)
         -- 表现成 changed 乱跳。
         local resolved, changed, info = TransformManager.resolve(target.id, config, target.context, source)
 
+        -- 模型高度:整套造型 → 状态组按叠加顺序,最后设过的那一层说了算
+        if global_config.height_enabled ~= false and info.v3 then
+            local cm = ModelV3.height_of(config, info.v3.picks)
+            if cm and cm ~= 0 then frame_heights[#frame_heights + 1] = { source = source, cm = cm } end
+        end
+
         -- 一:mesh 实例被换掉 —— 之前写的开关必然全丢,无条件重新应用。每帧四次指针比较,很便宜。
         local identity = Utils.get_mesh_identity(source)
         local mesh_swapped = (last_mesh_identity[target.id] ~= identity)
@@ -1224,8 +1237,12 @@ function Main.start(ctx)
     local function frame_logic()
         -- 推进正在跑的溶解过渡(和有没有目标无关:目标消失时动画自己会清掉)
         Dissolve.update()
+        frame_heights = {}
         local targets = Targets.collect()
-        if #targets == 0 then return end
+        if #targets == 0 then
+            if height_fix then height_fix.set_targets(frame_heights) end
+            return
+        end
 
         -- 有状态的条件(掉血计时之类)每帧维护一次,必须在 resolve 之前、且**只调一次** ——
         -- 所以放在目标循环**外面**。放进循环的话,场上有几个目标它就 tick 几次,
@@ -1255,6 +1272,7 @@ function Main.start(ctx)
             -- 一个目标炸掉(傀儡正好这一帧被销毁之类)不该让其它目标也停掉
             if not ok then note_error("apply_target " .. tostring(target.label), err) end
         end
+        if height_fix then height_fix.set_targets(frame_heights) end
 
         force_reapply = false
         preview_restoring = false
@@ -2694,6 +2712,15 @@ function Main.start(ctx)
         InputGuard.install(function() return global_config.block_game_mouse ~= false and InputGuard.reff_visible() end,
             function(msg) log.warn(msg) end)
     end)
+
+    -- 模型高度。装不上只记日志,不影响其他功能
+    local ok_hf, err_hf = pcall(function()
+        height_fix = require("ArmorVariantManager_Core.Games.RE4.HeightFix").new({
+            skeleton_of = Utils.get_skeleton_transform,
+            on_error = function(msg) note_error("height_fix", msg) end,
+        })
+    end)
+    if not ok_hf then note_error("height_fix", err_hf) end
 
     -- 全身预览的拍摄对象:{ root = 角色根变换, meshes = 四个槛位的网格 }。
     --   玩家 / 伙伴:BodyUpdater 挂在身体对象上,它的变换就是角色根(2026-11-05 实测伙伴 ch2a1z0_body 无父节点)

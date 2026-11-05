@@ -89,6 +89,23 @@ function Utils.get_mesh(source, slot)
     return nil
 end
 
+-- 驱动骨架的 Transform(模型高度要抬它的 root)。身体网格所在对象通常是 SameJointsConstraint
+-- 的子对象(实测 Leon:body / head / hair / body_armor 都挂在 ch0a0z0_body 下),往上找到
+-- 不再同步父骨架的那一层。找不到身体网格就返回 nil。
+function Utils.get_skeleton_transform(source)
+    local mesh = Utils.get_mesh(source, "body")
+    if not mesh then return nil end
+    local go = mesh:call("get_GameObject")
+    local tr = go and go:call("get_Transform")
+    for _ = 1, 4 do
+        if not tr or tr:call("get_SameJointsConstraint") ~= true then break end
+        local parent = tr:call("get_Parent")
+        if not parent then break end
+        tr = parent
+    end
+    return tr
+end
+
 function Utils.has_armor_mesh(source)
     if not source then return false end
     if type(source) == "table" then return Utils.get_mesh(source, "armor") ~= nil end

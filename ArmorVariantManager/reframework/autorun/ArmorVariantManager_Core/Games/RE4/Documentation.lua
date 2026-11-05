@@ -17,6 +17,11 @@ return {
                 { title = "左侧的游戏状态", paragraphs = {
                     "左侧只读显示 HP 和当前成立的条件;在整套造型、状态组和条件状态页还会列出最终材质。",
                 } },
+                { title = "模型高度", paragraphs = {
+                    "展开整套造型的预设或状态组的选项,可以填「模型高度」(厘米,-10 到 50),选中它时整个模型抬高或降低,适合高跟鞋陷进地面的情况。只改画面,碰撞和移动不变;镜头会跟着抬高同样的距离。",
+                    "留空表示这一层不管高度。几层都填了时,状态组覆盖整套造型,靠下的状态组覆盖靠上的;填 0 也算设置(例如平底鞋取消整套造型的抬高)。",
+                    "「杂项」里的「模型高度」开关可以整体关闭,已填的高度会保留。",
+                } },
             },
         },
         {
@@ -79,6 +84,11 @@ return {
                 } },
                 { title = "Game state on the left", paragraphs = {
                     "The left column shows HP and the conditions that are true right now; on the editing tabs it also lists the final materials.",
+                } },
+                { title = "Model height", paragraphs = {
+                    "Expand a full outfit preset or a state group option to set its \"Model height\" (cm, -10 to 50). While it is selected the whole model is raised or lowered, e.g. for high heels sinking into the ground. Visual only: collision and movement are unchanged; the camera rises by the same amount.",
+                    "Leave it empty to let other layers decide. When several layers set it, state groups override the full outfit and lower groups override upper ones; 0 also counts (e.g. flat shoes cancel the outfit's lift).",
+                    "The \"Model height\" switch under Misc turns it off everywhere; the heights you entered are kept.",
                 } },
             },
         },

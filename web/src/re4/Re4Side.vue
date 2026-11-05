@@ -43,6 +43,10 @@ const locating = computed(() => props.snapshot.locating);
     <section v-if="showLook" class="re4-panel re4-panel-body" :aria-label="t('finalMaterials')">
       <p class="re4-eyebrow">{{ t('finalMaterials') }}</p>
       <p v-if="locating" class="re4-small" style="margin:0;color:var(--avm-accent)">{{ t('locatingNow', locating.material) }}</p>
+      <p v-if="snapshot.height !== undefined && snapshot.height !== 0" class="re4-small" style="margin:0"
+        :class="{ 're4-muted': snapshot.settings.heightEnabled === false }">
+        {{ t('heightNow', (snapshot.height > 0 ? '+' : '') + snapshot.height) }}<template v-if="snapshot.settings.heightEnabled === false">{{ t('heightOff') }}</template>
+      </p>
       <div v-for="g in groupedLook" :key="g.slot" class="re4-look">
         <span class="re4-muted re4-small">{{ slotLabel(g.slot) }}</span>
         <div v-for="row in g.rows" :key="row.material" class="re4-look-row" :class="{ off: !row.on }">

@@ -78,7 +78,10 @@ export function installRe4Fixture() {
   const params = new URLSearchParams(location.search);
   let config = initial();
   let version: 2 | 3 = params.has('re4-v2') ? 2 : 3;
-  const settings = { weaponHideStorage: false, uiDissolveEnabled: true, uiDissolveTime: 1, blockGameMouse: true };
+  const settings = { weaponHideStorage: false, uiDissolveEnabled: true, uiDissolveTime: 1, blockGameMouse: true, heightEnabled: true };
+  // 模型高度(夹具简化:不跟改名 / 删除走)。键:'base|预设' / 'g:组|选项'
+  const heights: Record<string, number> = {};
+  const heightOverride = { enabled: false, cm: 0 };
   let character = 'Leon';
   let backup: Config | undefined;
   let notice: Re4Snapshot['notice'];
@@ -151,10 +154,14 @@ export function installRe4Fixture() {
     const pick = (key: string, manual: string) => r.claims[key]?.option ?? (manual || undefined);
     const effBase = pick('base', config.base.active);
     const look: Values = { ...(effBase ? config.base.presets[effBase] : full()) };
+    let height = effBase !== undefined ? heights['base|' + effBase] : undefined;
+    let heightSource: Re4Snapshot['heightSource'] = height !== undefined ? { layer: 'base', option: effBase } : undefined;
     for (const g of config.groups) {
       const o = pick('g:' + g.name, g.active);
       if (o && g.options[o]) Object.assign(look, g.options[o]);
+      if (o && heights[`g:${g.name}|${o}`] !== undefined) { height = heights[`g:${g.name}|${o}`]; heightSource = { layer: g.name, option: o }; }
     }
+    if (heightOverride.enabled) { height = heightOverride.cm; heightSource = { layer: 'override' }; }
     const states: Re4State[] = config.states.map((st, k) => ({
       name: st.name, enabled: st.enabled, exclusive: st.exclusive, logic: st.logic, hold: st.hold, fadeIn: st.fade_in, fadeOut: st.fade_out,
       hp: st.hp, base: st.base, baseResult: r.results[k].base, kind: r.status[k].kind, by: r.status[k].by, holding: false,
@@ -172,10 +179,10 @@ export function installRe4Fixture() {
       slots: Object.entries(catalog).map(([id, mats]) => ({ id, label: labels[id], mirrored: false, materials: mats.map(name => ({ name, note: config.notes[`${id}/${name}`] })) })),
       look: allKeys.map(k => { const [slot, material] = k.split('/'); return { slot, material, on: look[k] !== false }; }),
       base: { active: config.base.active, effective: effBase, fromState: r.claims.base?.i,
-        presets: config.base.order.map(name => ({ name, values: config.base.presets[name], match: { status: 'ok', skipped: [] } })) },
+        presets: config.base.order.map(name => ({ name, values: config.base.presets[name], match: { status: 'ok', skipped: [] }, height: heights['base|' + name] })) },
       groups: config.groups.map(g => ({ name: g.name, scope: g.scope, active: g.active, effective: pick('g:' + g.name, g.active),
-        fromState: r.claims['g:' + g.name]?.i, options: g.order.map(name => ({ name, values: g.options[name] })) })),
-      states, locating,
+        fromState: r.claims['g:' + g.name]?.i, options: g.order.map(name => ({ name, values: g.options[name], height: heights[`g:${g.name}|${name}`] })) })),
+      states, locating, height, heightSource, heightOverride: { ...heightOverride },
       presets: { current: config.source === 'p0002' ? 'partial' : 'full', dismissed,
         source: source ? { id: source.id, name: source.name, own: source.source === 'user' } : undefined,
         list: presets.map(p => ({ id: p.id, name: p.name, source: p.source, match: p.match })),
@@ -201,6 +208,7 @@ export function installRe4Fixture() {
     if (a.kind === 'setting') {
       if (a.id === 'weapon_hide_storage') settings.weaponHideStorage = a.value === true;
       else if (a.id === 'block_game_mouse') settings.blockGameMouse = a.value === true;
+      else if (a.id === 'height_enabled') settings.heightEnabled = a.value === true;
       else if (a.id === 'ui_dissolve_enabled') settings.uiDissolveEnabled = a.value === true;
       else if (a.id === 'portrait_enabled') previewEnabled = a.value === true;
       else if (a.id === 'portrait_distance' || a.id === 'portrait_height') return;
@@ -228,6 +236,11 @@ export function installRe4Fixture() {
         config.base.order.splice(config.base.order.indexOf(a.preset), 1); if (config.base.active === a.preset) config.base.active = ''; break;
       case 'base-recapture': if (!config.base.presets[a.preset]) fail(); backup = clone(config); config.base.presets[a.preset] = full(); break;
       case 'base-material': (config.base.presets[a.preset] ?? fail())[`${a.slot}/${a.material}`] = a.value; break;
+      case 'base-height': if (!config.base.presets[a.preset]) fail();
+        if (a.cm === undefined) delete heights['base|' + a.preset]; else heights['base|' + a.preset] = a.cm; break;
+      case 'height-override': if (a.enabled !== undefined) heightOverride.enabled = a.enabled; if (a.cm !== undefined) heightOverride.cm = a.cm; break;
+      case 'option-height': { const g = groupOf(a.group) ?? fail(); if (!g.options[a.option]) fail();
+        if (a.cm === undefined) delete heights[`g:${a.group}|${a.option}`]; else heights[`g:${a.group}|${a.option}`] = a.cm; break; }
       case 'group-new': if (!a.name || groupOf(a.name)) fail(); config.groups.push({ name: a.name, scope: [], options: {}, order: [], active: '' }); break;
       case 'group-rename': { const g = groupOf(a.group) ?? fail(); if (!a.name || groupOf(a.name)) fail(); config.states.forEach(s => s.targets.forEach(t => { if (t.group === a.group) t.group = a.name; })); g.name = a.name; break; }
       case 'group-move': { const i = config.groups.findIndex(g => g.name === a.group), j = i + a.offset; if (i < 0 || j < 0 || j >= config.groups.length) fail(); config.groups.splice(j, 0, config.groups.splice(i, 1)[0]); break; }
