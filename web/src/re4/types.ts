@@ -12,7 +12,7 @@ export interface Re4ConditionDef {
 export interface Re4Character { id: string; label: string; configured: boolean; targets: string[] }
 export interface Re4Settings {
   weaponHideStorage: boolean; uiDissolveEnabled: boolean; uiDissolveTime: number;
-  previewDistance?: number; previewHeight?: number;
+  previewDistance?: number; previewHeight?: number; blockGameMouse?: boolean;
 }
 // 全身预览(和荒野同一个原生插件);只在装了预览插件和新版 REFF 时可用
 export interface Re4Preview { available: boolean; enabled: boolean; status: string; error?: string }
@@ -49,7 +49,7 @@ export interface Re4Presets {
   current?: Re4Fit; source?: { id: string; name: string; own: boolean }; dismissed: boolean;
   list: Re4PresetEntry[]; better: { id: string; name: string }[]; autosaves: { name: string; time: number }[];
 }
-export interface Re4Notice { kind: 'migrated'; overlaps: number; presets: number }
+export interface Re4Notice { kind: 'migrated'; presets: number }
 
 export interface Re4Snapshot {
   game: 'RE4'; version: string; language: 'zh' | 'en';
@@ -70,7 +70,7 @@ export type Re4ConditionInput = { type: string; op?: Re4Op; value: number | stri
 type C = { character: string };
 export type Re4Action =
   | { kind: 'character'; id: string }
-  | { kind: 'setting'; id: 'weapon_hide_storage' | 'ui_dissolve_enabled' | 'ui_dissolve_time' | 'portrait_enabled' | 'portrait_distance' | 'portrait_height'; value: boolean | number }
+  | { kind: 'setting'; id: 'weapon_hide_storage' | 'ui_dissolve_enabled' | 'ui_dissolve_time' | 'portrait_enabled' | 'portrait_distance' | 'portrait_height' | 'block_game_mouse'; value: boolean | number }
   | C & { kind: 'migrate' }
   | C & { kind: 'manual'; layer: string; option: string }
   | C & { kind: 'auto'; enabled: boolean }
@@ -87,6 +87,7 @@ export type Re4Action =
   | C & { kind: 'group-move'; group: string; offset: number }
   | C & { kind: 'group-delete'; group: string }
   | C & { kind: 'scope-add' | 'scope-remove'; group: string; slot: string; material: string }
+  | C & { kind: 'scope-set'; group: string; add: { slot: string; material: string }[]; remove: { slot: string; material: string }[] }
   | C & { kind: 'option-new'; group: string; name?: string }
   | C & { kind: 'option-duplicate' | 'option-delete'; group: string; option: string }
   | C & { kind: 'option-rename'; group: string; option: string; name: string }

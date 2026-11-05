@@ -11,7 +11,7 @@ const props = defineProps<{ snapshot: Re4Snapshot; busy: boolean; perform: Re4Pe
 defineEmits<{ 'retry-documentation': [] }>();
 const helpOpen = shallowRef(false);
 const old = () => props.snapshot.configVersion === 2;
-const setting = (id: 'weapon_hide_storage' | 'ui_dissolve_enabled' | 'ui_dissolve_time' | 'portrait_distance' | 'portrait_height', value: boolean | number) =>
+const setting = (id: 'weapon_hide_storage' | 'ui_dissolve_enabled' | 'ui_dissolve_time' | 'portrait_distance' | 'portrait_height' | 'block_game_mouse', value: boolean | number) =>
   props.perform({ kind: 'setting', id, value });
 </script>
 
@@ -33,6 +33,10 @@ const setting = (id: 'weapon_hide_storage' | 'ui_dissolve_enabled' | 'ui_dissolv
         <ElSwitch :model-value="snapshot.armorMirror" :disabled="busy" size="small"
           @change="v => perform({ kind: 'armor-mirror', character: snapshot.character, enabled: v === true })" />
         <span>{{ t('armorMirror') }}</span><span class="re4-muted re4-small">{{ t('armorMirrorHint') }}</span>
+      </div>
+      <div class="re4-row">
+        <ElSwitch :model-value="snapshot.settings.blockGameMouse !== false" :disabled="busy" size="small" @change="v => setting('block_game_mouse', v === true)" />
+        <span>{{ t('blockGameMouse') }}</span><span class="re4-muted re4-small">{{ t('blockGameMouseHint') }}</span>
       </div>
       <div class="re4-row">
         <ElSwitch :model-value="snapshot.settings.weaponHideStorage" :disabled="busy" size="small" @change="v => setting('weapon_hide_storage', v === true)" />

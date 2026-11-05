@@ -2,6 +2,14 @@
 import { computed, shallowRef, watch, watchEffect } from 'vue';
 import { ElButton, ElConfigProvider, ElOption, ElSelect, ElSwitch, REFF_ELEMENT_LOCALES } from '@reff/ui';
 import { useAvmState } from '../avm';
+
+// REFF 是 WebView2 离屏渲染，宿主没有接系统级拖放：任何原生拖动（拖选中的文字、图片、链接）都会进入
+// 宿主的原生拖拽循环并卡死整个页面。从游戏外按住左键拖进来时，页面会收到"按住移动"而开始选字，
+// 接着就是拖文字 → 卡死。所以整页禁止原生拖动，只在输入框里允许选字。排序拖动走 reorder.ts。
+const blockSelect = (e: Event) => {
+  const el = e.target instanceof Element ? e.target : (e.target as Node | null)?.parentElement;
+  if (!el?.closest('input, textarea, [contenteditable="true"]')) e.preventDefault();
+};
 import PortraitPane from '../PortraitPane.vue';
 import type { Translate } from '../i18n';
 import Re4Side from './Re4Side.vue';
@@ -51,7 +59,8 @@ watch(() => snapshot.value?.notice, value => { if (value) notice.value = value; 
 
 <template>
   <ElConfigProvider :locale="REFF_ELEMENT_LOCALES[english ? 'en-US' : 'zh-CN']">
-    <main class="avm re4" :class="{ 'preview-open': previewOpen && !!snapshot?.preview }" data-theme="reff" :aria-busy="busy || loading">
+    <main class="avm re4" :class="{ 'preview-open': previewOpen && !!snapshot?.preview }" data-theme="reff" :aria-busy="busy || loading"
+      @dragstart.capture.prevent @selectstart.capture="blockSelect">
       <header class="avm-header re4-header">
         <div class="identity"><h1>{{ t('title') }}</h1></div>
         <div v-if="snapshot && snapshot.characters.length > 0" class="re4-character">
@@ -71,7 +80,8 @@ watch(() => snapshot.value?.notice, value => { if (value) notice.value = value; 
       </header>
       <div class="avm-body">
         <!-- 和荒野同一布局:预览是正文外的整列(原生画面在网页下层,正文底色不能盖住它),随窗口高度伸缩 -->
-        <PortraitPane v-if="previewOpen && snapshot?.preview" :client="avm.client" :preview="snapshot.preview" :t="previewText" />
+        <PortraitPane v-if="previewOpen && snapshot?.preview" :client="avm.client" :preview="snapshot.preview" :t="previewText"
+          controls :controls-hint="t('previewControls')" />
         <div class="avm-content">
           <div v-if="error" class="error-banner" role="alert"><span>{{ error }}</span>
             <ElButton v-if="!snapshot" :disabled="loading" @click="connect">{{ t('retry') }}</ElButton>
@@ -84,14 +94,15 @@ watch(() => snapshot.value?.notice, value => { if (value) notice.value = value; 
             </div>
             <div class="re4-main">
               <div v-if="notice" class="re4-banner ok" role="status">
-                <span>{{ t('migrated') }}<template v-if="notice.overlaps"> {{ t('migratedOverlaps', notice.overlaps) }}</template><template v-if="notice.presets"> {{ t('migratedPresets', notice.presets) }}</template></span>
+                <span>{{ t('migrated') }}<template v-if="notice.presets"> {{ t('migratedPresets', notice.presets) }}</template></span>
                 <button class="dismiss-error" :aria-label="t('dismiss')" @click="notice = null">×</button>
               </div>
               <div v-if="!hasCharacter && tab !== 'misc'" class="state-banner" role="status">{{ t('noCharacter') }}</div>
               <div v-else-if="!v3 && tab !== 'misc'" class="re4-banner" role="status">
                 <span>{{ t('needMigration') }}</span><ElButton size="small" type="primary" @click="tab = 'misc'">{{ t('goMigrate') }}</ElButton>
               </div>
-              <template v-else>
+              <!-- 切页签不丢折叠 / 展开状态：页签组件用 KeepAlive 缓存（键里带角色，换角色才重置） -->
+              <KeepAlive v-else :max="12">
                 <Re4Quick v-if="tab === 'quick'" :snapshot="snapshot" :busy="busy" :perform="perform" :t="t" />
                 <Re4Layers v-else-if="tab === 'base'" :key="'base-' + snapshot.character" mode="base" :snapshot="snapshot" :busy="busy" :perform="perform" :t="t" />
                 <Re4Layers v-else-if="tab === 'groups'" :key="'groups-' + snapshot.character" mode="groups" :snapshot="snapshot" :busy="busy" :perform="perform" :t="t" />
@@ -99,7 +110,7 @@ watch(() => snapshot.value?.notice, value => { if (value) notice.value = value; 
                 <Re4Presets v-else-if="tab === 'presets'" :key="'presets-' + snapshot.character" :snapshot="snapshot" :busy="busy" :perform="perform" :t="t" />
                 <Re4Misc v-else :snapshot="snapshot" :busy="busy" :perform="perform" :t="t" :documentation="documentation"
                   :documentation-loading="documentationLoading" :documentation-error="documentationError" @retry-documentation="retryDocumentation" />
-              </template>
+              </KeepAlive>
             </div>
           </div>
         </div>
@@ -118,6 +129,8 @@ watch(() => snapshot.value?.notice, value => { if (value) notice.value = value; 
 
 <style>
 /* 状态颜色：绿 = 生效，红 = 被覆盖（有问题），灰 = 未命中。颜色之外还有形状，照顾色弱 */
+.re4 { user-select: none; -webkit-user-drag: none; }
+.re4 input, .re4 textarea { user-select: text; }
 .re4 { --re4-ok: var(--el-color-success, #2c7a4b); --re4-bad: var(--el-color-danger, #c0353d); --re4-soft: var(--el-fill-color-light, rgba(127, 127, 127, .08));
   --re4-ok-soft: var(--el-color-success-light-9, rgba(44, 122, 75, .12)); --re4-bad-soft: var(--el-color-danger-light-9, rgba(192, 53, 61, .12)); }
 .re4-header { align-items: center; }

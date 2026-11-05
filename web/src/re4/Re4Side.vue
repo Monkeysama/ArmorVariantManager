@@ -2,6 +2,7 @@
 import { computed } from 'vue';
 import type { Re4Translate } from './i18n';
 import type { Re4Snapshot } from './types';
+import { shortSlot } from './util';
 
 // 左侧常驻：游戏状态只读（HP + 当前成立的条件；详情在条件状态展开时看），
 // 最终材质只在整套造型 / 状态组 / 条件状态页显示（快速切换用不到）。
@@ -12,7 +13,7 @@ const notes = computed(() => {
   for (const slot of props.snapshot.slots ?? []) for (const m of slot.materials) if (m.note) out[`${slot.id}/${m.name}`] = m.note;
   return out;
 });
-const slotLabel = (id: string) => props.snapshot.slots?.find(s => s.id === id)?.label ?? id;
+const slotLabel = (id: string) => shortSlot(props.snapshot.slots?.find(s => s.id === id)?.label ?? id);
 const groupedLook = computed(() => {
   const out: { slot: string; rows: { material: string; on: boolean; note?: string }[] }[] = [];
   for (const row of props.snapshot.look ?? []) {

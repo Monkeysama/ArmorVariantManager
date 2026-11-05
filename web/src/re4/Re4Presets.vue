@@ -96,10 +96,9 @@ const time = (s: number) => s > 0 ? new Date(s * 1000).toLocaleString() : '';
     <section class="re4-panel">
       <div class="re4-panel-head">
         <button class="re4-caret" :aria-expanded="folds.has('autosave')" @click="toggle('autosave')">{{ folds.has('autosave') ? '▾' : '▸' }}</button>
-        <span class="re4-panel-title">{{ t('autosaves', p.autosaves.length) }}</span>
+        <span class="re4-panel-title" :title="t('autosaveHint')">{{ t('autosaves', p.autosaves.length) }}</span>
       </div>
       <div v-if="folds.has('autosave')" class="re4-panel-body">
-        <span class="re4-muted re4-small">{{ t('autosaveHint') }}</span>
         <span v-if="!p.autosaves.length" class="re4-muted re4-small">{{ t('noAutosaves') }}</span>
         <div v-for="(a, k) in p.autosaves" :key="k" class="re4-prow">
           <span class="re4-pname">{{ a.name }}</span><span class="re4-muted re4-small">{{ time(a.time) }}</span><span class="re4-spacer"></span>

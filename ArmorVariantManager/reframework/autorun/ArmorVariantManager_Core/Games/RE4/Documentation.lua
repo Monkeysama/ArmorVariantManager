@@ -23,7 +23,7 @@ return {
             id = "states", title = "条件状态",
             entries = {
                 { title = "优先级与独占", paragraphs = {
-                    "条件状态从上往下就是优先级,拖动左边的 ⠿ 或点 ▲▼ 调整。一个条件状态可以同时切换整套造型和若干状态组。",
+                    "条件状态从上往下就是优先级,拖动左边的 ⠿ 调整。一个条件状态可以同时切换整套造型和若干状态组。",
                     "整套造型和每个状态组,各自听命中的最高那个条件状态的;没被提到的,保持手动选择。",
                     "打开「独占」后,这个条件状态命中时,排在下面的条件状态全部被覆盖。",
                     "颜色:绿色是生效,红色是被覆盖,灰色是未命中;虚线圆圈是已停用。",
@@ -86,7 +86,7 @@ return {
             id = "states", title = "Condition states",
             entries = {
                 { title = "Priority and exclusive", paragraphs = {
-                    "Top to bottom is priority; drag ⠿ or use ▲▼ to reorder. One condition state can switch the full outfit and several state groups at once.",
+                    "Top to bottom is priority; drag ⠿ to reorder. One condition state can switch the full outfit and several state groups at once.",
                     "The full outfit and each state group follow the highest matching condition state; anything not mentioned keeps the manual choice.",
                     "With Exclusive on, every condition state below it is overridden while it matches.",
                     "Colours: green is effective, red is overridden, grey is not matched; a dashed circle is disabled.",

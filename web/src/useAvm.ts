@@ -27,11 +27,25 @@ export function useAvm(helpOpen: Readonly<Ref<boolean>>) {
   let documentationRead: Promise<void> | undefined;
   let importsRead: Promise<Imports> | undefined;
   let timer: number | undefined;
+  // 轮询每次都整份替换快照，整页随之重渲染；打字时这一下会让输入框周期性顿住。
+  // 所以最近有键盘输入时跳过轮询，快照内容没变时也不替换（不触发重渲染）。
+  // 不用 document.activeElement 判断：REFF 的原生输入代理接管焦点后，页面里常常已不是输入框。
+  const TYPING_PAUSE_MS = 1500;
+  let lastTyping = 0;
+  let lastRaw = '';
+  const markTyping = () => { lastTyping = performance.now(); };
+  function accept(value: AnySnapshot) {
+    const raw = JSON.stringify(value);
+    if (raw === lastRaw && snapshot.value) return;
+    lastRaw = raw;
+    snapshot.value = normalize(value);
+  }
 
   function refresh() {
     if (disposed || busy.value || read || documentationRead || importsRead || document.hidden || !ready) return;
+    if (performance.now() - lastTyping < TYPING_PAUSE_MS) return;
     read = client.call<AnySnapshot>('monkeysama.avm.snapshot').then(value => {
-      if (!disposed) snapshot.value = normalize(value);
+      if (!disposed) accept(value);
     }).catch(reason => { if (!disposed) error.value = reason instanceof Error ? reason.message : String(reason); })
       .finally(() => { read = undefined; loading.value = false; });
     return read;
@@ -100,7 +114,7 @@ export function useAvm(helpOpen: Readonly<Ref<boolean>>) {
           : action.kind === 'mode' || action.kind === 'theme' ? action : { ...action, bodyId };
         const value = await client.call<AnySnapshot>('monkeysama.avm.action', params);
         if (disposed) return false;
-        snapshot.value = normalize(value);
+        accept(value);
       }
       error.value = '';
       return true;
@@ -114,12 +128,18 @@ export function useAvm(helpOpen: Readonly<Ref<boolean>>) {
     void connect();
     timer = window.setInterval(refresh, 1000);
     document.addEventListener('visibilitychange', visible);
+    window.addEventListener('keydown', markTyping, true);
+    window.addEventListener('input', markTyping, true);
+    window.addEventListener('compositionupdate', markTyping, true);
     window.parent.postMessage({ type: 'reff:plugin-ready', pluginId: 'monkeysama.avm', uiVersion: REFF_UI_VERSION, styled: true }, '*');
   });
   onBeforeUnmount(() => {
     disposed = true;
     window.clearInterval(timer);
     document.removeEventListener('visibilitychange', visible);
+    window.removeEventListener('keydown', markTyping, true);
+    window.removeEventListener('input', markTyping, true);
+    window.removeEventListener('compositionupdate', markTyping, true);
     stopInput(); client.dispose();
   });
   return { client, snapshot, busy, loading, error, notice, perform, connect, documentation, documentationLoading, documentationError, retryDocumentation: () => loadDocumentation(true), loadImports };

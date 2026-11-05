@@ -39,7 +39,7 @@ const base = computed(() => {
     <section class="re4-panel">
       <div class="re4-panel-head">
         <button class="re4-caret" :aria-expanded="groupsOpen" @click="groupsOpen = !groupsOpen">{{ groupsOpen ? '▾' : '▸' }}</button>
-        <span class="re4-panel-title">{{ t('tabGroups') }}</span><span class="re4-muted re4-small">{{ t('groupsHint') }}</span>
+        <span class="re4-panel-title">{{ t('tabGroups') }}</span>
       </div>
       <div v-if="groupsOpen" class="re4-panel-body">
         <span v-if="!rows.length" class="re4-muted re4-small">{{ t('noGroups') }}</span>

@@ -78,7 +78,7 @@ export function installRe4Fixture() {
   const params = new URLSearchParams(location.search);
   let config = initial();
   let version: 2 | 3 = params.has('re4-v2') ? 2 : 3;
-  const settings = { weaponHideStorage: false, uiDissolveEnabled: true, uiDissolveTime: 1 };
+  const settings = { weaponHideStorage: false, uiDissolveEnabled: true, uiDissolveTime: 1, blockGameMouse: true };
   let character = 'Leon';
   let backup: Config | undefined;
   let notice: Re4Snapshot['notice'];
@@ -141,7 +141,8 @@ export function installRe4Fixture() {
     const base: Re4Snapshot = { game: 'RE4', version: '4.3.4', language: 'zh', settings: { ...settings },
       characters: params.has('re4-empty') ? [] : [{ id: 'Leon', label: '里昂', configured: true, targets: ['玩家', '过场傀儡'] }, { id: 'Ada', label: '艾达', configured: false, targets: ['过场傀儡'] }],
       character: params.has('re4-empty') ? '' : character, notice,
-      preview: { available: false, enabled: previewEnabled, status: 'preview_native_missing' } };
+      preview: params.has('preview') ? { available: true, enabled: previewEnabled, status: 'preview_live' }
+        : { available: false, enabled: previewEnabled, status: 'preview_native_missing' } };
     notice = undefined;
     if (params.has('re4-empty')) return base;
     base.configVersion = version;
@@ -199,6 +200,7 @@ export function installRe4Fixture() {
     if (a.kind === 'character') { character = a.id; return; }
     if (a.kind === 'setting') {
       if (a.id === 'weapon_hide_storage') settings.weaponHideStorage = a.value === true;
+      else if (a.id === 'block_game_mouse') settings.blockGameMouse = a.value === true;
       else if (a.id === 'ui_dissolve_enabled') settings.uiDissolveEnabled = a.value === true;
       else if (a.id === 'portrait_enabled') previewEnabled = a.value === true;
       else if (a.id === 'portrait_distance' || a.id === 'portrait_height') return;
@@ -206,7 +208,7 @@ export function installRe4Fixture() {
       return;
     }
     if (a.character !== character) fail('当前角色已变化，请确认后重试');
-    if (a.kind === 'migrate') { if (version === 3) fail(); version = 3; backup = clone(config); notice = { kind: 'migrated', overlaps: 1, presets: 2 }; return; }
+    if (a.kind === 'migrate') { if (version === 3) fail(); version = 3; backup = clone(config); notice = { kind: 'migrated', presets: 2 }; return; }
     if (version !== 3) fail('这份配置还是旧版，请先在「杂项」里迁移旧配置');
     switch (a.kind) {
       case 'manual':
@@ -231,7 +233,7 @@ export function installRe4Fixture() {
       case 'group-move': { const i = config.groups.findIndex(g => g.name === a.group), j = i + a.offset; if (i < 0 || j < 0 || j >= config.groups.length) fail(); config.groups.splice(j, 0, config.groups.splice(i, 1)[0]); break; }
       case 'group-delete': { const i = config.groups.findIndex(g => g.name === a.group); if (i < 0) fail(); backup = clone(config); config.groups.splice(i, 1); break; }
       case 'scope-add': { const g = groupOf(a.group) ?? fail(); const key = `${a.slot}/${a.material}`;
-        if (config.groups.some(x => x.scope.includes(key))) fail('这个材质已属于别的状态组'); g.scope.push(key); break; }
+        if (g.scope.includes(key)) fail(); g.scope.push(key); break; }
       case 'scope-remove': { const g = groupOf(a.group) ?? fail(); const key = `${a.slot}/${a.material}`; if (!g.scope.includes(key)) fail();
         g.scope = g.scope.filter(k => k !== key); Object.values(g.options).forEach(o => { delete o[key]; }); break; }
       case 'option-new': { const g = groupOf(a.group) ?? fail(); let n = 1; while (g.options[String(n)]) n++; const name = a.name ?? String(n);
