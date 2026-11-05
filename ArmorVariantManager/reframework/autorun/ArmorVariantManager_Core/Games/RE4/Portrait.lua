@@ -86,6 +86,7 @@ function Portrait.new(deps)
     local rect, rect_at, next_tick, scanned_at, copied_at, shown_at = nil, 0, 0, nil, nil, nil
     local gpu_owned, first_draw, host_applied, failed, last_enabled = false, nil, false, false, nil
     local live_player, live_settings = nil, nil   -- 预览显示中:每帧回调用它们跟上网页的相机操作
+    local subject_root = nil                       -- 当前拍的是哪个角色(根变换地址);换人时先还原遮挡
     local prop_cache = {}
     local T = {}
 
@@ -266,7 +267,7 @@ function Portrait.new(deps)
             if ok and result == 0 then gpu_owned, first_draw = false, nil end
         end
         show(false)
-        live_player, live_settings = nil, nil
+        live_player, live_settings, subject_root = nil, nil, nil
         if next(masks) then pcall(restore_masks) end
         shown_at = nil
         if not failed then self.status = reason or "preview_off" end
@@ -329,6 +330,11 @@ function Portrait.new(deps)
                 if not find_camera() then self.stop("preview_waiting"); return end
             end
             local settings = Portrait.settings(s)
+            -- 换了角色:旧角色的网格还带着预览通道位,场景扫描又会跳过记录过的网格,
+            -- 不还原的话两个人会一起出现在预览里
+            local root_addr = player.root:get_address()
+            if subject_root and subject_root ~= root_addr and next(masks) then restore_masks() end
+            subject_root = root_addr
             place(player, settings)
             live_player, live_settings = player, settings
             mark_player(player)

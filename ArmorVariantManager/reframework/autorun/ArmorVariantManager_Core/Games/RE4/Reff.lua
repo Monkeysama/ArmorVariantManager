@@ -61,6 +61,14 @@ function Reff.new(deps)
                  context = target.context }, groups, order
     end
 
+    -- 全身预览拍谁:网页选中的那一组的代表模型;没选过或已离场时退回主控(同 current,但不读配置)
+    function controller.preview_target()
+        local groups, order = deps.groups(deps.targets())
+        if #order == 0 then return nil end
+        local group = deps.pick_group(groups, order, selected)
+        return group and group.rep or nil
+    end
+
     local function condition_defs(context)
         local out = {}
         for _, def in ipairs(Registry.all()) do

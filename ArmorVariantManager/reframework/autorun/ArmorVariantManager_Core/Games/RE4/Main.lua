@@ -2695,6 +2695,36 @@ function Main.start(ctx)
             function(msg) log.warn(msg) end)
     end)
 
+    -- 全身预览的拍摄对象:{ root = 角色根变换, meshes = 四个槛位的网格 }。
+    --   玩家 / 伙伴:BodyUpdater 挂在身体对象上,它的变换就是角色根(2026-11-05 实测伙伴 ch2a1z0_body 无父节点)
+    --   过场傀儡 / 模型鉴赏人偶:source 是网格表,从身体网格所在对象往上找到顶层变换
+    local function portrait_subject(target)
+        local source = target.source
+        local meshes = {}
+        for _, slot in ipairs(Utils.MESH_SLOTS) do
+            local mesh = Utils.get_mesh(source, slot)
+            if mesh then meshes[#meshes + 1] = mesh end
+        end
+        if #meshes == 0 then return nil end
+        local root
+        if type(source) ~= "table" then
+            local go = source:call("get_GameObject")
+            root = go and go:call("get_Valid") and go:call("get_Transform") or nil
+        end
+        if not root then
+            local body = Utils.get_mesh(source, "body") or meshes[1]
+            local go = body:call("get_GameObject")
+            local tr = go and go:call("get_Valid") and go:call("get_Transform") or nil
+            for _ = 1, 16 do
+                local parent = tr and tr:call("get_Parent")
+                if not parent then break end
+                tr = parent
+            end
+            root = tr
+        end
+        return root and { root = root, meshes = meshes } or nil
+    end
+
     -- REFF 网页界面(可选)。未安装 REFF 时不注册,REF 原生面板照常可用。
     -- 网页与面板共用分组、配置读写和 Ops,只是各自记着自己选中的角色。
     local reff_ok, reff_err = pcall(function()
@@ -2704,7 +2734,13 @@ function Main.start(ctx)
                 return { enabled = global_config.portrait_enabled == true,
                     distance = global_config.portrait_distance, height = global_config.portrait_height }
             end,
+            -- 拍网页上选中的角色(玩家 / 伙伴 / 过场傀儡 / 模型鉴赏人偶);拿不到时退回主控
             player = function()
+                local ok, subject = pcall(function()
+                    local target = Main.reff and Main.reff.preview_target and Main.reff.preview_target()
+                    return target and portrait_subject(target)
+                end)
+                if ok and subject then return subject end
                 local manager = sdk.get_managed_singleton("chainsaw.CharacterManager")
                 local context = manager and manager:call("getPlayerContextRef")
                 local body = context and context:call("get_BodyGameObject")
