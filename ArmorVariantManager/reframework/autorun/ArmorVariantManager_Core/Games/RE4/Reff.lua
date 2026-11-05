@@ -169,6 +169,11 @@ function Reff.new(deps)
 
         local context, config = cur.context, cur.config
         snapshot.character = cur.group.gid
+        -- v3 配置的快照在后续阶段接入;在那之前只报告版本,不按 v2 的结构去读
+        if config.version == 3 then
+            snapshot.configVersion = 3
+            return snapshot
+        end
         local shared = deps.cfg_key(cur.kind_id)
         if shared ~= cur.kind_id then snapshot.sharedWith = shared end
 
@@ -349,6 +354,7 @@ function Reff.new(deps)
         if not handler and not config_handler then error(T("reff_action_rejected")) end
         local cur = current()
         if not cur or (p.character and p.character ~= cur.group.gid) then error(T("reff_character_changed")) end
+        if cur.config.version == 3 then error(T("reff_action_rejected")) end
         local changed, reapply
         if config_handler then
             changed, reapply = config_handler(p, cur)

@@ -21,6 +21,7 @@ sync_main_release.py
 !/tests/re4_entrypoint.lua
 !/tests/re4_localization.lua
 !/tests/re4_ops.lua
+!/tests/re4_model_v3.lua
 !/tests/reff_bridge.lua
 !/tests/reff_conditions.lua
 !/tests/reff_settings.lua

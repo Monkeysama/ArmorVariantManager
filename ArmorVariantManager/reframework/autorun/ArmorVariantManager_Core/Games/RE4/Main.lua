@@ -17,6 +17,7 @@ function Main.start(ctx)
     local Localization = require("ArmorVariantManager_Core.Games.RE4.Localization")
     local Dissolve = require("ArmorVariantManager_Core.Games.RE4.Dissolve")
     local Ops = require("ArmorVariantManager_Core.Games.RE4.Ops")
+    local ModelV3 = require("ArmorVariantManager_Core.Games.RE4.ModelV3")
 
     local global_config_path = "ArmorVariantManager/GlobalSettings.json"
     -- 默认英文(面板顶部有「中文」勾选框,勾了才切中文)。语言是全局的,不跟角色配置走。
@@ -310,6 +311,20 @@ function Main.start(ctx)
         cfg.axis_order = out
     end
     local function normalize_config(data)
+        -- v3(状态组平铺 + 条件状态)由 ModelV3 负责;这里只补 v2 同样保证的那两件事:
+        -- 整套造型是整份快照(每个槛位都在),备注按槛位分表
+        if data.version == ModelV3.VERSION then
+            ModelV3.normalize(data)
+            for _, preset in pairs(data.base.presets) do
+                for _, slot in ipairs(Utils.MESH_SLOTS) do
+                    if type(preset[slot]) ~= "table" then preset[slot] = { materials = {} } end
+                end
+            end
+            for _, slot in ipairs(Utils.MESH_SLOTS) do
+                if type(data.material_notes[slot]) ~= "table" then data.material_notes[slot] = {} end
+            end
+            return data
+        end
         if data.version ~= 2 then migrate_v1_to_v2(data) end
         if type(data.base) ~= "table" then data.base = new_layer() end
         if type(data.axes) ~= "table" then data.axes = {} end
@@ -792,6 +807,26 @@ function Main.start(ctx)
         return changed
     end
 
+    -- v2 → v3(状态组平铺 + 条件状态)。由用户在杂项页 / 面板上点"迁移旧配置"触发,不自动迁移。
+    -- 迁移前写一份还原点("恢复到上次删除 / 覆写之前"能退回 v2);
+    -- 返回 ModelV3 的 report(作用域重叠的材质),已经是 v3 / 没有配置时返回 nil。
+    local function migrate_to_v3(kind_id)
+        local cfg = loaded_configs[cfg_key(kind_id)]
+        if not cfg or ModelV3.is_v3(cfg) then return nil end
+        snapshot_before_destructive(kind_id)
+        -- v2 的优先级 = 应用顺序倒过来(后写的优先)
+        local apply = TransformManager.axis_apply_order(cfg)
+        local priority = {}
+        for i = #apply, 1, -1 do priority[#priority + 1] = apply[i] end
+        local v3, report = ModelV3.migrate_from_v2(cfg, priority, T("base_layer"))
+        -- 原地换内容:其他地方拿着的是同一个表
+        for k in pairs(cfg) do cfg[k] = nil end
+        for k, v in pairs(normalize_config(v3)) do cfg[k] = v end
+        TransformManager.clear_last_state_cache()
+        commit(kind_id, true, true)
+        return report
+    end
+
     -- 玩家的装备组件。调用链(2026-08 用 reframework MCP 实测确认过):
     --   context -> get_HeadUpdater() -> get_Equipment()
     -- 这条链只对**真玩家**有意义,不走 Targets 那套傀儡/雕像分支。
@@ -890,6 +925,7 @@ function Main.start(ctx)
 
     local function layer_of(config, key)
         if key == "base" then return config.base end
+        if key:sub(1, 6) == "group:" then return (ModelV3.find_group(config, key:sub(7))) end
         return (config.axes or {})[key:sub(6)]
     end
 
@@ -909,7 +945,9 @@ function Main.start(ctx)
     local function choose_transition(layer, old, new)
         if new.rule then
             if new.rule.dissolve_enabled ~= true then return nil end
-            local forward = (not old.rule) or layer_pos(layer, new.name) < layer_pos(layer, old.name)
+            -- v3 的优先级是条件状态的顺序(prio),v2 是层内状态的顺序
+            local forward = (not old.rule) or ((new.prio and old.prio) and new.prio < old.prio)
+                or (not (new.prio and old.prio) and layer_pos(layer, new.name) < layer_pos(layer, old.name))
             return { enabled = true, dur = tonumber(new.rule.dissolve_hide_time) or 0.5, forward = forward }
         elseif old.rule then
             if old.rule.dissolve_enabled ~= true then return nil end
@@ -2154,6 +2192,13 @@ function Main.start(ctx)
             end
         end
         imgui.text(status)
+
+        -- v3 配置的面板(日常切换 + 预设)在后续阶段接入;在那之前只提示去 REFF 页面
+        if ModelV3.is_v3(config) then
+            imgui.text(T("v3_imgui_pending"))
+            ui_tree_pop()
+            return
+        end
 
         -- 共用/独立。两个出口都二次确认;初始化额外先备份。
         -- **「初始化预设」只在独立状态下出现** —— 共用时初始化会把来源角色一起清空,

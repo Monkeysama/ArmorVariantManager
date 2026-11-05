@@ -2,6 +2,7 @@ local TransformManager = {}
 local Utils = require("ArmorVariantManager_Core.Games.RE4.Utils")
 local Registry = require("ArmorVariantManager_Core.Games.RE4.Conditions.Registry")
 local Condition_HP = require("ArmorVariantManager_Core.Games.RE4.Conditions.Condition_HP")
+local ModelV3 = require("ArmorVariantManager_Core.Games.RE4.ModelV3")
 
 TransformManager.Registry = Registry
 
@@ -354,22 +355,10 @@ local function hp_chain(layer, context, normal_name, normal_rule)
     return { chain = chain, names = names }
 end
 
--- 解算最终状态。
--- 返回:
---   resolved  { [slot] = { materials = { [mat] = bool } } }   最终要写进 mesh 的
---   changed   跟上次相比状态变了没(用来省掉无谓的重写)
---   info      溶解要用的:{ layers = { [层键] = { name, rule } }, owner = { [slot] = { [mat] = 层键 } },
---             picks = { [层键] = 状态名 }, drives = { [层键] = hp_chain 的结果 + base_name }, build = function(picks) }
---             层键:"base" 或 "axis:<状态组名>"。build 按给定的各层选择重算一份 resolved, owner
---
--- 曾经还返回一份 provenance(每个材质是哪一层决定的)给溯源面板用,已删 —— 理由见 AGENTS.md:
--- 作用域唯一归属 ⇒ "谁决定的"没有歧义可言,面板只能告诉你已经知道的事。
--- (info.owner 是给溶解选过渡用的:一个材质由哪一层写出,就用那一层的过渡设置。)
-function TransformManager.resolve(char_addr, config, context, body_updater)
-    local base = config.base or {}
-    local axis_names = TransformManager.axis_apply_order(config)
-
-    -- 全启用那一层和逐槛位可用判定都要读 mesh,一次解算里只读一次
+-- 叠加:全启用铺底 → 整套造型(逐槛位判可用)→ 稀疏层按 sparse 的顺序后写覆盖先写 → 护甲镜像。
+-- sparse = { { key = 层键, presets = { 名 -> 稀疏快照 } }, ... },**应用顺序**(不是优先级顺序)。
+-- v2 和 v3 共用这一份,区别只在 picks 怎么来、sparse 怎么排。
+local function make_build(base, sparse, mirror, body_updater)
     local baseline = Utils.all_enabled_preset(body_updater)
     local usable_cache = {}
     local function usable_of(name)
@@ -380,7 +369,7 @@ function TransformManager.resolve(char_addr, config, context, body_updater)
         return usable_cache[name]
     end
 
-    local function build(picks)
+    return function(picks)
         local resolved, owner = {}, {}
         local function write(slot, mat, val, key)
             if val == nil then return end
@@ -395,17 +384,12 @@ function TransformManager.resolve(char_addr, config, context, body_updater)
         -- (= 模型作者原本的样子)。对不上时**宁可什么都不做,也不要套出个半残的**。
         --
         -- 全启用先铺一层:预设里没提到的材质(modder 后来新加的)才有确定值,
-        -- 而不是保留游戏当时的残留状态。
-        --
-        -- 这一层**刻意保持对所有槛位无条件铺开**,没跟着改成逐槛位。它保证的是
-        -- "没被预设点名的材质有确定值"这个不变量,和"预设在这个槛位上可不可用"是两件事;
-        -- 而且预设整个不可用时(含选了「(无)」)全启用就是既定的兜底行为。
-        -- 只把**预设的覆盖**改成逐槛位,改动面最小。
+        -- 而不是保留游戏当时的残留状态。这一层刻意对所有槛位无条件铺开;
+        -- 预设的覆盖才是逐槛位的(见 usable_slots)。
         for slot, data in pairs(baseline) do
             for m, v in pairs(data.materials) do write(slot, m, v, nil) end
         end
         local base_name = picks.base
-        -- **逐槛位**判可用,不再是一个整份的布尔。见 usable_slots 的注释。
         local usable = usable_of(base_name)
         if base_name and (base.presets or {})[base_name] then
             for slot, data in pairs(base.presets[base_name]) do
@@ -415,16 +399,14 @@ function TransformManager.resolve(char_addr, config, context, body_updater)
             end
         end
 
-        -- 轴:稀疏叠加。作用域不重叠时,顺序不影响结果。
-        -- **应用顺序**,不是优先级顺序(见上面那段注释)
-        for _, name in ipairs(axis_names) do
-            local axis = config.axes[name]
-            local key = "axis:" .. name
-            local pname = picks[key]
-            if pname and axis.presets[pname] then
-                for slot, data in pairs(axis.presets[pname]) do
+        -- 稀疏层:只对自己点名的材质发言。作用域不重叠时,顺序不影响结果。
+        for _, layer in ipairs(sparse) do
+            local pname = picks[layer.key]
+            local preset = pname and (layer.presets or {})[pname]
+            if preset then
+                for slot, data in pairs(preset) do
                     if type(data) == "table" then
-                        for m, v in pairs(data.materials or {}) do write(slot, m, v, key) end
+                        for m, v in pairs(data.materials or {}) do write(slot, m, v, layer.key) end
                     end
                 end
             end
@@ -432,15 +414,10 @@ function TransformManager.resolve(char_addr, config, context, body_updater)
 
         -- 护甲镜像:把 body 的最终结果整份复制给 armor,按材质名对应。
         --
-        -- 放在这里(base + 轴都合并完之后)是因为要跟随**任何来源**算出的 body 结果 ——
-        -- 不管是整套造型给的,还是某个状态组、某条规则算出来的,armor 都自动跟着走,
-        -- 用户开了这个开关之后,以后新建什么都不用再管 armor。
-        --
-        -- **完全覆盖,不是"填默认值"**:armor 上此前(base 或轴)单独写过的材质全部作废,
-        -- 直接换成 body 的整份结果。不做"body 填底、armor 自己配置的材质名可以盖回来"
-        -- 那种合并 —— 半镜像半自定义的状态没法一眼看出哪块是镜像的、哪块是手动的,
-        -- 想给 armor 单独配点什么,必须先关掉这个开关。
-        if config.armor_mirrors_body then
+        -- 放在最后,是因为要跟随**任何来源**算出的 body 结果。**完全覆盖,不是"填默认值"**:
+        -- armor 上此前单独写过的材质全部作废,直接换成 body 的整份结果 —— 半镜像半自定义的
+        -- 状态没法一眼看出哪块是镜像的;想给 armor 单独配点什么,必须先关掉这个开关。
+        if mirror then
             local mirrored, mirrored_owner = { materials = {} }, {}
             for m, v in pairs((resolved.body and resolved.body.materials) or {}) do
                 mirrored.materials[m] = v
@@ -451,6 +428,65 @@ function TransformManager.resolve(char_addr, config, context, body_updater)
         end
         return resolved, owner, usable
     end
+end
+
+-- 变化检测:**只记决策结果,不记条件原始值**。输出完全由"各层最终选了哪个预设"决定;
+-- 原始值进签名会让"距今多少秒"这类条件每帧都改签名,门控彻底失效。
+-- 签名里要带**哪些槛位生效了**:穿脱护甲会让 usable 变而 base_name 不变,只记名字就漏掉那次重写。
+-- (血量驱动的进度不进签名:驱动期间调用方每帧都会重写。)
+local function signature(picks, usable, sparse)
+    local usable_sig = ""
+    for _, slot in ipairs(Utils.MESH_SLOTS) do
+        if usable[slot] then usable_sig = usable_sig .. slot .. "," end
+    end
+    local sig = "base=" .. tostring(picks.base) .. "[" .. usable_sig .. "]"
+    for _, layer in ipairs(sparse) do
+        sig = sig .. "|" .. layer.key .. "=" .. tostring(picks[layer.key])
+    end
+    return sig
+end
+
+local function changed_since_last(char_addr, config, sig)
+    -- resolve 的第一个参数只是缓存键,必须按目标唯一
+    local cache_key = char_addr .. "_" .. tostring(config)
+    local changed = (last_state_cache[cache_key] ~= sig)
+    last_state_cache[cache_key] = sig
+    return changed
+end
+
+-- v3:各层的选择来自条件状态表(ModelV3.resolve),叠加和 v2 共用 make_build。
+-- 状态组的叠加顺序就是 groups 的顺序 —— 作用域不重叠,顺序不影响结果。
+local function resolve_v3(char_addr, config, context, body_updater)
+    local sparse = {}
+    for _, g in ipairs(config.groups or {}) do
+        sparse[#sparse + 1] = { key = ModelV3.layer_key(g.name), presets = g.options }
+    end
+    local r = ModelV3.resolve(config, context)
+    local build = make_build(config.base or {}, sparse, config.armor_mirrors_body, body_updater)
+    for key, d in pairs(r.drives) do d.base_name = r.picks[key] end
+    local resolved, owner, usable = build(r.picks)
+    local changed = changed_since_last(char_addr, config, signature(r.picks, usable, sparse))
+    return resolved, changed, { layers = r.layers, owner = owner, picks = r.picks, drives = r.drives,
+        build = build, v3 = r }
+end
+
+-- 解算最终状态。
+-- 返回:
+--   resolved  { [slot] = { materials = { [mat] = bool } } }   最终要写进 mesh 的
+--   changed   跟上次相比状态变了没(用来省掉无谓的重写)
+--   info      溶解要用的:{ layers = { [层键] = { name, rule, prio } }, owner = { [slot] = { [mat] = 层键 } },
+--             picks = { [层键] = 状态名 }, drives = { [层键] = hp_chain 的结果 + base_name }, build = function(picks) }
+--             层键:"base";v2 的状态组是 "axis:<名>",v3 的是 "group:<名>"。v3 另有 info.v3 = ModelV3.resolve 的结果
+function TransformManager.resolve(char_addr, config, context, body_updater)
+    if ModelV3.is_v3(config) then return resolve_v3(char_addr, config, context, body_updater) end
+
+    local base = config.base or {}
+    local axis_names = TransformManager.axis_apply_order(config)
+    local sparse = {}
+    for _, name in ipairs(axis_names) do
+        sparse[#sparse + 1] = { key = "axis:" .. name, presets = config.axes[name].presets }
+    end
+    local build = make_build(base, sparse, config.armor_mirrors_body, body_updater)
 
     -- 各层这一帧的选择(血量驱动的规则不参与,见 pick_active_preset)
     local layers, picks, drives = {}, {}, {}
@@ -468,27 +504,7 @@ function TransformManager.resolve(char_addr, config, context, body_updater)
     for _, name in ipairs(axis_names) do pick_layer("axis:" .. name, config.axes[name]) end
 
     local resolved, owner, usable = build(picks)
-
-    -- 变化检测:**只记决策结果,不记条件原始值**。
-    -- 输出完全由"各层最终选了哪个预设"决定,条件只是喂给 pick_active_preset 的输入,
-    -- 所以原始值进签名本来就是冗余的。而且一旦有"距今多少秒"这类持续变化的条件,
-    -- 把原始值放进签名会让签名每帧都变 → changed 恒为真 → 门控彻底失效。
-    -- 签名里要带**哪些槛位生效了**,不只是选了哪个预设:
-    -- 穿脱护甲会让 usable 的集合变化而 base_name 不变,只记名字的话 changed 恒为假,
-    -- 那一次变化就永远不会被重写。
-    -- (血量驱动的进度不进签名:驱动期间调用方每帧都会重写。)
-    local usable_sig = ""
-    for _, slot in ipairs(Utils.MESH_SLOTS) do
-        if usable[slot] then usable_sig = usable_sig .. slot .. "," end
-    end
-    local sig = "base=" .. tostring(picks.base) .. "[" .. usable_sig .. "]"
-    for _, name in ipairs(axis_names) do
-        sig = sig .. "|" .. name .. "=" .. tostring(picks["axis:" .. name])
-    end
-    local cache_key = char_addr .. "_" .. tostring(config)
-    local changed = (last_state_cache[cache_key] ~= sig)
-    last_state_cache[cache_key] = sig
-
+    local changed = changed_since_last(char_addr, config, signature(picks, usable, sparse))
     return resolved, changed, { layers = layers, owner = owner, picks = picks, drives = drives, build = build }
 end
 
