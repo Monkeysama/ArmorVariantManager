@@ -17,9 +17,16 @@ except its own config files.
 **You only need [REFramework](https://github.com/praydog/REFramework).** Nothing else —
 no REFramework C#, no reframework-d2d, no .pak. On RE4 it runs as pure Lua; the preview DLL in the
 package is for Monster Hunter Wilds and stays idle here. If you also use [REFF](https://github.com/Monkeysama/REFF),
-Armor Variant Manager appears in its plugin list with an RE4 page that covers everything this
-manual describes (quick switch, editing, rules, saves, settings); it edits the same config as the REF
+Armor Variant Manager appears in its plugin list with an RE4 page; it edits the same config as the REF
 panel.
+
+> **New config format (v3).** The REFF page uses a new layout: full outfits, flat state groups with an
+> explicit scope (a material belongs to one group), condition states in priority order (one condition
+> state can switch the full outfit and several groups, with exclusive, hold, fades and HP drive), and a
+> global preset library that only reminds you when a better-fitting preset exists. Old configs keep
+> working as described below; press **Migrate old config** (REFF page → Misc, or the REF panel) to convert
+> one. A restore point is written first and old named saves become presets. After migrating, the REF
+> panel covers daily switching, condition-state toggles and presets; full editing is on the REFF page.
 
 1. Install REFramework for RE4 (`dinput8.dll` in the game folder).
 2. Unzip the universal package **into the game's root folder**, so the files land as:

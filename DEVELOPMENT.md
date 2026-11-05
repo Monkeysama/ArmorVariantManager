@@ -24,7 +24,7 @@ ArmorVariantManager/
         Presets/                       分组、选择、合成、捕获与编辑
         Conditions/、Rules/、Runtime/  条件、规则与角色状态
         Games/Wilds/、Games/Rise/      各游戏 SDK、装备、材质和能力适配
-        Games/RE4/                     RE4 独立适配：Main.start、规则、条件与 REF 面板（见目录内 AGENTS.md）
+        Games/RE4/                     RE4 独立适配：Main.start、v3 模型（ModelV3 / OpsV3 / Presets）、条件、REF 面板（ImGuiV3）与 REFF 接口（见目录内 AGENTS.md）
         UI/Workspace.lua              当前编辑配置与选择状态
         UI/ImGui/、UI/Reff/            REF 绘制、REFF 序列化与 RPC 适配
         Documentation.lua             游戏内中英文帮助与历史记录
@@ -83,7 +83,7 @@ node web/scripts/reff.mjs dev --reff-root ../RE-FF
 node web/scripts/reff.mjs build --reff-root ../RE-FF
 ```
 
-开发服务为 `http://127.0.0.1:5178`；统一夹具在 `/tests/fixture.html`，`?preview&controls` 可检查预览状态、设置失败、语言和字号等场景；`?re4` 切到 RE4 页面（`&re4-empty` 无角色，`&re4-null` 空 Lua 表，`&re4-shared` 共用配置）。网页入口 `Root.vue` 按快照的 `game` 渲染 MH 的 `App.vue` 或 `src/re4/` 下的 RE4 页面。夹具不提供游戏人物或 GPU 验收。
+开发服务为 `http://127.0.0.1:5178`；统一夹具在 `/tests/fixture.html`，`?preview&controls` 可检查预览状态、设置失败、语言和字号等场景；`?re4` 切到 RE4 页面（内存中的 v3 配置；`&re4-v2` 先给旧配置以检查迁移入口，`&re4-empty` 无角色，`&re4-null` 空 Lua 表）。网页入口 `Root.vue` 按快照的 `game` 渲染 MH 的 `App.vue` 或 `src/re4/` 下的 RE4 页面。夹具不提供游戏人物或 GPU 验收。
 
 生产构建直接更新 `reframework/reff/plugins/monkeysama.avm/ui/dist/` 并复制 REFF 许可。修改布局或交互后检查实际页面和关键操作；消费新 SDK 时确认可选能力失败不会阻断基础界面。
 

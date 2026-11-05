@@ -1,4 +1,4 @@
--- RE4 的 REFF 帮助页内容。按 RE4 的概念(整套造型 / 状态组 / 规则)写,不复用 MH 的分组说明。
+-- RE4 的 REFF 帮助页内容(v3:整套造型 + 状态组 + 条件状态 + 预设库)。按 RE4 的概念写,不复用 MH 的分组说明。
 -- 内容由维护者直接编辑。
 return {
     zh = {
@@ -6,49 +6,60 @@ return {
             id = "usage", title = "日常使用",
             entries = {
                 { title = "角色", paragraphs = {
-                    "配置按角色保存(如 Leon.json)。同一角色在场的玩家、CG 过场傀儡和模型鉴赏雕像共用这一份配置。",
+                    "配置按角色保存(如 Leon.json)。同一角色在场的玩家、过场傀儡和模型鉴赏雕像共用这一份配置。",
                     "场上有多个角色时,在顶部切换当前编辑的角色。网页和 REF 菜单里的选择互不影响。",
                 } },
                 { title = "整套造型与状态组", paragraphs = {
-                    "整套造型是一整套外观,同一时间只生效一份。",
-                    "状态组只覆盖它点名的部位,例如「面部:正常 / 受伤 / 低血量」。每个状态组各自生效一个状态,选「(无)」时这个组不发言,显示整套造型的样子。",
-                    "没有规则的状态组在「基础状态组」里手动切换;加了规则的状态组归入「高级状态组」,由条件自动驱动。",
+                    "整套造型是一份完整快照:每个材质都有开 / 关,同一时间只生效一套。",
+                    "状态组只管自己范围里的几个材质,例如「面部:干净 / 受伤 / 血迹重」。一个材质只能属于一个状态组;选「(无)」时,这部分显示整套造型的样子。",
+                    "「快速切换」页用来手动选择。正被条件状态接管的整套造型或状态组会锁定,条件结束后回到手动选择。",
                 } },
-                { title = "自动", paragraphs = {
-                    "带规则的层有「自动」开关。开着时规则命中就接管;关掉后规则暂停,改用手动选择。暂停的层会在页面上标出来,避免忘了打开。",
-                } },
-            },
-        },
-        {
-            id = "rules", title = "条件规则",
-            entries = {
-                { title = "规则与优先级", paragraphs = {
-                    "每个状态最多一条规则。一条规则由若干条件组成,条件之间统一用「全部满足」或「任一满足」连接。",
-                    "多条规则同时命中时,状态列表里排在上面的优先。页面上「生效」表示它正在决定外观,「被覆盖」表示条件成立但被更高优先级的规则覆盖。",
-                } },
-                { title = "条件结束后保持", paragraphs = {
-                    "受击、掉血这类条件只亮一瞬间。给规则设置保持秒数后,命中会延续这么久;条件持续成立时会一直续期。",
-                } },
-                { title = "溶解过渡", paragraphs = {
-                    "只对使用溶解模板(带 Dissolve_Rate 变量)的材质生效,其他材质照常瞬间切换。",
-                    "溶解过渡:进入状态时按渐入时间溶解,规则结束回到手动选择时按渐出时间溶解。",
-                    "按血量驱动:不看条件,在上限与下限之间按血量连续溶解。同一层的多个血量驱动状态按上限从高到低串联。",
+                { title = "左侧的游戏状态", paragraphs = {
+                    "左侧只读显示 HP 和当前成立的条件;在整套造型、状态组和条件状态页还会列出最终材质。",
                 } },
             },
         },
         {
-            id = "editing", title = "编辑与存档",
+            id = "states", title = "条件状态",
             entries = {
-                { title = "编辑预设与状态", paragraphs = {
-                    "在「编辑」页选择层,再选中一个预设或状态 —— 选中即生效,然后编辑它的材质。编辑非生效的预设时,改动会被生效的那个盖掉,所以两件事是一个动作。",
-                    "整套造型的材质是开 / 关;新建时会抓取当前外观。状态组的材质是「不管 / 关 / 开」三态,「不管」交给整套造型;「整块纳入」让这个状态接管整个部位。",
-                    "列表顺序就是优先级,用上移 / 下移调整。删除和「从当前模型重新抓取」会先自动备份。",
-                    "打开「备注与定位」可以给材质起名字;「定位」会临时只显示这一个材质几秒,用来认清它是哪块。",
+                { title = "优先级与独占", paragraphs = {
+                    "条件状态从上往下就是优先级,拖动左边的 ⠿ 或点 ▲▼ 调整。一个条件状态可以同时切换整套造型和若干状态组。",
+                    "整套造型和每个状态组,各自听命中的最高那个条件状态的;没被提到的,保持手动选择。",
+                    "打开「独占」后,这个条件状态命中时,排在下面的条件状态全部被覆盖。",
+                    "颜色:绿色是生效,红色是被覆盖,灰色是未命中;虚线圆圈是已停用。",
                 } },
-                { title = "存档与归属", paragraphs = {
-                    "「存档」页可以保存命名存档(也能读取其他角色的存档,读取是复制,不影响来源),以及恢复到最近一次删除 / 覆写之前或本次载入时。",
-                    "与其他角色共用配置时可以「创建独立预设」;独立后可以初始化。",
-                    "网页和 REF 菜单改的是同一份配置,两边的改动会互相同步。",
+                { title = "条件", paragraphs = {
+                    "第一条条件前写「当」,后面每一条前面选「并且」或「或者」,一个条件状态里统一用一种。条件当前成立时会变成绿色。",
+                    "受击、掉血这类条件只亮一瞬间。设置「条件不再满足后,继续保持」几秒,命中会延续这么久。",
+                } },
+                { title = "过渡与按血量驱动", paragraphs = {
+                    "渐入 / 渐出只对使用溶解模板(带 Dissolve_Rate 变量)的材质生效,其他材质照常瞬间切换。",
+                    "勾选「按血量驱动」后不看条件,在上限与下限之间按血量连续溶解;同一层的多个血量驱动状态按上限从高到低串联。",
+                } },
+            },
+        },
+        {
+            id = "presets", title = "预设",
+            entries = {
+                { title = "当前配置与预设库", paragraphs = {
+                    "每个角色只有一份正在生效的当前配置。预设库里的预设只是套用的来源,套用是复制:当前配置会先存进「自动保存」(每个角色保留最近 5 份)。",
+                    "预设记录了它适用的模型材质,按当前模型标出完全适用、部分适用或不适用。部分适用时,对不上的部位会跳过。",
+                } },
+                { title = "不会自动切换", paragraphs = {
+                    "模型变了时,如果当前配置不再完全适用、而库里有完全适用的预设,只会在「预设」页提醒;换不换由你决定。",
+                    "mod 作者随 mod 发布的预设放进 reframework/data/ArmorVariantManager/presets/ 就会出现在库里,这类预设只能套用,不能修改。",
+                } },
+            },
+        },
+        {
+            id = "misc", title = "旧配置与还原",
+            entries = {
+                { title = "迁移旧配置", paragraphs = {
+                    "旧版配置照常可用。在「杂项」页或 REF 菜单里点「迁移旧配置」转为新版:每条旧规则变成一个条件状态,外观不变;旧的命名存档转成预设。",
+                    "迁移前会先写一份还原点,用「恢复到上次删除 / 覆写之前」可以退回旧配置。",
+                } },
+                { title = "还原点", paragraphs = {
+                    "删除和重新抓取之前会自动写还原点;另外还能恢复到本次载入配置时的样子。",
                 } },
             },
         },
@@ -59,48 +70,59 @@ return {
             entries = {
                 { title = "Characters", paragraphs = {
                     "Configs are saved per character (e.g. Leon.json). The player, cutscene puppets and model-viewer figures of the same character share that config.",
-                    "When several characters are on screen, switch the one you are editing at the top. The web page and the REF menu keep separate selections.",
+                    "When several characters are on screen, switch the one you are editing at the top. The page and the REF menu keep separate selections.",
                 } },
-                { title = "Full outfit and state groups", paragraphs = {
-                    "A full outfit is a complete look; one is in effect at a time.",
-                    "A state group covers only the parts it names, e.g. \"Face: normal / hurt / low HP\". Each group has one state in effect; \"(none)\" lets the full outfit show through.",
-                    "Groups without rules are switched by hand under Basic state groups; groups with rules move to Advanced state groups and are driven by conditions.",
+                { title = "Full outfits and state groups", paragraphs = {
+                    "A full outfit is a complete snapshot: every material is on or off, and one outfit is in effect at a time.",
+                    "A state group covers only its own materials, e.g. \"Face: clean / hurt / bloody\". A material belongs to one group only; when a group is set to (none), that part shows the full outfit.",
+                    "Use Quick switch to choose by hand. An outfit or group taken over by a condition state is locked until the condition ends.",
                 } },
-                { title = "Auto", paragraphs = {
-                    "Layers with rules have an Auto switch. When on, a matching rule takes over; when off, rules pause and the manual choice applies. Paused layers are flagged so they are not forgotten.",
-                } },
-            },
-        },
-        {
-            id = "rules", title = "Condition rules",
-            entries = {
-                { title = "Rules and priority", paragraphs = {
-                    "Each state has at most one rule. A rule is a list of conditions joined by either \"all\" or \"any\".",
-                    "When several rules match, the state higher in the list wins. \"Effective\" means the rule is deciding the look; \"Overridden\" means it matches but a higher-priority rule covers it.",
-                } },
-                { title = "Hold after the condition ends", paragraphs = {
-                    "Hits and HP drops last a split second. A hold time keeps the rule matched for that long, and keeps extending while the condition stays true.",
-                } },
-                { title = "Dissolve transitions", paragraphs = {
-                    "Only materials on a dissolve template (with a Dissolve_Rate variable) dissolve; the rest switch instantly.",
-                    "Dissolve transition: entering a state dissolves over the fade-in time; returning to the manual choice dissolves over the fade-out time.",
-                    "HP-driven: ignores conditions and dissolves continuously by HP between the upper and lower bounds. Several HP-driven states in one layer chain from the highest upper bound down.",
+                { title = "Game state on the left", paragraphs = {
+                    "The left column shows HP and the conditions that are true right now; on the editing tabs it also lists the final materials.",
                 } },
             },
         },
         {
-            id = "editing", title = "Editing and saves",
+            id = "states", title = "Condition states",
             entries = {
-                { title = "Editing presets and states", paragraphs = {
-                    "On the Edit tab pick a layer, then select a preset or state - selecting puts it in effect - and edit its materials. Editing a preset that is not in effect would be overwritten by the one that is, so both happen in one step.",
-                    "Full-outfit materials are on / off; a new full outfit captures the current look. State-group materials are Ignore / Off / On, where Ignore leaves the material to the full outfit; Claim all makes the state take over a whole part.",
-                    "List order is priority; use move up / down. Deleting and recapturing take a backup first.",
-                    "Turn on Notes & locate to name materials; Locate shows only that material for a few seconds so you can tell which piece it is.",
+                { title = "Priority and exclusive", paragraphs = {
+                    "Top to bottom is priority; drag ⠿ or use ▲▼ to reorder. One condition state can switch the full outfit and several state groups at once.",
+                    "The full outfit and each state group follow the highest matching condition state; anything not mentioned keeps the manual choice.",
+                    "With Exclusive on, every condition state below it is overridden while it matches.",
+                    "Colours: green is effective, red is overridden, grey is not matched; a dashed circle is disabled.",
                 } },
-                { title = "Saves and ownership", paragraphs = {
-                    "The Saves tab keeps named saves (you can also load another character's save; loading copies it and leaves the source alone) and restores to before the last delete / overwrite or to when the config was loaded.",
-                    "While sharing a config with another character you can make it independent; once independent you can reset it.",
-                    "The page and the REF menu edit the same config, and changes show up on both sides.",
+                { title = "Conditions", paragraphs = {
+                    "The first condition starts with \"When\"; each following one is joined with \"and\" or \"or\" (one kind per condition state). A condition that is true right now turns green.",
+                    "Hits and HP drops last a split second. \"Keep it for\" extends the match by that many seconds after the condition ends.",
+                } },
+                { title = "Fades and HP-driven states", paragraphs = {
+                    "Fade in / out only affects materials on a dissolve template (with a Dissolve_Rate variable); others switch instantly.",
+                    "\"Drive by HP\" ignores conditions and dissolves continuously by HP between the bounds; several HP-driven states on one layer chain from the highest upper bound down.",
+                } },
+            },
+        },
+        {
+            id = "presets", title = "Presets",
+            entries = {
+                { title = "Current config and the library", paragraphs = {
+                    "Each character has one current config in effect. Presets are only a source to apply from; applying copies the preset, and the current config is auto-saved first (the newest 5 per character are kept).",
+                    "Presets remember the materials they were made for and show whether they fit the current model fully, partly or not at all. When a preset fits partly, slots that do not match are skipped.",
+                } },
+                { title = "Never switched automatically", paragraphs = {
+                    "When the model changes and the current config no longer fits fully while a preset does, the Presets tab only reminds you; switching is up to you.",
+                    "Presets shipped with a mod go into reframework/data/ArmorVariantManager/presets/ and show up in the library; they can be applied but not changed.",
+                } },
+            },
+        },
+        {
+            id = "misc", title = "Old configs and restore",
+            entries = {
+                { title = "Migrating an old config", paragraphs = {
+                    "Old configs keep working. Use \"Migrate old config\" on the Misc tab or in the REF menu to convert one: every old rule becomes a condition state and the look stays the same; old named saves become presets.",
+                    "A restore point is written first, so \"Restore to before the last delete / overwrite\" brings the old config back.",
+                } },
+                { title = "Restore points", paragraphs = {
+                    "Deleting and recapturing write a restore point first; you can also go back to the config as it was loaded this session.",
                 } },
             },
         },
