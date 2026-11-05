@@ -25,7 +25,8 @@ std::string last_error;
 bool output_sdr_confirmed{};
 std::atomic<bool> reff_host{};
 // 源透明约定尚待实机对照，默认直通 alpha；可显式选择线性预乘输入作比较。
-enum class AlphaMode { Straight, Premultiplied };
+// Opaque：忽略源 alpha（RE4 的相机纹理 alpha 不是覆盖率），只用于 REFF 合成。
+enum class AlphaMode { Straight, Premultiplied, Opaque };
 AlphaMode alpha_mode{AlphaMode::Straight};
 float rectangle[4]{30,190,330,360};
 uint64_t drawn{};
@@ -288,7 +289,7 @@ void present() {
     if (!host || !output_sdr_confirmed || faulted || !drawing || !source || GetTickCount64()-heartbeat>500) return;
     try {
         if (!overlay) overlay=std::make_unique<Overlay>(*host->renderer_data);
-        if (overlay->render(source.Get(),rectangle,alpha_mode)) ++drawn;
+        if (overlay->render(source.Get(),rectangle,alpha_mode==AlphaMode::Opaque?AlphaMode::Straight:alpha_mode)) ++drawn;
     } catch(const std::exception& error) { faulted=true; drawing=false; source.Reset(); last_error=error.what(); note(error.what()); }
 }
 // 公开独立预览入口沿用自动回调；REFF 模式只由正式合成器绘制。
@@ -327,7 +328,7 @@ extern "C" __declspec(dllexport) int portrait_gpu_update(uintptr_t holder,int en
     ComPtr<ID3D12Resource> image; auto hr=portrait_gpu::resolve(holder,image); if (FAILED(hr)) { drawing=false; source.Reset(); return int(hr); }
     if(reff_host) {
         const auto result=portrait_reff::update(image.Get(),static_cast<ID3D12CommandQueue*>(host->renderer_data->command_queue),
-            alpha_mode==AlphaMode::Premultiplied,true);
+            int(alpha_mode),true);
         if(result!=0){drawing=false;source.Reset();return result;}
     }
     source=std::move(image); heartbeat=GetTickCount64(); drawing=true; rectangle[0]=x;rectangle[1]=y;rectangle[2]=w;rectangle[3]=h; return 0;
@@ -364,12 +365,12 @@ extern "C" __declspec(dllexport) int portrait_gpu_set_output_contract(int hdr,in
 
 // 仅切换本模块混合管线，不修改游戏材质、相机、曝光或配置文件。
 extern "C" __declspec(dllexport) int portrait_gpu_set_alpha_mode(int mode) {
-    if (mode<0 || mode>1) return int(E_INVALIDARG);
+    if (mode<0 || mode>2) return int(E_INVALIDARG);
     std::scoped_lock lock(gate);
     const auto next=static_cast<AlphaMode>(mode);
     if(alpha_mode!=next) {
         alpha_mode=next;
-        note(mode==0?"ALPHA straight":"ALPHA linear-premultiplied (explicit comparison)");
+        note(mode==0?"ALPHA straight":mode==1?"ALPHA linear-premultiplied (explicit comparison)":"ALPHA opaque");
     }
     return 0;
 }

@@ -46,7 +46,8 @@ int main(int argc,char** argv) {
         D3D12_HEAP_PROPERTIES gpu{};gpu.Type=D3D12_HEAP_TYPE_DEFAULT;
         unsigned cases=0;
         for(auto format:{DXGI_FORMAT_R8G8B8A8_UNORM,DXGI_FORMAT_B8G8R8A8_UNORM,DXGI_FORMAT_R10G10B10A2_UNORM}) {
-            for(bool premult:{false,true}) {
+            for(int mode:{0,1,2}) {
+                const bool premult=mode==1;
                 D3D12_RESOURCE_DESC input{};input.Dimension=D3D12_RESOURCE_DIMENSION_TEXTURE2D;input.Width=220;input.Height=240;
                 input.DepthOrArraySize=1;input.MipLevels=1;input.SampleDesc.Count=1;input.Format=DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
                 ComPtr<ID3D12Resource> image;ok(device->CreateCommittedResource(&gpu,D3D12_HEAP_FLAG_NONE,&input,D3D12_RESOURCE_STATE_COPY_DEST,nullptr,IID_PPV_ARGS(&image)),"image");
@@ -79,17 +80,17 @@ int main(int argc,char** argv) {
                 ComPtr<ID3D12DescriptorHeap> rtv;ok(device->CreateDescriptorHeap(&hd,IID_PPV_ARGS(&rtv)),"RTV");
                 device->CreateRenderTargetView(target.Get(),nullptr,rtv->GetCPUDescriptorHandleForHeapStart());
                 commands->ClearRenderTargetView(rtv->GetCPUDescriptorHandleForHeapStart(),background,0,nullptr);
-                if(portrait_reff::update(image.Get(),queue.Get(),premult,true)!=0)throw std::runtime_error(portrait_reff::error());
+                if(portrait_reff::update(image.Get(),queue.Get(),mode,true)!=0)throw std::runtime_error(portrait_reff::error());
                 auto* first=active()->user;
-                require(portrait_reff::update(image.Get(),queue.Get(),premult,true)==0 && active()->user==first && retired()==0,"same texture must renew without replacing provider");
+                require(portrait_reff::update(image.Get(),queue.Get(),mode,true)==0 && active()->user==first && retired()==0,"same texture must renew without replacing provider");
                 REFFPreviewDrawContext context{sizeof(context),REFF_PREVIEW_ABI_V1,device.Get(),queue.Get(),commands.Get(),target.Get(),fence.Get(),serial+1,42,
                     static_cast<uint32_t>(format),256,512,{12,10,220,480},{28,25,202,440}};
                 active()->draw(active()->user,&context);
                 require(!portrait_reff::failed(),"provider draw failed");
-                require(portrait_reff::update(image.Get(),queue.Get(),!premult,true)==0 && active()->user!=first && retired()==1,"replacement did not retain in-flight provider");
+                require(portrait_reff::update(image.Get(),queue.Get(),(mode+1)%3,true)==0 && active()->user!=first && retired()==1,"replacement did not retain in-flight provider");
                 auto* replacement=active()->user;
                 // 拒绝更新不能转移新 user 所有权，也不能丢掉仍可用的旧实例。
-                reject();require(portrait_reff::update(image.Get(),queue.Get(),premult,true)!=0 && active()->user==replacement,"failed update replaced live provider");
+                reject();require(portrait_reff::update(image.Get(),queue.Get(),mode,true)!=0 && active()->user==replacement,"failed update replaced live provider");
                 require(portrait_reff::failed() && !portrait_reff::error().empty(),"failed update reason lost");
                 portrait_reff::stop();require(!active() && retired()==2 && !portrait_reff::failed(),"stop did not retire or clear fault");
                 D3D12_PLACED_SUBRESOURCE_FOOTPRINT read_layout{};UINT64 read_size{};
@@ -108,14 +109,14 @@ int main(int argc,char** argv) {
                 };
                 // 独立的标准曲线期望值；在带边界之外采样，检测裁剪而不是缩放剩余区域。
                 for(auto point:{std::array<unsigned,3>{32,100,3},{100,300,1},{210,400,2},{20,100,0},{100,490,0}}) {
-                    const double alpha=point[2]==1?128./255:point[2]==2?1:0;const double color[]{.25,.5,.75};const auto actual=pixel(point[0],point[1]);
+                    const double alpha=point[2]==0?0:mode==2?1:point[2]==1?128./255:point[2]==2?1:0;const double color[]{.25,.5,.75};const auto actual=pixel(point[0],point[1]);
                     const double studio[]{17./255,24./255,25./255};
                     for(unsigned c=0;c<3;++c)require(std::abs(actual[c]-(encode(color[c])*alpha+(point[2]?studio[c]:background[c])*(1-alpha)))<.015,"SDR/opaque background/tall clip pixel mismatch");
                 }
                 if(cases==0) {std::ofstream file(argv[2],std::ios::binary);file<<"P6\n256 512\n255\n";
                     for(unsigned y=0;y<512;++y)for(unsigned x=0;x<256;++x)for(double c:pixel(x,y))file.put(static_cast<char>(channel_byte(c)));}
                 read->Unmap(0,nullptr);
-                require(portrait_reff::update(image.Get(),queue.Get(),premult,true)==0,"restart after failure");
+                require(portrait_reff::update(image.Get(),queue.Get(),mode,true)==0,"restart after failure");
                 context.queue=other_queue.Get();active()->draw(active()->user,&context);
                 require(portrait_reff::failed() && portrait_reff::error().find("queue")!=std::string::npos,"cross-queue source was silently accepted");
                 portrait_reff::stop();release();++cases;
@@ -126,7 +127,7 @@ int main(int argc,char** argv) {
             auto* message=reinterpret_cast<D3D12_MESSAGE*>(storage.data());messages->GetMessage(i,message,&size);
             require(message->Severity>D3D12_MESSAGE_SEVERITY_WARNING,message->pDescription);
         }
-        std::cout<<"PASS: "<<cases<<" production REFF provider SDR/alpha/clip cases, borrowed commands, failed update, lease retirement and queue rejection\n";
+        std::cout<<"PASS: "<<cases<<" production REFF provider SDR/alpha/opaque/clip cases, borrowed commands, failed update, lease retirement and queue rejection\n";
         return 0;
     }catch(const std::exception& error){std::cerr<<error.what()<<'\n';return 1;}
 }

@@ -8,7 +8,8 @@
 --   * 输出位用 Quateary(8):SKS 表情镜占 Tertiary(4),各改各的位,互不干扰。
 --     玩家网格默认只有 Primary | Secondary,所以给玩家的网格加上这一位;场景里其他带这一位的
 --     网格(道具默认带)清掉,画面里只有玩家。停下时按记录还原。
---   * 曝光跟主相机走(固定曝光 = 主相机测光值 + 主相机补偿),调色每隔一阵从主相机复制。
+--   * 曝光跟主相机走(固定曝光 = 主相机实际生效的 EV,即 SnappedRealEV),调色每隔一阵从主相机复制。
+--   * RE4 相机纹理的 alpha 不是覆盖率(网页里整张图被当成透明),合成时按不透明处理。
 -- 相机挂在玩家根节点上(不挂骨骼),全身取景不随动作晃动。
 local Portrait = {}
 
@@ -160,10 +161,11 @@ function Portrait.new(deps)
         local center = 0.95 + settings.height
         R.tr:call("set_LocalPosition", Vector3f.new(0.0, center, settings.distance))
         R.tr:call("set_LocalRotation", Quaternion.new(1.0, 0.0, 0.0, 0.0))
-        -- 竖向容纳约 2.1 m;网页槽位比 rtex 更扁时放大视角,由 DLL 等比裁边
-        local half = math.atan(1.05 / settings.distance)
+        -- 竖向容纳约 1.95 m。DLL 等比裁切:槽位比 rtex 窄时裁左右(竖向不变);
+        -- 槽位比 rtex 扁时裁上下,这时才需要放大竖向视角,裁完仍是这个高度
+        local half = math.atan(0.975 / settings.distance)
         local ratio = ASPECT / aspect
-        if ratio > 1 then half = math.atan(math.tan(half) * ratio) end
+        if ratio < 1 then half = math.atan(math.tan(half) / ratio) end
         R.cam:call("set_FOV", math.deg(half * 2) + 0.0)
         R.cam:call("set_NearClipPlane", 0.1)
         R.cam:call("set_FarClipPlane", settings.distance + 4.0)
@@ -210,8 +212,9 @@ function Portrait.new(deps)
             if main_ldr and R.ldr then copy_props(main_ldr, R.ldr, COMMON_SKIP) end
         end
         if R.auto ~= 2 then R.tm:call("setAutoExposure", 2); R.auto = 2 end
+        -- SnappedRealEV 已经包含主相机的补偿,再加一次 EV 会暗 3~4 档
         local real = main_tm:call("get_SnappedRealEV")
-        if real and real > 0 then R.tm:call("set_EV", real + (main_tm:call("get_EV") or 0) + 0.0) end
+        if real and real == real then R.tm:call("set_EV", real + 0.0) end
     end
     local function show(value)
         if R.go and R.shown ~= value then pcall(R.go.call, R.go, "set_DrawSelf", value); R.shown = value end
@@ -291,7 +294,8 @@ function Portrait.new(deps)
             if first_draw == nil then first_draw = native.portrait_drawn() end
             gpu_owned = true
             assert(native.portrait_update(res.holder:get_address(), 1, rect.x, rect.y, rect.w, rect.h) == 0, "GPU source unavailable")
-            assert(native.portrait_alpha(0) == 0, "GPU alpha mode unavailable")
+            -- 2 = 不透明(新版 DLL);旧 DLL 只认 0/1,退回直通
+            if native.portrait_alpha(2) ~= 0 then assert(native.portrait_alpha(0) == 0, "GPU alpha mode unavailable") end
             self.status = native.portrait_drawn() <= first_draw and "preview_compositor_waiting" or "preview_live"
         end, tostring)
         if not ok then

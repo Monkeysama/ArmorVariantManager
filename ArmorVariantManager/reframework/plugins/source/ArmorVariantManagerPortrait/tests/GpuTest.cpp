@@ -75,7 +75,7 @@ int main(int argc, char** argv) {
             bool rejected=false;try{sdr_rtv_format(format);}catch(const std::runtime_error&){rejected=true;}
             if(!rejected)throw std::runtime_error("HDR/unknown output silently accepted");
         }
-        if(portrait_gpu_set_alpha_mode(-1)!=int(E_INVALIDARG)||portrait_gpu_set_alpha_mode(2)!=int(E_INVALIDARG))
+        if(portrait_gpu_set_alpha_mode(-1)!=int(E_INVALIDARG)||portrait_gpu_set_alpha_mode(3)!=int(E_INVALIDARG))
             throw std::runtime_error("invalid alpha mode accepted");
         // 游戏控制器会重复提交同一 alpha 模式；状态不变时不应反复写日志。
         const auto before_alpha=log_count;

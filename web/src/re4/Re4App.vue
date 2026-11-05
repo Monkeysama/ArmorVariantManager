@@ -51,7 +51,7 @@ watch(() => snapshot.value?.notice, value => { if (value) notice.value = value; 
 
 <template>
   <ElConfigProvider :locale="REFF_ELEMENT_LOCALES[english ? 'en-US' : 'zh-CN']">
-    <main class="avm re4" data-theme="reff" :aria-busy="busy || loading">
+    <main class="avm re4" :class="{ 'preview-open': previewOpen && !!snapshot?.preview }" data-theme="reff" :aria-busy="busy || loading">
       <header class="avm-header re4-header">
         <div class="identity"><h1>{{ t('title') }}</h1></div>
         <div v-if="snapshot && snapshot.characters.length > 0" class="re4-character">
@@ -70,15 +70,16 @@ watch(() => snapshot.value?.notice, value => { if (value) notice.value = value; 
         <div class="game-identity"><span>RE4</span><span class="version">{{ snapshot?.version }}</span></div>
       </header>
       <div class="avm-body">
+        <!-- 和荒野同一布局:预览是正文外的整列(原生画面在网页下层,正文底色不能盖住它),随窗口高度伸缩 -->
+        <PortraitPane v-if="previewOpen && snapshot?.preview" :client="avm.client" :preview="snapshot.preview" :t="previewText" />
         <div class="avm-content">
           <div v-if="error" class="error-banner" role="alert"><span>{{ error }}</span>
             <ElButton v-if="!snapshot" :disabled="loading" @click="connect">{{ t('retry') }}</ElButton>
             <button v-else class="dismiss-error" :aria-label="t('dismiss')" @click="error = ''">×</button>
           </div>
           <div v-if="!snapshot" class="connection-state"><span v-if="loading" class="connection-dot"></span>{{ loading ? t('loading') : t('wait') }}</div>
-          <div v-else class="re4-layout">
-            <div v-if="hasCharacter && (v3 || previewOpen)" class="re4-left">
-              <div v-if="previewOpen && snapshot.preview" class="re4-preview"><PortraitPane :client="avm.client" :preview="snapshot.preview" :t="previewText" /></div>
+          <div v-else class="re4-layout" :class="{ single: !(hasCharacter && v3) }">
+            <div v-if="hasCharacter && v3" class="re4-left">
               <Re4Side v-if="v3" :snapshot="snapshot" :t="t" :show-look="showLook" />
             </div>
             <div class="re4-main">
@@ -127,11 +128,12 @@ watch(() => snapshot.value?.notice, value => { if (value) notice.value = value; 
 .re4-muted { color: var(--avm-muted); }
 .re4-small { font-size: var(--reff-font-size-xs, 12px); }
 .re4-layout { display: grid; grid-template-columns: minmax(0, 15em) minmax(0, 1fr); gap: 12px; padding: 10px 12px 16px; align-items: start; }
+.re4-layout.single { grid-template-columns: minmax(0, 1fr); }
 @media (max-width: 720px) { .re4-layout { grid-template-columns: minmax(0, 1fr); } }
 .re4-main { display: grid; gap: 10px; min-width: 0; align-content: start; }
 .re4-left { display: grid; gap: 10px; align-content: start; min-width: 0; }
-.re4-preview { height: 380px; display: flex; border: 1px solid var(--avm-line); border-radius: 8px; overflow: hidden; }
-.re4 .re4-preview .portrait-pane { flex: 1 1 auto; border: 0; }
+/* 预览列比荒野宽一些:RE4 人物是竖长全身,窗口越大预览越大 */
+@media (min-width: 761px) { .avm.re4 .portrait-pane { flex-basis: clamp(220px, 30%, 560px); } }
 .re4-preview-toggle { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; margin-right: 12px; cursor: pointer; }
 .re4-panel { border: 1px solid var(--avm-line); border-radius: 8px; background: var(--el-bg-color, transparent); min-width: 0; }
 .re4-panel-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 7px 12px; }
