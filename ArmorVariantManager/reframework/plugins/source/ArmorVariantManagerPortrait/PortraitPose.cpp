@@ -98,7 +98,27 @@ struct Mesh {
     // 2 表示尚未写入；每次绑定重新初始化，仅在副本 setter 成功后缓存 0/1。
     std::vector<uint8_t> material_visibility, part_visibility;
     uint8_t enabled{2}, draw{2};
+    // 形态键权重镜像(avm_portrait_blend_sync):首次同步时确定通道数,只缓存副本 setter 成功写入的值。
+    bool blend_ready{false};
+    uint64_t blend_count{};
+    std::vector<float> blend;
+    std::vector<uint8_t> blend_written;
 };
+
+// 形态键方法单独、按需查找:不进 initialize(),姿态同步(荒野在用)不依赖它们。
+struct BlendMethods { Method *count{}, *get{}, *set{}; } blend_methods;
+void initialize_blend() {
+    if (blend_methods.count) return;
+    BlendMethods next{};
+    next.count = find("via.render.Mesh", "get_BlendShapeChannelWeightCount");
+    next.get = find("via.render.Mesh", "getBlendShapeChannelWeightParam");
+    next.set = find("via.render.Mesh", "setBlendShapeChannelWeightParam");
+    blend_methods = next;
+}
+// System.Single 的参数和返回值在 invoke 包装里都是 double(REFramework 源码 Method.cpp / Sdk.cpp 的注释:
+// "the invoke wrappers ALWAYS expect a double");按 float 读写会读到 0、写进极小值。
+void* single_arg(float value) { const double d = value; uintptr_t slot{}; std::memcpy(&slot, &d, sizeof(d)); return reinterpret_cast<void*>(slot); }
+float single_ret(const reframework::InvokeRet& value) { return static_cast<float>(value.d); }
 struct Binding {
     std::vector<Pair> transforms, joints;
     std::vector<Mesh> meshes;
@@ -135,6 +155,34 @@ void pose(const std::vector<Pair>& pairs, Method* const* get, Method* const* set
 }
 
 int avm_portrait_pose_version() { return 3; }
+int avm_portrait_blend_version() { return 1; }
+
+// 把原网格的形态键(blend shape)通道权重镜像到副本:SKS、游戏或其他 MOD 写在原网格实例上的权重,
+// 副本网格是另一个实例拿不到。在 pose_sync 之后调用,只写变化了的通道。
+// 两边通道数不同(或超过 4096)的网格跳过;返回 0 成功,-1 失败(错误见 avm_portrait_pose_error)。
+int avm_portrait_blend_sync() {
+    using namespace portrait_pose;
+    try {
+        if (!binding) throw std::runtime_error("Portrait pose binding unavailable");
+        initialize_blend();
+        for (auto& mesh : binding->meshes) {
+            if (!mesh.blend_ready) {
+                const auto count = invoke(blend_methods.count, mesh.source).qword;
+                mesh.blend_count = count <= 4096 && count == invoke(blend_methods.count, mesh.copy).qword ? count : 0;
+                mesh.blend.assign(mesh.blend_count, 0.0f);
+                mesh.blend_written.assign(mesh.blend_count, 0);
+                mesh.blend_ready = true;
+            }
+            for (uint64_t i = 0; i < mesh.blend_count; ++i) {
+                const float value = single_ret(invoke(blend_methods.get, mesh.source, { reinterpret_cast<void*>(i) }));
+                if (mesh.blend_written[i] && mesh.blend[i] == value) continue;
+                invoke(blend_methods.set, mesh.copy, { reinterpret_cast<void*>(i), single_arg(value) });
+                mesh.blend[i] = value; mesh.blend_written[i] = 1;
+            }
+        }
+        failure.clear(); return 0;
+    } catch (const std::exception& error) { failure = error.what(); return -1; }
+}
 const char* avm_portrait_pose_error() { return portrait_pose::failure.c_str(); }
 void avm_portrait_pose_clear() { portrait_pose::binding.reset(); }
 

@@ -27,6 +27,8 @@ void register_portrait(sol::table table) {
     };
     table["portrait_pose_sync"] = &avm_portrait_pose_sync;
     table["portrait_pose_clear"] = &avm_portrait_pose_clear;
+    table["portrait_blend_version"] = &avm_portrait_blend_version;
+    table["portrait_blend_sync"] = &avm_portrait_blend_sync;
     table["portrait_pose_error"] = [] { return std::string(avm_portrait_pose_error()); };
 }
 

@@ -1,24 +1,29 @@
--- RE4 全身预览:第二台相机把玩家渲染进随插件发布的 rtex,再由 ArmorVariantManager_Portrait.dll
+-- RE4 全身预览:第二台相机把角色渲染进随插件发布的 rtex,再由 ArmorVariantManager_Portrait.dll
 -- 交给 REFF 的原生预览槽位显示在网页里(和荒野同一个 DLL,纹理布局按游戏区分)。
+--
+-- 拍的是远处舞台上的显示副本(PortraitModel.lua),不是世界里的真人:真人会被游戏为主镜头做的
+-- 贴近隐藏、剔除和所在位置的灯光带偏。副本网格只带预览通道位,舞台上也没有别的东西,
+-- 所以不再需要给场景网格清位。
 --
 -- 做法参考 SKS 的表情镜(它在 RE4 上已验证):
 --   * 相机只创建一次,之后只隐藏(set_DrawSelf),按名字找回 —— RE4 里反复销毁 / 重建渲染相机
 --     会在渲染器里留下孤立输出。所以这里**从不销毁**相机。
 --   * RenderOutput 先设成自己的输出位、再设渲染目标,永远不会变成主相机。
 --   * 输出位用 Quateary(8):SKS 表情镜占 Tertiary(4),各改各的位,互不干扰。
---     玩家网格默认只有 Primary | Secondary,所以给玩家的网格加上这一位;场景里其他带这一位的
---     网格(道具默认带)清掉,画面里只有玩家。停下时按记录还原。
---   * 曝光跟主相机走(固定曝光 = 主相机实际生效的 EV,即 SnappedRealEV),调色每隔一阵从主相机复制。
+--   * 曝光固定(STAGE_EV,舞台只有自己的补光),调色每隔一阵从主相机复制。
 --   * RE4 相机纹理的 alpha 不是覆盖率(网页里整张图被当成透明),合成时按不透明处理。
--- 相机挂在玩家根节点上(不挂骨骼),全身取景不随动作晃动。
+-- 相机按角色根的朝向摆在舞台原点周围(不跟骨骼),全身取景不随动作晃动。
 local Portrait = {}
+local PortraitModel = require("ArmorVariantManager_Core.Games.RE4.PortraitModel")
 
 local CAMERA = "AVM_PortraitCamera"
 local TARGET = "ArmorVariantManager/Portrait/portrait.rtex"
 local CHANNEL = 8                      -- via.render.RenderOutputID.Quateary
 local ASPECT = 660 / 720               -- rtex 尺寸,DLL 只接受 660×720
+-- 舞台只有自己的补光,曝光固定(跟主相机走的话,暗处主相机提曝光,补光一照就整片发白)。
+-- 2026-11-05 和用户在游戏里调的,配 PortraitModel 的补光强度
+local STAGE_EV = 3.5
 local COMPONENTS = { "via.Camera", "via.render.RenderOutput", "via.render.ToneMapping", "via.render.LDRPostProcess" }
-local SCAN_STEP = 200                  -- 每次 tick 最多处理的场景网格数(一次读完一个区域会卡一帧)
 
 local COMMON_SKIP = { Enabled = true, GameObject = true, InjectingGameObject = true, Valid = true, UpdateTiming = true, DrawTiming = true }
 local TM_SKIP = { EV = true, AutoExposure = true, UseAutoExposure = true, MultiZoneMeteringTexture = true,
@@ -82,11 +87,18 @@ function Portrait.new(deps)
     local clock = deps.clock or os.clock
     local bridge = deps.bridge or function() return rawget(_G, "avm_portrait") or rawget(_G, "avm_bridge") end
     local self = { status = "preview_off", error = nil }
-    local res, R, masks, scan = {}, {}, {}, nil
-    local rect, rect_at, next_tick, scanned_at, copied_at, shown_at = nil, 0, 0, nil, nil, nil
+    local res, R = {}, {}
+    local rect, rect_at, next_tick, copied_at, shown_at = nil, 0, 0, nil, nil
     local gpu_owned, first_draw, host_applied, failed, last_enabled = false, nil, false, false, nil
-    local live_player, live_settings = nil, nil   -- 预览显示中:每帧回调用它们跟上网页的相机操作
-    local subject_root = nil                       -- 当前拍的是哪个角色(根变换地址);换人时先还原遮挡
+    local live_player, live_settings = nil, nil   -- 预览显示中:每帧回调用它们同步副本、跟上网页的相机操作
+    local context = nil                            -- 交给副本模型的 { key, root, light }
+    -- 副本模型第一次用到时才建(建的时候要查游戏类型)
+    local model = deps.model
+    local function ensure_model()
+        model = model or PortraitModel.new({ bridge = bridge, clock = clock, skip = { [CAMERA] = true } })
+        return model
+    end
+    local function model_state() return model and model.state or "idle" end
     local prop_cache = {}
     local T = {}
 
@@ -105,59 +117,6 @@ function Portrait.new(deps)
         if not native or not native.portrait_reff or not native.portrait_reff_ready then return false end
         local ok, ready = pcall(native.portrait_reff_ready)
         return ok and ready == 1
-    end
-
-    -- ------------------------------------------------------------ 只显示玩家
-    local function restore_masks()
-        for _, m in pairs(masks) do pcall(m[1].call, m[1], "set_RenderOutputID", m[2]) end
-        masks, scan, scanned_at = {}, nil, nil
-    end
-    local function remember(mesh)
-        local addr = mesh:get_address()
-        local m = masks[addr]
-        if not m then m = { mesh, mesh:call("get_RenderOutputID") or 3 }; masks[addr] = m end
-        return m
-    end
-    local function mark_player(player)
-        local seen = {}
-        local function show(mesh)
-            if not mesh or seen[mesh:get_address()] then return end
-            seen[mesh:get_address()] = true
-            local m = remember(mesh)
-            if mesh:call("get_RenderOutputID") ~= (m[2] | CHANNEL) then mesh:call("set_RenderOutputID", m[2] | CHANNEL) end
-        end
-        for _, mesh in ipairs(player.meshes or {}) do show(mesh) end
-        -- 挂在玩家根节点下的其他网格(饰品、背着的武器)也一起拍进来
-        local function visit(tr, depth)
-            for _ = 1, 64 do
-                if not tr then return end
-                local go = tr:call("get_GameObject")
-                local mesh = go and go:call("get_Name") ~= CAMERA and component(go, "via.render.Mesh")
-                if mesh then show(mesh) end
-                if depth < 4 then visit(tr:call("get_Child"), depth + 1) end
-                tr = tr:call("get_Next")
-            end
-        end
-        visit(player.root:call("get_Child"), 0)
-    end
-    -- 场景里其他网格清掉这一位;见过的按地址跳过,每 3 秒再扫一次新出现的网格
-    local function step_scan(now)
-        if not scan then
-            if scanned_at and now - scanned_at < 3 then return end
-            local arr = scene():call("findComponents(System.Type)", sdk.typeof("via.render.Mesh"))
-            if not arr then return end
-            scan = { list = arr:get_elements(), i = 1 }
-        end
-        local last = math.min(#scan.list, scan.i + SCAN_STEP - 1)
-        for k = scan.i, last do
-            local mesh = scan.list[k]
-            if not masks[mesh:get_address()] then
-                local m = remember(mesh)
-                if (m[2] & CHANNEL) ~= 0 then mesh:call("set_RenderOutputID", m[2] & ~CHANNEL) end
-            end
-        end
-        scan.i = last + 1
-        if scan.i > #scan.list then scan, scanned_at = nil, now end
     end
 
     -- ------------------------------------------------------------ 相机
@@ -190,25 +149,30 @@ function Portrait.new(deps)
         R.cam:call("set_AspectRatio", ASPECT)
         return true
     end
+    -- 相机不挂在任何对象上(旧版挂在玩家根下,这里先摘下来),每帧按角色根的朝向摆到舞台上
     local function place(player, settings)
-        local root = player.root
-        if R.attached ~= root:get_address() then
-            R.tr:call("set_Parent", root)
+        if not R.detached then
             R.tr:call("set_ParentJoint", "")
-            R.attached, R.pose = root:get_address(), nil
+            R.tr:call("set_Parent", nil)
+            R.detached = true
         end
         local aspect = rect and rect.w > 0 and rect.h > 0 and rect.w / rect.h or ASPECT
         local camera = Portrait.camera(deps.camera and deps.camera() or nil)
         local key = string.format("%g|%g|%g|%g|%g|%g|%g|%g", settings.distance, settings.height, aspect,
             camera.yaw, camera.pitch, camera.zoom, camera.pan_x, camera.pan_y)
-        if R.pose == key then return end
-        local pose = Portrait.pose(settings, camera, aspect, ASPECT)
-        R.tr:call("set_LocalPosition", Vector3f.new(pose.pos[1], pose.pos[2], pose.pos[3]))
-        R.tr:call("set_LocalRotation", Quaternion.new(pose.rot[1], pose.rot[2], pose.rot[3], pose.rot[4]))
-        R.cam:call("set_FOV", pose.fov + 0.0)
-        R.cam:call("set_NearClipPlane", 0.05)
-        R.cam:call("set_FarClipPlane", pose.far + 0.0)
-        R.pose = key
+        if R.pose ~= key then
+            R.local_pose = Portrait.pose(settings, camera, aspect, ASPECT)
+            R.cam:call("set_FOV", R.local_pose.fov + 0.0)
+            R.cam:call("set_NearClipPlane", 0.05)
+            R.cam:call("set_FarClipPlane", R.local_pose.far + 0.0)
+            R.pose = key
+        end
+        local q = (context and context.anchor or player.root):call("get_Rotation")
+        local world = PortraitModel.stage_pose({ q.w, q.x, q.y, q.z }, R.local_pose)
+        R.tr:call("set_Position", Vector3f.new(world.pos[1], world.pos[2], world.pos[3]))
+        R.tr:call("set_Rotation", Quaternion.new(world.rot[1], world.rot[2], world.rot[3], world.rot[4]))
+        -- 补光放在相机上方一点,转到哪边哪边亮
+        if context then context.light = { world.pos[1], world.pos[2] + 0.6, world.pos[3] } end
     end
     local function props_of(obj, skip)
         local td = obj:get_type_definition()
@@ -240,6 +204,20 @@ function Portrait.new(deps)
             end)
         end
     end
+    -- 主相机的调色(LUT + 调色元素)在 LDRPostProcess 的 ColorCorrect 子对象里;copy_props 不复制子对象,
+    -- 不单独抄的话预览没有游戏的调色,颜色比画面鲜艳(2026-11-05 实测主相机开着、预览相机关着)
+    local function copy_color_correct(src_ldr, dst_ldr)
+        local a, b = src_ldr:call("get_ColorCorrect"), dst_ldr:call("get_ColorCorrect")
+        if not a or not b then return end
+        copy_props(a, b, COMMON_SKIP)   -- ColorCube0/1/2、混合比例等
+        local n = a:call("getColorCubeElementCount") or 0
+        b:call("setColorCubeElementCount", n)
+        for i = 0, n - 1 do b:call("setColorCubeElement", i, a:call("getColorCubeElement", i)) end
+        local m = a:call("get_LinearParamsCount") or 0
+        b:call("set_LinearParamsCount", m)
+        for i = 0, m - 1 do b:call("setLinearParamsAt", i, a:call("getLinearParamsAt", i)) end
+        b:call("set_Enabled", a:call("get_Enabled") == true)
+    end
     local function update_image(now)
         local main = main_camera_go()
         local main_tm = main and component(main, "via.render.ToneMapping")
@@ -248,12 +226,14 @@ function Portrait.new(deps)
             copied_at = now
             copy_props(main_tm, R.tm, TM_SKIP)
             local main_ldr = component(main, "via.render.LDRPostProcess")
-            if main_ldr and R.ldr then copy_props(main_ldr, R.ldr, COMMON_SKIP) end
+            if main_ldr and R.ldr then
+                copy_props(main_ldr, R.ldr, COMMON_SKIP)
+                local ok, err = pcall(copy_color_correct, main_ldr, R.ldr)
+                if not ok and not R.cc_noted then R.cc_noted = true; note("color correct copy failed: " .. tostring(err)) end
+            end
         end
         if R.auto ~= 2 then R.tm:call("setAutoExposure", 2); R.auto = 2 end
-        -- SnappedRealEV 已经包含主相机的补偿,再加一次 EV 会暗 3~4 档
-        local real = main_tm:call("get_SnappedRealEV")
-        if real and real == real then R.tm:call("set_EV", real + 0.0) end
+        if R.ev ~= STAGE_EV then R.tm:call("set_EV", STAGE_EV + 0.0); R.ev = STAGE_EV end
     end
     local function show(value)
         if R.go and R.shown ~= value then pcall(R.go.call, R.go, "set_DrawSelf", value); R.shown = value end
@@ -267,8 +247,11 @@ function Portrait.new(deps)
             if ok and result == 0 then gpu_owned, first_draw = false, nil end
         end
         show(false)
-        live_player, live_settings, subject_root = nil, nil, nil
-        if next(masks) then pcall(restore_masks) end
+        live_player, live_settings, context = nil, nil, nil
+        if model_state() ~= "idle" then
+            local ok, err = pcall(model.stop)
+            if not ok then note(tostring(err)) end
+        end
         shown_at = nil
         if not failed then self.status = reason or "preview_off" end
     end
@@ -282,11 +265,21 @@ function Portrait.new(deps)
 
     function self.reset_error() failed, self.error = false, nil end
 
-    -- tick 只有 10 Hz;鼠标旋转 / 缩放 / 平移要每帧跟上,否则画面每秒只动 10 下。
-    -- 只摆相机(参数没变时 place 直接返回),资源、遮挡、曝光仍在 tick 里做。
+    -- 每帧在 UpdateBehavior 之前:把真人上一帧的最终姿态同步到副本,再按同一时刻的根朝向摆相机。
+    -- (tick 只有 10 Hz,放在 tick 里副本和鼠标操作每秒只动 10 下;建副本、曝光仍在 tick 里做。)
+    -- 为什么是这个时机(2026-11-05 实测):
+    --   * 头发、外套、尾巴的物理(Chain)在 PrepareRendering 之后才写进关节,LateUpdateBehavior 时关节里
+    --     只有动画姿态 —— 在那里同步,副本没有物理;
+    --   * 在 BeginRendering 前同步,关节数据是对的,但渲染这一帧的数据已经准备好了,副本画面不动;
+    --   * 从 BeginRendering 到下一帧 UpdateMotion 开始,关节都保持着上一帧的最终姿态(含物理),
+    --     到 UpdateMotion 才被动画重置。所以在 UpdateBehavior 前同步:带物理、能被渲染,只晚一帧。
+    --     (HeightFix 在 UpdateMotion 前才还原抬高量,这里读到的仍是抬高后的姿态,和画面一致。)
     function self.frame()
-        if not gpu_owned or not live_player or not R.tr then return end
-        if not pcall(place, live_player, live_settings) then live_player = nil end
+        if not live_player or not R.tr or model_state() ~= "ready" then return end
+        local ok, err = pcall(function()
+            if model.sync(context) then place(live_player, live_settings) end
+        end)
+        if not ok then live_player = nil; note(tostring(err)) end
     end
 
     function self.tick()
@@ -301,7 +294,7 @@ function Portrait.new(deps)
         end
         local want = s.enabled and not failed and rect and now - rect_at <= 0.5 and (not deps.should_show or deps.should_show())
         if not want then
-            if gpu_owned or R.shown or next(masks) or self.status ~= (s.enabled and "preview_waiting" or "preview_off") then
+            if gpu_owned or R.shown or model_state() ~= "idle" or self.status ~= (s.enabled and "preview_waiting" or "preview_off") then
                 self.stop(failed and self.status or (s.enabled and "preview_waiting" or "preview_off"))
             end
             return
@@ -330,15 +323,17 @@ function Portrait.new(deps)
                 if not find_camera() then self.stop("preview_waiting"); return end
             end
             local settings = Portrait.settings(s)
-            -- 换了角色:旧角色的网格还带着预览通道位,场景扫描又会跳过记录过的网格,
-            -- 不还原的话两个人会一起出现在预览里
-            local root_addr = player.root:get_address()
-            if subject_root and subject_root ~= root_addr and next(masks) then restore_masks() end
-            subject_root = root_addr
+            -- 换了角色 key 就变了,副本模型会先销毁旧副本再重建
+            local key = tostring(player.root:get_address())
+            if not context or context.key ~= key then
+                context = { key = key, root = player.root, anchor = PortraitModel.anchor(player.root) }
+            end
+            if not ensure_model().current(context) then
+                live_player = nil
+                self.status = "preview_waiting"; return
+            end
             place(player, settings)
             live_player, live_settings = player, settings
-            mark_player(player)
-            step_scan(now)
             update_image(now)
             show(true)
             -- 相机刚显示的那一帧纹理里还没有画面,等一下再交给 DLL
@@ -360,6 +355,7 @@ function Portrait.new(deps)
 
     function self.shutdown()
         self.stop("preview_off")
+        if model then pcall(model.shutdown) end
         R, res = {}, {}
     end
 
@@ -372,9 +368,9 @@ function Portrait.new(deps)
             T.taa_off = sdk.find_type_definition("via.render.ToneMapping.TemporalAA"):get_field("Disable"):get_data(nil)
             assert(T.SceneManager and T.Renderer and T.create and T.taa_off ~= nil)
         end)
-        if not ok or not re.on_application_entry then return false end
+        if not ok or not re.on_application_entry or not re.on_pre_application_entry then return false end
         re.on_application_entry("UpdateBehavior", self.tick)
-        re.on_application_entry("LateUpdateBehavior", self.frame)
+        re.on_pre_application_entry("UpdateBehavior", self.frame)
         re.on_script_reset(self.shutdown)
         return true
     end

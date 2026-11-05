@@ -9,5 +9,7 @@ int avm_portrait_pose_bind(const std::vector<uintptr_t>& source_transforms, cons
     const std::vector<uintptr_t>& source_joints, const std::vector<uintptr_t>& copy_joints,
     const std::vector<uintptr_t>& source_meshes, const std::vector<uintptr_t>& copy_meshes);
 int avm_portrait_pose_sync(float dx, float dy, float dz);
+int avm_portrait_blend_version();
+int avm_portrait_blend_sync();
 void avm_portrait_pose_clear();
 const char* avm_portrait_pose_error();
