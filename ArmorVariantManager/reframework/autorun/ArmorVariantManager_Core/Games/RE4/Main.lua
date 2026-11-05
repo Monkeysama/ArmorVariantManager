@@ -936,7 +936,7 @@ function Main.start(ctx)
     -- v2 → v3(状态组平铺 + 条件状态)。由用户在杂项页 / 面板上点"迁移旧配置"触发,不自动迁移。
     -- 迁移前写一份还原点("恢复到上次删除 / 覆写之前"能退回 v2)。
     -- 旧的命名存档(backup/<角色>.slots.json)逐条转成预设,原文件保留不删。
-    -- 返回 ModelV3 的 report(作用域重叠的材质)+ presets(转换出来的预设编号);
+    -- 返回 ModelV3 的 report + presets(转换出来的预设编号);
     -- 已经是 v3 / 没有配置时返回 nil。
     local function migrate_to_v3(kind_id)
         local key = cfg_key(kind_id)
@@ -2348,7 +2348,7 @@ function Main.start(ctx)
         if ModelV3.is_v3(config) then
             local report = ui_state.migrate_report
             if report then
-                imgui.text(string.format(T("migrate_done"), #report.overlaps, #(report.presets or {})))
+                imgui.text(string.format(T("migrate_done"), #(report.presets or {})))
                 imgui.same_line()
                 if imgui.button(T("cancel_btn") .. "###mig_ok") then ui_state.migrate_report = nil end
             end

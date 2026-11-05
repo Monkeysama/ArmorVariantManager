@@ -9,6 +9,7 @@ local Condition_HP = require("ArmorVariantManager_Core.Games.RE4.Conditions.Cond
 local TM = require("ArmorVariantManager_Core.Games.RE4.TransformManager")
 local M3 = require("ArmorVariantManager_Core.Games.RE4.ModelV3")
 local OpsV3 = require("ArmorVariantManager_Core.Games.RE4.OpsV3")
+local Utils = require("ArmorVariantManager_Core.Games.RE4.Utils")
 
 -- 条件求值换成读 context 表:{ type = "x" } 成立 ⇔ ctx.x == true;血量读 ctx.hp
 Registry.eval_condition = function(c, ctx) return ctx[c.type] == true end
@@ -40,8 +41,9 @@ do
     assert(#cfg.groups == 2, "duplicate group names dropped")
     S.equal(cfg.groups[1].scope, {"head/x", "head/y"})
     S.equal(cfg.groups[1].options.o, {head = {materials = {x = true}}})
-    S.equal(cfg.groups[2].scope, {"head/w"}, "overlapping scope: first group keeps it")
-    S.equal(cfg.groups[2].options.p, {head = {materials = {w = false}}})
+    S.equal(cfg.groups[2].scope, {"head/y", "head/w"}, "overlapping scopes are kept")
+    S.equal(cfg.groups[2].options.p, {head = {materials = {y = true, w = false}}})
+    S.equal(M3.groups_of(cfg)["head/y"], {"G1", "G2"})
     assert(cfg.conditions.auto == true)
     local st = cfg.conditions.states[1]
     assert(#st.targets == 1 and st.fade_in == 30 and st.enabled and not st.exclusive and st.logic == "AND")
@@ -78,11 +80,14 @@ do
     for i = #apply, 1, -1 do priority[#priority + 1] = apply[i] end
     local v3, report = M3.migrate_from_v2(v2_config(), priority, "Full outfit")
 
-    -- Gear 和 Coat 都管 body/shared:Coat 是高级组且排在前面,优先级更高
-    assert(#report.overlaps == 1 and report.overlaps[1].key == "body/shared", "overlap reported")
+    -- Gear 和 Coat 都管 body/shared:重叠原样保留,groups 按 v2 的应用顺序排(Coat 是高级组,最后写)
+    assert(report.overlaps == nil)
     local gear = M3.find_group(v3, "Gear")
-    assert(gear.options.Holster.body.materials.shared == nil, "overlapped material removed from lower group")
-    assert(M3.owner_map(v3)["body/shared"] == "Coat")
+    assert(gear.options.Holster.body.materials.shared == false, "overlapped material kept")
+    local order = {}
+    for i, g in ipairs(v3.groups) do order[i] = g.name end
+    S.equal(order, apply, "groups follow the v2 apply order")
+    S.equal(M3.groups_of(v3)["body/shared"], {"Gear", "Coat"})
 
     local base_state = v3.conditions.states[1]
     assert(base_state.base == "Shirt" and base_state.fade_in == 0.8 and base_state.fade_out == 0.5)
@@ -105,6 +110,50 @@ do
                 ("group %s differs for mask %d: %s vs %s"):format(name, mask, tostring(r.picks["group:" .. name]), tostring(want)))
         end
     end
+
+    -- 最终材质也和 v2 一致(包括重叠的 body/shared)
+    local saved_all, saved_usable = Utils.all_enabled_preset, TM.usable_slots
+    Utils.all_enabled_preset = function()
+        return {body = {materials = {a = true, j = true, shared = true, t = true, h = true, v = true}},
+            head = {materials = {b1 = true, b2 = true}}, hair = {materials = {r = true}}}
+    end
+    TM.usable_slots = function() return {body = true, head = true, hair = true} end
+    v2.armor_mirrors_body, v3.armor_mirrors_body = false, false
+    for mask = 0, 15 do
+        local ctx = {}
+        for b, f in ipairs(flags) do ctx[f] = (mask >> (b - 1)) & 1 == 1 end
+        local want = TM.resolve("mig_v2_" .. mask, v2, ctx, nil)
+        local got = TM.resolve("mig_v3_" .. mask, v3, ctx, nil)
+        S.equal(got, want, "final materials differ for mask " .. mask)
+    end
+    Utils.all_enabled_preset, TM.usable_slots = saved_all, saved_usable
+end
+
+-- ============================================================ 重叠的状态组:靠后的覆盖靠前的
+do
+    local saved_all, saved_usable = Utils.all_enabled_preset, TM.usable_slots
+    Utils.all_enabled_preset = function() return {body = {materials = {coat = true, torn = true}}} end
+    TM.usable_slots = function() return {body = true} end
+    -- 破损(按条件)在上,外套(手动)在下:脱下时两套都关;穿着对这两个材质是「-」,交给破损组
+    local cfg = M3.normalize({
+        version = 3, base = {presets = {}},
+        groups = {
+            {name = "Damage", scope = {"body/coat", "body/torn"},
+                options = {Fine = snap("body", {coat = true, torn = false}), Torn = snap("body", {coat = false, torn = true})}, active = "Fine"},
+            {name = "Coat", scope = {"body/coat", "body/torn"},
+                options = {Wear = {}, Off = snap("body", {coat = false, torn = false})}, active = "Wear"},
+        },
+        conditions = {states = {{name = "hurt", conditions = {{type = "low"}}, targets = {{group = "Damage", option = "Torn"}}}}},
+        armor_mirrors_body = false,
+    })
+    local function mats(ctx, tag) return (TM.resolve("ov_" .. tag, cfg, ctx, nil)).body.materials end
+    S.equal(mats({}, 1), {coat = true, torn = false})
+    S.equal(mats({low = true}, 2), {coat = false, torn = true}, "condition reaches the overlapped materials")
+    M3.find_group(cfg, "Coat").active = "Off"
+    S.equal(mats({low = true}, 3), {coat = false, torn = false}, "lower group wins")
+    assert(OpsV3.move_group(cfg, "Coat", -1))
+    S.equal(mats({low = true}, 4), {coat = false, torn = true}, "reordering changes who wins")
+    Utils.all_enabled_preset, TM.usable_slots = saved_all, saved_usable
 end
 
 -- ============================================================ 条件状态解算
@@ -211,8 +260,9 @@ do
     assert(not OpsV3.rename_group(cfg, "Jacket", "Face"), "name collision rejected")
 
     -- 作用域
-    local ok, _, owner = OpsV3.scope_add(cfg, "Jacket", "head", "b1")
-    assert(not ok and owner == "Face", "material owned by another group")
+    assert(OpsV3.scope_add(cfg, "Jacket", "head", "b1"), "a material may belong to several groups")
+    assert(not OpsV3.scope_add(cfg, "Jacket", "head", "b1"), "already in scope")
+    assert(OpsV3.scope_remove(cfg, "Jacket", "head", "b1"))
     assert(OpsV3.scope_add(cfg, "Jacket", "body", "sleeve"))
     assert(OpsV3.set_option_material(cfg, "Jacket", "On", "body", "sleeve", "on"))
     assert(g.options.On.body.materials.sleeve == true)
@@ -221,6 +271,16 @@ do
     assert(g.options.On.body.materials.sleeve == nil, "removing from scope clears option values")
     assert(OpsV3.set_option_material(cfg, "Jacket", "Torn", "body", "j", "none"))
     assert(g.options.Torn.body == nil, "empty slot table dropped")
+    -- 批量改作用域
+    local n0 = #g.scope
+    assert(OpsV3.scope_set(cfg, "Jacket", { { slot = "head", material = "b1" }, { slot = "head", material = "b2" } }, {}))
+    assert(#g.scope == n0 + 2)
+    assert(not OpsV3.scope_set(cfg, "Jacket", { { slot = "head", material = "b1" } }, {}), "nothing new to add")
+    assert(OpsV3.set_option_material(cfg, "Jacket", "On", "head", "b2", "on"))
+    local changed, reapply = OpsV3.scope_set(cfg, "Jacket", {}, { { slot = "head", material = "b1" }, { slot = "head", material = "b2" } })
+    assert(changed and reapply and #g.scope == n0)
+    assert(g.options.On.head == nil, "bulk removal clears option values")
+    assert(not OpsV3.scope_set(cfg, "Nope", {}, {}), "unknown group")
 
     -- 选项增删
     local _, _, name = OpsV3.new_option(cfg, "Face")
@@ -258,7 +318,7 @@ end
 
 -- ============================================================ TransformManager.resolve 走 v3
 do
-    local Utils = require("ArmorVariantManager_Core.Games.RE4.Utils")
+
     local saved_all, saved_usable = Utils.all_enabled_preset, TM.usable_slots
     Utils.all_enabled_preset = function()
         return {body = {materials = {a = true, j = true, x = true}}, head = {materials = {b1 = true, b2 = true}}}
@@ -286,4 +346,4 @@ do
     Utils.all_enabled_preset, TM.usable_slots = saved_all, saved_usable
 end
 
-print("PASS: v3 normalize, v2 migration equivalence (16 condition combinations, overlap report), claims / partial / exclusive / broken / paused, hold, HP chains and OpsV3 edits")
+print("PASS: v3 normalize, v2 migration equivalence (16 condition combinations, picks and final materials), overlapping groups, claims / partial / exclusive / broken / paused, hold, HP chains and OpsV3 edits")

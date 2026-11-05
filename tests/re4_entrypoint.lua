@@ -259,7 +259,7 @@ local function run_frames(n) for _ = 1, n or 2 do tick() end end
 snap = act({kind = "migrate", character = "Leon"})
 plain(snap, "v3 snapshot")
 assert(snap.configVersion == 3 and files[CONFIG_PATH].version == 3)
-assert(snap.notice.kind == "migrated" and snap.notice.overlaps == 0 and snap.notice.presets == 1)
+assert(snap.notice.kind == "migrated" and snap.notice.overlaps == nil and snap.notice.presets == 1)
 assert(files["ArmorVariantManager/backup/Leon.json"].version == 2, "restore point keeps the v2 config")
 assert(files["ArmorVariantManager/presets/p0001.json"].name == "Leon · Old")
 assert(files["ArmorVariantManager/presets/p0001.json"].config.version == 3)
@@ -333,12 +333,13 @@ snap = act({kind = "base-delete", character = "Leon", preset = "Battle"})
 assert(#snap.base.presets == 1 and snap.backups.hasBackup == true)
 assert(snap.states[1].baseResult.kind == "broken", "deleted target shows as broken")
 
--- 状态组:新建、作用域(不重叠)、选项、材质三态、改名牵动引用、删除
+-- 状态组:新建、作用域(可以和别的组重叠)、选项、材质三态、改名牵动引用、删除
 snap = act({kind = "group-new", character = "Leon", name = "Face"})
 snap = act({kind = "scope-add", character = "Leon", group = "Face", slot = "head", material = "Face"})
 S.equal(snap.groups[2].scope, {"head/Face"})
-assert(not pcall(act, {kind = "scope-add", character = "Leon", group = "Face", slot = "hair", material = "Hair"}),
-    "a material belongs to one group only")
+snap = act({kind = "scope-add", character = "Leon", group = "Face", slot = "hair", material = "Hair"})
+S.equal(snap.groups[2].scope, {"head/Face", "hair/Hair"}, "a material may belong to several groups")
+snap = act({kind = "scope-remove", character = "Leon", group = "Face", slot = "hair", material = "Hair"})
 snap = act({kind = "option-new", character = "Leon", group = "Face"})
 assert(snap.groups[2].active == "1")
 snap = act({kind = "option-material", character = "Leon", group = "Face", option = "1", slot = "head", material = "Face", value = "off"})

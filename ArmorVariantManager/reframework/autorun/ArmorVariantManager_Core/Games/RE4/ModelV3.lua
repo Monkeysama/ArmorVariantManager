@@ -8,6 +8,7 @@
 --     version = 3,
 --     base   = { presets = {名 -> 快照}, order = {...}, active = "名" | "" },
 --     groups = { { name, scope = {"slot/材质", ...}, options = {名 -> 稀疏快照}, order, active }, ... },
+--              -- 数组顺序就是叠加顺序:靠后的组覆盖靠前的。作用域可以重叠
 --     conditions = { auto = true, states = { 条件状态, ... } },   -- 数组顺序就是优先级
 --     material_notes = { [slot] = { [材质] = "备注" } }, armor_mirrors_body = true, source_preset = nil,
 --   }
@@ -40,11 +41,14 @@ function M.find_group(cfg, name)
     return nil
 end
 
--- 材质 -> 管它的状态组
-function M.owner_map(cfg)
+-- 材质 -> 管它的状态组名列表(按叠加顺序,最后一个说了算)
+function M.groups_of(cfg)
     local map = {}
     for _, g in ipairs(cfg.groups or {}) do
-        for _, k in ipairs(g.scope or {}) do map[k] = g.name end
+        for _, k in ipairs(g.scope or {}) do
+            map[k] = map[k] or {}
+            table.insert(map[k], g.name)
+        end
     end
     return map
 end
@@ -137,16 +141,13 @@ function M.normalize(cfg)
     base.rules, base.auto = nil, nil
     cfg.base = base
 
-    local groups, owned, names = {}, {}, {}
+    local groups, names = {}, {}
     for _, g in ipairs(is_tbl(cfg.groups) and cfg.groups or {}) do
         if is_tbl(g) and type(g.name) == "string" and g.name ~= "" and not names[g.name] then
             names[g.name] = true
             local scope, set = {}, {}
             for _, k in ipairs(is_tbl(g.scope) and g.scope or {}) do
-                -- 一个材质只属于一个组:写坏 / 手改出来的重叠,先到先得
-                if M.split_key(k) and not owned[k] and not set[k] then
-                    owned[k] = g.name; set[k] = true; scope[#scope + 1] = k
-                end
+                if M.split_key(k) and not set[k] then set[k] = true; scope[#scope + 1] = k end
             end
             local options = {}
             for n, p in pairs(is_tbl(g.options) and g.options or {}) do
@@ -190,8 +191,8 @@ end
 -- 结果等价性:每条 v2 规则变成一个只指向原来那一层的条件状态,排列顺序 = 整套造型的规则,
 -- 再按状态组优先级、组内按 order。v2 里各层互不影响、每层取第一条命中的规则;v3 里每个状态
 -- 只认领一层,同一层上仍是排在前面的先认领 —— 所以各层的选择和 v2 一致。全部不独占。
--- 唯一的例外是作用域重叠:同一个材质被几个组管时,分给优先级最高的组,其他组里删掉,
--- 并在 report.overlaps 里列出来。
+-- 作用域重叠原样保留:groups 按优先级**倒序**排(= v2 的应用顺序,优先级高的最后写),
+-- 后写覆盖先写,所以重叠材质的结果也和 v2 一致。
 -- ============================================================
 function M.migrate_from_v2(v2, axis_priority, base_label)
     local axes = is_tbl(v2.axes) and v2.axes or {}
@@ -202,9 +203,9 @@ function M.migrate_from_v2(v2, axis_priority, base_label)
         material_notes = v2.material_notes,
         armor_mirrors_body = v2.armor_mirrors_body,
     }
-    local report = { overlaps = {} }
+    local report = {}
 
-    local owner, scopes = {}, {}
+    local scopes = {}
     for _, name in ipairs(axis_priority) do
         local axis = axes[name]
         if is_tbl(axis) then
@@ -221,20 +222,13 @@ function M.migrate_from_v2(v2, axis_priority, base_label)
             local keys = {}
             for k in pairs(kset) do keys[#keys + 1] = k end
             table.sort(keys)
-            local mine = {}
-            for _, k in ipairs(keys) do
-                if owner[k] then
-                    report.overlaps[#report.overlaps + 1] = { key = k, kept = owner[k], dropped = name }
-                else
-                    owner[k] = name; mine[#mine + 1] = k
-                end
-            end
-            scopes[name] = mine
+            scopes[name] = keys
         end
     end
 
     out.groups = {}
-    for _, name in ipairs(axis_priority) do
+    for i = #axis_priority, 1, -1 do
+        local name = axis_priority[i]
         local axis = axes[name]
         if is_tbl(axis) then
             out.groups[#out.groups + 1] = { name = name, scope = scopes[name], options = axis.presets,

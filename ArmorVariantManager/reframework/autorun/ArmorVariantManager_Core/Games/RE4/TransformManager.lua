@@ -399,7 +399,7 @@ local function make_build(base, sparse, mirror, body_updater)
             end
         end
 
-        -- 稀疏层:只对自己点名的材质发言。作用域不重叠时,顺序不影响结果。
+        -- 稀疏层:只对自己点名的材质发言,后写的覆盖先写的(v2 按 axis_apply_order,v3 按 groups 顺序)。
         for _, layer in ipairs(sparse) do
             local pname = picks[layer.key]
             local preset = pname and (layer.presets or {})[pname]
@@ -455,7 +455,7 @@ local function changed_since_last(char_addr, config, sig)
 end
 
 -- v3:各层的选择来自条件状态表(ModelV3.resolve),叠加和 v2 共用 make_build。
--- 状态组的叠加顺序就是 groups 的顺序 —— 作用域不重叠,顺序不影响结果。
+-- 状态组的叠加顺序就是 groups 的顺序:作用域可以重叠,靠后的组覆盖靠前的。
 local function resolve_v3(char_addr, config, context, body_updater)
     local sparse = {}
     for _, g in ipairs(config.groups or {}) do

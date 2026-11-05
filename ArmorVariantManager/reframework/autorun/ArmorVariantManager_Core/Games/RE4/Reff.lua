@@ -289,6 +289,11 @@ function Reff.new(deps)
         end,
         ["scope-add"] = function(p, cfg) return OpsV3.scope_add(cfg, p.group, p.slot, p.material) end,
         ["scope-remove"] = function(p, cfg) return OpsV3.scope_remove(cfg, p.group, p.slot, p.material) end,
+        ["scope-set"] = function(p, cfg, cur)
+            if not M3.find_group(cfg, p.group) then return false end
+            if type(p.remove) == "table" and #p.remove > 0 then deps.snapshot_before_destructive(cur.kind_id) end
+            return OpsV3.scope_set(cfg, p.group, p.add, p.remove)
+        end,
         ["option-new"] = function(p, cfg) return OpsV3.new_option(cfg, p.group, str(p.name)) end,
         ["option-duplicate"] = function(p, cfg) return OpsV3.duplicate_option(cfg, p.group, p.option) end,
         ["option-rename"] = function(p, cfg) return OpsV3.rename_option(cfg, p.group, p.option, str(p.name)) end,
@@ -365,7 +370,7 @@ function Reff.new(deps)
         if p.kind == "migrate" then
             local report = deps.migrate_to_v3(cur.kind_id)
             if not report then error(T("reff_action_rejected")) end
-            notice = { kind = "migrated", overlaps = #report.overlaps, presets = #(report.presets or {}) }
+            notice = { kind = "migrated", presets = #(report.presets or {}) }
             deps.reset_ui_state()
             return controller.snapshot()
         end

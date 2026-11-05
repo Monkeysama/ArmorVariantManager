@@ -75,13 +75,12 @@ function OpsV3.move_group(cfg, name, offset)
     return true, false
 end
 
--- 作用域:一个材质只能属于一个状态组
+-- 作用域:一个材质可以属于几个状态组,重叠部分由靠后的组覆盖(见 TransformManager.resolve_v3)
 function OpsV3.scope_add(cfg, group, slot, mat)
     local g = M3.find_group(cfg, group)
     if not g or type(slot) ~= "string" or type(mat) ~= "string" then return false end
     local key = M3.key_of(slot, mat)
-    local owner = M3.owner_map(cfg)[key]
-    if owner then return false, false, owner end
+    for _, k in ipairs(g.scope) do if k == key then return false end end
     table.insert(g.scope, key)
     return true, false
 end
@@ -104,6 +103,23 @@ function OpsV3.scope_remove(cfg, group, slot, mat)
         end
     end
     return false
+end
+
+-- 批量改作用域(编辑范围的全选 / 清空):add / remove 是 { {slot=, material=}, ... }
+function OpsV3.scope_set(cfg, group, add, remove)
+    if not M3.find_group(cfg, group) then return false end
+    local changed, reapply = false, false
+    for _, m in ipairs(type(add) == "table" and add or {}) do
+        if type(m) == "table" and OpsV3.scope_add(cfg, group, m.slot, m.material) then changed = true end
+    end
+    for _, m in ipairs(type(remove) == "table" and remove or {}) do
+        if type(m) == "table" then
+            local c, r = OpsV3.scope_remove(cfg, group, m.slot, m.material)
+            if c then changed = true end
+            if r then reapply = true end
+        end
+    end
+    return changed, reapply
 end
 
 -- ============================================================ 状态组的选项
