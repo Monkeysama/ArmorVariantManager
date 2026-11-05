@@ -23,7 +23,8 @@ function Main.start(ctx)
     local global_config_path = "ArmorVariantManager/GlobalSettings.json"
     -- 默认英文(面板顶部有「中文」勾选框,勾了才切中文)。语言是全局的,不跟角色配置走。
     -- ui_dissolve_*:在面板上手动切状态 / 预设时的溶解过渡(只作用于溶解模板的材质)
-    local global_config = { language = "en", ui_dissolve_enabled = true, ui_dissolve_time = 1.0 }
+    -- block_game_mouse:REFF 面板显示时不让游戏读到鼠标按键(见 InputGuard.lua)
+    local global_config = { language = "en", ui_dissolve_enabled = true, ui_dissolve_time = 1.0, block_game_mouse = true }
     local function load_global_settings()
         local loaded = json.load_file(global_config_path)
         if not loaded then return end
@@ -35,6 +36,7 @@ function Main.start(ctx)
             global_config.weapon_hide_storage = loaded.weapon_hide_storage
         end
         if type(loaded.ui_dissolve_enabled) == "boolean" then global_config.ui_dissolve_enabled = loaded.ui_dissolve_enabled end
+        if type(loaded.block_game_mouse) == "boolean" then global_config.block_game_mouse = loaded.block_game_mouse end
         if tonumber(loaded.ui_dissolve_time) then global_config.ui_dissolve_time = tonumber(loaded.ui_dissolve_time) end
         -- 全身预览(REFF 页面里显示)
         if type(loaded.portrait_enabled) == "boolean" then global_config.portrait_enabled = loaded.portrait_enabled end
@@ -2684,6 +2686,13 @@ function Main.start(ctx)
         else
             last_draw_error = note_error("on_draw_ui", err)
         end
+    end)
+
+    -- REFF 面板显示时屏蔽游戏的鼠标并接管光标模式(键盘不拦)。装不上(类型变了)只记日志,不影响其他功能。
+    pcall(function()
+        local InputGuard = require("ArmorVariantManager_Core.Games.RE4.InputGuard")
+        InputGuard.install(function() return global_config.block_game_mouse ~= false and InputGuard.reff_visible() end,
+            function(msg) log.warn(msg) end)
     end)
 
     -- REFF 网页界面(可选)。未安装 REFF 时不注册,REF 原生面板照常可用。

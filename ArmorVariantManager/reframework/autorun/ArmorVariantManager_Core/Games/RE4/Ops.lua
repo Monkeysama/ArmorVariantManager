@@ -176,7 +176,7 @@ function Ops.set_global(global_config, id, value)
     if id == "language" then
         if value ~= "zh" and value ~= "en" then return false end
         global_config.language = value
-    elseif id == "weapon_hide_storage" or id == "ui_dissolve_enabled" or id == "portrait_enabled" then
+    elseif id == "weapon_hide_storage" or id == "ui_dissolve_enabled" or id == "portrait_enabled" or id == "block_game_mouse" then
         global_config[id] = value == true
     elseif id == "portrait_distance" or id == "portrait_height" then
         local n = tonumber(value)

@@ -219,7 +219,7 @@ function Reff.new(deps)
         local g = deps.global_config
         local snapshot = { game = "RE4", version = deps.version, language = language(),
             settings = { weaponHideStorage = g.weapon_hide_storage == true,
-                uiDissolveEnabled = g.ui_dissolve_enabled ~= false,
+                uiDissolveEnabled = g.ui_dissolve_enabled ~= false, blockGameMouse = g.block_game_mouse ~= false,
                 uiDissolveTime = tonumber(g.ui_dissolve_time) or 1.0,
                 previewDistance = tonumber(g.portrait_distance) or 3.0, previewHeight = tonumber(g.portrait_height) or 0.0 },
             characters = {}, character = "", notice = notice,

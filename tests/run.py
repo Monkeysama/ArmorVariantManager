@@ -17,6 +17,7 @@ DEFAULT_TESTS = (
     "tests/re4_presets.lua",
     "tests/re4_dissolve.lua",
     "tests/re4_targets.lua",
+    "tests/re4_input_guard.lua",
     "tests/app_ui.lua",
     "tests/material_ui.lua",
     "tests/parts_ui.lua",
