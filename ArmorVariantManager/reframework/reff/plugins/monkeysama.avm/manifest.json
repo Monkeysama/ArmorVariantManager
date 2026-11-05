@@ -6,7 +6,7 @@
   "author": "MK,Moon,AZUSA,Ensicht",
   "version": "4.3.4",
   "reffApi": ">=1.0.0 <2.0.0",
-  "games": ["MHWILDS", "MHRISE"],
+  "games": ["MHWILDS", "MHRISE", "RE4"],
   "ui": { "kind": "page", "mode": "isolated-page", "entry": "ui/dist/index.html" },
   "methods": ["monkeysama.avm.snapshot", "monkeysama.avm.action", "monkeysama.avm.documentation", "monkeysama.avm.imports", "monkeysama.avm.preview"],
   "events": [],

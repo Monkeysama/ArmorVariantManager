@@ -10,6 +10,9 @@ import subprocess
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_TESTS = (
     "tests/entrypoint.lua",
+    "tests/re4_entrypoint.lua",
+    "tests/re4_localization.lua",
+    "tests/re4_ops.lua",
     "tests/app_ui.lua",
     "tests/material_ui.lua",
     "tests/parts_ui.lua",

@@ -1,0 +1,259 @@
+-- 【已从插件里移除的代码,仅存档,不会被 REFramework 加载】
+--
+-- 「条件判断」面板的候选清单 + 探针。恢复方式见 condition_probe_panel.lua.txt。
+-- 清单本身的实测结论已经写进 README(「条件 backlog」的三档 + 「实测出来的语义坑」),
+-- 所以这个文件的价值只剩下"代码现成的",不是结论的出处。
+
+-- 条件判断面板的数据源(**只读探针,不参与规则求值**)。
+--
+-- 这里放的是 README「条件 backlog」里那批候选:实测确认存在、但还没实装成真正条件的
+-- 方法。面板把它们全部实时读一遍,让用户在游戏里对着自己想要的时机看哪一条变绿,
+-- 挑中了再去 PlayerBools.lua 实装 —— 省掉"猜方法名 → 实装 → 发现语义不对 → 回退"这圈。
+--
+-- 为什么标签直接写在这张表里,而不是走 Localization 的 cond_<id>:
+-- 这些条目**不是**条件,没有 id、不会写进用户配置,给它们各开一对 zh/en key 会让
+-- Localization 多出一百多行、还得跟这张表来回对照。已实装的那几个照样从 Registry 拿
+-- 官方文案(见 Panel 里的 registered 集合),所以不存在"同一个条件两处文案打架"。
+--
+-- 探针**绝不能**因为方法不存在就每帧刷日志:所有取值前先用反射确认方法在,
+-- 确认不到就记进 missing 缓存,之后再也不碰(见 probe_bool)。
+--
+-- 标签里的「很难触发」= **测的时候没见它亮**,不等于"它不会亮" —— 很可能只是没走到
+-- 那个场景(吊桥、电梯、冰属性敌人)。所以这些条目一条都不删,留着随时再测;
+-- 措辞也别改成"不亮/从不亮",那是把没验证的结论钉死。
+
+local Probe = {}
+
+-- ---------- 反射:方法存在性 + 枚举名 ----------
+
+-- TypeDefinition:get_method 不一定会往父类找,所以自己顺着 parent 链走一遍。
+local function find_method(td, name)
+    local cur = td
+    while cur do
+        local ok, m = pcall(function() return cur:get_method(name) end)
+        if ok and m then return m end
+        local ok_p, p = pcall(function() return cur:get_parent_type() end)
+        if not ok_p then return nil end
+        cur = p
+    end
+    return nil
+end
+
+local function type_name_of(obj)
+    local ok, td = pcall(function() return obj:get_type_definition() end)
+    if not ok or not td then return "?" end
+    local ok_n, n = pcall(function() return td:get_full_name() end)
+    if ok_n and n then return n end
+    return "?"
+end
+
+local function type_def_of(obj)
+    local ok, td = pcall(function() return obj:get_type_definition() end)
+    if ok and td then return td end
+    return nil
+end
+
+-- 枚举名反查表,按类型全名缓存。和 Utils.get_kind_id_string 同一套路:
+-- 运行时 sdk 给的是裸整数,人看得懂的名字得去静态字段里查。
+local enum_maps = {}
+local function enum_map(type_full_name)
+    if not type_full_name then return nil end
+    if enum_maps[type_full_name] ~= nil then return enum_maps[type_full_name] end
+    local map = {}
+    local td = sdk.find_type_definition(type_full_name)
+    if td then
+        local ok, fields = pcall(function() return td:get_fields() end)
+        if ok and fields then
+            for _, f in ipairs(fields) do
+                local ok_s, is_static = pcall(function() return f:is_static() end)
+                if ok_s and is_static then
+                    local ok_v, v = pcall(function() return f:get_data(nil) end)
+                    if ok_v and type(v) == "number" then map[v] = f:get_name() end
+                end
+            end
+        end
+    end
+    enum_maps[type_full_name] = map
+    return map
+end
+
+-- 标志枚举(chainsaw.PlayerDefine.State 是 64 位、66 个状态)按位拆开。
+-- 刻意不用 & / >> —— 那是 Lua 5.3+ 语法,这个文件要能在更老的解释器上加载;
+-- 用除法取位对 2^53 以内的值是精确的,够覆盖实际会出现的状态组合。
+local function decompose_flags(map, value)
+    if map[value] then return map[value] end
+    local names = {}
+    for bit = 0, 52 do
+        local mask = 2 ^ bit
+        if mask > value then break end
+        if math.floor(value / mask) % 2 == 1 then
+            table.insert(names, map[mask] or ("bit" .. bit))
+        end
+    end
+    if #names == 0 then return tostring(value) end
+    return table.concat(names, "+")
+end
+
+-- ---------- 取值 ----------
+
+-- 拿不到的方法(不存在 / 返回类型不是布尔)记在这里,键带类型全名 ——
+-- 换角色(里昂/艾达)可能是不同派生类,不能一棍子缓存。
+local missing = {}
+
+local function owner_object(context, owner)
+    if not context then return nil end
+    if owner == nil then return context end
+    if owner == "hitpoint" then
+        local ok, hp = pcall(function() return context:call("get_HitPoint") end)
+        if ok and hp and sdk.is_managed_object(hp) then return hp end
+    end
+    return nil
+end
+
+local function cache_key(obj, item)
+    return type_name_of(obj) .. "|" .. item.method
+end
+
+-- 返回 "on" / "off" / "na"("na" = 这个版本上读不到,面板里灰着显示)
+function Probe.probe_bool(context, item)
+    local obj = owner_object(context, item.owner)
+    if not obj then return "na" end
+    local key = cache_key(obj, item)
+    if missing[key] then return "na" end
+
+    local td = type_def_of(obj)
+    if not td or not find_method(td, item.method) then
+        missing[key] = true
+        return "na"
+    end
+
+    local ok, v = pcall(function() return obj:call(item.method) end)
+    if not ok then missing[key] = true; return "na" end
+    if type(v) == "boolean" then return v and "on" or "off" end
+    -- 方法在、却不给布尔:这是稳定事实,缓存掉,别每帧白调
+    missing[key] = true
+    return "na"
+end
+
+-- 取值类返回给面板显示的字符串;读不到返回 nil
+function Probe.probe_value(context, item)
+    local obj = owner_object(context, item.owner)
+    if not obj then return nil end
+    local key = cache_key(obj, item)
+    if missing[key] then return nil end
+
+    local td = type_def_of(obj)
+    local m = td and find_method(td, item.method)
+    if not m then missing[key] = true; return nil end
+
+    local ok, v = pcall(function() return obj:call(item.method) end)
+    if not ok then missing[key] = true; return nil end
+    if v == nil then return nil end
+
+    if type(v) == "number" then
+        if item.enum or item.flags then
+            -- 枚举类型名从方法的返回类型上问,不硬编码 —— 硬编码过一次,
+            -- SituationType 的真实类型名跟猜的不一样,查出来是空表。
+            local ok_rt, rt = pcall(function() return m:get_return_type() end)
+            local rt_name = (ok_rt and rt) and select(2, pcall(function() return rt:get_full_name() end)) or nil
+            local map = rt_name and enum_map(rt_name) or nil
+            if map then
+                if item.flags then return decompose_flags(map, v) end
+                if map[v] then return map[v] .. " (" .. tostring(v) .. ")" end
+            end
+        end
+        if v ~= math.floor(v) then return string.format("%.3f", v) end
+        return tostring(v)
+    end
+    if type(v) == "boolean" then return v and "true" or "false" end
+    if type(v) == "string" then return v end
+    if sdk.is_managed_object(v) then return "<" .. type_name_of(v) .. ">" end
+    return tostring(v)
+end
+
+-- ---------- 候选清单 ----------
+--
+-- item = { method = 方法名, zh = 中文名, en = 英文名, owner = nil|"hitpoint" }
+-- 已实装成真正条件的也留在表里(面板会给它们打标记),这样"能测的"和"能用的"
+-- 在同一份清单里一眼看得出差别。
+
+Probe.BOOL_GROUPS = {
+    { key = "probe_g_combat", items = {
+        { method = "get_IsBattle",           zh = "战斗中",             en = "In battle" },
+        { method = "get_IsAiming",           zh = "瞄准中移动或转视角", en = "Aiming while moving/turning" },
+        { method = "get_IsWheel",            zh = "站定瞄准/举刀",      en = "Aiming while stationary" },
+        { method = "get_IsCombating",        zh = "近战攻击中",         en = "Melee attacking" },
+        { method = "get_IsShooting",         zh = "开火中",             en = "Shooting" },
+        { method = "get_IsPullTrigger",      zh = "扣扳机",             en = "Pulling trigger" },
+        { method = "get_IsThrowing",         zh = "投掷中",             en = "Throwing" },
+        { method = "get_IsReloading",        zh = "换弹中",             en = "Reloading" },
+        { method = "get_IsWeaponChanging",   zh = "换武器中",           en = "Changing weapon" },
+        { method = "get_IsParry",            zh = "招架",               en = "Parry" },
+        { method = "get_IsBigParry",         zh = "完美招架",           en = "Perfect parry" },
+        { method = "get_IsFatalKick",        zh = "处决踢",             en = "Fatal kick" },
+        { method = "get_IsFatalRoundKick",   zh = "处决回旋踢",         en = "Fatal round kick" },
+        { method = "get_IsFatalKill",        zh = "处决击杀",           en = "Fatal kill" },
+        { method = "get_IsAttackGuarded",    zh = "攻击被防住(很难触发)",   en = "Attack guarded (hard to trigger)" },
+        { method = "get_IsDodging",          zh = "闪避中(很难触发)",       en = "Dodging (hard to trigger)" },
+        { method = "get_IsInAttackSign",     zh = "敌人预备攻击(很难触发)", en = "Enemy attack sign (hard to trigger)" },
+    } },
+    { key = "probe_g_posture", items = {
+        { method = "get_IsCrouch",           zh = "蹲下",               en = "Crouching" },
+        { method = "get_IsWalk",             zh = "行走",               en = "Walking" },
+        { method = "get_IsRun",              zh = "跑动",               en = "Running" },
+        { method = "get_IsSprint",           zh = "冲刺(很难触发)",     en = "Sprinting (hard to trigger)" },
+        { method = "get_IsQuickTurn",        zh = "快速转身",           en = "Quick turn" },
+        { method = "get_IsJumping",          zh = "跳跃中",             en = "Jumping" },
+        { method = "get_IsFalling",          zh = "下落中",             en = "Falling" },
+        { method = "get_IsLanding",          zh = "落地",               en = "Landing" },
+        { method = "get_IsLadder",           zh = "爬梯子",             en = "On ladder" },
+        { method = "get_IsHookShot",         zh = "钩索",               en = "Hook shot" },
+        { method = "get_IsBoat",             zh = "乘船",               en = "On boat" },
+        { method = "get_IsGround",           zh = "站在地面(几乎恒为真)", en = "On ground (almost always true)" },
+        { method = "get_IsRetreat",          zh = "后退(很难触发)",         en = "Retreating (hard to trigger)" },
+    } },
+    { key = "probe_g_env", items = {
+        { method = "get_InSafeRoom",         zh = "在安全屋(很难触发)", en = "In safe room (hard to trigger)" },
+        { method = "get_IsLightArea",        zh = "明亮区域(很难触发)",     en = "Lit area (hard to trigger)" },
+        { method = "get_IsLightOn",          zh = "手电筒开着(很难触发)",   en = "Flashlight on (hard to trigger)" },
+        { method = "get_IsInsideElevator",   zh = "电梯里(很难触发)",       en = "Inside elevator (hard to trigger)" },
+        { method = "get_IsInsideSuspensionBridge", zh = "吊桥上(很难触发)", en = "On suspension bridge (hard to trigger)" },
+        { method = "get_IsDoorPass",         zh = "正在过门(很难触发)",     en = "Passing a door (hard to trigger)" },
+    } },
+    { key = "probe_g_damage", items = {
+        { method = "get_IsDamaging",         zh = "受击",               en = "Hit taken" },
+        { method = "get_IsUpperBodyDamage",  zh = "上半身受击",         en = "Upper body hit" },
+        { method = "get_IsInBurnDamage",     zh = "烧伤中",             en = "Burning" },
+        { method = "get_IsInFreezeDamage",   zh = "冻伤中(很难触发)",       en = "Freezing (hard to trigger)" },
+        { method = "get_IsInvincible",       zh = "无敌",               en = "Invincible" },
+        { method = "get_IsAutoRecovery",     zh = "正在自动回血",       en = "Auto recovering" },
+        { method = "get_IsInGrappleDamage",  zh = "被擒抱(很难触发)",   en = "Grappled (hard to trigger)" },
+        { method = "get_IsJacked",           zh = "被抓住(很难触发)",   en = "Jacked (hard to trigger)" },
+        { method = "checkDyingMode",         zh = "濒死模式(很难触发)", en = "Dying mode (hard to trigger)" },
+        { method = "get_IsHPChanged",        zh = "HP 本帧有变化(很难触发)", en = "HP changed this frame (hard to trigger)", owner = "hitpoint" },
+    } },
+}
+
+-- 取值类:名字单独看没意义,所以这一组显示「名字 = 当前值」,不做绿色判定
+-- (没有阈值就谈不上"符合")。想按它们做规则,得先按 README 给 Registry 加 kind。
+--
+-- 当前 HP / 上限 HP 放在这里是为了配下面那个改血测试:要回答"血量分级的 1 是什么"
+-- "HP 只剩 1 时是什么分级",得能同时看见精确血量和分级。
+Probe.VALUE_ITEMS = {
+    { method = "getHitPointVital",  zh = "血量分级",       en = "HP vital tier",     enum = true },
+    { method = "get_CurrentHitPoint", zh = "当前 HP",      en = "Current HP",        owner = "hitpoint" },
+    { method = "get_DefaultHitPoint", zh = "上限 HP",      en = "Max HP",            owner = "hitpoint" },
+    { method = "get_SituationType", zh = "章节/情境",      en = "Situation (chapter)", enum = true },
+    { method = "get_State",         zh = "状态标志",       en = "State flags",       flags = true },
+    { method = "get_EquipWeaponTypeBackup", zh = "装备武器类型", en = "Equipped weapon type", enum = true },
+    { method = "get_HateRate",      zh = "敌人仇恨值",     en = "Enemy hate rate" },
+    { method = "get_GutsValue",     zh = "残血保命值",     en = "Guts value" },
+    { method = "get_RunAccelRate",  zh = "跑动加速率",     en = "Run accel rate" },
+}
+
+function Probe.label(item, lang)
+    if lang == "zh" then return item.zh or item.en or item.method end
+    return item.en or item.method
+end
+
+return Probe

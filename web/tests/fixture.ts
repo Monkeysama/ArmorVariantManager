@@ -330,4 +330,6 @@ if (new URLSearchParams(location.search).has('controls')) {
   add('REFF violet / 140%', () => window.postMessage({ type: 'reff:preferences', preferences: { language: 'zh-CN', appearance: { preset: 'violet', accent: '#c8a0ef', background: '#1b1823', surface: '#272031', backgroundOpacity: .94, cornerRadius: 6, surfaceBlur: 8, textScale: 1.4 } } }, '*'));
   status = document.createElement('output'); status.style.cssText = 'flex-basis:100%;max-height:60px;overflow:auto'; toolbar.append(status); renderStatus();
 }
-void import('../src/main');
+// ?re4 换成 RE4 的夹具宿主（同一个页面入口，按快照里的 game 渲染 RE4 页面）。
+if (new URLSearchParams(location.search).has('re4')) void import('./re4-fixture').then(module => { module.installRe4Fixture(); return import('../src/main'); });
+else void import('../src/main');

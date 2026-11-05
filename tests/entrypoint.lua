@@ -7,7 +7,8 @@ local main = autorun .. "/ArmorVariantManager.lua"
 local Game = require("ArmorVariantManager_Core.Game")
 assert(Game.detect("MHWILDS").name == "Wilds")
 assert(Game.detect("MHRise").name == "Rise")
-assert(not Game.detect("re4"))
+assert(Game.detect("re4").standalone)
+assert(not Game.detect("re2"))
 
 local S = dofile("tests/support.lua")
 for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", true}, {"mhrise", true}}) do
