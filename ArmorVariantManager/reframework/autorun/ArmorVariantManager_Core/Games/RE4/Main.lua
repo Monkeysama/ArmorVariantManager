@@ -18,6 +18,7 @@ function Main.start(ctx)
     local Dissolve = require("ArmorVariantManager_Core.Games.RE4.Dissolve")
     local Ops = require("ArmorVariantManager_Core.Games.RE4.Ops")
     local ModelV3 = require("ArmorVariantManager_Core.Games.RE4.ModelV3")
+    local Presets = require("ArmorVariantManager_Core.Games.RE4.Presets")
 
     local global_config_path = "ArmorVariantManager/GlobalSettings.json"
     -- 默认英文(面板顶部有「中文」勾选框,勾了才切中文)。语言是全局的,不跟角色配置走。
@@ -807,23 +808,145 @@ function Main.start(ctx)
         return changed
     end
 
-    -- v2 → v3(状态组平铺 + 条件状态)。由用户在杂项页 / 面板上点"迁移旧配置"触发,不自动迁移。
-    -- 迁移前写一份还原点("恢复到上次删除 / 覆写之前"能退回 v2);
-    -- 返回 ModelV3 的 report(作用域重叠的材质),已经是 v3 / 没有配置时返回 nil。
-    local function migrate_to_v3(kind_id)
+    -- ============================================================
+    -- 预设库(v3),见 Presets.lua。当前配置是唯一生效的那份,预设只是套用的来源;
+    -- 套用 = 当前配置先进自动保存,再整份换成预设的内容。从不自动切换。
+    -- ============================================================
+    local preset_lib = Presets.library({
+        load = function(path) return json.load_file(path) end,
+        dump = function(path, t) return json.dump_file(path, t) end,
+        glob = (fs and fs.glob) and function(pattern) return fs.glob(pattern) end or nil,
+        now = os.time,
+    })
+    -- "不用了"按模型记:[配置键] = 当时的材质签名;模型再变就重新提醒
+    local preset_dismissed = {}
+
+    local function live_sets_of(source) return Presets.live_sets(Utils.all_enabled_preset(source)) end
+    local function live_signature(sets)
+        local parts = {}
+        for _, slot in ipairs(Utils.MESH_SLOTS) do
+            local names = {}
+            for m in pairs(sets[slot] or {}) do names[#names + 1] = m end
+            table.sort(names)
+            parts[#parts + 1] = slot .. ":" .. table.concat(names, ",")
+        end
+        return table.concat(parts, "|")
+    end
+
+    -- 原地换内容:其他地方(解算缓存、面板)拿着的是同一个表
+    local function replace_config(cfg, new)
+        for k in pairs(cfg) do cfg[k] = nil end
+        for k, v in pairs(normalize_config(new)) do cfg[k] = v end
+        TransformManager.clear_last_state_cache()
+    end
+
+    -- v2 的优先级 = 应用顺序倒过来(后写的优先)
+    local function v2_priority(cfg)
+        local apply, out = TransformManager.axis_apply_order(cfg), {}
+        for i = #apply, 1, -1 do out[#out + 1] = apply[i] end
+        return out
+    end
+
+    local function preset_view(kind_id, source)
+        local key = cfg_key(kind_id)
+        local cfg = loaded_configs[key]
+        local live = live_sets_of(source)
+        local ranked = Presets.ranked(preset_lib, live)
+        local current = (cfg and ModelV3.is_v3(cfg)) and Presets.match(cfg, live) or nil
+        local better = {}
+        if current and current ~= "full" then
+            for _, r in ipairs(ranked) do if r.match == "full" then better[#better + 1] = r.entry end end
+        end
+        return {
+            current = current,
+            source = cfg and cfg.source_preset and preset_lib.get(cfg.source_preset) or nil,
+            presets = ranked, better = better,
+            dismissed = preset_dismissed[key] == live_signature(live),
+            autosaves = preset_lib.autosaves(key),
+        }
+    end
+
+    local function dismiss_preset_hint(kind_id, source)
+        preset_dismissed[cfg_key(kind_id)] = live_signature(live_sets_of(source))
+        return true
+    end
+
+    local function apply_preset(kind_id, id)
+        local key = cfg_key(kind_id)
+        local cfg, e = loaded_configs[key], preset_lib.get(id)
+        if not cfg or not e or not ModelV3.is_v3(cfg) then return false end
+        preset_lib.autosave_push(key, string.format(T("autosave_before_apply"), e.name), cfg)
+        local new = deep_copy(e.config)
+        new.version = ModelV3.VERSION
+        replace_config(cfg, new)
+        cfg.source_preset = id
+        commit(kind_id, true, true)
+        return true
+    end
+
+    local function save_current_as_preset(kind_id, name)
+        local key = cfg_key(kind_id)
+        local cfg = loaded_configs[key]
+        if not cfg or not ModelV3.is_v3(cfg) then return nil end
+        local id = preset_lib.save_new(name, cfg, key)
+        if id then cfg.source_preset = id; commit(kind_id, true, false) end
+        return id
+    end
+
+    local function update_source_preset(kind_id)
         local cfg = loaded_configs[cfg_key(kind_id)]
+        if not cfg or not cfg.source_preset then return false end
+        return preset_lib.update(cfg.source_preset, cfg)
+    end
+
+    local function restore_autosave(kind_id, k)
+        local key = cfg_key(kind_id)
+        local cfg = loaded_configs[key]
+        if not cfg or not ModelV3.is_v3(cfg) then return false end
+        local a = preset_lib.autosave_take(key, k)
+        if not a then return false end
+        preset_lib.autosave_push(key, T("autosave_before_restore"), cfg)
+        local new = deep_copy(a.config)
+        new.version = ModelV3.VERSION
+        replace_config(cfg, new)
+        commit(kind_id, true, true)
+        return true
+    end
+
+    local function promote_autosave(kind_id, k, name)
+        local key = cfg_key(kind_id)
+        local a = preset_lib.autosaves(key)[tonumber(k) or -1]
+        if not a then return nil end
+        local id = preset_lib.save_new(name, a.config, key)
+        if id then preset_lib.autosave_take(key, k) end
+        return id
+    end
+
+    -- v2 → v3(状态组平铺 + 条件状态)。由用户在杂项页 / 面板上点"迁移旧配置"触发,不自动迁移。
+    -- 迁移前写一份还原点("恢复到上次删除 / 覆写之前"能退回 v2)。
+    -- 旧的命名存档(backup/<角色>.slots.json)逐条转成预设,原文件保留不删。
+    -- 返回 ModelV3 的 report(作用域重叠的材质)+ presets(转换出来的预设编号);
+    -- 已经是 v3 / 没有配置时返回 nil。
+    local function migrate_to_v3(kind_id)
+        local key = cfg_key(kind_id)
+        local cfg = loaded_configs[key]
         if not cfg or ModelV3.is_v3(cfg) then return nil end
         snapshot_before_destructive(kind_id)
-        -- v2 的优先级 = 应用顺序倒过来(后写的优先)
-        local apply = TransformManager.axis_apply_order(cfg)
-        local priority = {}
-        for i = #apply, 1, -1 do priority[#priority + 1] = apply[i] end
-        local v3, report = ModelV3.migrate_from_v2(cfg, priority, T("base_layer"))
-        -- 原地换内容:其他地方拿着的是同一个表
-        for k in pairs(cfg) do cfg[k] = nil end
-        for k, v in pairs(normalize_config(v3)) do cfg[k] = v end
-        TransformManager.clear_last_state_cache()
+        local v3, report = ModelV3.migrate_from_v2(cfg, v2_priority(cfg), T("base_layer"))
+        replace_config(cfg, v3)
         commit(kind_id, true, true)
+
+        report.presets = {}
+        local slots = get_slots_by_key(key)
+        local names = {}
+        for n in pairs(slots) do names[#names + 1] = n end
+        table.sort(names)
+        for _, n in ipairs(names) do
+            local old = normalize_config(deep_copy(slots[n]))
+            if not ModelV3.is_v3(old) then old = (ModelV3.migrate_from_v2(old, v2_priority(old), T("base_layer"))) end
+            local id = preset_lib.save_new(key .. " · " .. n, old, key)
+            if id then report.presets[#report.presets + 1] = id end
+        end
         return report
     end
 

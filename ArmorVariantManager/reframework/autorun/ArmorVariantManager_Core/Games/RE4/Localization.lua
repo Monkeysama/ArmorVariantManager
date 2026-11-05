@@ -38,6 +38,8 @@ return {
         none_active = "无生效",
         base_layer = "整套造型",
         v3_imgui_pending = "这份配置已是新版(v3),目前请在 REFF 的差分管理器页面里使用。",
+        autosave_before_apply = "套用「%s」前",
+        autosave_before_restore = "恢复自动保存前",
         none_option = "(无)",
         overridden_by_rule = "条件规则接管",
 
@@ -254,6 +256,8 @@ return {
         none_active = "none active",
         base_layer = "Full outfit",
         v3_imgui_pending = "This config is already the new format (v3); use the Armor Variant Manager page in REFF for now.",
+        autosave_before_apply = "Before applying \"%s\"",
+        autosave_before_restore = "Before restoring an auto-save",
         none_option = "(none)",
         overridden_by_rule = "driven by rule",
 

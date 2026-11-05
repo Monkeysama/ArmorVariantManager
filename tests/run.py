@@ -14,6 +14,7 @@ DEFAULT_TESTS = (
     "tests/re4_localization.lua",
     "tests/re4_ops.lua",
     "tests/re4_model_v3.lua",
+    "tests/re4_presets.lua",
     "tests/app_ui.lua",
     "tests/material_ui.lua",
     "tests/parts_ui.lua",
