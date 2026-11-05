@@ -2316,9 +2316,38 @@ function Main.start(ctx)
         end
         imgui.text(status)
 
-        -- v3 配置的面板(日常切换 + 预设)在后续阶段接入;在那之前只提示去 REFF 页面
+        -- v2 配置:给"迁移旧配置"(两步确认)。迁移在原表上换内容,同一帧就会走到下面的 v3 面板
+        if not ModelV3.is_v3(config) then
+            if ui_state.migrate_pending then
+                imgui.text(T("migrate_confirm"))
+                if imgui.button(T("migrate_btn") .. "###mig_yes") then
+                    ui_state.migrate_pending = nil
+                    ui_state.migrate_report = migrate_to_v3(kind_id)
+                end
+                imgui.same_line()
+                if imgui.button(T("cancel_btn") .. "###mig_no") then ui_state.migrate_pending = nil end
+            elseif imgui.button(T("migrate_btn") .. "###mig") then
+                ui_state.migrate_pending = true
+            end
+        end
+
+        -- v3 配置:REF 菜单里只做日常使用(手动选择、条件状态开关、预设),完整编辑在 REFF 页面
         if ModelV3.is_v3(config) then
-            imgui.text(T("v3_imgui_pending"))
+            local report = ui_state.migrate_report
+            if report then
+                imgui.text(string.format(T("migrate_done"), #report.overlaps, #(report.presets or {})))
+                imgui.same_line()
+                if imgui.button(T("cancel_btn") .. "###mig_ok") then ui_state.migrate_report = nil end
+            end
+            ui_state.v3 = ui_state.v3 or {}
+            require("ArmorVariantManager_Core.Games.RE4.ImGuiV3").draw({
+                T = T, config = config, kind_id = kind_id, target = target, context = context, source = source,
+                TM = TransformManager, ui = ui_state.v3,
+                commit = function(changed, reapply) return commit(kind_id, changed, reapply) end,
+                ui_tree = ui_tree, ui_tree_pop = ui_tree_pop, ui_w = ui_w,
+                preset_view = preset_view, apply_preset = apply_preset, save_current_as_preset = save_current_as_preset,
+                dismiss_preset_hint = dismiss_preset_hint, restore_autosave = restore_autosave,
+            })
             ui_tree_pop()
             return
         end

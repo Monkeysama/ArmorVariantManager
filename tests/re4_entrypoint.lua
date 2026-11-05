@@ -75,13 +75,20 @@ local function mesh(path, materials)
     return result
 end
 
-local function imgui_stub()
+-- clicks:按顺序要点的按钮(按标签结尾匹配,点到一个才轮到下一个);texts:收集画出来的文字
+local function imgui_stub(clicks, texts)
+    local queue = clicks or {}
     local returns = {
         tree_node = function() return true end,
-        combo = function(_, current) return false, current end,
+        combo = function(label, current) texts[#texts + 1] = tostring(label); return false, current end,
         checkbox = function(_, value) return false, value end,
         input_text = function(_, value) return false, value end,
-        button = function() return false end,
+        button = function(label)
+            if queue[1] and tostring(label):sub(-#queue[1]) == queue[1] then table.remove(queue, 1); return true end
+            return false
+        end,
+        text = function(t) texts[#texts + 1] = tostring(t) end,
+        text_colored = function(t) texts[#texts + 1] = tostring(t) end,
     }
     return setmetatable({}, {__index = function(_, name) return returns[name] or function() end end})
 end
@@ -149,7 +156,8 @@ local function run(scenario)
         is_managed_object = is_managed,
         typeof = function(name) return {name = name} end,
     }
-    _G.imgui = imgui_stub()
+    local texts = {}
+    _G.imgui = imgui_stub(scenario.clicks, texts)
 
     local native_require = require
     _G.require = function(name)
@@ -182,7 +190,7 @@ local function run(scenario)
     for _ = 1, 40 do frames[1]() end
     for _ = 1, 3 do draws[1]() end
     assert(#errors == 0, "unexpected error: " .. tostring(errors[1]))
-    return files, meshes, handlers, frames[1]
+    return files, meshes, handlers, frames[1], texts
 end
 
 -- 有玩家、有旧配置：整套造型铺底，状态组只覆盖它点名的材质，没点名的保持整套造型的值。
@@ -202,6 +210,19 @@ print("PASS: RE4 standalone entry, no shared app modules (REFF bridge only), v2 
 files = run({player = false, config = leon})
 S.equal(files[CONFIG_PATH], leon)
 print("PASS: RE4 without player context keeps callbacks quiet and config untouched")
+
+-- REF 菜单:v2 配置给"迁移旧配置"(两步确认);迁移后同一个面板画 v3 的日常切换与预设,不出错
+do
+    local texts
+    files, meshes, _, _, texts = run({player = true, config = leon, clicks = {"###mig", "###mig_yes"}})
+    assert(files[CONFIG_PATH].version == 3, "migrated from the REF menu")
+    assert(files["ArmorVariantManager/backup/Leon.json"].version == 2, "restore point written first")
+    local joined = table.concat(texts, "\n")
+    assert(joined:find("REFF", 1, true), "v3 panel explains where full editing lives")
+    assert(joined:find("Hide Hair", 1, true), "state groups are listed for manual switching")
+    S.equal(meshes.hair.state(), {Hair = false, Clip = true}, "look unchanged after migrating from the menu")
+end
+print("PASS: RE4 REF menu migrates a v2 config in two steps and draws the v3 daily-use panel")
 
 -- 装了 REFF:v2 配置只能迁移;迁移后快照与操作都按 v3(整套造型 + 状态组 + 条件状态 + 预设库)。
 local function plain(value, path)
