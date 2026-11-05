@@ -1,0 +1,493 @@
+{
+  "format": 1,
+  "id": "auto_character_reflectivetransparent",
+  "source": "自动生成：tools/re4/gen_auto_profiles.py ← 离线材质库 library.json（_chainsaw/mastermaterial/master/character_reflectivetransparent.mmtr）",
+  "label": {
+    "zh": "原版：character_reflectivetransparent",
+    "en": "Vanilla: character_reflectivetransparent"
+  },
+  "priority": 10,
+  "match": {
+    "master": [
+      "_chainsaw/mastermaterial/master/character_reflectivetransparent.mmtr"
+    ]
+  },
+  "sections": [
+    {
+      "id": "color",
+      "label": {
+        "zh": "颜色层",
+        "en": "Colour layers"
+      }
+    },
+    {
+      "id": "light",
+      "label": {
+        "zh": "明暗",
+        "en": "Light and shade"
+      }
+    },
+    {
+      "id": "surface",
+      "label": {
+        "zh": "质感",
+        "en": "Surface"
+      }
+    },
+    {
+      "id": "emission",
+      "label": {
+        "zh": "发光",
+        "en": "Emission"
+      }
+    },
+    {
+      "id": "system",
+      "label": {
+        "zh": "系统",
+        "en": "System"
+      }
+    }
+  ],
+  "groups": [
+    {
+      "id": "base",
+      "section": "color",
+      "tier": "basic",
+      "label": {
+        "zh": "基础色",
+        "en": "Base colour"
+      },
+      "params": [
+        {
+          "param": "BaseColor",
+          "kind": "color",
+          "channels": "rgb",
+          "label": {
+            "zh": "基础色（主色）",
+            "en": "base colour"
+          },
+          "tier": "basic",
+          "note": {
+            "zh": "乘在 BaseDielectricMap 上；lilToon 母材质里同样是主色（lilToon 在原版反照率之上运算）",
+            "en": "乘在 BaseDielectricMap 上；lilToon 母材质里同样是主色（lilToon 在原版反照率之上运算）"
+          }
+        }
+      ]
+    },
+    {
+      "id": "eye",
+      "section": "light",
+      "tier": "basic",
+      "label": {
+        "zh": "眼睛",
+        "en": "Eye"
+      },
+      "params": [
+        {
+          "param": "EyeCatch_Color",
+          "kind": "color",
+          "channels": "rgb",
+          "label": {
+            "zh": "眼神光颜色",
+            "en": "EyeCatch_Color"
+          },
+          "tier": "basic"
+        }
+      ]
+    },
+    {
+      "id": "occlusion_other",
+      "section": "light",
+      "tier": "other",
+      "label": {
+        "zh": "遮蔽",
+        "en": "Occlusion"
+      },
+      "params": [
+        {
+          "param": "Occlusion",
+          "kind": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "label": {
+            "zh": "遮蔽（Occlusion）",
+            "en": "Occlusion"
+          },
+          "tier": "other"
+        }
+      ]
+    },
+    {
+      "id": "eye_other",
+      "section": "light",
+      "tier": "other",
+      "label": {
+        "zh": "眼睛",
+        "en": "Eye"
+      },
+      "params": [
+        {
+          "param": "EyeCatch_Intensity",
+          "kind": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "label": {
+            "zh": "眼神光强度（EyeCatch_Intensity）",
+            "en": "EyeCatch_Intensity"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "EyeCatch_Radius",
+          "kind": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "label": {
+            "zh": "眼神光半径（EyeCatch_Radius）",
+            "en": "EyeCatch_Radius"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "EyeCatch_Blur",
+          "kind": "float",
+          "min": 0.0,
+          "max": 2,
+          "label": {
+            "zh": "眼神光模糊（EyeCatch_Blur）",
+            "en": "EyeCatch_Blur"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "EyeCatch_Horizontal",
+          "kind": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "label": {
+            "zh": "眼神光水平位置（EyeCatch_Horizontal）",
+            "en": "EyeCatch_Horizontal"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "EyeCatch_Vertical",
+          "kind": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "label": {
+            "zh": "眼神光垂直位置（EyeCatch_Vertical）",
+            "en": "EyeCatch_Vertical"
+          },
+          "tier": "other"
+        }
+      ]
+    },
+    {
+      "id": "oilfilm",
+      "section": "surface",
+      "tier": "more",
+      "label": {
+        "zh": "油膜",
+        "en": "Oil film"
+      },
+      "params": [
+        {
+          "param": "OilFilmMaskMap_Tiling_Offset",
+          "component": "x",
+          "kind": "float",
+          "label": {
+            "zh": "油膜遮罩 UV · 油膜遮罩 UV U 缩放",
+            "en": "OilFilmMaskMap_Tiling_Offset · tiling U"
+          },
+          "tier": "more",
+          "min": 0.0,
+          "max": 2
+        },
+        {
+          "param": "OilFilmMaskMap_Tiling_Offset",
+          "component": "y",
+          "kind": "float",
+          "label": {
+            "zh": "油膜遮罩 UV · 油膜遮罩 UV V 缩放",
+            "en": "OilFilmMaskMap_Tiling_Offset · tiling V"
+          },
+          "tier": "more",
+          "min": 0.0,
+          "max": 2
+        },
+        {
+          "param": "OilFilmMaskMap_Tiling_Offset",
+          "component": "z",
+          "kind": "float",
+          "label": {
+            "zh": "油膜遮罩 UV · 油膜遮罩 UV U 偏移",
+            "en": "OilFilmMaskMap_Tiling_Offset · offset U"
+          },
+          "tier": "more",
+          "min": 0.0,
+          "max": 2
+        },
+        {
+          "param": "OilFilmMaskMap_Tiling_Offset",
+          "component": "w",
+          "kind": "float",
+          "label": {
+            "zh": "油膜遮罩 UV · 油膜遮罩 UV V 偏移",
+            "en": "OilFilmMaskMap_Tiling_Offset · offset V"
+          },
+          "tier": "more",
+          "min": 0.0,
+          "max": 2
+        },
+        {
+          "param": "Enable_OilFilm",
+          "kind": "bool",
+          "label": {
+            "zh": "油膜开关",
+            "en": "Enable_OilFilm"
+          },
+          "tier": "basic"
+        },
+        {
+          "param": "OilFilm_UseSecondaryUV",
+          "kind": "bool",
+          "label": {
+            "zh": "油膜使用第二 UV",
+            "en": "OilFilm_UseSecondaryUV"
+          },
+          "tier": "basic"
+        },
+        {
+          "param": "OilFilm_Thickness",
+          "kind": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "label": {
+            "zh": "油膜厚度",
+            "en": "OilFilm_Thickness"
+          },
+          "tier": "more"
+        },
+        {
+          "param": "OilFilm_BlendRate",
+          "kind": "float",
+          "min": 0.0,
+          "max": 2,
+          "label": {
+            "zh": "油膜混合",
+            "en": "OilFilm_BlendRate"
+          },
+          "tier": "more"
+        }
+      ]
+    },
+    {
+      "id": "surface",
+      "section": "surface",
+      "tier": "more",
+      "label": {
+        "zh": "表面（粗糙度 / 金属 / 透光）",
+        "en": "Surface (roughness / metal / translucency)"
+      },
+      "params": [
+        {
+          "param": "Metallic",
+          "kind": "float",
+          "min": 0,
+          "max": 1,
+          "label": {
+            "zh": "金属度",
+            "en": "metallic"
+          },
+          "tier": "more",
+          "note": {
+            "zh": "金属 = Metallic × (1 - BaseDielectricMap.A)（推断）",
+            "en": "金属 = Metallic × (1 - BaseDielectricMap.A)（推断）"
+          }
+        },
+        {
+          "param": "Roughness",
+          "kind": "float",
+          "min": 0,
+          "max": 1,
+          "label": {
+            "zh": "粗糙度",
+            "en": "roughness"
+          },
+          "tier": "more"
+        },
+        {
+          "param": "Translucency",
+          "kind": "float",
+          "min": 0,
+          "max": 1,
+          "label": {
+            "zh": "透光度",
+            "en": "translucency"
+          },
+          "tier": "more"
+        },
+        {
+          "param": "Cavity",
+          "kind": "float",
+          "min": 0,
+          "max": 1,
+          "label": {
+            "zh": "腔隙（Cavity）强度",
+            "en": "cavity"
+          },
+          "tier": "more"
+        }
+      ]
+    },
+    {
+      "id": "glass",
+      "section": "surface",
+      "tier": "more",
+      "label": {
+        "zh": "玻璃",
+        "en": "Glass"
+      },
+      "params": [
+        {
+          "param": "Alpha",
+          "kind": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "label": {
+            "zh": "不透明度",
+            "en": "Alpha"
+          },
+          "tier": "more"
+        },
+        {
+          "param": "FakeGlass_Enable",
+          "kind": "bool",
+          "label": {
+            "zh": "假玻璃开关",
+            "en": "FakeGlass_Enable"
+          },
+          "tier": "basic"
+        }
+      ]
+    },
+    {
+      "id": "glass_other",
+      "section": "surface",
+      "tier": "other",
+      "label": {
+        "zh": "玻璃",
+        "en": "Glass"
+      },
+      "params": [
+        {
+          "param": "FakeGlassIntensity",
+          "kind": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "label": {
+            "zh": "假玻璃强度（FakeGlassIntensity）",
+            "en": "FakeGlassIntensity"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "FakeGlassColor_Add",
+          "kind": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "label": {
+            "zh": "假玻璃颜色叠加（FakeGlassColor_Add）",
+            "en": "FakeGlassColor_Add"
+          },
+          "tier": "other"
+        }
+      ]
+    },
+    {
+      "id": "fakesphere",
+      "section": "surface",
+      "tier": "more",
+      "label": {
+        "zh": "假反射球",
+        "en": "Fake sphere reflection"
+      },
+      "params": [
+        {
+          "param": "FakeSphere_Intensity",
+          "kind": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "label": {
+            "zh": "假反射球强度",
+            "en": "FakeSphere_Intensity"
+          },
+          "tier": "more"
+        },
+        {
+          "param": "FakeSphere_DisTransparent",
+          "kind": "float",
+          "min": 0.0,
+          "max": 2,
+          "label": {
+            "zh": "假反射球不透明",
+            "en": "FakeSphere_DisTransparent"
+          },
+          "tier": "more"
+        }
+      ]
+    },
+    {
+      "id": "alpha_other",
+      "section": "surface",
+      "tier": "other",
+      "label": {
+        "zh": "透明 / Alpha 测试",
+        "en": "Alpha / alpha test"
+      },
+      "params": [
+        {
+          "param": "Dissolve_Saturation",
+          "kind": "float",
+          "min": 0,
+          "max": 1,
+          "label": {
+            "zh": "抖动覆盖率（Dissolve_Saturation）",
+            "en": "Dissolve_Saturation"
+          },
+          "tier": "other",
+          "note": {
+            "zh": "原版 Alpha 测试 + 蓝噪声抖动用；与溶解行无关",
+            "en": "原版 Alpha 测试 + 蓝噪声抖动用；与溶解行无关"
+          }
+        }
+      ]
+    },
+    {
+      "id": "alpha",
+      "section": "surface",
+      "tier": "more",
+      "label": {
+        "zh": "透明 / Alpha 测试",
+        "en": "Alpha / alpha test"
+      },
+      "params": [
+        {
+          "param": "Enable_BlueNoiseDither",
+          "kind": "bool",
+          "label": {
+            "zh": "蓝噪声抖动",
+            "en": "blue noise dither"
+          },
+          "tier": "basic",
+          "note": {
+            "zh": "LIL 母材质上开启曾导致崩溃",
+            "en": "LIL 母材质上开启曾导致崩溃"
+          }
+        }
+      ]
+    }
+  ]
+}

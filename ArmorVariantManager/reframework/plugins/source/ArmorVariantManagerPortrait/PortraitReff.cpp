@@ -30,7 +30,7 @@ struct Status {
 auto status=std::make_shared<Status>();
 ComPtr<ID3D12Resource> current_image;
 ID3D12CommandQueue* current_queue{};
-bool current_premultiplied{},current_sdr10{};
+int current_alpha{};bool current_sdr10{};
 uint64_t previous_draws{};
 
 void check(HRESULT hr,const char* operation) {
@@ -47,10 +47,10 @@ struct Surface {
     ComPtr<ID3D12DescriptorHeap> srv,rtv;
     ComPtr<ID3DBlob> vertex,pixel;
     std::array<ComPtr<ID3D12PipelineState>,3> pipelines;
-    bool premultiplied;
+    int alpha;
 
-    Surface(std::shared_ptr<Status> state,ID3D12Resource* texture,ID3D12CommandQueue* queue,bool premult)
-        :lease(std::move(state)),image(texture),producer(queue),premultiplied(premult) {
+    Surface(std::shared_ptr<Status> state,ID3D12Resource* texture,ID3D12CommandQueue* queue,int alpha_mode)
+        :lease(std::move(state)),image(texture),producer(queue),alpha(alpha_mode) {
         check(image->GetDevice(IID_PPV_ARGS(&device)),"preview texture device");
         initialize();
         for(const auto format:{DXGI_FORMAT_R8G8B8A8_UNORM,DXGI_FORMAT_B8G8R8A8_UNORM,DXGI_FORMAT_R10G10B10A2_UNORM})pipeline(format);
@@ -97,7 +97,8 @@ Vertex vs(uint id:SV_VertexID){float2 uv=float2((id<<1)&2,id&2);Vertex v;
 v.position=float4(uv.x*2-1,1-uv.y*2,0,1);v.uv=crop.xy+uv*crop.zw;return v;}
 float3 encode(float3 x){x=max(x,0);return lerp(12.92*x,1.055*pow(x,1.0/2.4)-.055,step(.0031308,x));}
 float4 ps(Vertex v):SV_Target{float4 c=image.Sample(linearClamp,v.uv);float a=saturate(c.a);
-float3 rgb=premult>.5?(a>0?c.rgb/a:0):c.rgb;
+float3 rgb=premult>.5&&premult<1.5?(a>0?c.rgb/a:0):c.rgb;
+if(premult>1.5)a=1;
 return float4(encode(rgb)*a+float3(17,24,25)/255*(1-a),1);}
 )";
         auto compile=[&](const char* entry,const char* target,ComPtr<ID3DBlob>& output) {
@@ -132,7 +133,7 @@ return float4(encode(rgb)*a+float3(17,24,25)/255*(1-a),1);}
             const auto source=self.image->GetDesc();
             const float aspect=(float(source.Width)/source.Height)/(r.width/r.height);
             const float u=(std::min)(1.f,1.f/aspect),v=(std::min)(1.f,aspect);
-            const float constants[]{(1-u)*.5f,(1-v)*.5f,u,v,self.premultiplied?1.f:0.f};
+            const float constants[]{(1-u)*.5f,(1-v)*.5f,u,v,float(self.alpha)};
             self.device->CreateRenderTargetView(c->target,nullptr,self.rtv->GetCPUDescriptorHandleForHeapStart());
             const auto target=self.rtv->GetCPUDescriptorHandleForHeapStart();
             c->commands->OMSetRenderTargets(1,&target,FALSE,nullptr);
@@ -161,22 +162,22 @@ bool available() {
     api=candidate;return true;
 }
 
-int update(ID3D12Resource* image,ID3D12CommandQueue* producer,bool premultiplied,bool sdr10) {
+int update(ID3D12Resource* image,ID3D12CommandQueue* producer,int alpha,bool sdr10) {
     if(!available())return int(E_NOTIMPL);
     if(handle && status->fault)return int(E_FAIL);
     const auto expires=GetTickCount64()+500;
-    if(handle && current_image.Get()==image && current_queue==producer && current_premultiplied==premultiplied && current_sdr10==sdr10) {
+    if(handle && current_image.Get()==image && current_queue==producer && current_alpha==alpha && current_sdr10==sdr10) {
         status->expires=expires;return 0;
     }
     try {
         if(!handle){previous_draws+=status->draws;status=std::make_shared<Status>();}
         status->expires=expires;
-        auto next=std::make_unique<Surface>(status,image,producer,premultiplied);
+        auto next=std::make_unique<Surface>(status,image,producer,alpha);
         REFFPreviewProvider provider{sizeof(provider),"monkeysama.avm","portrait",next.get(),&Surface::record,&Surface::release,
             sdr10?REFF_PREVIEW_SDR10_CONFIRMED:0u};
         if(handle) { if(!api->update_provider(handle,&provider))throw std::runtime_error("REFF rejected preview provider update"); }
         else { handle=api->register_provider(&provider);if(!handle)throw std::runtime_error("REFF rejected preview provider registration"); }
-        next.release();current_image=image;current_queue=producer;current_premultiplied=premultiplied;current_sdr10=sdr10;return 0;
+        next.release();current_image=image;current_queue=producer;current_alpha=alpha;current_sdr10=sdr10;return 0;
     } catch(const std::exception& e) { status->fail(e.what());return int(E_FAIL); }
 }
 void stop() {

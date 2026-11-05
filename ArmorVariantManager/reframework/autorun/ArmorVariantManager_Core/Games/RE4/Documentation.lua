@@ -17,13 +17,18 @@ return {
                 { title = "左侧的游戏状态", paragraphs = {
                     "左侧只读显示 HP 和当前成立的条件;在整套造型、状态组和条件状态页还会列出最终材质。",
                 } },
+                { title = "模型高度", paragraphs = {
+                    "展开整套造型的预设或状态组的选项,可以填「模型高度」(厘米,-10 到 50),选中它时整个模型抬高或降低,适合高跟鞋陷进地面的情况。只改画面,碰撞和移动不变;镜头会跟着抬高同样的距离。",
+                    "留空表示这一层不管高度。几层都填了时,状态组覆盖整套造型,靠下的状态组覆盖靠上的;填 0 也算设置(例如平底鞋取消整套造型的抬高)。",
+                    "「杂项」里的「模型高度」开关可以整体关闭,已填的高度会保留。",
+                } },
             },
         },
         {
             id = "states", title = "条件状态",
             entries = {
                 { title = "优先级与独占", paragraphs = {
-                    "条件状态从上往下就是优先级,拖动左边的 ⠿ 或点 ▲▼ 调整。一个条件状态可以同时切换整套造型和若干状态组。",
+                    "条件状态从上往下就是优先级,拖动左边的 ⠿ 调整。一个条件状态可以同时切换整套造型和若干状态组。",
                     "整套造型和每个状态组,各自听命中的最高那个条件状态的;没被提到的,保持手动选择。",
                     "打开「独占」后,这个条件状态命中时,排在下面的条件状态全部被覆盖。",
                     "颜色:绿色是生效,红色是被覆盖,灰色是未命中;虚线圆圈是已停用。",
@@ -80,13 +85,18 @@ return {
                 { title = "Game state on the left", paragraphs = {
                     "The left column shows HP and the conditions that are true right now; on the editing tabs it also lists the final materials.",
                 } },
+                { title = "Model height", paragraphs = {
+                    "Expand a full outfit preset or a state group option to set its \"Model height\" (cm, -10 to 50). While it is selected the whole model is raised or lowered, e.g. for high heels sinking into the ground. Visual only: collision and movement are unchanged; the camera rises by the same amount.",
+                    "Leave it empty to let other layers decide. When several layers set it, state groups override the full outfit and lower groups override upper ones; 0 also counts (e.g. flat shoes cancel the outfit's lift).",
+                    "The \"Model height\" switch under Misc turns it off everywhere; the heights you entered are kept.",
+                } },
             },
         },
         {
             id = "states", title = "Condition states",
             entries = {
                 { title = "Priority and exclusive", paragraphs = {
-                    "Top to bottom is priority; drag ⠿ or use ▲▼ to reorder. One condition state can switch the full outfit and several state groups at once.",
+                    "Top to bottom is priority; drag ⠿ to reorder. One condition state can switch the full outfit and several state groups at once.",
                     "The full outfit and each state group follow the highest matching condition state; anything not mentioned keeps the manual choice.",
                     "With Exclusive on, every condition state below it is overridden while it matches.",
                     "Colours: green is effective, red is overridden, grey is not matched; a dashed circle is disabled.",

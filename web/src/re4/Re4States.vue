@@ -1,11 +1,13 @@
 <script setup lang="ts">
+import Re4Num from './Re4Num.vue';
 import { computed, reactive, shallowRef } from 'vue';
-import { ElButton, ElSwitch } from '@reff/ui';
+import { ElButton, ElOption, ElSelect, ElSwitch } from '@reff/ui';
 import type { Re4Key, Re4Translate } from './i18n';
 import type { Re4Category, Re4ConditionDef, Re4ConditionInput, Re4Op, Re4Perform, Re4Snapshot, Re4State, Re4StateCondition } from './types';
 import { conditionSentence, currentValueText, kindText, resultText, targetSentence } from './util';
+import { usePointerReorder } from './reorder';
 
-// 条件状态页。从上往下是优先级(拖 ⠿ 或点 ▲▼ 调整,拖动用浏览器原生拖放,不引入依赖)。
+// 条件状态页。从上往下是优先级(拖 ⠿ 调整;拖动用 pointer 事件,见 reorder.ts)。
 // 收起时一行;展开后左右两栏:左边触发条件,右边切换到(整套造型单独一行,下面是状态组)。
 const props = defineProps<{ snapshot: Re4Snapshot; busy: boolean; perform: Re4Perform; t: Re4Translate }>();
 const c = () => ({ character: props.snapshot.character });
@@ -67,33 +69,9 @@ function addTarget(i: number, st: Re4State) {
   if (g) return props.perform({ kind: 'state-target', ...c(), index: i, group: g.name, option: g.options[0].name });
 }
 
-// 拖动
-const dragFrom = shallowRef(0);
-const dropAt = shallowRef<{ index: number; after: boolean } | null>(null);
-function onDragStart(e: DragEvent, i: number) {
-  dragFrom.value = i;
-  e.dataTransfer?.setData('text/plain', String(i));
-  if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
-  const card = (e.target as HTMLElement).closest('.re4-state');
-  if (card && e.dataTransfer) e.dataTransfer.setDragImage(card, 24, 18);
-}
-function onDragOver(e: DragEvent, i: number) {
-  if (!dragFrom.value) return;
-  e.preventDefault();
-  const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-  dropAt.value = { index: i, after: e.clientY > r.top + r.height / 2 };
-}
-async function onDrop(e: DragEvent, i: number) {
-  e.preventDefault();
-  const from = dragFrom.value, d = dropAt.value;
-  dragFrom.value = 0; dropAt.value = null;
-  if (!from || !d) return;
-  let to = d.index + (d.after ? 1 : 0);
-  if (to > from) to--;
-  if (to !== from && to >= 1) await props.perform({ kind: 'state-move', ...c(), from, to });
-  void i;
-}
-const endDrag = () => { dragFrom.value = 0; dropAt.value = null; };
+// 拖动(下标从 0 开始;state-move 从 1 开始)
+const { from: dragFrom, drop: dropAt, start: startDrag } = usePointerReorder('.re4-main > .re4-state',
+  (from, to) => props.busy ? undefined : props.perform({ kind: 'state-move', ...c(), from: from + 1, to: to + 1 }));
 </script>
 
 <template>
@@ -101,7 +79,6 @@ const endDrag = () => { dragFrom.value = 0; dropAt.value = null; };
     <section class="re4-panel re4-panel-head">
       <ElSwitch :model-value="snapshot.auto" :disabled="busy" size="small" @change="v => perform({ kind: 'auto', ...c(), enabled: v === true })" />
       <span class="re4-panel-title" :title="t('conditionSwitchHint')">{{ t('conditionSwitch') }}</span>
-      <span class="re4-muted re4-small">{{ t('orderHint') }}</span>
       <div class="re4-legend"><span v-for="k in LEGEND" :key="k" :class="'k-' + k"><span class="re4-sdot"></span>{{ t(LEGEND_KEY[k]) }}</span></div>
       <span class="re4-spacer"></span>
       <ElButton size="small" @click="states.forEach((_, i) => open.add(i + 1))">{{ t('expandAll') }}</ElButton>
@@ -111,15 +88,10 @@ const endDrag = () => { dragFrom.value = 0; dropAt.value = null; };
     <span v-if="!states.length" class="re4-muted re4-small">{{ t('noStates') }}</span>
 
     <article v-for="(st, k) in states" :key="k" class="re4-panel re4-state" :class="['k-' + st.kind, { open: open.has(k + 1),
-      'drop-before': dropAt?.index === k + 1 && !dropAt.after, 'drop-after': dropAt?.index === k + 1 && dropAt.after, dragging: dragFrom === k + 1 }]"
-      @dragover="e => onDragOver(e, k + 1)" @drop="e => onDrop(e, k + 1)">
+      'drop-before': dropAt?.index === k && !dropAt.after, 'drop-after': dropAt?.index === k && dropAt.after, dragging: dragFrom === k }]">
       <div class="re4-state-head" :class="{ one: !open.has(k + 1) }">
-        <span class="re4-grip" draggable="true" :title="t('orderHint')" @dragstart="e => onDragStart(e, k + 1)" @dragend="endDrag">⠿</span>
-        <span v-if="open.has(k + 1)" class="re4-prio">
-          <button :disabled="busy || k === 0" :aria-label="t('moveUp')" @click="perform({ kind: 'state-move', ...c(), from: k + 1, to: k })">▲</button>
-          <span>{{ k + 1 }}</span>
-          <button :disabled="busy || k === states.length - 1" :aria-label="t('moveDown')" @click="perform({ kind: 'state-move', ...c(), from: k + 1, to: k + 2 })">▼</button>
-        </span>
+        <span class="re4-grip" :title="t('orderHint')" @pointerdown="e => startDrag(e, k)">⠿</span>
+        <span v-if="open.has(k + 1)" class="re4-prio"><span>{{ k + 1 }}</span></span>
         <button class="re4-caret" :aria-expanded="open.has(k + 1)" @click="toggle(k + 1)">{{ open.has(k + 1) ? '▾' : '▸' }}</button>
         <span class="re4-sdot" :title="kindText(st, states, t)"></span>
         <template v-if="!open.has(k + 1)">
@@ -132,8 +104,8 @@ const endDrag = () => { dragFrom.value = 0; dropAt.value = null; };
             @change="e => perform({ kind: 'state-rename', ...c(), index: k + 1, name: (e.target as HTMLInputElement).value.trim() })">
           <button class="re4-xbtn" :aria-pressed="st.exclusive" :disabled="busy" :title="t('exclusiveHint')" @click="field(k + 1, 'exclusive', !st.exclusive)">{{ t('exclusive') }}</button>
           <span class="re4-fade">
-            <label>{{ t('fadeIn') }}<input type="number" min="0" step="0.1" :value="st.fadeIn" @change="e => numField(k + 1, 'fade_in', (e.target as HTMLInputElement).value)"></label>
-            <label>{{ t('fadeOut') }}<input type="number" min="0" step="0.1" :value="st.fadeOut" @change="e => numField(k + 1, 'fade_out', (e.target as HTMLInputElement).value)"></label>{{ t('seconds') }}
+            <label>{{ t('fadeIn') }}<Re4Num :value="st.fadeIn" :min="0" :max="30" @change="v => v !== undefined && numField(k + 1, 'fade_in', String(v))" /></label>
+            <label>{{ t('fadeOut') }}<Re4Num :value="st.fadeOut" :min="0" :max="30" @change="v => v !== undefined && numField(k + 1, 'fade_out', String(v))" /></label>{{ t('seconds') }}
           </span>
           <span class="re4-spacer"></span>
         </template>
@@ -150,12 +122,11 @@ const endDrag = () => { dragFrom.value = 0; dropAt.value = null; };
       <div v-if="open.has(k + 1)" class="re4-state-body">
         <div class="re4-scol">
           <div class="re4-scol-title">{{ t('trigger') }}</div>
-          <label class="re4-row re4-small"><input type="checkbox" :checked="!!st.hp" :disabled="busy" @change="e => setHp(k + 1, st, (e.target as HTMLInputElement).checked ? {} : null)">{{ t('hpDrive') }}</label>
+          <label class="re4-row re4-small" :title="t('hpHint')"><input type="checkbox" :checked="!!st.hp" :disabled="busy" @change="e => setHp(k + 1, st, (e.target as HTMLInputElement).checked ? {} : null)">{{ t('hpDrive') }}</label>
           <template v-if="st.hp">
-            <span class="re4-muted re4-small">{{ t('hpHint') }}</span>
             <div class="re4-fade">
-              <label>{{ t('hpUpper') }}<input type="number" min="0" max="100" :value="st.hp.upper" @change="e => setHp(k + 1, st, { upper: Number((e.target as HTMLInputElement).value) })"></label>
-              <label>{{ t('hpLower') }}<input type="number" min="0" max="100" :value="st.hp.lower" @change="e => setHp(k + 1, st, { lower: Number((e.target as HTMLInputElement).value) })"></label>
+              <label>{{ t('hpUpper') }}<Re4Num :value="st.hp.upper" :min="0" :max="100" @change="v => v !== undefined && setHp(k + 1, st, { upper: v })" /></label>
+              <label>{{ t('hpLower') }}<Re4Num :value="st.hp.lower" :min="0" :max="100" @change="v => v !== undefined && setHp(k + 1, st, { lower: v })" /></label>
               <label><input type="checkbox" :checked="st.hp.invert" @change="e => setHp(k + 1, st, { invert: (e.target as HTMLInputElement).checked })">{{ t('hpInvert') }}</label>
             </div>
           </template>
@@ -164,63 +135,64 @@ const endDrag = () => { dragFrom.value = 0; dropAt.value = null; };
             <div v-for="(cond, ci) in st.conditions" :key="ci" class="re4-cond" :class="{ met: cond.met }">
               <span class="re4-conn">
                 <template v-if="ci === 0">{{ t('when') }}</template>
-                <select v-else :value="st.logic" :disabled="busy" @change="e => setLogic(k + 1, (e.target as HTMLSelectElement).value)">
-                  <option value="AND">{{ t('and') }}</option><option value="OR">{{ t('or') }}</option>
-                </select>
+                <ElSelect v-else :model-value="st.logic" :disabled="busy" size="small" @change="v => setLogic(k + 1, String(v))">
+                  <ElOption value="AND" :label="t('and')" /><ElOption value="OR" :label="t('or')" />
+                </ElSelect>
               </span>
               <span class="re4-cexpr">
-                <select :value="cond.type" :disabled="busy" @change="e => changeType(k + 1, ci + 1, (e.target as HTMLSelectElement).value)">
-                  <option v-if="!cond.known" :value="cond.type">{{ t('unknownCondition') }} {{ cond.type }}</option>
-                  <optgroup v-for="group in byCategory" :key="group.cat" :label="t(CAT_KEY[group.cat])">
-                    <option v-for="d in group.defs" :key="d.id" :value="d.id">{{ d.label }}</option>
-                  </optgroup>
-                </select>
+                <ElSelect class="re4-sel-type" :model-value="cond.type" :disabled="busy" size="small" filterable @change="v => changeType(k + 1, ci + 1, String(v))">
+                  <ElOption v-if="!cond.known" :value="cond.type" :label="t('unknownCondition') + ' ' + cond.type" />
+                  <template v-for="group in byCategory" :key="group.cat">
+                    <ElOption class="re4-opt-head" :value="'__cat_' + group.cat" :label="t(CAT_KEY[group.cat])" disabled />
+                    <ElOption v-for="d in group.defs" :key="d.id" :value="d.id" :label="d.label" />
+                  </template>
+                </ElSelect>
                 <template v-if="defOf(cond.type)?.kind === 'number'">
-                  <select :value="cond.op" :disabled="busy" @change="e => changeOp(k + 1, ci + 1, cond, (e.target as HTMLSelectElement).value)">
-                    <option v-for="op in defOf(cond.type)?.ops ?? []" :key="op" :value="op">{{ op }}</option>
-                  </select>
-                  <input type="number" :value="cond.value" :disabled="busy" @change="e => changeValue(k + 1, ci + 1, cond, (e.target as HTMLInputElement).value)">
+                  <ElSelect class="re4-sel-op" :model-value="cond.op" :disabled="busy" size="small" @change="v => changeOp(k + 1, ci + 1, cond, String(v))">
+                    <ElOption v-for="op in defOf(cond.type)?.ops ?? []" :key="op" :value="op" :label="op" />
+                  </ElSelect>
+                  <Re4Num :value="Number(cond.value)" :disabled="busy" @change="v => v !== undefined && changeValue(k + 1, ci + 1, cond, String(v))" />
                 </template>
                 <template v-else-if="defOf(cond.type)?.kind === 'enum'">
-                  <select :value="cond.op" :disabled="busy" @change="e => changeOp(k + 1, ci + 1, cond, (e.target as HTMLSelectElement).value)">
-                    <option value="==">=</option><option value="~=">≠</option>
-                  </select>
-                  <select :value="String(cond.value)" :disabled="busy" @change="e => changeValue(k + 1, ci + 1, cond, (e.target as HTMLSelectElement).value)">
-                    <option v-for="o in defOf(cond.type)?.options ?? []" :key="String(o.value)" :value="String(o.value)">{{ o.label }}</option>
-                  </select>
+                  <ElSelect class="re4-sel-op" :model-value="cond.op" :disabled="busy" size="small" @change="v => changeOp(k + 1, ci + 1, cond, String(v))">
+                    <ElOption value="==" label="=" /><ElOption value="~=" label="≠" />
+                  </ElSelect>
+                  <ElSelect class="re4-sel-val" :model-value="String(cond.value)" :disabled="busy" size="small" @change="v => changeValue(k + 1, ci + 1, cond, String(v))">
+                    <ElOption v-for="o in defOf(cond.type)?.options ?? []" :key="String(o.value)" :value="String(o.value)" :label="o.label" />
+                  </ElSelect>
                 </template>
-                <select v-else :value="String(cond.value)" :disabled="busy" @change="e => changeValue(k + 1, ci + 1, cond, (e.target as HTMLSelectElement).value)">
-                  <option value="true">{{ t('yes') }}</option><option value="false">{{ t('no') }}</option>
-                </select>
+                <ElSelect v-else class="re4-sel-op" :model-value="String(cond.value)" :disabled="busy" size="small" @change="v => changeValue(k + 1, ci + 1, cond, String(v))">
+                  <ElOption value="true" :label="t('yes')" /><ElOption value="false" :label="t('no')" />
+                </ElSelect>
                 <span class="re4-now">{{ currentValueText(defOf(cond.type), t) ? t('now', currentValueText(defOf(cond.type), t)) : '' }}</span>
               </span>
               <button class="re4-x" :disabled="busy" :aria-label="t('delete')" @click="perform({ kind: 'condition-delete', ...c(), index: k + 1, condition_index: ci + 1 })">×</button>
             </div>
             <div><ElButton size="small" :disabled="busy" @click="perform({ kind: 'condition-add', ...c(), index: k + 1, condition: defaultCondition(defOf('is_battle')) })">{{ t('addCondition') }}</ElButton></div>
-            <div class="re4-fade">{{ t('holdLabel') }}<input type="number" min="0" step="0.5" :value="st.hold" @change="e => numField(k + 1, 'hold', (e.target as HTMLInputElement).value)">{{ t('seconds') }}</div>
+            <div class="re4-fade">{{ t('holdLabel') }}<Re4Num :value="st.hold" :min="0" :max="3600" @change="v => v !== undefined && numField(k + 1, 'hold', String(v))" />{{ t('seconds') }}</div>
           </template>
         </div>
         <div class="re4-scol">
           <div class="re4-scol-title">{{ t('switchTo') }}</div>
           <div class="re4-target">
             <span class="re4-muted re4-small">{{ t('baseTarget') }}</span>
-            <select :value="st.base ?? ''" :disabled="busy" @change="e => perform({ kind: 'state-base', ...c(), index: k + 1, preset: (e.target as HTMLSelectElement).value || undefined })">
-              <option value="">{{ t('noSwitch') }}</option>
-              <option v-if="st.base && !basePresets.includes(st.base)" :value="st.base">{{ st.base }} · {{ t('moved') }}</option>
-              <option v-for="name in basePresets" :key="name" :value="name">{{ name }}</option>
-            </select>
+            <ElSelect class="re4-sel-target" :model-value="st.base ?? ''" :empty-values="[null, undefined]" :disabled="busy" size="small" @change="v => perform({ kind: 'state-base', ...c(), index: k + 1, preset: String(v ?? '') || undefined })">
+              <ElOption value="" :label="t('noSwitch')" />
+              <ElOption v-if="st.base && !basePresets.includes(st.base)" :value="st.base" :label="st.base + ' · ' + t('moved')" />
+              <ElOption v-for="name in basePresets" :key="name" :value="name" :label="name" />
+            </ElSelect>
             <span class="re4-res" :class="st.baseResult?.kind">{{ resultText(st.baseResult, states, t) }}</span>
           </div>
           <div v-for="(tg, ti) in st.targets" :key="tg.group" class="re4-target">
-            <select :value="tg.group" :disabled="busy" @change="e => perform({ kind: 'state-target-group', ...c(), index: k + 1, target: ti + 1, group: (e.target as HTMLSelectElement).value })">
-              <option v-if="!groups.some(g => g.name === tg.group)" :value="tg.group">{{ tg.group }} · {{ t('moved') }}</option>
-              <option v-for="g in groups" :key="g.name" :value="g.name">{{ g.name }}</option>
-            </select>
+            <ElSelect class="re4-sel-target" :model-value="tg.group" :disabled="busy" size="small" @change="v => perform({ kind: 'state-target-group', ...c(), index: k + 1, target: ti + 1, group: String(v) })">
+              <ElOption v-if="!groups.some(g => g.name === tg.group)" :value="tg.group" :label="tg.group + ' · ' + t('moved')" />
+              <ElOption v-for="g in groups" :key="g.name" :value="g.name" :label="g.name" />
+            </ElSelect>
             <span class="re4-muted">→</span>
-            <select :value="tg.option" :disabled="busy" @change="e => perform({ kind: 'state-target', ...c(), index: k + 1, group: tg.group, option: (e.target as HTMLSelectElement).value })">
-              <option v-if="!optionsOf(tg.group).includes(tg.option)" :value="tg.option">{{ tg.option }} · {{ t('moved') }}</option>
-              <option v-for="o in optionsOf(tg.group)" :key="o" :value="o">{{ o }}</option>
-            </select>
+            <ElSelect class="re4-sel-target" :model-value="tg.option" :disabled="busy" size="small" @change="v => perform({ kind: 'state-target', ...c(), index: k + 1, group: tg.group, option: String(v) })">
+              <ElOption v-if="!optionsOf(tg.group).includes(tg.option)" :value="tg.option" :label="tg.option + ' · ' + t('moved')" />
+              <ElOption v-for="o in optionsOf(tg.group)" :key="o" :value="o" :label="o" />
+            </ElSelect>
             <span class="re4-res" :class="tg.result?.kind">{{ resultText(tg.result, states, t) }}</span>
             <button class="re4-x" :disabled="busy" :aria-label="t('delete')" @click="perform({ kind: 'state-target-remove', ...c(), index: k + 1, target: ti + 1 })">×</button>
           </div>
@@ -239,10 +211,9 @@ const endDrag = () => { dragFrom.value = 0; dropAt.value = null; };
 .re4-state-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 7px 12px; }
 .re4-state-head.one { flex-wrap: nowrap; }
 .re4-state.open .re4-state-head { border-bottom: 1px solid var(--avm-line); }
-.re4-grip { cursor: grab; color: var(--avm-muted); user-select: none; }
+.re4-grip { cursor: grab; color: var(--avm-muted); user-select: none; touch-action: none; padding: 2px 3px; }
+body.re4-reordering, body.re4-reordering * { cursor: grabbing !important; user-select: none !important; }
 .re4-prio { display: inline-flex; flex-direction: column; align-items: center; line-height: 1; }
-.re4-prio button { border: 0; background: none; color: var(--avm-muted); padding: 0 4px; font-size: 10px; cursor: pointer; }
-.re4-prio button:disabled { opacity: .3; cursor: default; }
 .re4-prio span { font-size: 11px; color: var(--avm-muted); font-variant-numeric: tabular-nums; }
 .re4-state-head .re4-sname { font-weight: 600; white-space: nowrap; }
 .re4-sname-input { font-weight: 600; border: 1px solid transparent; border-radius: 4px; padding: 1px 6px; background: transparent; width: 9em; max-width: 100%; color: inherit; }
@@ -264,11 +235,17 @@ const endDrag = () => { dragFrom.value = 0; dropAt.value = null; };
 .re4-scol-title { font-weight: 500; font-size: 13px; }
 .re4-cond { display: grid; grid-template-columns: 3.4em minmax(0, 1fr) auto; gap: 6px; align-items: center; }
 .re4-conn { font-size: 13px; color: var(--avm-muted); text-align: right; }
-.re4-conn select { width: 100%; color: var(--avm-accent); }
+.re4-conn .el-select { width: 100%; }
+.re4-conn .el-select__selected-item { color: var(--avm-accent); }
 .re4-cexpr { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; padding: 3px 8px; border-radius: 6px; border: 1px solid var(--avm-line); min-width: 0; }
 .re4-cond.met .re4-cexpr { border-color: var(--re4-ok); background: var(--re4-ok-soft); }
-.re4-cexpr select, .re4-cexpr input, .re4-conn select, .re4-target select { border: 1px solid var(--avm-line); border-radius: 4px; background: var(--el-bg-color, transparent); color: inherit; padding: 0 4px; max-width: 100%; }
-.re4-cexpr input[type=number] { width: 4.5em; }
+.re4-cexpr > input { border: 1px solid var(--avm-line); border-radius: 4px; background: var(--el-bg-color, transparent); color: inherit; padding: 0 4px; max-width: 100%; }
+.re4-sel-type { width: 11em; }
+.re4-sel-op { width: 5em; }
+.re4-sel-val { width: 8em; }
+.re4-sel-target { width: 9.5em; }
+.re4-opt-head.is-disabled { font-size: 12px; font-weight: 600; cursor: default; }
+.re4-cexpr > input[type=number] { width: 4.5em; }
 .re4-now { font-size: 12px; color: var(--avm-muted); margin-left: auto; }
 .re4-cond.met .re4-now { color: var(--re4-ok); }
 .re4-x { border: 0; background: none; color: var(--avm-muted); padding: 0 4px; font-size: 16px; line-height: 1; cursor: pointer; }

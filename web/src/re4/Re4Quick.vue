@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import Re4Num from './Re4Num.vue';
 import { computed, shallowRef } from 'vue';
 import { ElSwitch } from '@reff/ui';
 import type { Re4Translate } from './i18n';
@@ -16,6 +17,20 @@ const rows = computed(() => (props.snapshot.groups ?? []).map(g => ({
   layer: g.name, label: g.name, active: g.active, effective: g.effective, locked: g.fromState, none: true,
   options: g.options.map(o => o.name),
 })));
+// 模型高度:显示当前生效的值和来源;全局覆盖打开时无视各预设 / 选项,统一用这里的值(存在当前配置里)
+const override = computed(() => props.snapshot.heightOverride ?? { enabled: false, cm: 0 });
+const signed = (v: number) => (v > 0 ? '+' : '') + v;
+const heightNow = computed(() => {
+  const h = props.snapshot.height;
+  return h === undefined || h === 0 ? props.t('heightNone') : signed(h) + ' cm';
+});
+const heightFrom = computed(() => {
+  const s = props.snapshot.heightSource;
+  if (!s) return props.t('heightNoSource');
+  if (s.layer === 'override') return props.t('heightFromOverride');
+  if (s.layer === 'base') return props.t('heightFromBase', s.option ?? '');
+  return props.t('heightFromGroup', s.layer, s.option ?? '');
+});
 const base = computed(() => {
   const b = props.snapshot.base!;
   return { layer: 'base', label: props.t('tabBase'), active: b.active, effective: b.effective, locked: b.fromState, none: false,
@@ -39,7 +54,7 @@ const base = computed(() => {
     <section class="re4-panel">
       <div class="re4-panel-head">
         <button class="re4-caret" :aria-expanded="groupsOpen" @click="groupsOpen = !groupsOpen">{{ groupsOpen ? '▾' : '▸' }}</button>
-        <span class="re4-panel-title">{{ t('tabGroups') }}</span><span class="re4-muted re4-small">{{ t('groupsHint') }}</span>
+        <span class="re4-panel-title">{{ t('tabGroups') }}</span>
       </div>
       <div v-if="groupsOpen" class="re4-panel-body">
         <span v-if="!rows.length" class="re4-muted re4-small">{{ t('noGroups') }}</span>
@@ -73,6 +88,26 @@ const base = computed(() => {
         </label>
       </div>
     </section>
+
+    <section class="re4-panel re4-panel-body">
+      <div class="re4-qrow">
+        <span class="re4-qname">{{ t('heightQuick') }}</span>
+        <span class="re4-hnow" :class="{ off: snapshot.settings.heightEnabled === false }">
+          <b>{{ heightNow }}</b><span class="re4-muted re4-small">{{ heightFrom }}</span>
+          <span v-if="snapshot.settings.heightEnabled === false" class="re4-small re4-bad-text">{{ t('heightOff') }}</span>
+        </span>
+      </div>
+      <div class="re4-qrow">
+        <span class="re4-qname">{{ t('heightOverride') }}</span>
+        <span class="re4-hctl" :class="{ dim: !override.enabled }">
+          <ElSwitch :model-value="override.enabled" :disabled="busy" size="small" :aria-label="t('heightOverride')"
+            @change="v => perform({ kind: 'height-override', ...c(), enabled: v === true })" />
+          <Re4Num :value="override.cm" :min="-10" :max="50" :disabled="busy" :aria-label="t('heightOverride')"
+            @change="v => v !== undefined && perform({ kind: 'height-override', ...c(), cm: v })" />cm
+          <span class="re4-muted re4-small">{{ t('heightOverrideHint') }}</span>
+        </span>
+      </div>
+    </section>
   </div>
 </template>
 
@@ -89,6 +124,12 @@ const base = computed(() => {
 .re4-seg button:disabled { cursor: not-allowed; }
 .re4-seg button:disabled:not(.eff) { opacity: .4; }
 .re4-seg button.eff { box-shadow: 0 0 0 2px var(--re4-ok); color: var(--avm-ink); opacity: 1; }
+.re4-hnow { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+.re4-hnow b { font-weight: 600; font-variant-numeric: tabular-nums; }
+.re4-hnow.off b { color: var(--avm-muted); text-decoration: line-through; }
+.re4-hctl { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.re4-hctl input { width: 4.5em; border: 1px solid var(--avm-line); border-radius: 4px; background: transparent; color: inherit; padding: 0 4px; }
+.re4-hctl.dim input { opacity: .55; }
 .re4-sflow { display: flex; flex-wrap: wrap; gap: 6px; }
 .re4-schip { display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px 2px 6px; border: 1px solid var(--avm-line); border-radius: 14px; cursor: pointer; user-select: none; }
 .re4-schip input { margin: 0; }

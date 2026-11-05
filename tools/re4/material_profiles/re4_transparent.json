@@ -1,0 +1,657 @@
+{
+  "format": 1,
+  "id": "re4_transparent",
+  "label": {
+    "zh": "半透明（RE4）",
+    "en": "Transparent (RE4)"
+  },
+  "source": "「RE4 溶解流光半透明材质」会话 2026-11-05 的回复；原版 Glass_ReflectiveTransparent_Emissive 参数只列出确认过含义的几项",
+  "priority": 100,
+  "match": {
+    "all": [
+      "LIL_EmissionParam",
+      "Bulb_Color"
+    ],
+    "none": [
+      "LIL_Switch"
+    ]
+  },
+  "sections": [{"id": "color", "label": {"zh": "颜色层", "en": "Colour layers"}}, {"id": "emission", "label": {"zh": "发光", "en": "Emission"}}],
+  "groups": [
+    {
+      "id": "main", "section": "color",
+      "tier": "basic",
+      "label": {
+        "zh": "基础",
+        "en": "Base"
+      },
+      "params": [
+        {
+          "param": "BaseColor",
+          "kind": "color",
+          "channels": "rgb",
+          "label": {
+            "zh": "颜色",
+            "en": "Colour"
+          }
+        },
+        {
+          "param": "Alpha",
+          "kind": "float",
+          "min": 0,
+          "max": 1,
+          "label": {
+            "zh": "不透明度",
+            "en": "Opacity"
+          }
+        },
+        {
+          "param": "EmissiveIntensity",
+          "kind": "float",
+          "min": 0,
+          "max": 10,
+          "label": {
+            "zh": "原版自发光强度",
+            "en": "Original emissive intensity"
+          },
+          "note": {
+            "zh": "使用下面的发光层时设 0，否则两者叠加",
+            "en": "Set to 0 when using the emission layers below, or both add up"
+          }
+        }
+      ]
+    },
+    {
+      "id": "emission_all", "section": "emission",
+      "tier": "basic",
+      "label": {
+        "zh": "发光总控",
+        "en": "Emission"
+      },
+      "note": {
+        "zh": "作用于两层发光和溶解发光",
+        "en": "Applies to both emission layers and the dissolve glow"
+      },
+      "params": [
+        {
+          "param": "LIL_EmissionParam",
+          "component": "w",
+          "kind": "float",
+          "min": 0,
+          "max": 100,
+          "label": {
+            "zh": "总强度",
+            "en": "Overall intensity"
+          },
+          "note": {
+            "zh": "屏幕恒定亮度关闭时常用 1，打开时可到 100",
+            "en": "Usually 1 with constant brightness off; up to 100 with it on"
+          }
+        },
+        {
+          "param": "LIL_EmissionParam",
+          "component": "z",
+          "kind": "bool",
+          "label": {
+            "zh": "屏幕恒定亮度",
+            "en": "Constant on screen"
+          },
+          "note": {
+            "zh": "打开 = 亮度不随场景变化，关闭 = 随场景亮度缩放",
+            "en": "On keeps the brightness fixed, off scales it with the scene"
+          }
+        }
+      ]
+    },
+    {
+      "id": "emission", "section": "emission",
+      "tier": "basic",
+      "label": {
+        "zh": "发光（第一层）",
+        "en": "Emission 1st"
+      },
+      "note": {
+        "zh": "发光图 EmissiveMap × 遮罩 LIL_EmissionMaskMap；用这一组发光时，原版自发光强度要设 0，否则会叠加",
+        "en": "EmissiveMap × mask LIL_EmissionMaskMap; set the original emissive intensity to 0 when using this, or both add up"
+      },
+      "params": [
+        {
+          "param": "LIL_EmissionColor",
+          "kind": "color",
+          "channels": "rgb",
+          "label": {
+            "zh": "颜色",
+            "en": "Colour"
+          },
+          "note": {
+            "zh": "可以大于 1，当作亮度",
+            "en": "May exceed 1 as brightness"
+          }
+        },
+        {
+          "param": "LIL_EmissionColor",
+          "component": "w",
+          "kind": "float",
+          "min": 0,
+          "max": 1,
+          "label": {
+            "zh": "强度",
+            "en": "Strength"
+          },
+          "note": {
+            "zh": "0 = 关闭这一层",
+            "en": "0 turns the layer off"
+          }
+        },
+        {
+          "param": "LIL_EmissionParam",
+          "component": "x",
+          "kind": "float",
+          "min": 0,
+          "max": 1,
+          "label": {
+            "zh": "乘基础色贴图",
+            "en": "Tint by base map"
+          },
+          "note": {
+            "zh": "发光乘以 BaseDielectricMap 颜色的比例",
+            "en": "How much the glow is multiplied by the BaseDielectricMap colour"
+          }
+        },
+        {
+          "param": "LIL_EmissionBlink",
+          "component": "x",
+          "kind": "float",
+          "min": 0,
+          "max": 1,
+          "label": {
+            "zh": "闪烁",
+            "en": "Blink"
+          },
+          "note": {
+            "zh": "0 = 不闪，1 = 完全闪",
+            "en": "0 steady, 1 full blink"
+          }
+        },
+        {
+          "param": "LIL_EmissionBlink",
+          "component": "y",
+          "kind": "bool",
+          "label": {
+            "zh": "方波闪烁",
+            "en": "Square wave"
+          },
+          "note": {
+            "zh": "打开 = 亮灭切换，关闭 = 正弦渐变",
+            "en": "On switches on/off, off fades as a sine"
+          }
+        },
+        {
+          "param": "LIL_EmissionBlink",
+          "component": "z",
+          "kind": "float",
+          "min": 0,
+          "max": 20,
+          "label": {
+            "zh": "闪烁频率",
+            "en": "Blink frequency"
+          },
+          "note": {
+            "zh": "弧度/秒；π ≈ 每 2 秒一次",
+            "en": "Radians per second; π ≈ once every 2 s"
+          }
+        },
+        {
+          "param": "LIL_EmissionBlink",
+          "component": "w",
+          "kind": "float",
+          "min": 0,
+          "max": 6.2832,
+          "label": {
+            "zh": "闪烁相位",
+            "en": "Blink phase"
+          },
+          "note": {
+            "zh": "弧度",
+            "en": "Radians"
+          }
+        },
+        {
+          "param": "LIL_EmissionScroll",
+          "component": "x",
+          "kind": "float",
+          "min": -2,
+          "max": 2,
+          "tier": "more",
+          "label": {
+            "zh": "U 滚动速度",
+            "en": "Scroll U"
+          },
+          "note": {
+            "zh": "UV/秒",
+            "en": "UV per second"
+          }
+        },
+        {
+          "param": "LIL_EmissionScroll",
+          "component": "y",
+          "kind": "float",
+          "min": -2,
+          "max": 2,
+          "tier": "more",
+          "label": {
+            "zh": "V 滚动速度",
+            "en": "Scroll V"
+          },
+          "note": {
+            "zh": "UV/秒",
+            "en": "UV per second"
+          }
+        },
+        {
+          "param": "LIL_EmissionScroll",
+          "component": "z",
+          "kind": "float",
+          "min": -3.1416,
+          "max": 3.1416,
+          "tier": "more",
+          "label": {
+            "zh": "旋转角",
+            "en": "Rotation"
+          },
+          "note": {
+            "zh": "弧度",
+            "en": "Radians"
+          }
+        },
+        {
+          "param": "LIL_EmissionScroll",
+          "component": "w",
+          "kind": "float",
+          "min": -10,
+          "max": 10,
+          "tier": "more",
+          "label": {
+            "zh": "旋转速度",
+            "en": "Rotation speed"
+          },
+          "note": {
+            "zh": "弧度/秒",
+            "en": "Radians per second"
+          }
+        },
+        {
+          "param": "LIL_EmissionST",
+          "kind": "vec",
+          "tier": "more",
+          "label": {
+            "zh": "发光图平铺 / 偏移",
+            "en": "Map tiling / offset"
+          },
+          "labels": {
+            "zh": [
+              "平铺 U",
+              "平铺 V",
+              "偏移 U",
+              "偏移 V"
+            ],
+            "en": [
+              "Tiling U",
+              "Tiling V",
+              "Offset U",
+              "Offset V"
+            ]
+          }
+        },
+        {
+          "param": "LIL_EmissionMaskST",
+          "kind": "vec",
+          "tier": "more",
+          "label": {
+            "zh": "遮罩平铺 / 偏移",
+            "en": "Mask tiling / offset"
+          },
+          "labels": {
+            "zh": [
+              "平铺 U",
+              "平铺 V",
+              "偏移 U",
+              "偏移 V"
+            ],
+            "en": [
+              "Tiling U",
+              "Tiling V",
+              "Offset U",
+              "Offset V"
+            ]
+          }
+        },
+        {
+          "param": "LIL_EmissionMaskScroll",
+          "component": "x",
+          "kind": "float",
+          "min": -2,
+          "max": 2,
+          "tier": "more",
+          "label": {
+            "zh": "遮罩 U 滚动速度",
+            "en": "Mask scroll U"
+          }
+        },
+        {
+          "param": "LIL_EmissionMaskScroll",
+          "component": "y",
+          "kind": "float",
+          "min": -2,
+          "max": 2,
+          "tier": "more",
+          "label": {
+            "zh": "遮罩 V 滚动速度",
+            "en": "Mask scroll V"
+          }
+        },
+        {
+          "param": "LIL_EmissionMaskScroll",
+          "component": "z",
+          "kind": "float",
+          "min": -3.1416,
+          "max": 3.1416,
+          "tier": "more",
+          "label": {
+            "zh": "遮罩旋转角",
+            "en": "Mask rotation"
+          }
+        },
+        {
+          "param": "LIL_EmissionMaskScroll",
+          "component": "w",
+          "kind": "float",
+          "min": -10,
+          "max": 10,
+          "tier": "more",
+          "label": {
+            "zh": "遮罩旋转速度",
+            "en": "Mask rotation speed"
+          }
+        }
+      ]
+    },
+    {
+      "id": "emission2nd", "section": "emission",
+      "tier": "basic",
+      "label": {
+        "zh": "发光（第二层）",
+        "en": "Emission 2nd"
+      },
+      "note": {
+        "zh": "发光图 LIL_Emission2ndMap × 遮罩 LIL_Emission2ndMaskMap；用这一组发光时，原版自发光强度要设 0，否则会叠加",
+        "en": "LIL_Emission2ndMap × mask LIL_Emission2ndMaskMap; set the original emissive intensity to 0 when using this, or both add up"
+      },
+      "params": [
+        {
+          "param": "LIL_Emission2ndColor",
+          "kind": "color",
+          "channels": "rgb",
+          "label": {
+            "zh": "颜色",
+            "en": "Colour"
+          },
+          "note": {
+            "zh": "可以大于 1，当作亮度",
+            "en": "May exceed 1 as brightness"
+          }
+        },
+        {
+          "param": "LIL_Emission2ndColor",
+          "component": "w",
+          "kind": "float",
+          "min": 0,
+          "max": 1,
+          "label": {
+            "zh": "强度",
+            "en": "Strength"
+          },
+          "note": {
+            "zh": "0 = 关闭这一层",
+            "en": "0 turns the layer off"
+          }
+        },
+        {
+          "param": "LIL_EmissionParam",
+          "component": "y",
+          "kind": "float",
+          "min": 0,
+          "max": 1,
+          "label": {
+            "zh": "乘基础色贴图",
+            "en": "Tint by base map"
+          },
+          "note": {
+            "zh": "发光乘以 BaseDielectricMap 颜色的比例",
+            "en": "How much the glow is multiplied by the BaseDielectricMap colour"
+          }
+        },
+        {
+          "param": "LIL_Emission2ndBlink",
+          "component": "x",
+          "kind": "float",
+          "min": 0,
+          "max": 1,
+          "label": {
+            "zh": "闪烁",
+            "en": "Blink"
+          },
+          "note": {
+            "zh": "0 = 不闪，1 = 完全闪",
+            "en": "0 steady, 1 full blink"
+          }
+        },
+        {
+          "param": "LIL_Emission2ndBlink",
+          "component": "y",
+          "kind": "bool",
+          "label": {
+            "zh": "方波闪烁",
+            "en": "Square wave"
+          },
+          "note": {
+            "zh": "打开 = 亮灭切换，关闭 = 正弦渐变",
+            "en": "On switches on/off, off fades as a sine"
+          }
+        },
+        {
+          "param": "LIL_Emission2ndBlink",
+          "component": "z",
+          "kind": "float",
+          "min": 0,
+          "max": 20,
+          "label": {
+            "zh": "闪烁频率",
+            "en": "Blink frequency"
+          },
+          "note": {
+            "zh": "弧度/秒；π ≈ 每 2 秒一次",
+            "en": "Radians per second; π ≈ once every 2 s"
+          }
+        },
+        {
+          "param": "LIL_Emission2ndBlink",
+          "component": "w",
+          "kind": "float",
+          "min": 0,
+          "max": 6.2832,
+          "label": {
+            "zh": "闪烁相位",
+            "en": "Blink phase"
+          },
+          "note": {
+            "zh": "弧度",
+            "en": "Radians"
+          }
+        },
+        {
+          "param": "LIL_Emission2ndScroll",
+          "component": "x",
+          "kind": "float",
+          "min": -2,
+          "max": 2,
+          "tier": "more",
+          "label": {
+            "zh": "U 滚动速度",
+            "en": "Scroll U"
+          },
+          "note": {
+            "zh": "UV/秒",
+            "en": "UV per second"
+          }
+        },
+        {
+          "param": "LIL_Emission2ndScroll",
+          "component": "y",
+          "kind": "float",
+          "min": -2,
+          "max": 2,
+          "tier": "more",
+          "label": {
+            "zh": "V 滚动速度",
+            "en": "Scroll V"
+          },
+          "note": {
+            "zh": "UV/秒",
+            "en": "UV per second"
+          }
+        },
+        {
+          "param": "LIL_Emission2ndScroll",
+          "component": "z",
+          "kind": "float",
+          "min": -3.1416,
+          "max": 3.1416,
+          "tier": "more",
+          "label": {
+            "zh": "旋转角",
+            "en": "Rotation"
+          },
+          "note": {
+            "zh": "弧度",
+            "en": "Radians"
+          }
+        },
+        {
+          "param": "LIL_Emission2ndScroll",
+          "component": "w",
+          "kind": "float",
+          "min": -10,
+          "max": 10,
+          "tier": "more",
+          "label": {
+            "zh": "旋转速度",
+            "en": "Rotation speed"
+          },
+          "note": {
+            "zh": "弧度/秒",
+            "en": "Radians per second"
+          }
+        },
+        {
+          "param": "LIL_Emission2ndST",
+          "kind": "vec",
+          "tier": "more",
+          "label": {
+            "zh": "发光图平铺 / 偏移",
+            "en": "Map tiling / offset"
+          },
+          "labels": {
+            "zh": [
+              "平铺 U",
+              "平铺 V",
+              "偏移 U",
+              "偏移 V"
+            ],
+            "en": [
+              "Tiling U",
+              "Tiling V",
+              "Offset U",
+              "Offset V"
+            ]
+          }
+        },
+        {
+          "param": "LIL_Emission2ndMaskST",
+          "kind": "vec",
+          "tier": "more",
+          "label": {
+            "zh": "遮罩平铺 / 偏移",
+            "en": "Mask tiling / offset"
+          },
+          "labels": {
+            "zh": [
+              "平铺 U",
+              "平铺 V",
+              "偏移 U",
+              "偏移 V"
+            ],
+            "en": [
+              "Tiling U",
+              "Tiling V",
+              "Offset U",
+              "Offset V"
+            ]
+          }
+        },
+        {
+          "param": "LIL_Emission2ndMaskScroll",
+          "component": "x",
+          "kind": "float",
+          "min": -2,
+          "max": 2,
+          "tier": "more",
+          "label": {
+            "zh": "遮罩 U 滚动速度",
+            "en": "Mask scroll U"
+          }
+        },
+        {
+          "param": "LIL_Emission2ndMaskScroll",
+          "component": "y",
+          "kind": "float",
+          "min": -2,
+          "max": 2,
+          "tier": "more",
+          "label": {
+            "zh": "遮罩 V 滚动速度",
+            "en": "Mask scroll V"
+          }
+        },
+        {
+          "param": "LIL_Emission2ndMaskScroll",
+          "component": "z",
+          "kind": "float",
+          "min": -3.1416,
+          "max": 3.1416,
+          "tier": "more",
+          "label": {
+            "zh": "遮罩旋转角",
+            "en": "Mask rotation"
+          }
+        },
+        {
+          "param": "LIL_Emission2ndMaskScroll",
+          "component": "w",
+          "kind": "float",
+          "min": -10,
+          "max": 10,
+          "tier": "more",
+          "label": {
+            "zh": "遮罩旋转速度",
+            "en": "Mask rotation speed"
+          }
+        }
+      ]
+    }
+  ],
+  "ignore": [
+    "LIL_LightDir",
+    "LIL_Time"
+  ]
+}

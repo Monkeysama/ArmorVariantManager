@@ -23,6 +23,13 @@ sync_main_release.py
 !/tests/re4_ops.lua
 !/tests/re4_model_v3.lua
 !/tests/re4_presets.lua
+!/tests/re4_dissolve.lua
+!/tests/re4_height.lua
+!/tests/re4_palette.lua
+!/tests/re4_targets.lua
+!/tests/re4_input_guard.lua
+!/tests/re4_portrait_camera.lua
+!/tests/re4_portrait_copy.lua
 !/tests/reff_bridge.lua
 !/tests/reff_conditions.lua
 !/tests/reff_settings.lua

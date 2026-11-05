@@ -10,7 +10,12 @@ export interface Re4ConditionDef {
   ops?: Re4Op[]; options?: Re4ConditionOption[]; value?: number | boolean;
 }
 export interface Re4Character { id: string; label: string; configured: boolean; targets: string[] }
-export interface Re4Settings { weaponHideStorage: boolean; uiDissolveEnabled: boolean; uiDissolveTime: number }
+export interface Re4Settings {
+  weaponHideStorage: boolean; uiDissolveEnabled: boolean; uiDissolveTime: number;
+  previewDistance?: number; previewHeight?: number; blockGameMouse?: boolean; heightEnabled?: boolean;
+}
+// 全身预览(和荒野同一个原生插件);只在装了预览插件和新版 REFF 时可用
+export interface Re4Preview { available: boolean; enabled: boolean; status: string; error?: string }
 
 // 认领结果：win = 这一处由它决定；lose = 被第 by 个条件状态覆盖；broken = 引用的组 / 选项不存在
 export interface Re4Result { kind: 'win' | 'lose' | 'broken'; by?: number }
@@ -29,9 +34,10 @@ export interface Re4State {
 // 材质值：键是 "slot/材质"。整套造型是整份（每个材质都有值）；状态组稀疏，没写 = 不管
 export type Re4Values = Record<string, boolean>;
 export interface Re4Match { status: 'ok' | 'partial' | 'mismatch'; skipped: string[] }
-export interface Re4BasePreset { name: string; values: Re4Values; match: Re4Match }
+// height:这个预设 / 选项设的模型高度（厘米）；没有 = 这一层不管高度
+export interface Re4BasePreset { name: string; values: Re4Values; match: Re4Match; height?: number }
 export interface Re4Base { active: string; effective?: string; fromState?: number; presets: Re4BasePreset[] }
-export interface Re4Option { name: string; values: Re4Values }
+export interface Re4Option { name: string; values: Re4Values; height?: number }
 export interface Re4Group { name: string; scope: string[]; active: string; effective?: string; fromState?: number; options: Re4Option[] }
 
 export interface Re4Material { name: string; note?: string }
@@ -44,18 +50,52 @@ export interface Re4Presets {
   current?: Re4Fit; source?: { id: string; name: string; own: boolean }; dismissed: boolean;
   list: Re4PresetEntry[]; better: { id: string; name: string }[]; autosaves: { name: string; time: number }[];
 }
-export interface Re4Notice { kind: 'migrated'; overlaps: number; presets: number }
+export type Re4Notice = { kind: 'migrated'; presets: number } | { kind: 'palette-exported'; path: string };
+
+// 调色盘（Lua 的 Palette.lua / tools/re4/material_profiles）
+export type Re4Text = { zh?: string; en?: string };
+export type Re4Comp = 'x' | 'y' | 'z' | 'w';
+export interface Re4PaletteOption { value: number; label: Re4Text }
+export interface Re4PaletteEntry {
+  param: string; kind: 'color' | 'float' | 'enum' | 'bool' | 'vec'; component?: Re4Comp; channels?: 'rgb' | 'rgba';
+  min?: number; max?: number; step?: number; hard_min?: number; hard_max?: number;
+  enum?: string; options?: Re4PaletteOption[]; labels?: { zh?: string[]; en?: string[] };
+  tier?: 'basic' | 'more' | 'other'; label?: Re4Text; note?: Re4Text;
+}
+export interface Re4PaletteGroup { id: string; tier: 'basic' | 'more' | 'other'; section?: string; label?: Re4Text; note?: Re4Text; params: Re4PaletteEntry[] }
+export interface Re4PaletteSection { id: string; label?: Re4Text }
+export interface Re4PaletteProfile { id: string; label: Re4Text; addon: boolean; enums: Record<string, Re4PaletteOption[]>; groups: Re4PaletteGroup[]; sections: Re4PaletteSection[] }
+export interface Re4PaletteMaterial {
+  key: string; slot: string; material: string; note?: string; main?: string; addons: string[];
+  missing: string[]; generic?: string[]; overridden: number;
+  // 贴图槽绑了默认(null)贴图而改了不生效的参数:comps = 失效的分量,why = 哪个槽绑了哪张 null 贴图
+  ineffective?: Record<string, { comps: string; why: { texture: string; null: string }[] }>;
+}
+// 当前值：float 是数字，float4 是 [x, y, z, w]；覆盖值：float 是数字，float4 只有改过的分量
+export type Re4PaletteValue = number | [number, number, number, number];
+export type Re4PaletteOverride = number | Partial<Record<Re4Comp, number>>;
+export interface Re4Palette {
+  materials: Re4PaletteMaterial[]; profiles: Record<string, Re4PaletteProfile>;
+  values: Record<string, Record<string, Re4PaletteValue>>;
+  overrides: Record<string, Record<string, Re4PaletteOverride> | false>;
+  selected: string[]; errors: string[]; error?: string;
+}
+export interface Re4PaletteWrite { slot: string; material: string; param: string; component?: Re4Comp; value: number }
 
 export interface Re4Snapshot {
   game: 'RE4'; version: string; language: 'zh' | 'en';
   settings: Re4Settings; characters: Re4Character[]; character: string;
-  configVersion?: 2 | 3; notice?: Re4Notice;
+  configVersion?: 2 | 3; notice?: Re4Notice; preview?: Re4Preview;
   // 以下只在 v3 配置时出现
   status?: { hp?: number; flags: string[] };
   conditions?: Re4ConditionDef[];
   auto?: boolean; armorMirror?: boolean;
   slots?: Re4Slot[]; look?: Re4Look[];
   base?: Re4Base; groups?: Re4Group[]; states?: Re4State[];
+  height?: number;   // 这一帧生效的模型高度（厘米）；没有 = 不抬高
+  heightSource?: { layer: string; option?: string };   // layer: 'override' / 'base' / 状态组名
+  heightOverride?: { enabled: boolean; cm: number };   // 快速切换页的全局覆盖（存在当前配置里）
+  palette?: Re4Palette;   // 只在调色页打开时出现
   locating?: { slot: string; material: string };
   presets?: Re4Presets;
   backups?: { hasBackup: boolean; hasOnload: boolean };
@@ -65,7 +105,7 @@ export type Re4ConditionInput = { type: string; op?: Re4Op; value: number | stri
 type C = { character: string };
 export type Re4Action =
   | { kind: 'character'; id: string }
-  | { kind: 'setting'; id: 'weapon_hide_storage' | 'ui_dissolve_enabled' | 'ui_dissolve_time'; value: boolean | number }
+  | { kind: 'setting'; id: 'weapon_hide_storage' | 'ui_dissolve_enabled' | 'ui_dissolve_time' | 'portrait_enabled' | 'portrait_distance' | 'portrait_height' | 'block_game_mouse' | 'height_enabled'; value: boolean | number }
   | C & { kind: 'migrate' }
   | C & { kind: 'manual'; layer: string; option: string }
   | C & { kind: 'auto'; enabled: boolean }
@@ -77,11 +117,20 @@ export type Re4Action =
   | C & { kind: 'base-rename'; preset: string; name: string }
   | C & { kind: 'base-move'; preset: string; offset: number }
   | C & { kind: 'base-material'; preset: string; slot: string; material: string; value: boolean }
+  | C & { kind: 'base-height'; preset: string; cm?: number }
+  | C & { kind: 'option-height'; group: string; option: string; cm?: number }
+  | C & { kind: 'height-override'; enabled?: boolean; cm?: number }
+  | C & { kind: 'palette-view'; open: boolean; keys: string[] }
+  | C & { kind: 'palette-set'; writes: Re4PaletteWrite[]; live?: boolean }
+  | C & { kind: 'palette-reset'; targets: { slot: string; material: string }[]; param?: string; component?: Re4Comp }
+  | C & { kind: 'palette-reload' }
+  | C & { kind: 'palette-export'; slot: string; material: string }
   | C & { kind: 'group-new'; name: string }
   | C & { kind: 'group-rename'; group: string; name: string }
   | C & { kind: 'group-move'; group: string; offset: number }
   | C & { kind: 'group-delete'; group: string }
   | C & { kind: 'scope-add' | 'scope-remove'; group: string; slot: string; material: string }
+  | C & { kind: 'scope-set'; group: string; add: { slot: string; material: string }[]; remove: { slot: string; material: string }[] }
   | C & { kind: 'option-new'; group: string; name?: string }
   | C & { kind: 'option-duplicate' | 'option-delete'; group: string; option: string }
   | C & { kind: 'option-rename'; group: string; option: string; name: string }

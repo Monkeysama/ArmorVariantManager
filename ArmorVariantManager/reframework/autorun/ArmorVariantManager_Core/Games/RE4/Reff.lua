@@ -10,6 +10,10 @@
 local Ops = require("ArmorVariantManager_Core.Games.RE4.Ops")
 local OpsV3 = require("ArmorVariantManager_Core.Games.RE4.OpsV3")
 local M3 = require("ArmorVariantManager_Core.Games.RE4.ModelV3")
+local Palette = require("ArmorVariantManager_Core.Games.RE4.Palette")
+-- 默认贴图失效规则(离线材质库生成);加载失败就不做判断,不影响调色盘本身
+local ok_effects, MaterialEffects = pcall(require, "ArmorVariantManager_Core.Games.RE4.MaterialEffects")
+local effects_index = ok_effects and Palette.effects_index(MaterialEffects) or nil
 local Bridge = require("ArmorVariantManager_Core.UI.Reff.Bridge")
 
 local Reff = {}
@@ -34,6 +38,7 @@ local CATEGORY = {
 --   TransformManager, Registry, Utils, documentation
 --   snapshot_before_destructive, has_backup, has_onload_backup, restore_backup, restore_onload_backup,
 --   start_preview, get_preview
+--   preview(可选):Portrait.connect 的网页接口 { snapshot(), action(request) }
 --   v3:migrate_to_v3, preset_view, dismiss_preset_hint, apply_preset, save_current_as_preset,
 --      update_source_preset, restore_autosave, promote_autosave, preset_lib
 function Reff.new(deps)
@@ -41,6 +46,12 @@ function Reff.new(deps)
     local selected = nil
     local notice = nil     -- 一次性提示(迁移结果之类),随下一份快照交给网页
     local T, TM, Registry, Utils = deps.T, deps.TransformManager, deps.Registry, deps.Utils
+
+    -- 调色盘:只有网页开着调色页时快照才带 palette(参数多,不必每次都读)。
+    -- palette_sel = 网页选中的材质键("slot/材质"),只给它们读当前值;
+    -- palette_cache[mesh|序号] = { name, has = {参数 = 类型}, main, addons, missing },mesh 换实例就是新键
+    local palette_open, palette_sel, palette_cache = false, {}, {}
+    local palette_dirty = false   -- 拖动中的实时写入还没存盘
 
     local function language() return deps.global_config.language == "zh" and "zh" or "en" end
 
@@ -58,6 +69,14 @@ function Reff.new(deps)
         local config = deps.load_config(kind_id, target.source, how == "legacy")
         return { group = group, target = target, kind_id = kind_id, config = config,
                  context = target.context }, groups, order
+    end
+
+    -- 全身预览拍谁:网页选中的那一组的代表模型;没选过或已离场时退回主控(同 current,但不读配置)
+    function controller.preview_target()
+        local groups, order = deps.groups(deps.targets())
+        if #order == 0 then return nil end
+        local group = deps.pick_group(groups, order, selected)
+        return group and group.rep or nil
     end
 
     local function condition_defs(context)
@@ -133,6 +152,105 @@ function Reff.new(deps)
         return { status = (#skipped > 0) and "partial" or "ok", skipped = skipped }
     end
 
+    -- 一个材质的识别结果(缓存)。missing = 映射里写了、但这个材质没有或类型不对的参数
+    local function palette_info(mesh, j, profiles)
+        local key = tostring(mesh) .. "|" .. j
+        local c = palette_cache[key]
+        if c then return c end
+        local name = mesh:call("getMaterialName", j)
+        local vars = Palette.read_vars(mesh, j)
+        local has = {}
+        for n, v in pairs(vars) do has[n] = v.t end
+        -- 先认母材质(离线材质库):自动生成的原版母材质映射按它匹配,默认贴图失效也按它判断
+        local textures, master = nil, nil
+        if effects_index then
+            local ok_m = pcall(function()
+                textures = Palette.read_textures(mesh, j)
+                master = Palette.find_master(effects_index, mesh:call("getMaterialVariableNum", j), textures)
+            end)
+            if not ok_m then textures, master = nil, nil end
+        end
+        local main, addons = Palette.match(profiles, has, master and master.id or nil)
+        local missing, seen = {}, {}
+        local all = {}
+        if main then all[1] = main end
+        for _, a in ipairs(addons) do all[#all + 1] = a end
+        for _, p in ipairs(all) do
+            for _, g in ipairs(p.groups) do
+                for _, e in ipairs(g.params) do
+                    if not seen[e.param] and not Palette.entry_usable(e, has) then seen[e.param] = true; missing[#missing + 1] = e.param end
+                end
+            end
+        end
+        local ids = {}
+        for _, a in ipairs(addons) do ids[#ids + 1] = a.id end
+        -- 哪些参数因为贴图槽绑了默认(null)贴图而改了不生效
+        local dead = nil
+        if master then
+            local ok_d, d = pcall(Palette.ineffective, effects_index, master, textures)
+            if ok_d then dead = d end
+        end
+        c = { name = name, vars = vars, has = has, main = main, addons = ids, addon_list = addons, missing = missing,
+              generic = (not main) and Palette.generic(has) or nil, ineffective = dead }
+        palette_cache[key] = c
+        return c
+    end
+
+    local function palette_snapshot(cur)
+        local profiles = deps.palette_profiles()
+        local source, config = cur.target.source, cur.config
+        local pal = config.palette or {}
+        local out = { materials = {}, profiles = {}, values = {}, overrides = {}, selected = {},
+                      errors = deps.palette_profile_errors() }
+        local used, live, sel, listed = {}, {}, {}, {}
+        for _, k in ipairs(palette_sel) do sel[k] = true end
+        local notes = config.material_notes or {}
+        for _, slot in ipairs(deps.visible_slots(source)) do
+            local mesh = Utils.get_mesh(source, slot)
+            local ok, count = pcall(function() return mesh and mesh:call("get_MaterialNum") or 0 end)
+            for j = 0, (ok and count or 0) - 1 do
+                local okc, c = pcall(palette_info, mesh, j, profiles)
+                if okc and type(c.name) == "string" then
+                    live[tostring(mesh) .. "|" .. j] = true
+                    local key = slot .. "/" .. c.name
+                    -- 同名材质(同一 mesh 里重复的名字)只列第一个;写入时也按名字,一起改
+                    if not listed[key] then
+                        listed[key] = true
+                        local ov = (pal[slot] or {})[c.name]
+                        local n = 0
+                        for _ in pairs(ov or {}) do n = n + 1 end
+                        out.materials[#out.materials + 1] = { key = key, slot = slot, material = c.name,
+                            note = (notes[slot] or {})[c.name], main = c.main and c.main.id or nil, addons = c.addons,
+                            missing = c.missing, generic = c.generic, overridden = n, ineffective = c.ineffective }
+                        if c.main then used[c.main.id] = c.main end
+                        for _, a in ipairs(c.addon_list) do used[a.id] = a end
+                        out.overrides[key] = ov or false
+                        if sel[key] then
+                            out.selected[#out.selected + 1] = key
+                            -- 当前值叠加上覆盖值:改完到下一帧才真正写进 mesh,直接读会读到旧值,界面就跳回去了
+                            local values = {}
+                            for name, var in pairs(c.vars) do
+                                local v = Palette.read_value(mesh, j, var)
+                                local o = ov and ov[name]
+                                if type(o) == "number" and var.t == Palette.TYPE_FLOAT then v = o
+                                elseif type(o) == "table" and type(v) == "table" then
+                                    for k, i in pairs({ x = 1, y = 2, z = 3, w = 4 }) do if type(o[k]) == "number" then v[i] = o[k] end end
+                                end
+                                values[name] = v
+                            end
+                            out.values[key] = values
+                        end
+                    end
+                end
+            end
+        end
+        for key in pairs(palette_cache) do if not live[key] then palette_cache[key] = nil end end
+        for id, p in pairs(used) do
+            out.profiles[id] = { id = p.id, label = p.label, addon = p.addon, enums = p.enums, groups = p.groups, sections = p.sections }
+        end
+        return out
+    end
+
     local function v3_snapshot(snapshot, cur)
         local context, config, source = cur.context, cur.config, cur.target.source
         snapshot.status = { flags = {} }
@@ -178,7 +296,7 @@ function Reff.new(deps)
         snapshot.base = { active = base.active, effective = v3.picks.base, fromState = base_layer.prio, presets = {} }
         for _, name in ipairs(base.order) do
             snapshot.base.presets[#snapshot.base.presets + 1] = { name = name, values = values_of(base.presets[name]),
-                match = base_match(source, base.presets[name]) }
+                match = base_match(source, base.presets[name]), height = (base.heights or {})[name] }
         end
 
         snapshot.groups = {}
@@ -188,9 +306,21 @@ function Reff.new(deps)
                 fromState = (info.layers[key] or {}).prio, options = {} }
             for k, s in ipairs(g.scope) do row.scope[k] = s end
             for _, name in ipairs(g.order) do
-                row.options[#row.options + 1] = { name = name, values = values_of(g.options[name]) }
+                row.options[#row.options + 1] = { name = name, values = values_of(g.options[name]), height = (g.heights or {})[name] }
             end
             snapshot.groups[#snapshot.groups + 1] = row
+        end
+
+        -- 这一帧生效的模型高度(厘米,nil = 不抬高;总开关关掉时也照算,界面上另外标出)
+        -- heightSource:来自哪一层("override" / "base" / 状态组名 + 选项名);heightOverride:快速切换页的全局覆盖
+        local cm, src = M3.height_of(config, v3.picks)
+        snapshot.height, snapshot.heightSource = cm, src
+        local o = config.height_override
+        snapshot.heightOverride = { enabled = type(o) == "table" and o.enabled == true, cm = type(o) == "table" and o.cm or 0 }
+
+        if palette_open then
+            local ok, pal = pcall(palette_snapshot, cur)
+            snapshot.palette = ok and pal or { error = tostring(pal) }
         end
 
         snapshot.states = {}
@@ -218,9 +348,12 @@ function Reff.new(deps)
         local g = deps.global_config
         local snapshot = { game = "RE4", version = deps.version, language = language(),
             settings = { weaponHideStorage = g.weapon_hide_storage == true,
-                uiDissolveEnabled = g.ui_dissolve_enabled ~= false,
-                uiDissolveTime = tonumber(g.ui_dissolve_time) or 1.0 },
-            characters = {}, character = "", notice = notice }
+                uiDissolveEnabled = g.ui_dissolve_enabled ~= false, blockGameMouse = g.block_game_mouse ~= false,
+                heightEnabled = g.height_enabled ~= false,
+                uiDissolveTime = tonumber(g.ui_dissolve_time) or 1.0,
+                previewDistance = tonumber(g.portrait_distance) or 3.0, previewHeight = tonumber(g.portrait_height) or 0.0 },
+            characters = {}, character = "", notice = notice,
+            preview = deps.preview and deps.preview.snapshot() or nil }
         notice = nil
         local cur, groups, order = current()
         for _, gid in ipairs(order) do
@@ -271,6 +404,73 @@ function Reff.new(deps)
             return Ops.replace_preset(cfg.base, p.preset,
                 Utils.capture_preserving_unmatched(source, prev, TM.usable_slots(source, prev)))
         end,
+        -- 调色盘。view:网页打开 / 关闭调色页、换选中的材质(不改配置)
+        ["palette-view"] = function(p)
+            palette_open = p.open == true
+            local keys = {}
+            for _, k in ipairs(type(p.keys) == "table" and p.keys or {}) do
+                if type(k) == "string" and #keys < 64 then keys[#keys + 1] = k end
+            end
+            palette_sel = keys
+            -- 拖动后没点确定就关了面板 / 换了材质:实时改动已经生效,这里补存一次
+            if palette_dirty then palette_dirty = false; return true, false end
+            return "saved"
+        end,
+        -- set:writes = { { slot, material, param, component?, value }, ... }(整体调色一次发一批)
+        -- live = 拖动中:只改内存里的配置并重写模型,不存盘;松手 / 确定时再发一次不带 live 的,存盘
+        ["palette-set"] = function(p, cfg)
+            local changed = false
+            for _, w in ipairs(type(p.writes) == "table" and p.writes or {}) do
+                if Palette.set(cfg, w) then changed = true end
+            end
+            if p.live == true then
+                if changed then palette_dirty = true; deps.request_reapply() end
+                return "saved"
+            end
+            -- 最终值和最后一次拖动的值一样时 changed 为 false,但拖动中的改动还没存盘
+            if not changed and not palette_dirty then return "saved" end
+            palette_dirty = false
+            return true, true
+        end,
+        -- reset:targets = { { slot, material }, ... };param / component 可选(缺省 = 全部)
+        ["palette-reset"] = function(p, cfg)
+            local changed = false
+            for _, t in ipairs(type(p.targets) == "table" and p.targets or {}) do
+                if type(t) == "table" and Palette.reset(cfg, t.slot, t.material, str(p.param), str(p.component)) then changed = true end
+            end
+            if not changed then return "saved" end
+            return true, true
+        end,
+        ["palette-reload"] = function()
+            deps.palette_profiles(true)
+            palette_cache = {}
+            return "saved"
+        end,
+        -- 导出参数清单:写成映射草稿 material_profiles/drafts/<材质名>.json(drafts 不会被当成映射读进来)
+        ["palette-export"] = function(p, _, cur)
+            local mesh = Utils.get_mesh(cur.target.source, str(p.slot))
+            local count = mesh and mesh:call("get_MaterialNum") or 0
+            for j = 0, count - 1 do
+                if mesh:call("getMaterialName", j) == p.material then
+                    local file = tostring(p.material):gsub("[^%w%-_%.]", "_") .. ".json"
+                    local path = deps.palette_dir .. "drafts/" .. file
+                    local ok = deps.palette_dump(path, Palette.draft(mesh, j))
+                    if not ok then return false end
+                    notice = { kind = "palette-exported", path = "reframework/data/" .. path }
+                    return "saved"
+                end
+            end
+            return false
+        end,
+
+        -- 模型高度:cm = nil 清除
+        ["base-height"] = function(p, cfg) return OpsV3.set_height(cfg, "base", p.preset, p.cm) end,
+        ["option-height"] = function(p, cfg) return OpsV3.set_height(cfg, p.group, p.option, p.cm) end,
+        ["height-override"] = function(p, cfg)
+            local enabled = nil
+            if p.enabled ~= nil then enabled = p.enabled == true end
+            return OpsV3.set_height_override(cfg, enabled, p.cm)
+        end,
         ["base-material"] = function(p, cfg)
             return Ops.set_material(cfg.base.presets[p.preset], p.slot, p.material, p.value == true, true)
         end,
@@ -286,6 +486,11 @@ function Reff.new(deps)
         end,
         ["scope-add"] = function(p, cfg) return OpsV3.scope_add(cfg, p.group, p.slot, p.material) end,
         ["scope-remove"] = function(p, cfg) return OpsV3.scope_remove(cfg, p.group, p.slot, p.material) end,
+        ["scope-set"] = function(p, cfg, cur)
+            if not M3.find_group(cfg, p.group) then return false end
+            if type(p.remove) == "table" and #p.remove > 0 then deps.snapshot_before_destructive(cur.kind_id) end
+            return OpsV3.scope_set(cfg, p.group, p.add, p.remove)
+        end,
         ["option-new"] = function(p, cfg) return OpsV3.new_option(cfg, p.group, str(p.name)) end,
         ["option-duplicate"] = function(p, cfg) return OpsV3.duplicate_option(cfg, p.group, p.option) end,
         ["option-rename"] = function(p, cfg) return OpsV3.rename_option(cfg, p.group, p.option, str(p.name)) end,
@@ -349,6 +554,7 @@ function Reff.new(deps)
         p = type(p) == "table" and p or {}
         if p.kind == "character" then
             selected = p.id
+            palette_sel = {}    -- 选中的材质键是按角色的
             return controller.snapshot()
         end
         if p.kind == "setting" then
@@ -362,7 +568,7 @@ function Reff.new(deps)
         if p.kind == "migrate" then
             local report = deps.migrate_to_v3(cur.kind_id)
             if not report then error(T("reff_action_rejected")) end
-            notice = { kind = "migrated", overlaps = #report.overlaps, presets = #(report.presets or {}) }
+            notice = { kind = "migrated", presets = #(report.presets or {}) }
             deps.reset_ui_state()
             return controller.snapshot()
         end
@@ -376,6 +582,12 @@ function Reff.new(deps)
         -- 面板上正在填的表单按旧值缓存,改过之后让它重新读
         deps.reset_ui_state()
         return controller.snapshot()
+    end
+
+    -- 全身预览的心跳(可见、尺寸);没有预览能力时如实报告
+    function controller.preview(request)
+        if not deps.preview then return { available = false, enabled = false, status = "preview_native_missing" } end
+        return deps.preview.action(request)
     end
 
     function controller.documentation()

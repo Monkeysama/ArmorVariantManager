@@ -3,7 +3,7 @@
 //   &re4-v2    先给一份旧配置（configVersion = 2），点「迁移旧配置」后变成 v3
 //   &re4-empty 没有角色
 //   &re4-null  空表按 REFramework 的习惯序列化成 null
-import type { Re4Action, Re4ConditionDef, Re4Result, Re4Snapshot, Re4State, Re4StateKind } from '../src/re4/types';
+import type { Re4Action, Re4ConditionDef, Re4Palette, Re4PaletteMaterial, Re4PaletteOverride, Re4PaletteProfile, Re4PaletteValue, Re4Result, Re4Snapshot, Re4State, Re4StateKind } from '../src/re4/types';
 
 type Win = Window & { reffNativeCall?: (method: string, params: Record<string, unknown>) => Promise<unknown>; re4Calls?: unknown[] };
 type Values = Record<string, boolean>;
@@ -24,6 +24,35 @@ const catalog: Record<string, string[]> = {
 };
 const labels: Record<string, string> = { body: '身体', head: '头部', hair: '头发' };
 const allKeys = Object.entries(catalog).flatMap(([slot, mats]) => mats.map(m => `${slot}/${m}`));
+
+// 调色盘夹具:身体和头部的材质按一份简化的 lilToon 映射识别,头发走通用兜底
+const paletteProfile: Re4PaletteProfile = {
+  id: 'fx_toon', label: { zh: 'lilToon（夹具）', en: 'lilToon (fixture)' }, addon: false,
+  sections: [{ id: 'color', label: { zh: '颜色层' } }, { id: 'light', label: { zh: '明暗' } }, { id: 'system', label: { zh: '系统' } }],
+  enums: { blend: [{ value: 0, label: { zh: '正常' } }, { value: 1, label: { zh: '相加' } }, { value: 2, label: { zh: '滤色' } }, { value: 3, label: { zh: '相乘' } }] },
+  groups: [
+    { id: 'main', tier: 'basic', section: 'color', label: { zh: '主色' }, params: [{ param: 'BaseColor', kind: 'color', channels: 'rgb', label: { zh: '主色' }, note: { zh: '原生的基础色乘数' } }] },
+    { id: 'main2nd', tier: 'basic', section: 'color', label: { zh: '第二层' }, params: [{ param: 'LIL_Main2ndColor', kind: 'color', channels: 'rgb', label: { zh: '颜色' } },
+      { param: 'LIL_Main2ndColor', component: 'w', kind: 'float', min: 0, max: 1, label: { zh: '强度' }, note: { zh: '0 = 关闭这一层' } }] },
+    { id: 'shadow', tier: 'basic', section: 'light', label: { zh: '阴影' }, note: { zh: '卡通阴影' }, params: [
+      { param: 'LIL_ShadowColor', kind: 'color', channels: 'rgb', label: { zh: '一影颜色' } },
+      { param: 'LIL_ShadowParam', component: 'x', kind: 'float', min: 0, max: 1, label: { zh: '一影边界' }, note: { zh: '越大阴影越多' } },
+      { param: 'LIL_ShadowParam', component: 'y', kind: 'float', min: 0, max: 1, label: { zh: '一影模糊' } },
+      { param: 'LIL_ShadowParam2', component: 'z', kind: 'float', min: 0, max: 1, tier: 'more', label: { zh: '阴影混入主色' } }] },
+    { id: 'rim', tier: 'more', section: 'system', label: { zh: '边缘光' }, params: [
+      { param: 'LIL_RimColor', kind: 'color', channels: 'rgb', label: { zh: '颜色' } },
+      { param: 'LIL_RimParam2', component: 'x', kind: 'enum', enum: 'blend', label: { zh: '混合模式' } },
+      { param: 'LIL_Switch', component: 'x', kind: 'bool', label: { zh: '总开关' } },
+      { param: 'LIL_MatCapST', kind: 'vec', labels: { zh: ['缩放 U', '缩放 V', '偏移 U', '偏移 V'] }, label: { zh: 'UV 缩放 / 偏移' } }] },
+    { id: 'shadow_other', tier: 'other', section: 'light', label: { zh: '阴影' }, params: [
+      { param: 'LIL_ShadowParam2', component: 'x', kind: 'float', min: 0, max: 1, tier: 'other', label: { zh: '阴影接收（LIL_ShadowParam2）' } },
+      { param: 'LIL_ShadowParam2', component: 'y', kind: 'float', min: 0, max: 1, tier: 'other', label: { zh: 'SSS_Channel' } }] },
+  ],
+};
+const paletteBase = (slot: string): Record<string, Re4PaletteValue> => slot === 'hair'
+  ? { BaseColor: [0.4, 0.3, 0.2, 1], SpecularColor: [1, 1, 1, 1] }
+  : { BaseColor: [1, 1, 1, 1], LIL_ShadowColor: [0.7, 0.6, 0.65, 1], LIL_ShadowParam: [0.5, 0.05, 0.4, 0.05], LIL_ShadowParam2: [1, 0, 0.5, 1],
+      LIL_RimColor: [1, 1, 1, 0.5], LIL_RimParam2: [0, 0.5, 1, 1], LIL_Switch: [1, 0, 0.5, 0], LIL_MatCapST: [1, 1, 0, 0], LIL_Main2ndColor: [1, 0.8, 0.9, 0] };
 const full = (off: string[] = []): Values => Object.fromEntries(allKeys.map(k => [k, !off.includes(k)]));
 const clone = <T>(v: T): T => structuredClone(v);
 
@@ -78,12 +107,43 @@ export function installRe4Fixture() {
   const params = new URLSearchParams(location.search);
   let config = initial();
   let version: 2 | 3 = params.has('re4-v2') ? 2 : 3;
-  const settings = { weaponHideStorage: false, uiDissolveEnabled: true, uiDissolveTime: 1 };
+  const settings = { weaponHideStorage: false, uiDissolveEnabled: true, uiDissolveTime: 1, blockGameMouse: true, heightEnabled: true };
+  // 模型高度(夹具简化:不跟改名 / 删除走)。键:'base|预设' / 'g:组|选项'
+  const heights: Record<string, number> = {};
+  const heightOverride = { enabled: false, cm: 0 };
+  let paletteOpen = false, paletteSel: string[] = [];
+  const paletteOv: Record<string, Record<string, Re4PaletteOverride>> = {};
+  function paletteSnapshot(): Re4Palette {
+    const materials: Re4PaletteMaterial[] = [], values: Re4Palette['values'] = {}, overrides: Re4Palette['overrides'] = {};
+    for (const [slot, mats] of Object.entries(catalog)) for (const material of mats) {
+      const key = `${slot}/${material}`, ov = paletteOv[key];
+      materials.push({ key, slot, material, note: config.notes[key], main: slot === 'hair' ? undefined : 'fx_toon', addons: [],
+        missing: [], generic: slot === 'hair' ? ['BaseColor', 'SpecularColor'] : undefined, overridden: ov ? Object.keys(ov).length : 0,
+        // 默认贴图失效:边缘光整组(LIL_MaskMap 为黑)、第二层只有颜色(强度仍有效)
+        ineffective: slot === 'hair' ? undefined : {
+          LIL_RimColor: { comps: 'xyzw', why: [{ texture: 'LIL_MaskMap', null: 'systems/rendering/nullblack' }] },
+          LIL_RimParam2: { comps: 'xyzw', why: [{ texture: 'LIL_MaskMap', null: 'systems/rendering/nullblack' }] },
+          LIL_Switch: { comps: 'x', why: [{ texture: 'LIL_MaskMap', null: 'systems/rendering/nullblack' }] },
+          LIL_MatCapST: { comps: 'xyzw', why: [{ texture: 'LIL_MatCapMap', null: 'systems/rendering/nullblack' }] },
+          LIL_Main2ndColor: { comps: 'xyz', why: [{ texture: 'LIL_Main2nd', null: 'systems/rendering/nullblack' }] },
+        } });
+      overrides[key] = ov ?? false;
+      if (!paletteSel.includes(key)) continue;
+      const v: Record<string, Re4PaletteValue> = JSON.parse(JSON.stringify(paletteBase(slot)));
+      for (const [param, o] of Object.entries(ov ?? {})) {
+        if (typeof o === 'number') v[param] = o;
+        else { const arr = v[param] as number[]; (['x', 'y', 'z', 'w'] as const).forEach((k, i) => { if (o[k] !== undefined) arr[i] = o[k]!; }); }
+      }
+      values[key] = v;
+    }
+    return { materials, profiles: { fx_toon: paletteProfile }, values, overrides, selected: [...paletteSel], errors: [] };
+  }
   let character = 'Leon';
   let backup: Config | undefined;
   let notice: Re4Snapshot['notice'];
   let locating: { slot: string; material: string } | undefined;
   let dismissed = false;
+  let previewEnabled = false;
   let nextId = 4;
   const presets: Preset[] = [
     { id: 'p0001', name: '日常', source: 'user', match: 'full', config: initial() },
@@ -139,7 +199,9 @@ export function installRe4Fixture() {
   function snapshot(): Re4Snapshot {
     const base: Re4Snapshot = { game: 'RE4', version: '4.3.4', language: 'zh', settings: { ...settings },
       characters: params.has('re4-empty') ? [] : [{ id: 'Leon', label: '里昂', configured: true, targets: ['玩家', '过场傀儡'] }, { id: 'Ada', label: '艾达', configured: false, targets: ['过场傀儡'] }],
-      character: params.has('re4-empty') ? '' : character, notice };
+      character: params.has('re4-empty') ? '' : character, notice,
+      preview: params.has('preview') ? { available: true, enabled: previewEnabled, status: 'preview_live' }
+        : { available: false, enabled: previewEnabled, status: 'preview_native_missing' } };
     notice = undefined;
     if (params.has('re4-empty')) return base;
     base.configVersion = version;
@@ -148,10 +210,14 @@ export function installRe4Fixture() {
     const pick = (key: string, manual: string) => r.claims[key]?.option ?? (manual || undefined);
     const effBase = pick('base', config.base.active);
     const look: Values = { ...(effBase ? config.base.presets[effBase] : full()) };
+    let height = effBase !== undefined ? heights['base|' + effBase] : undefined;
+    let heightSource: Re4Snapshot['heightSource'] = height !== undefined ? { layer: 'base', option: effBase } : undefined;
     for (const g of config.groups) {
       const o = pick('g:' + g.name, g.active);
       if (o && g.options[o]) Object.assign(look, g.options[o]);
+      if (o && heights[`g:${g.name}|${o}`] !== undefined) { height = heights[`g:${g.name}|${o}`]; heightSource = { layer: g.name, option: o }; }
     }
+    if (heightOverride.enabled) { height = heightOverride.cm; heightSource = { layer: 'override' }; }
     const states: Re4State[] = config.states.map((st, k) => ({
       name: st.name, enabled: st.enabled, exclusive: st.exclusive, logic: st.logic, hold: st.hold, fadeIn: st.fade_in, fadeOut: st.fade_out,
       hp: st.hp, base: st.base, baseResult: r.results[k].base, kind: r.status[k].kind, by: r.status[k].by, holding: false,
@@ -169,10 +235,11 @@ export function installRe4Fixture() {
       slots: Object.entries(catalog).map(([id, mats]) => ({ id, label: labels[id], mirrored: false, materials: mats.map(name => ({ name, note: config.notes[`${id}/${name}`] })) })),
       look: allKeys.map(k => { const [slot, material] = k.split('/'); return { slot, material, on: look[k] !== false }; }),
       base: { active: config.base.active, effective: effBase, fromState: r.claims.base?.i,
-        presets: config.base.order.map(name => ({ name, values: config.base.presets[name], match: { status: 'ok', skipped: [] } })) },
+        presets: config.base.order.map(name => ({ name, values: config.base.presets[name], match: { status: 'ok', skipped: [] }, height: heights['base|' + name] })) },
       groups: config.groups.map(g => ({ name: g.name, scope: g.scope, active: g.active, effective: pick('g:' + g.name, g.active),
-        fromState: r.claims['g:' + g.name]?.i, options: g.order.map(name => ({ name, values: g.options[name] })) })),
-      states, locating,
+        fromState: r.claims['g:' + g.name]?.i, options: g.order.map(name => ({ name, values: g.options[name], height: heights[`g:${g.name}|${name}`] })) })),
+      states, locating, height, heightSource, heightOverride: { ...heightOverride },
+      palette: paletteOpen ? paletteSnapshot() : undefined,
       presets: { current: config.source === 'p0002' ? 'partial' : 'full', dismissed,
         source: source ? { id: source.id, name: source.name, own: source.source === 'user' } : undefined,
         list: presets.map(p => ({ id: p.id, name: p.name, source: p.source, match: p.match })),
@@ -197,12 +264,16 @@ export function installRe4Fixture() {
     if (a.kind === 'character') { character = a.id; return; }
     if (a.kind === 'setting') {
       if (a.id === 'weapon_hide_storage') settings.weaponHideStorage = a.value === true;
+      else if (a.id === 'block_game_mouse') settings.blockGameMouse = a.value === true;
+      else if (a.id === 'height_enabled') settings.heightEnabled = a.value === true;
       else if (a.id === 'ui_dissolve_enabled') settings.uiDissolveEnabled = a.value === true;
+      else if (a.id === 'portrait_enabled') previewEnabled = a.value === true;
+      else if (a.id === 'portrait_distance' || a.id === 'portrait_height') return;
       else settings.uiDissolveTime = Math.round(Number(a.value) * 10) / 10;
       return;
     }
     if (a.character !== character) fail('当前角色已变化，请确认后重试');
-    if (a.kind === 'migrate') { if (version === 3) fail(); version = 3; backup = clone(config); notice = { kind: 'migrated', overlaps: 1, presets: 2 }; return; }
+    if (a.kind === 'migrate') { if (version === 3) fail(); version = 3; backup = clone(config); notice = { kind: 'migrated', presets: 2 }; return; }
     if (version !== 3) fail('这份配置还是旧版，请先在「杂项」里迁移旧配置');
     switch (a.kind) {
       case 'manual':
@@ -222,12 +293,34 @@ export function installRe4Fixture() {
         config.base.order.splice(config.base.order.indexOf(a.preset), 1); if (config.base.active === a.preset) config.base.active = ''; break;
       case 'base-recapture': if (!config.base.presets[a.preset]) fail(); backup = clone(config); config.base.presets[a.preset] = full(); break;
       case 'base-material': (config.base.presets[a.preset] ?? fail())[`${a.slot}/${a.material}`] = a.value; break;
+      case 'base-height': if (!config.base.presets[a.preset]) fail();
+        if (a.cm === undefined) delete heights['base|' + a.preset]; else heights['base|' + a.preset] = a.cm; break;
+      case 'palette-view': paletteOpen = a.open; paletteSel = [...a.keys]; break;
+      case 'palette-set': for (const w of a.writes) {
+        const key = `${w.slot}/${w.material}`, ov = (paletteOv[key] ??= {});
+        if (w.component) { const cur = ov[w.param]; const o = typeof cur === 'object' ? cur : {}; o[w.component] = w.value; ov[w.param] = o; }
+        else ov[w.param] = w.value;
+      } break;
+      case 'palette-reset': for (const t of a.targets) {
+        const key = `${t.slot}/${t.material}`, ov = paletteOv[key];
+        if (!ov) continue;
+        if (!a.param) { delete paletteOv[key]; continue; }
+        const cur = ov[a.param];
+        if (a.component && typeof cur === 'object') { delete cur[a.component]; if (!Object.keys(cur).length) delete ov[a.param]; }
+        else delete ov[a.param];
+        if (!Object.keys(ov).length) delete paletteOv[key];
+      } break;
+      case 'palette-reload': break;
+      case 'palette-export': notice = { kind: 'palette-exported', path: `reframework/data/ArmorVariantManager/material_profiles/drafts/${a.material}.json` }; break;
+      case 'height-override': if (a.enabled !== undefined) heightOverride.enabled = a.enabled; if (a.cm !== undefined) heightOverride.cm = a.cm; break;
+      case 'option-height': { const g = groupOf(a.group) ?? fail(); if (!g.options[a.option]) fail();
+        if (a.cm === undefined) delete heights[`g:${a.group}|${a.option}`]; else heights[`g:${a.group}|${a.option}`] = a.cm; break; }
       case 'group-new': if (!a.name || groupOf(a.name)) fail(); config.groups.push({ name: a.name, scope: [], options: {}, order: [], active: '' }); break;
       case 'group-rename': { const g = groupOf(a.group) ?? fail(); if (!a.name || groupOf(a.name)) fail(); config.states.forEach(s => s.targets.forEach(t => { if (t.group === a.group) t.group = a.name; })); g.name = a.name; break; }
       case 'group-move': { const i = config.groups.findIndex(g => g.name === a.group), j = i + a.offset; if (i < 0 || j < 0 || j >= config.groups.length) fail(); config.groups.splice(j, 0, config.groups.splice(i, 1)[0]); break; }
       case 'group-delete': { const i = config.groups.findIndex(g => g.name === a.group); if (i < 0) fail(); backup = clone(config); config.groups.splice(i, 1); break; }
       case 'scope-add': { const g = groupOf(a.group) ?? fail(); const key = `${a.slot}/${a.material}`;
-        if (config.groups.some(x => x.scope.includes(key))) fail('这个材质已属于别的状态组'); g.scope.push(key); break; }
+        if (g.scope.includes(key)) fail(); g.scope.push(key); break; }
       case 'scope-remove': { const g = groupOf(a.group) ?? fail(); const key = `${a.slot}/${a.material}`; if (!g.scope.includes(key)) fail();
         g.scope = g.scope.filter(k => k !== key); Object.values(g.options).forEach(o => { delete o[key]; }); break; }
       case 'option-new': { const g = groupOf(a.group) ?? fail(); let n = 1; while (g.options[String(n)]) n++; const name = a.name ?? String(n);
@@ -280,9 +373,14 @@ export function installRe4Fixture() {
   (window as Win).reffNativeCall = async (method, args) => {
     if (method === 'ui.status') return { ready: true, epoch: 1 };
     if (method === 'ui.layout.set') return { padding: 0, override: 0, defaultPadding: 24 };
+    // 原生预览槽:只回应能力与登记,不画画面(?re4&preview 用于测试预览框布局与鼠标操作)
+    if (method === 'ui.preview.capabilities') return { version: 1, layoutProtocol: 2, maxSlots: 4, composition: 'underlay-alpha', color: 'sdr-unorm8' };
+    if (method === 'ui.preview.register') return { pageId: 'avm-re4-preview-fixture' };
+    if (method === 'ui.preview.remove') return {};
     await wait();
     const out = (value: Re4Snapshot) => params.has('re4-null') ? nullify(value) : value;
     if (method === 'monkeysama.avm.snapshot') return out(snapshot());
+    if (method === 'monkeysama.avm.preview') return snapshot().preview;
     if (method === 'monkeysama.avm.documentation') return { sections: [{ id: 'usage', title: '日常使用', entries: [{ title: '整套造型与状态组', paragraphs: ['整套造型是完整的一套外观。'] }] }] };
     if (method === 'monkeysama.avm.action') { calls.push(args); act(args as unknown as Re4Action); return out(snapshot()); }
     throw new Error(`RE4 fixture: unknown method ${method}`);

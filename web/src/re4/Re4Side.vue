@@ -2,17 +2,19 @@
 import { computed } from 'vue';
 import type { Re4Translate } from './i18n';
 import type { Re4Snapshot } from './types';
+import { shortSlot } from './util';
 
 // 左侧常驻：游戏状态只读（HP + 当前成立的条件；详情在条件状态展开时看），
 // 最终材质只在整套造型 / 状态组 / 条件状态页显示（快速切换用不到）。
-const props = defineProps<{ snapshot: Re4Snapshot; t: Re4Translate; showLook: boolean }>();
+// inline:全身预览「原比例」时放在主栏最上面,横排一行
+const props = defineProps<{ snapshot: Re4Snapshot; t: Re4Translate; showLook: boolean; inline?: boolean }>();
 const hp = computed(() => props.snapshot.status?.hp);
 const notes = computed(() => {
   const out: Record<string, string> = {};
   for (const slot of props.snapshot.slots ?? []) for (const m of slot.materials) if (m.note) out[`${slot.id}/${m.name}`] = m.note;
   return out;
 });
-const slotLabel = (id: string) => props.snapshot.slots?.find(s => s.id === id)?.label ?? id;
+const slotLabel = (id: string) => shortSlot(props.snapshot.slots?.find(s => s.id === id)?.label ?? id);
 const groupedLook = computed(() => {
   const out: { slot: string; rows: { material: string; on: boolean; note?: string }[] }[] = [];
   for (const row of props.snapshot.look ?? []) {
@@ -26,7 +28,7 @@ const locating = computed(() => props.snapshot.locating);
 </script>
 
 <template>
-  <aside class="re4-side">
+  <aside class="re4-side" :class="{ inline }">
     <section class="re4-panel re4-panel-body" :aria-label="t('gameState')">
       <p class="re4-eyebrow">{{ t('gameState') }}</p>
       <div v-if="hp !== undefined" class="re4-hp">
@@ -41,6 +43,10 @@ const locating = computed(() => props.snapshot.locating);
     <section v-if="showLook" class="re4-panel re4-panel-body" :aria-label="t('finalMaterials')">
       <p class="re4-eyebrow">{{ t('finalMaterials') }}</p>
       <p v-if="locating" class="re4-small" style="margin:0;color:var(--avm-accent)">{{ t('locatingNow', locating.material) }}</p>
+      <p v-if="snapshot.height !== undefined && snapshot.height !== 0" class="re4-small" style="margin:0"
+        :class="{ 're4-muted': snapshot.settings.heightEnabled === false }">
+        {{ t('heightNow', (snapshot.height > 0 ? '+' : '') + snapshot.height) }}<template v-if="snapshot.settings.heightEnabled === false">{{ t('heightOff') }}</template>
+      </p>
       <div v-for="g in groupedLook" :key="g.slot" class="re4-look">
         <span class="re4-muted re4-small">{{ slotLabel(g.slot) }}</span>
         <div v-for="row in g.rows" :key="row.material" class="re4-look-row" :class="{ off: !row.on }">
@@ -54,6 +60,10 @@ const locating = computed(() => props.snapshot.locating);
 
 <style>
 .re4-side { display: grid; gap: 10px; align-content: start; position: sticky; top: 8px; }
+.re4-side.inline { position: static; }
+.re4-side.inline .re4-panel-body { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; }
+.re4-side.inline .re4-eyebrow { margin: 0; }
+.re4-side.inline .re4-hp { flex: 0 1 18em; }
 @media (max-width: 720px) { .re4-side { position: static; } }
 .re4-hp { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px; align-items: center; }
 .re4-hpbar { height: 6px; border-radius: 3px; background: var(--re4-soft); overflow: hidden; }

@@ -8,9 +8,14 @@
 --     version = 3,
 --     base   = { presets = {名 -> 快照}, order = {...}, active = "名" | "" },
 --     groups = { { name, scope = {"slot/材质", ...}, options = {名 -> 稀疏快照}, order, active }, ... },
+--              -- 数组顺序就是叠加顺序:靠后的组覆盖靠前的。作用域可以重叠
 --     conditions = { auto = true, states = { 条件状态, ... } },   -- 数组顺序就是优先级
 --     material_notes = { [slot] = { [材质] = "备注" } }, armor_mirrors_body = true, source_preset = nil,
 --   }
+--   模型高度(可选):base.heights = { [预设名] = 厘米 },groups[i].heights = { [选项名] = 厘米 }。
+--     不放进快照(快照顶层键都是槛位,预设指纹按它算)。解算见 height_of:按叠加顺序,后写覆盖先写。
+--   height_override = { enabled, cm }:全局覆盖(快速切换页),打开时无视各层,统一用 cm。
+--   palette = { [slot] = { [材质] = { [参数] = 数值 | {x..w} } } }:调色盘的覆盖值,见 Palette.lua。
 --   条件状态 = { name, enabled, exclusive, logic, conditions, hold, fade_in, fade_out,
 --               hp = nil | { upper, lower, invert }, base = nil | "整套造型名",
 --               targets = { { group, option }, ... } }
@@ -22,6 +27,7 @@ M.VERSION = 3
 
 local Registry = require("ArmorVariantManager_Core.Games.RE4.Conditions.Registry")
 local Condition_HP = require("ArmorVariantManager_Core.Games.RE4.Conditions.Condition_HP")
+local Palette = require("ArmorVariantManager_Core.Games.RE4.Palette")
 
 local function is_tbl(v) return type(v) == "table" end
 
@@ -40,11 +46,14 @@ function M.find_group(cfg, name)
     return nil
 end
 
--- 材质 -> 管它的状态组
-function M.owner_map(cfg)
+-- 材质 -> 管它的状态组名列表(按叠加顺序,最后一个说了算)
+function M.groups_of(cfg)
     local map = {}
     for _, g in ipairs(cfg.groups or {}) do
-        for _, k in ipairs(g.scope or {}) do map[k] = g.name end
+        for _, k in ipairs(g.scope or {}) do
+            map[k] = map[k] or {}
+            table.insert(map[k], g.name)
+        end
     end
     return map
 end
@@ -88,6 +97,45 @@ local function num(v, default, lo, hi)
     if lo and v < lo then v = lo end
     if hi and v > hi then v = hi end
     return v
+end
+
+-- 模型高度(厘米):范围同 Wilds 的陷地修复,0.1 厘米取整
+M.HEIGHT_MIN, M.HEIGHT_MAX = -10, 50
+function M.clamp_height(v)
+    v = tonumber(v)
+    if not v or v ~= v or v == math.huge or v == -math.huge then return nil end
+    v = math.max(M.HEIGHT_MIN, math.min(M.HEIGHT_MAX, v))
+    return math.floor(v * 10 + 0.5) / 10
+end
+
+-- 只留指向现有预设 / 选项的合法数值
+local function clean_heights(h, names)
+    local out = {}
+    for n, v in pairs(is_tbl(h) and h or {}) do
+        local cm = names[n] ~= nil and M.clamp_height(v)
+        if cm then out[n] = cm end
+    end
+    return out
+end
+
+-- 这一帧的模型高度:全局覆盖打开时直接用它;否则整套造型先写,再按状态组顺序覆盖;
+-- 没有任何一层设过 → nil(不抬高)。第二个返回值是来源:
+--   { layer = "override" } / { layer = "base", option = 预设名 } / { layer = 状态组名, option = 选项名 }
+function M.height_of(cfg, picks)
+    if not is_tbl(cfg) then return nil end
+    local o = cfg.height_override
+    if is_tbl(o) and o.enabled == true then return M.clamp_height(o.cm) or 0, { layer = "override" } end
+    if not is_tbl(picks) then return nil end
+    local cm, src = nil, nil
+    local base = cfg.base or {}
+    if picks.base and base.heights and base.heights[picks.base] then
+        cm, src = base.heights[picks.base], { layer = "base", option = picks.base }
+    end
+    for _, g in ipairs(cfg.groups or {}) do
+        local pick = picks[M.layer_key(g.name)]
+        if pick and g.heights and g.heights[pick] then cm, src = g.heights[pick], { layer = g.name, option = pick } end
+    end
+    return cm, src
 end
 
 function M.normalize_state(st)
@@ -135,18 +183,16 @@ function M.normalize(cfg)
     base.order = M.reconcile_order(base.order, presets)
     if type(base.active) ~= "string" or (base.active ~= "" and not presets[base.active]) then base.active = "" end
     base.rules, base.auto = nil, nil
+    base.heights = clean_heights(base.heights, presets)
     cfg.base = base
 
-    local groups, owned, names = {}, {}, {}
+    local groups, names = {}, {}
     for _, g in ipairs(is_tbl(cfg.groups) and cfg.groups or {}) do
         if is_tbl(g) and type(g.name) == "string" and g.name ~= "" and not names[g.name] then
             names[g.name] = true
             local scope, set = {}, {}
             for _, k in ipairs(is_tbl(g.scope) and g.scope or {}) do
-                -- 一个材质只属于一个组:写坏 / 手改出来的重叠,先到先得
-                if M.split_key(k) and not owned[k] and not set[k] then
-                    owned[k] = g.name; set[k] = true; scope[#scope + 1] = k
-                end
+                if M.split_key(k) and not set[k] then set[k] = true; scope[#scope + 1] = k end
             end
             local options = {}
             for n, p in pairs(is_tbl(g.options) and g.options or {}) do
@@ -156,6 +202,7 @@ function M.normalize(cfg)
                 name = g.name, scope = scope, options = options,
                 order = M.reconcile_order(g.order, options),
                 active = (type(g.active) == "string" and options[g.active]) and g.active or "",
+                heights = clean_heights(g.heights, options),
             }
         end
     end
@@ -171,8 +218,16 @@ function M.normalize(cfg)
     cfg.conditions = cond
 
     cfg.axes, cfg.axis_order = nil, nil
+    if is_tbl(cfg.height_override) then
+        cfg.height_override = { enabled = cfg.height_override.enabled == true, cm = M.clamp_height(cfg.height_override.cm) or 0 }
+    else
+        cfg.height_override = nil
+    end
     if not is_tbl(cfg.material_notes) then cfg.material_notes = {} end
     if cfg.armor_mirrors_body ~= false then cfg.armor_mirrors_body = true end
+    -- 调色盘的覆盖值(见 Palette.lua);空表不留,省得每份配置都多一个字段
+    local palette = Palette.clean(cfg.palette)
+    cfg.palette = next(palette) and palette or nil
     if type(cfg.source_preset) ~= "string" then cfg.source_preset = nil end
     return cfg
 end
@@ -190,8 +245,8 @@ end
 -- 结果等价性:每条 v2 规则变成一个只指向原来那一层的条件状态,排列顺序 = 整套造型的规则,
 -- 再按状态组优先级、组内按 order。v2 里各层互不影响、每层取第一条命中的规则;v3 里每个状态
 -- 只认领一层,同一层上仍是排在前面的先认领 —— 所以各层的选择和 v2 一致。全部不独占。
--- 唯一的例外是作用域重叠:同一个材质被几个组管时,分给优先级最高的组,其他组里删掉,
--- 并在 report.overlaps 里列出来。
+-- 作用域重叠原样保留:groups 按优先级**倒序**排(= v2 的应用顺序,优先级高的最后写),
+-- 后写覆盖先写,所以重叠材质的结果也和 v2 一致。
 -- ============================================================
 function M.migrate_from_v2(v2, axis_priority, base_label)
     local axes = is_tbl(v2.axes) and v2.axes or {}
@@ -202,9 +257,9 @@ function M.migrate_from_v2(v2, axis_priority, base_label)
         material_notes = v2.material_notes,
         armor_mirrors_body = v2.armor_mirrors_body,
     }
-    local report = { overlaps = {} }
+    local report = {}
 
-    local owner, scopes = {}, {}
+    local scopes = {}
     for _, name in ipairs(axis_priority) do
         local axis = axes[name]
         if is_tbl(axis) then
@@ -221,20 +276,13 @@ function M.migrate_from_v2(v2, axis_priority, base_label)
             local keys = {}
             for k in pairs(kset) do keys[#keys + 1] = k end
             table.sort(keys)
-            local mine = {}
-            for _, k in ipairs(keys) do
-                if owner[k] then
-                    report.overlaps[#report.overlaps + 1] = { key = k, kept = owner[k], dropped = name }
-                else
-                    owner[k] = name; mine[#mine + 1] = k
-                end
-            end
-            scopes[name] = mine
+            scopes[name] = keys
         end
     end
 
     out.groups = {}
-    for _, name in ipairs(axis_priority) do
+    for i = #axis_priority, 1, -1 do
+        local name = axis_priority[i]
         local axis = axes[name]
         if is_tbl(axis) then
             out.groups[#out.groups + 1] = { name = name, scope = scopes[name], options = axis.presets,

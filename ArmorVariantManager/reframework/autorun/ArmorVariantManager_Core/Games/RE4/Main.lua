@@ -23,7 +23,10 @@ function Main.start(ctx)
     local global_config_path = "ArmorVariantManager/GlobalSettings.json"
     -- 默认英文(面板顶部有「中文」勾选框,勾了才切中文)。语言是全局的,不跟角色配置走。
     -- ui_dissolve_*:在面板上手动切状态 / 预设时的溶解过渡(只作用于溶解模板的材质)
-    local global_config = { language = "en", ui_dissolve_enabled = true, ui_dissolve_time = 1.0 }
+    -- block_game_mouse:REFF 面板显示时不让游戏读到鼠标按键(见 InputGuard.lua)
+    -- height_enabled:模型高度总开关(高度本身按预设 / 选项存在角色配置里,见 HeightFix.lua)
+    local global_config = { language = "en", ui_dissolve_enabled = true, ui_dissolve_time = 1.0, block_game_mouse = true,
+        height_enabled = true }
     local function load_global_settings()
         local loaded = json.load_file(global_config_path)
         if not loaded then return end
@@ -35,7 +38,13 @@ function Main.start(ctx)
             global_config.weapon_hide_storage = loaded.weapon_hide_storage
         end
         if type(loaded.ui_dissolve_enabled) == "boolean" then global_config.ui_dissolve_enabled = loaded.ui_dissolve_enabled end
+        if type(loaded.block_game_mouse) == "boolean" then global_config.block_game_mouse = loaded.block_game_mouse end
+        if type(loaded.height_enabled) == "boolean" then global_config.height_enabled = loaded.height_enabled end
         if tonumber(loaded.ui_dissolve_time) then global_config.ui_dissolve_time = tonumber(loaded.ui_dissolve_time) end
+        -- 全身预览(REFF 页面里显示)
+        if type(loaded.portrait_enabled) == "boolean" then global_config.portrait_enabled = loaded.portrait_enabled end
+        if tonumber(loaded.portrait_distance) then global_config.portrait_distance = tonumber(loaded.portrait_distance) end
+        if tonumber(loaded.portrait_height) then global_config.portrait_height = tonumber(loaded.portrait_height) end
     end
     local function save_global_settings()
         json.dump_file(global_config_path, global_config)
@@ -737,6 +746,7 @@ function Main.start(ctx)
     -- 纯预览,**不写进任何预设**;到时间自动恢复,所以不会留下脏状态。
     local preview = nil            -- { slot=, mat=, until_clock=, target_id= }
     local PREVIEW_SECONDS = 3
+    local preview_restoring = false -- 预览刚过期的那一帧:恢复时不用溶解过渡
 
     -- 面板当前编辑的目标(Targets.collect 给的 id)。nil = 还没选过,取第一个(本地玩家)。
     local selected_target_id = nil
@@ -772,17 +782,23 @@ function Main.start(ctx)
 
     local function apply_resolved(source, resolved, active_preview, owner_of, trans, drive_map)
         if not resolved then return end
+        local preview_slot = active_preview and active_preview.slot
         for _, slot in ipairs(Utils.MESH_SLOTS) do
             local slot_data = resolved[slot]
-            if slot_data then
+            -- 预览中的槛位不走正常应用:正常应用会给被预览关掉 / 打开的材质起溶解过渡,
+            -- 和预览每帧互相拉扯(目标材质被溶掉、其余材质反复"出现"),定位就失效了
+            if slot_data and slot ~= preview_slot then
                 local mesh = Utils.get_mesh(source, slot)
                 if mesh then apply_slot(mesh, slot, slot_data, owner_of, trans, drive_map and drive_map[slot]) end
             end
         end
-        -- 预览盖在正常结果之上,否则会被 resolve 的输出压回去
+        -- 预览:瞬间只显示这一个材质,不用溶解(进行中的溶解先复位成 mdf2 的值)
         if active_preview then
             local mesh = Utils.get_mesh(source, active_preview.slot)
-            if mesh then Utils.isolate_material(mesh, active_preview.mat) end
+            if mesh then
+                Dissolve.reset_mesh(mesh)
+                Utils.isolate_material(mesh, active_preview.mat)
+            end
         end
     end
 
@@ -799,6 +815,58 @@ function Main.start(ctx)
 
     -- UI 改了配置之后置上,下一帧强制重写一次(比如把某个材质从轴里摘掉,要退回基线值)
     local force_reapply = false
+
+    -- 模型高度:应用循环每帧按解算结果收集 { source, cm },循环结束交给 HeightFix(下面安装)
+    local height_fix = nil
+    local frame_heights = {}
+
+    -- 调色盘(Palette.lua)。映射 = 内置(PaletteProfiles.lua)+ data/ArmorVariantManager/material_profiles/*.json,
+    -- 同 id 的外部文件覆盖内置;按需读一次,网页上「重新读取映射」时重读。
+    -- palette_state[target.id] = Palette.apply_mesh 的状态(各 mesh 的原值与写过的参数)
+    local Palette = require("ArmorVariantManager_Core.Games.RE4.Palette")
+    -- 必须在脚本加载时 require:REFramework 只在加载 autorun 期间把 autorun 目录放进 package.path,
+    -- 之后(网页请求、每帧回调里)再 require 会找不到模块
+    local PaletteProfiles = require("ArmorVariantManager_Core.Games.RE4.PaletteProfiles")
+    local PALETTE_DIR = "ArmorVariantManager/material_profiles/"
+    local palette_profiles, palette_by_id, palette_profile_errors = nil, nil, {}
+    local palette_state = {}
+    local function load_palette_profiles(reload)
+        if palette_profiles and not reload then return palette_profiles, palette_by_id end
+        local extras, errors = {}, {}
+        -- glob 会遍历整个 data 目录,遇到转不成系统代码页的文件名会抛错(见 Presets.lua),必须包 pcall
+        local ok, found = false, nil
+        if fs and fs.glob then ok, found = pcall(fs.glob, "ArmorVariantManager[/\\\\]material_profiles[/\\\\][^/\\\\]*\\.json") end
+        if ok and type(found) == "table" then
+            table.sort(found)
+            for _, raw in ipairs(found) do
+                local file = tostring(raw):match("([^/\\]+%.json)$")
+                local ok_l, data = pcall(json.load_file, PALETTE_DIR .. file)
+                if ok_l and type(data) == "table" and Palette.clean_profile(data) then extras[#extras + 1] = data
+                else errors[#errors + 1] = file end
+            end
+        end
+        palette_profiles, palette_by_id = Palette.load_profiles(PaletteProfiles, extras)
+        palette_profile_errors = errors
+        return palette_profiles, palette_by_id
+    end
+    local function apply_palette(target, source, config)
+        local state = palette_state[target.id]
+        local pal = config.palette
+        if not pal and not state then return end
+        state = state or {}
+        palette_state[target.id] = state
+        local live = {}
+        for _, slot in ipairs(Utils.MESH_SLOTS) do
+            local mesh = Utils.get_mesh(source, slot)
+            if mesh then
+                live[tostring(mesh)] = true
+                Palette.apply_mesh(mesh, pal and pal[slot], state, function(m, j, param, value)
+                    if param == "Dissolve_Flag" then Dissolve.set_flag_base(m, j, value) end
+                end)
+            end
+        end
+        Palette.prune(state, live)
+    end
     local function request_reapply() force_reapply = true end
 
     -- Ops 的返回值 → 存盘 / 重写。ImGui 和 REFF 改配置都走这里。
@@ -925,7 +993,7 @@ function Main.start(ctx)
     -- v2 → v3(状态组平铺 + 条件状态)。由用户在杂项页 / 面板上点"迁移旧配置"触发,不自动迁移。
     -- 迁移前写一份还原点("恢复到上次删除 / 覆写之前"能退回 v2)。
     -- 旧的命名存档(backup/<角色>.slots.json)逐条转成预设,原文件保留不删。
-    -- 返回 ModelV3 的 report(作用域重叠的材质)+ presets(转换出来的预设编号);
+    -- 返回 ModelV3 的 report + presets(转换出来的预设编号);
     -- 已经是 v3 / 没有配置时返回 nil。
     local function migrate_to_v3(kind_id)
         local key = cfg_key(kind_id)
@@ -1116,6 +1184,12 @@ function Main.start(ctx)
         -- 表现成 changed 乱跳。
         local resolved, changed, info = TransformManager.resolve(target.id, config, target.context, source)
 
+        -- 模型高度:整套造型 → 状态组按叠加顺序,最后设过的那一层说了算
+        if global_config.height_enabled ~= false and info.v3 then
+            local cm = ModelV3.height_of(config, info.v3.picks)
+            if cm and cm ~= 0 then frame_heights[#frame_heights + 1] = { source = source, cm = cm } end
+        end
+
         -- 一:mesh 实例被换掉 —— 之前写的开关必然全丢,无条件重新应用。每帧四次指针比较,很便宜。
         local identity = Utils.get_mesh_identity(source)
         local mesh_swapped = (last_mesh_identity[target.id] ~= identity)
@@ -1172,14 +1246,14 @@ function Main.start(ctx)
             if not now_drives[dkey] then Dissolve.drive_end(dkey); drive_stopped = true end
         end
         ds.drives = now_drives
-        -- 材质归属:这一帧写出它的层;基线(全启用)写出的,沿用上一次写它的层(那一层刚放手)
+        -- 材质归属 → 用哪一层的过渡:见 Dissolve.transition_layer(放手的层也要带过渡)
         local owner, prev_owner = info.owner, ds.owner
+        -- 预览刚结束的那一次恢复也是瞬间的:被预览关掉的材质不该一个个溶解着"出现"
+        local trans = (not fresh) and (not preview_restoring) and ds.trans or nil
         local function owner_of(slot, mat)
-            local o = owner[slot] and owner[slot][mat]
-            if o then return o end
-            return prev_owner[slot] and prev_owner[slot][mat]
+            return Dissolve.transition_layer(owner[slot] and owner[slot][mat],
+                prev_owner[slot] and prev_owner[slot][mat], trans)
         end
-        local trans = (not fresh) and ds.trans or nil
 
         -- 二:mesh 没换但开关被游戏重置了 —— 每帧全量核对太浪费,隔几十帧抽一次。
         -- 预览期间要跳过:那时 mesh 上的状态是故意和 resolved 不一致的,不是漂移。
@@ -1206,13 +1280,22 @@ function Main.start(ctx)
                 for m, k in pairs(mats) do prev_owner[slot][m] = k end
             end
         end
+        -- 调色盘:和材质开关同一套时机(换实例 / 配置变了 / 被重置 / 强制重写);预览和血量驱动的
+        -- 每帧重写不带它,调色值不会被那些路径改掉
+        if changed or mesh_swapped or drifted or force_reapply then
+            apply_palette(target, source, config)
+        end
     end
 
     local function frame_logic()
         -- 推进正在跑的溶解过渡(和有没有目标无关:目标消失时动画自己会清掉)
         Dissolve.update()
+        frame_heights = {}
         local targets = Targets.collect()
-        if #targets == 0 then return end
+        if #targets == 0 then
+            if height_fix then height_fix.set_targets(frame_heights) end
+            return
+        end
 
         -- 有状态的条件(掉血计时之类)每帧维护一次,必须在 resolve 之前、且**只调一次** ——
         -- 所以放在目标循环**外面**。放进循环的话,场上有几个目标它就 tick 几次,
@@ -1231,6 +1314,7 @@ function Main.start(ctx)
             else
                 preview = nil
                 force_reapply = true
+                preview_restoring = true
             end
         end
 
@@ -1241,8 +1325,10 @@ function Main.start(ctx)
             -- 一个目标炸掉(傀儡正好这一帧被销毁之类)不该让其它目标也停掉
             if not ok then note_error("apply_target " .. tostring(target.label), err) end
         end
+        if height_fix then height_fix.set_targets(frame_heights) end
 
         force_reapply = false
+        preview_restoring = false
     end
 
     re.on_frame(function()
@@ -2335,7 +2421,7 @@ function Main.start(ctx)
         if ModelV3.is_v3(config) then
             local report = ui_state.migrate_report
             if report then
-                imgui.text(string.format(T("migrate_done"), #report.overlaps, #(report.presets or {})))
+                imgui.text(string.format(T("migrate_done"), #(report.presets or {})))
                 imgui.same_line()
                 if imgui.button(T("cancel_btn") .. "###mig_ok") then ui_state.migrate_report = nil end
             end
@@ -2673,9 +2759,84 @@ function Main.start(ctx)
         end
     end)
 
+    -- REFF 面板显示时屏蔽游戏的鼠标并接管光标模式(键盘不拦)。装不上(类型变了)只记日志,不影响其他功能。
+    pcall(function()
+        local InputGuard = require("ArmorVariantManager_Core.Games.RE4.InputGuard")
+        InputGuard.install(function() return global_config.block_game_mouse ~= false and InputGuard.reff_visible() end,
+            function(msg) log.warn(msg) end)
+    end)
+
+    -- 模型高度。装不上只记日志,不影响其他功能
+    local ok_hf, err_hf = pcall(function()
+        height_fix = require("ArmorVariantManager_Core.Games.RE4.HeightFix").new({
+            skeleton_of = Utils.get_skeleton_transform,
+            on_error = function(msg) note_error("height_fix", msg) end,
+        })
+    end)
+    if not ok_hf then note_error("height_fix", err_hf) end
+
+    -- 全身预览的拍摄对象:{ root = 角色根变换, meshes = 四个槛位的网格 }。
+    --   玩家 / 伙伴:BodyUpdater 挂在身体对象上,它的变换就是角色根(2026-11-05 实测伙伴 ch2a1z0_body 无父节点)
+    --   过场傀儡 / 模型鉴赏人偶:source 是网格表,从身体网格所在对象往上找到顶层变换
+    local function portrait_subject(target)
+        local source = target.source
+        local meshes = {}
+        for _, slot in ipairs(Utils.MESH_SLOTS) do
+            local mesh = Utils.get_mesh(source, slot)
+            if mesh then meshes[#meshes + 1] = mesh end
+        end
+        if #meshes == 0 then return nil end
+        local root
+        if type(source) ~= "table" then
+            local go = source:call("get_GameObject")
+            root = go and go:call("get_Valid") and go:call("get_Transform") or nil
+        end
+        if not root then
+            local body = Utils.get_mesh(source, "body") or meshes[1]
+            local go = body:call("get_GameObject")
+            local tr = go and go:call("get_Valid") and go:call("get_Transform") or nil
+            for _ = 1, 16 do
+                local parent = tr and tr:call("get_Parent")
+                if not parent then break end
+                tr = parent
+            end
+            root = tr
+        end
+        return root and { root = root, meshes = meshes } or nil
+    end
+
     -- REFF 网页界面(可选)。未安装 REFF 时不注册,REF 原生面板照常可用。
     -- 网页与面板共用分组、配置读写和 Ops,只是各自记着自己选中的角色。
     local reff_ok, reff_err = pcall(function()
+        -- 全身预览:相机与 GPU 交接在 Portrait.lua,网页只发心跳。拿不到玩家时不画。
+        local portrait, portrait_web = require("ArmorVariantManager_Core.Games.RE4.Portrait").connect({
+            settings = function()
+                return { enabled = global_config.portrait_enabled == true,
+                    distance = global_config.portrait_distance, height = global_config.portrait_height }
+            end,
+            -- 拍网页上选中的角色(玩家 / 伙伴 / 过场傀儡 / 模型鉴赏人偶);拿不到时退回主控
+            player = function()
+                local ok, subject = pcall(function()
+                    local target = Main.reff and Main.reff.preview_target and Main.reff.preview_target()
+                    return target and portrait_subject(target)
+                end)
+                if ok and subject then return subject end
+                local manager = sdk.get_managed_singleton("chainsaw.CharacterManager")
+                local context = manager and manager:call("getPlayerContextRef")
+                local body = context and context:call("get_BodyGameObject")
+                if not body or not body:call("get_Valid") then return nil end
+                local updater = context:call("get_BodyUpdater")
+                local meshes = {}
+                for _, slot in ipairs(Utils.MESH_SLOTS) do
+                    local mesh = updater and Utils.get_mesh(updater, slot)
+                    if mesh then meshes[#meshes + 1] = mesh end
+                end
+                return { root = body:call("get_Transform"), meshes = meshes }
+            end,
+            log = function(message) if log and log.info then log.info("[AVM Portrait] " .. message) end end,
+        })
+        if not portrait.register() then portrait_web = nil end
+        Main.portrait = portrait
         Main.reff = require("ArmorVariantManager_Core.Games.RE4.Reff").connect({
             version = version, global_config = global_config, save_global_settings = save_global_settings, T = T,
             targets = Targets.collect, groups = collect_character_groups, pick_group = pick_character_group,
@@ -2697,6 +2858,10 @@ function Main.start(ctx)
             apply_preset = apply_preset, save_current_as_preset = save_current_as_preset,
             update_source_preset = update_source_preset, restore_autosave = restore_autosave,
             promote_autosave = promote_autosave, preset_lib = preset_lib,
+            preview = portrait_web,
+            -- 调色盘:映射(reload = true 重读 data 目录)、读不了的映射文件名、草稿写盘
+            palette_profiles = load_palette_profiles, palette_profile_errors = function() return palette_profile_errors end,
+            palette_dump = function(path, data) return pcall(json.dump_file, path, data) end, palette_dir = PALETTE_DIR,
         })
     end)
     if not reff_ok then note_error("reff", reff_err) end

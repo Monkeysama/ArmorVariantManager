@@ -51,3 +51,30 @@ test('normalizes the REFramework empty-table shapes inside the v3 snapshot', () 
 test('rejects a non-list where a list is required', () => {
   assert.throws(() => normalizeSnapshot({ game: 'RE4', version: '1', language: 'en', settings, character: '', characters: 'x' }));
 });
+
+test('palette snapshot survives the REFramework empty-table shapes (null / {} for empty arrays)', () => {
+  for (const empty of [null, {}]) {
+    const result = normalizeSnapshot({ game: 'RE4', version: '1', language: 'zh', settings, character: 'Leon', configVersion: 3, characters: [],
+      palette: {
+        materials: [{ key: 'body/Skin', slot: 'body', material: 'Skin', main: 'p', addons: empty, missing: empty, overridden: 0 },
+                    { key: 'hair/Hair', slot: 'hair', material: 'Hair', addons: empty, missing: empty, generic: empty, overridden: 2 }],
+        profiles: { p: { id: 'p', label: { zh: 'P' }, enums: empty, groups: [{ id: 'g', tier: 'basic', params: [{ param: 'A', kind: 'enum', options: empty }] }] } },
+        values: { 'body/Skin': empty }, overrides: { 'body/Skin': false, 'hair/Hair': empty }, selected: empty, errors: empty,
+      } });
+    const pal = result.palette;
+    assert.deepEqual(pal.materials[0].addons, []);
+    assert.deepEqual(pal.materials[0].missing, []);
+    assert.deepEqual(pal.materials[1].generic, []);
+    assert.deepEqual(pal.profiles.p.enums, {});
+    assert.deepEqual(pal.profiles.p.groups[0].params[0].options, []);
+    assert.deepEqual(pal.values['body/Skin'], {});
+    assert.equal(pal.overrides['body/Skin'], false);
+    assert.deepEqual(pal.overrides['hair/Hair'], {});
+    assert.deepEqual(pal.selected, []);
+    assert.deepEqual(pal.errors, []);
+  }
+  const bare = normalizeSnapshot({ game: 'RE4', version: '1', language: 'zh', settings, character: 'Leon', configVersion: 3, characters: [],
+    palette: { error: 'boom', materials: null, profiles: null, values: null, overrides: null, selected: null, errors: null } }).palette;
+  assert.equal(bare.error, 'boom');
+  assert.deepEqual(bare.materials, []);
+});

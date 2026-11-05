@@ -75,13 +75,12 @@ function OpsV3.move_group(cfg, name, offset)
     return true, false
 end
 
--- 作用域:一个材质只能属于一个状态组
+-- 作用域:一个材质可以属于几个状态组,重叠部分由靠后的组覆盖(见 TransformManager.resolve_v3)
 function OpsV3.scope_add(cfg, group, slot, mat)
     local g = M3.find_group(cfg, group)
     if not g or type(slot) ~= "string" or type(mat) ~= "string" then return false end
     local key = M3.key_of(slot, mat)
-    local owner = M3.owner_map(cfg)[key]
-    if owner then return false, false, owner end
+    for _, k in ipairs(g.scope) do if k == key then return false end end
     table.insert(g.scope, key)
     return true, false
 end
@@ -104,6 +103,23 @@ function OpsV3.scope_remove(cfg, group, slot, mat)
         end
     end
     return false
+end
+
+-- 批量改作用域(编辑范围的全选 / 清空):add / remove 是 { {slot=, material=}, ... }
+function OpsV3.scope_set(cfg, group, add, remove)
+    if not M3.find_group(cfg, group) then return false end
+    local changed, reapply = false, false
+    for _, m in ipairs(type(add) == "table" and add or {}) do
+        if type(m) == "table" and OpsV3.scope_add(cfg, group, m.slot, m.material) then changed = true end
+    end
+    for _, m in ipairs(type(remove) == "table" and remove or {}) do
+        if type(m) == "table" then
+            local c, r = OpsV3.scope_remove(cfg, group, m.slot, m.material)
+            if c then changed = true end
+            if r then reapply = true end
+        end
+    end
+    return changed, reapply
 end
 
 -- ============================================================ 状态组的选项
@@ -175,6 +191,48 @@ function OpsV3.set_option_material(cfg, group, option, slot, mat, value)
     if not ok then return false end
     local data = g.options[option][slot]
     if data and next(data.materials) == nil then g.options[option][slot] = nil end
+    return true, true
+end
+
+-- ============================================================ 模型高度
+-- layer:"base" 或状态组名;option:预设 / 选项名;cm = nil 清除(这一层不管高度)。
+-- 改了要重写:高度每帧由应用循环按解算结果交给 HeightFix
+function OpsV3.set_height(cfg, layer, option, cm)
+    local holder, names
+    if layer == "base" then
+        holder, names = cfg.base, cfg.base.presets
+    else
+        local g = M3.find_group(cfg, layer)
+        if not g then return false end
+        holder, names = g, g.options
+    end
+    if type(option) ~= "string" or not names[option] then return false end
+    if type(holder.heights) ~= "table" then holder.heights = {} end
+    local v = nil
+    if cm ~= nil then
+        v = M3.clamp_height(cm)
+        if v == nil then return false end
+    end
+    if holder.heights[option] == v then return false end
+    holder.heights[option] = v
+    return true, true
+end
+
+-- 全局覆盖(快速切换页):enabled / cm 给哪个改哪个,另一个保持。关掉时保留数值,下次打开接着用
+function OpsV3.set_height_override(cfg, enabled, cm)
+    local cur = type(cfg.height_override) == "table" and cfg.height_override or { enabled = false, cm = 0 }
+    local nxt = { enabled = cur.enabled == true, cm = cur.cm or 0 }
+    if enabled ~= nil then
+        if type(enabled) ~= "boolean" then return false end
+        nxt.enabled = enabled
+    end
+    if cm ~= nil then
+        local v = M3.clamp_height(cm)
+        if v == nil then return false end
+        nxt.cm = v
+    end
+    if type(cfg.height_override) == "table" and nxt.enabled == cur.enabled and nxt.cm == cur.cm then return false end
+    cfg.height_override = nxt
     return true, true
 end
 

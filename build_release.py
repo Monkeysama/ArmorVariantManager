@@ -23,7 +23,8 @@ RELEASE_ROOT = ROOT / "release"
 AUTORUN_SOURCE = SOURCE_REFRAMEWORK / "autorun"
 PORTRAIT_DLL = SOURCE_REFRAMEWORK / "plugins" / "ArmorVariantManager_Portrait.dll"
 PORTRAIT_ASSETS = PROJECT / "natives" / "STM" / "ArmorVariantManager" / "Portrait"
-PORTRAIT_FILES = ("portrait_camera.pfb.18", "portrait_resources.user.3", "portrait.rtex.6")
+# portrait.rtex.6 给荒野,portrait.rtex.5 给 RE4(同一路径,各游戏读自己的版本)
+PORTRAIT_FILES = ("portrait_camera.pfb.18", "portrait_resources.user.3", "portrait.rtex.6", "portrait.rtex.5")
 REFF_PLUGIN = SOURCE_REFRAMEWORK / "reff" / "plugins" / "monkeysama.avm"
 LICENSE = ROOT / "LICENSE"
 CHANGELOG = ROOT / "CHANGELOG.md"

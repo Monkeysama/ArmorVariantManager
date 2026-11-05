@@ -1,27 +1,44 @@
 <script setup lang="ts">
-import { computed, shallowRef, watch, watchEffect } from 'vue';
-import { ElButton, ElConfigProvider, ElOption, ElSelect, REFF_ELEMENT_LOCALES } from '@reff/ui';
+import { computed, onErrorCaptured, shallowRef, watch, watchEffect } from 'vue';
+import { ElButton, ElConfigProvider, ElOption, ElSelect, ElSwitch, REFF_ELEMENT_LOCALES } from '@reff/ui';
 import { useAvmState } from '../avm';
+
+// REFF 是 WebView2 离屏渲染，宿主没有接系统级拖放：任何原生拖动（拖选中的文字、图片、链接）都会进入
+// 宿主的原生拖拽循环并卡死整个页面。从游戏外按住左键拖进来时，页面会收到"按住移动"而开始选字，
+// 接着就是拖文字 → 卡死。所以整页禁止原生拖动，只在输入框里允许选字。排序拖动走 reorder.ts。
+const blockSelect = (e: Event) => {
+  const el = e.target instanceof Element ? e.target : (e.target as Node | null)?.parentElement;
+  if (!el?.closest('input, textarea, [contenteditable="true"]')) e.preventDefault();
+};
+import PortraitPane from '../PortraitPane.vue';
+import type { Translate } from '../i18n';
 import Re4Side from './Re4Side.vue';
 import Re4Quick from './Re4Quick.vue';
 import Re4Layers from './Re4Layers.vue';
 import Re4States from './Re4States.vue';
 import Re4Presets from './Re4Presets.vue';
+import Re4Palette from './Re4Palette.vue';
 import Re4Misc from './Re4Misc.vue';
 import { useRe4Text, type Re4Key } from './i18n';
 import type { Re4Notice, Re4Perform, Re4Snapshot } from './types';
 
 // RE4 的 REFF 页面（v3）：按 RE4 的模型设计，不套用 MH 的分组页面。
 // 左侧常驻游戏状态（和编辑页的最终材质）；右侧六个页签。v2 配置只能先迁移。
-type Tab = 'quick' | 'base' | 'groups' | 'states' | 'presets' | 'misc';
-const TABS: Tab[] = ['quick', 'base', 'groups', 'states', 'presets', 'misc'];
-const TAB_LABEL: Record<Tab, Re4Key> = { quick: 'tabQuick', base: 'tabBase', groups: 'tabGroups', states: 'tabStates', presets: 'tabPresets', misc: 'tabMisc' };
+type Tab = 'quick' | 'base' | 'groups' | 'states' | 'palette' | 'presets' | 'misc';
+const TABS: Tab[] = ['quick', 'base', 'groups', 'states', 'palette', 'presets', 'misc'];
+const TAB_LABEL: Record<Tab, Re4Key> = { quick: 'tabQuick', base: 'tabBase', groups: 'tabGroups', states: 'tabStates', palette: 'tabPalette', presets: 'tabPresets', misc: 'tabMisc' };
 const tab = shallowRef<Tab>('quick');
 const avm = useAvmState();
 watchEffect(() => { avm.helpOpen.value = tab.value === 'misc'; });
 const { busy, loading, error, connect, documentation, documentationLoading, documentationError, retryDocumentation } = avm;
 const snapshot = computed(() => avm.snapshot.value?.game === 'RE4' ? avm.snapshot.value as Re4Snapshot : null);
 const perform: Re4Perform = actions => avm.perform(actions);
+// 某个页签渲染出错时不要整页变空:把错误显示在顶部横幅里,其余页面照常可用
+onErrorCaptured(err => {
+  error.value = err instanceof Error ? `${err.message}` : String(err);
+  console.error(err);
+  return false;
+});
 const { t, english } = useRe4Text(snapshot);
 const hasCharacter = computed(() => !!snapshot.value?.character);
 const v3 = computed(() => snapshot.value?.configVersion === 3);
@@ -32,6 +49,22 @@ const presetDot = computed(() => {
   return !!p && p.current !== 'full' && p.better.length > 0 && !p.dismissed;
 });
 const showLook = computed(() => tab.value === 'base' || tab.value === 'groups' || tab.value === 'states');
+// 全身预览：开关在顶栏，打开后画在左栏最上面（和荒野共用网页预览组件，文案换成 RE4 的）
+const previewIntent = shallowRef<boolean | null>(null);
+const previewOpen = computed(() => snapshot.value?.preview?.enabled === true && hasCharacter.value);
+// 全身预览「填满 / 原比例」。原比例时预览栏加宽,左栏让出来:游戏状态移到主栏最上面,最终材质不显示。
+// 选择是这台机器上的个人偏好,记在浏览器本地(读写失败就只是不记住)。
+const FIT_KEY = 'avm.re4.previewFit';
+const previewFit = shallowRef<'fill' | 'native'>((() => { try { return localStorage.getItem(FIT_KEY) === 'native' ? 'native' : 'fill'; } catch { return 'fill'; } })());
+watch(previewFit, value => { try { localStorage.setItem(FIT_KEY, value); } catch { /* 隐私模式等 */ } });
+const previewWide = computed(() => previewOpen.value && !!snapshot.value?.preview && previewFit.value === 'native');
+async function setPreview(value: unknown) {
+  previewIntent.value = value === true;
+  try { await perform({ kind: 'setting', id: 'portrait_enabled', value: previewIntent.value }); }
+  finally { previewIntent.value = null; }
+}
+const PREVIEW_KEYS = new Set(['preview', 'previewLive', 'previewWaiting', 'previewWaitingForHost', 'previewUnavailable', 'previewSdr']);
+const previewText = ((key: string) => PREVIEW_KEYS.has(key) ? t(key as Re4Key) : key) as unknown as Translate;
 // 一次性提示（迁移结果）：快照只带一次，留到用户关掉
 const notice = shallowRef<Re4Notice | null>(null);
 watch(() => snapshot.value?.notice, value => { if (value) notice.value = value; });
@@ -39,7 +72,8 @@ watch(() => snapshot.value?.notice, value => { if (value) notice.value = value; 
 
 <template>
   <ElConfigProvider :locale="REFF_ELEMENT_LOCALES[english ? 'en-US' : 'zh-CN']">
-    <main class="avm re4" data-theme="reff" :aria-busy="busy || loading">
+    <main class="avm re4" :class="{ 'preview-open': previewOpen && !!snapshot?.preview }" data-theme="reff" :aria-busy="busy || loading"
+      @dragstart.capture.prevent @selectstart.capture="blockSelect">
       <header class="avm-header re4-header">
         <div class="identity"><h1>{{ t('title') }}</h1></div>
         <div v-if="snapshot && snapshot.characters.length > 0" class="re4-character">
@@ -52,35 +86,48 @@ watch(() => snapshot.value?.notice, value => { if (value) notice.value = value; 
           <span v-else class="re4-character-name">{{ character?.label }}</span>
           <span v-if="character && character.targets.length" class="re4-muted re4-small">{{ t('onField') }}：{{ character.targets.join('、') }}</span>
         </div>
+        <label v-if="snapshot?.preview && hasCharacter" class="re4-preview-toggle">
+          <ElSwitch :model-value="previewIntent ?? previewOpen" :disabled="busy" size="small" @change="setPreview" />{{ t('preview') }}
+        </label>
         <div class="game-identity"><span>RE4</span><span class="version">{{ snapshot?.version }}</span></div>
       </header>
       <div class="avm-body">
+        <!-- 和荒野同一布局:预览是正文外的整列(原生画面在网页下层,正文底色不能盖住它),随窗口高度伸缩 -->
+        <PortraitPane v-if="previewOpen && snapshot?.preview" :client="avm.client" :preview="snapshot.preview" :t="previewText"
+          controls :controls-hint="t('previewControls')" :fit-labels="{ fill: t('previewFill'), native: t('previewNative') }"
+          v-model:fit="previewFit" />
         <div class="avm-content">
           <div v-if="error" class="error-banner" role="alert"><span>{{ error }}</span>
             <ElButton v-if="!snapshot" :disabled="loading" @click="connect">{{ t('retry') }}</ElButton>
             <button v-else class="dismiss-error" :aria-label="t('dismiss')" @click="error = ''">×</button>
           </div>
           <div v-if="!snapshot" class="connection-state"><span v-if="loading" class="connection-dot"></span>{{ loading ? t('loading') : t('wait') }}</div>
-          <div v-else class="re4-layout">
-            <Re4Side v-if="hasCharacter && v3" :snapshot="snapshot" :t="t" :show-look="showLook" />
+          <div v-else class="re4-layout" :class="{ single: !(hasCharacter && v3) || previewWide }">
+            <div v-if="hasCharacter && v3 && !previewWide" class="re4-left">
+              <Re4Side v-if="v3" :snapshot="snapshot" :t="t" :show-look="showLook" />
+            </div>
             <div class="re4-main">
+              <Re4Side v-if="hasCharacter && v3 && previewWide" :snapshot="snapshot" :t="t" :show-look="false" inline />
               <div v-if="notice" class="re4-banner ok" role="status">
-                <span>{{ t('migrated') }}<template v-if="notice.overlaps"> {{ t('migratedOverlaps', notice.overlaps) }}</template><template v-if="notice.presets"> {{ t('migratedPresets', notice.presets) }}</template></span>
+                <span v-if="notice.kind === 'migrated'">{{ t('migrated') }}<template v-if="notice.presets"> {{ t('migratedPresets', notice.presets) }}</template></span>
+                <span v-else>{{ t('paletteExported', notice.path) }}</span>
                 <button class="dismiss-error" :aria-label="t('dismiss')" @click="notice = null">×</button>
               </div>
               <div v-if="!hasCharacter && tab !== 'misc'" class="state-banner" role="status">{{ t('noCharacter') }}</div>
               <div v-else-if="!v3 && tab !== 'misc'" class="re4-banner" role="status">
                 <span>{{ t('needMigration') }}</span><ElButton size="small" type="primary" @click="tab = 'misc'">{{ t('goMigrate') }}</ElButton>
               </div>
-              <template v-else>
+              <!-- 切页签不丢折叠 / 展开状态：页签组件用 KeepAlive 缓存（键里带角色，换角色才重置） -->
+              <KeepAlive v-else :max="12">
                 <Re4Quick v-if="tab === 'quick'" :snapshot="snapshot" :busy="busy" :perform="perform" :t="t" />
                 <Re4Layers v-else-if="tab === 'base'" :key="'base-' + snapshot.character" mode="base" :snapshot="snapshot" :busy="busy" :perform="perform" :t="t" />
                 <Re4Layers v-else-if="tab === 'groups'" :key="'groups-' + snapshot.character" mode="groups" :snapshot="snapshot" :busy="busy" :perform="perform" :t="t" />
                 <Re4States v-else-if="tab === 'states'" :key="'states-' + snapshot.character" :snapshot="snapshot" :busy="busy" :perform="perform" :t="t" />
+                <Re4Palette v-else-if="tab === 'palette'" :key="'palette-' + snapshot.character" :snapshot="snapshot" :busy="busy" :perform="perform" :t="t" />
                 <Re4Presets v-else-if="tab === 'presets'" :key="'presets-' + snapshot.character" :snapshot="snapshot" :busy="busy" :perform="perform" :t="t" />
                 <Re4Misc v-else :snapshot="snapshot" :busy="busy" :perform="perform" :t="t" :documentation="documentation"
                   :documentation-loading="documentationLoading" :documentation-error="documentationError" @retry-documentation="retryDocumentation" />
-              </template>
+              </KeepAlive>
             </div>
           </div>
         </div>
@@ -99,6 +146,8 @@ watch(() => snapshot.value?.notice, value => { if (value) notice.value = value; 
 
 <style>
 /* 状态颜色：绿 = 生效，红 = 被覆盖（有问题），灰 = 未命中。颜色之外还有形状，照顾色弱 */
+.re4 { user-select: none; -webkit-user-drag: none; }
+.re4 input, .re4 textarea { user-select: text; }
 .re4 { --re4-ok: var(--el-color-success, #2c7a4b); --re4-bad: var(--el-color-danger, #c0353d); --re4-soft: var(--el-fill-color-light, rgba(127, 127, 127, .08));
   --re4-ok-soft: var(--el-color-success-light-9, rgba(44, 122, 75, .12)); --re4-bad-soft: var(--el-color-danger-light-9, rgba(192, 53, 61, .12)); }
 .re4-header { align-items: center; }
@@ -109,8 +158,13 @@ watch(() => snapshot.value?.notice, value => { if (value) notice.value = value; 
 .re4-muted { color: var(--avm-muted); }
 .re4-small { font-size: var(--reff-font-size-xs, 12px); }
 .re4-layout { display: grid; grid-template-columns: minmax(0, 15em) minmax(0, 1fr); gap: 12px; padding: 10px 12px 16px; align-items: start; }
+.re4-layout.single { grid-template-columns: minmax(0, 1fr); }
 @media (max-width: 720px) { .re4-layout { grid-template-columns: minmax(0, 1fr); } }
 .re4-main { display: grid; gap: 10px; min-width: 0; align-content: start; }
+.re4-left { display: grid; gap: 10px; align-content: start; min-width: 0; }
+/* 预览列比荒野宽一些:RE4 人物是竖长全身,窗口越大预览越大 */
+@media (min-width: 761px) { .avm.re4 .portrait-pane { flex-basis: clamp(220px, 30%, 560px); } }
+.re4-preview-toggle { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; margin-right: 12px; cursor: pointer; }
 .re4-panel { border: 1px solid var(--avm-line); border-radius: 8px; background: var(--el-bg-color, transparent); min-width: 0; }
 .re4-panel-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 7px 12px; }
 .re4-panel-head + * { border-top: 1px solid var(--avm-line); }

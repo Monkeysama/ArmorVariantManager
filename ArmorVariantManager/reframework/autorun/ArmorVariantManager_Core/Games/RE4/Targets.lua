@@ -101,6 +101,13 @@ local cached_figures = {}
 local cached_figures_all = {}
 local frames_since_scan = RESCAN_INTERVAL   -- 首帧就扫一次
 
+-- 重扫**失败**(拿不到场景 / findComponents 报错或返回 nil)和"扫到 0 个"是两回事。
+-- 实测模型鉴赏页挂机时,每隔几秒就有一次重扫失败;以前失败也当成"0 个"把缓存清空,
+-- 雕像就整整丢一个重扫周期(约 1 秒),表现为"反复丢失角色追踪"。
+-- 现在失败时沿用上次结果,连续失败超过这么多次才清空(真离开了场景也不会一直挂着旧目标)。
+local SCAN_FAIL_LIMIT = 3
+local scan_fails = { puppets = 0, figures = 0 }
+
 local function current_scene()
     if not scene_type_def then scene_type_def = sdk.find_type_definition("via.SceneManager") end
     local sm = sdk.get_native_singleton("via.SceneManager")
@@ -116,7 +123,7 @@ local function rescan_puppets()
     if not puppet_system_type then return out end
 
     local scene = current_scene()
-    if not scene then return out end
+    if not scene then return nil end
 
     -- findComponents 返回 SystemArray,**必须先 get_elements() 转成 Lua 表**。
     -- 直接 ipairs 一个 SystemArray 会跳过第 0 个元素、还会越界读一格
@@ -125,7 +132,7 @@ local function rescan_puppets()
         local arr = scene:call("findComponents(System.Type)", puppet_system_type)
         return arr and arr:get_elements() or nil
     end)
-    if not ok or not comps then return out end
+    if not ok or not comps then return nil end
 
     for _, comp in ipairs(comps) do
         if comp and sdk.is_managed_object(comp) then
@@ -272,13 +279,13 @@ local function rescan_figures()
     if not figure_system_type then return out end
 
     local scene = current_scene()
-    if not scene then return out end
+    if not scene then return nil end
 
     local ok, comps = pcall(function()
         local arr = scene:call("findComponents(System.Type)", figure_system_type)
         return arr and arr:get_elements() or nil
     end)
-    if not ok or not comps then return out end
+    if not ok or not comps then return nil end
 
     local all = {}
     for _, comp in ipairs(comps) do
@@ -442,8 +449,18 @@ function Targets.collect()
     frames_since_scan = frames_since_scan + 1
     if frames_since_scan >= RESCAN_INTERVAL then
         frames_since_scan = 0
-        cached_puppets = rescan_puppets()
-        cached_figures, cached_figures_all = rescan_figures()
+        local puppets = rescan_puppets()
+        if puppets then cached_puppets, scan_fails.puppets = puppets, 0
+        else
+            scan_fails.puppets = scan_fails.puppets + 1
+            if scan_fails.puppets > SCAN_FAIL_LIMIT then cached_puppets = {} end
+        end
+        local figures, figures_all = rescan_figures()
+        if figures then cached_figures, cached_figures_all, scan_fails.figures = figures, figures_all or {}, 0
+        else
+            scan_fails.figures = scan_fails.figures + 1
+            if scan_fails.figures > SCAN_FAIL_LIMIT then cached_figures, cached_figures_all = {}, {} end
+        end
     end
 
     for _, list in ipairs({ cached_puppets, cached_figures }) do

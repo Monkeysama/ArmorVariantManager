@@ -102,6 +102,7 @@ local function run(scenario)
     if scenario.config then files[CONFIG_PATH] = S.copy(scenario.config) end
     for path, value in pairs(scenario.files or {}) do files[path] = S.copy(value) end
     local frames, draws, errors, imports = {}, {}, {}, {}
+    local app_entries = {}
 
     local meshes = {
         body = mesh("_Chainsaw/Character/ch/cha0/cha000/00/cha000_00.mesh", {"Skin", "Jacket"}),
@@ -126,7 +127,10 @@ local function run(scenario)
 
     _G.reframework = {get_game_name = function() return "re4" end}
     _G.re = {on_frame = function(f) frames[#frames + 1] = f end,
-        on_draw_ui = function(f) draws[#draws + 1] = f end, on_script_reset = function() end}
+        on_draw_ui = function(f) draws[#draws + 1] = f end, on_script_reset = function() end,
+        -- 模型高度(HeightFix)按引擎阶段注册;这里只确认能装上,写入时机见 re4_height.lua
+        on_pre_application_entry = function(name) app_entries[name] = true end,
+        on_application_entry = function(name) app_entries[name] = true end}
     -- 是否装了 REFF:共享 Bridge 只在 reff_native 存在时才去加载 reff.sdk
     _G.reff_native = scenario.reff and {} or nil
     local handlers, registered_id
@@ -242,7 +246,10 @@ local SLOTS_PATH = "ArmorVariantManager/backup/Leon.slots.json"
 files, meshes, handlers, tick = run({player = true, config = leon, reff = true,
     files = {[SLOTS_PATH] = {slots = {Old = leon}}}})
 assert(handlers["monkeysama.avm.snapshot"] and handlers["monkeysama.avm.action"] and handlers["monkeysama.avm.documentation"])
-assert(handlers["monkeysama.avm.imports"] == nil and handlers["monkeysama.avm.preview"] == nil, "RE4 registers only what it serves")
+assert(handlers["monkeysama.avm.imports"] == nil, "RE4 registers only what it serves")
+-- 全身预览:测试环境里没有原生 DLL,如实报告不可用,不报错
+local preview_state = handlers["monkeysama.avm.preview"]({visible = true, width = 330, height = 360})
+assert(preview_state.available == false and preview_state.status == "preview_native_missing")
 local snap = handlers["monkeysama.avm.snapshot"]()
 plain(snap, "v2 snapshot")
 assert(snap.game == "RE4" and snap.character == "Leon" and #snap.characters == 1 and snap.configVersion == 2)
@@ -256,7 +263,7 @@ local function run_frames(n) for _ = 1, n or 2 do tick() end end
 snap = act({kind = "migrate", character = "Leon"})
 plain(snap, "v3 snapshot")
 assert(snap.configVersion == 3 and files[CONFIG_PATH].version == 3)
-assert(snap.notice.kind == "migrated" and snap.notice.overlaps == 0 and snap.notice.presets == 1)
+assert(snap.notice.kind == "migrated" and snap.notice.overlaps == nil and snap.notice.presets == 1)
 assert(files["ArmorVariantManager/backup/Leon.json"].version == 2, "restore point keeps the v2 config")
 assert(files["ArmorVariantManager/presets/p0001.json"].name == "Leon · Old")
 assert(files["ArmorVariantManager/presets/p0001.json"].config.version == 3)
@@ -330,12 +337,13 @@ snap = act({kind = "base-delete", character = "Leon", preset = "Battle"})
 assert(#snap.base.presets == 1 and snap.backups.hasBackup == true)
 assert(snap.states[1].baseResult.kind == "broken", "deleted target shows as broken")
 
--- 状态组:新建、作用域(不重叠)、选项、材质三态、改名牵动引用、删除
+-- 状态组:新建、作用域(可以和别的组重叠)、选项、材质三态、改名牵动引用、删除
 snap = act({kind = "group-new", character = "Leon", name = "Face"})
 snap = act({kind = "scope-add", character = "Leon", group = "Face", slot = "head", material = "Face"})
 S.equal(snap.groups[2].scope, {"head/Face"})
-assert(not pcall(act, {kind = "scope-add", character = "Leon", group = "Face", slot = "hair", material = "Hair"}),
-    "a material belongs to one group only")
+snap = act({kind = "scope-add", character = "Leon", group = "Face", slot = "hair", material = "Hair"})
+S.equal(snap.groups[2].scope, {"head/Face", "hair/Hair"}, "a material may belong to several groups")
+snap = act({kind = "scope-remove", character = "Leon", group = "Face", slot = "hair", material = "Hair"})
 snap = act({kind = "option-new", character = "Leon", group = "Face"})
 assert(snap.groups[2].active == "1")
 snap = act({kind = "option-material", character = "Leon", group = "Face", option = "1", slot = "head", material = "Face", value = "off"})

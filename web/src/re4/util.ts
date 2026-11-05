@@ -6,6 +6,8 @@ export const splitKey = (key: string): [string, string] => {
   return i < 0 ? [key, ''] : [key.slice(0, i), key.slice(i + 1)];
 };
 export const keyOf = (slot: string, material: string) => `${slot}/${material}`;
+// 部位名只留中文 / 英文名，去掉后面括号里的内部 id（如「身体 (body / 00)」→「身体」）
+export const shortSlot = (label: string) => label.replace(/\s*[(（][^()（）]*[)）]\s*$/, '') || label;
 
 const KIND_KEY: Record<Re4StateKind, 'kindActive' | 'kindPartial' | 'kindOutranked' | 'kindIdle' | 'kindOff' | 'kindPaused'> = {
   active: 'kindActive', partial: 'kindPartial', outranked: 'kindOutranked', idle: 'kindIdle', off: 'kindOff', paused: 'kindPaused',
@@ -46,9 +48,10 @@ export function conditionSentence(state: Re4State, t: Re4Translate) {
 
 export function targetSentence(state: Re4State, t: Re4Translate) {
   const parts: string[] = [];
-  if (state.base) parts.push(`${t('baseTarget')} → ${state.base}`);
-  for (const target of state.targets) parts.push(`${target.group} → ${target.option}`);
-  return parts.join('，') || t('noTargets');
+  // 箭头只留给"条件 → 切换目标"这一层，目标里的"组：选项"用冒号
+  if (state.base) parts.push(t('targetPair', t('baseTarget'), state.base));
+  for (const target of state.targets) parts.push(t('targetPair', target.group, target.option));
+  return parts.join(t('targetSep')) || t('noTargets');
 }
 
 // 当前值的显示（条件行右侧的"现在：…"）
