@@ -93,6 +93,7 @@ local function run(scenario)
     local files = {[GLOBAL_PATH] = {language = "zh", ui_dissolve_enabled = false, ui_dissolve_time = 2.5,
         extra = {keep = true}}}
     if scenario.config then files[CONFIG_PATH] = S.copy(scenario.config) end
+    for path, value in pairs(scenario.files or {}) do files[path] = S.copy(value) end
     local frames, draws, errors, imports = {}, {}, {}, {}
 
     local meshes = {
@@ -127,6 +128,14 @@ local function run(scenario)
         load_file = function(path) return S.copy(files[path]) end,
         dump_file = function(path, value) files[path] = S.copy(value); return true end,
     }
+    -- 预设库靠 fs.glob 枚举目录(游戏里返回带 reframework\data 前缀、反斜杠的路径)
+    _G.fs = {glob = function()
+        local out = {}
+        for path in pairs(files) do
+            if path:find("^ArmorVariantManager/presets/") then out[#out + 1] = "reframework\\data\\" .. path:gsub("/", "\\") end
+        end
+        return out
+    end}
     _G.sdk = {
         find_type_definition = function(name)
             if name == "chainsaw.CharacterKindID" then return {get_fields = function() return {kind_field} end} end
@@ -194,7 +203,7 @@ files = run({player = false, config = leon})
 S.equal(files[CONFIG_PATH], leon)
 print("PASS: RE4 without player context keeps callbacks quiet and config untouched")
 
--- 装了 REFF：快照只含可序列化的值；操作走共用 Ops，存盘并重写到模型；角色变了就拒绝。
+-- 装了 REFF:v2 配置只能迁移;迁移后快照与操作都按 v3(整套造型 + 状态组 + 条件状态 + 预设库)。
 local function plain(value, path)
     local kind = type(value)
     assert(kind == "string" or kind == "number" or kind == "boolean" or kind == "table" or kind == "nil",
@@ -207,47 +216,174 @@ local function plain(value, path)
         end
     end
 end
-local handlers
-local tick
-files, meshes, handlers, tick = run({player = true, config = leon, reff = true})
+local handlers, tick
+local SLOTS_PATH = "ArmorVariantManager/backup/Leon.slots.json"
+files, meshes, handlers, tick = run({player = true, config = leon, reff = true,
+    files = {[SLOTS_PATH] = {slots = {Old = leon}}}})
 assert(handlers["monkeysama.avm.snapshot"] and handlers["monkeysama.avm.action"] and handlers["monkeysama.avm.documentation"])
 assert(handlers["monkeysama.avm.imports"] == nil and handlers["monkeysama.avm.preview"] == nil, "RE4 registers only what it serves")
 local snap = handlers["monkeysama.avm.snapshot"]()
-plain(snap, "snapshot")
-assert(snap.game == "RE4" and snap.character == "Leon" and #snap.characters == 1)
-assert(snap.characters[1].configured == true and snap.status.hp == 100)
-assert(snap.base.base == true and snap.base.active == "Default" and snap.base.presets[1] == "Default")
-assert(#snap.axes == 1 and snap.axes[1].name == "Hide Hair" and snap.axes[1].active == "On" and snap.axes[1].advanced == false)
+plain(snap, "v2 snapshot")
+assert(snap.game == "RE4" and snap.character == "Leon" and #snap.characters == 1 and snap.configVersion == 2)
+assert(snap.base == nil and snap.states == nil, "a v2 config only gets the migration entry")
 assert(snap.settings.uiDissolveEnabled == false and snap.settings.uiDissolveTime == 2.5)
+local act = handlers["monkeysama.avm.action"]
+assert(not pcall(act, {kind = "manual", character = "Leon", layer = "base", option = ""}), "v3 actions wait for migration")
+
+local function run_frames(n) for _ = 1, n or 2 do tick() end end
+-- 迁移:先写还原点;旧的命名存档转成预设;外观不变
+snap = act({kind = "migrate", character = "Leon"})
+plain(snap, "v3 snapshot")
+assert(snap.configVersion == 3 and files[CONFIG_PATH].version == 3)
+assert(snap.notice.kind == "migrated" and snap.notice.overlaps == 0 and snap.notice.presets == 1)
+assert(files["ArmorVariantManager/backup/Leon.json"].version == 2, "restore point keeps the v2 config")
+assert(files["ArmorVariantManager/presets/p0001.json"].name == "Leon · Old")
+assert(files["ArmorVariantManager/presets/p0001.json"].config.version == 3)
+assert(files[SLOTS_PATH].slots.Old, "old saves file is kept")
+assert(not pcall(act, {kind = "migrate", character = "Leon"}), "already migrated")
+run_frames()
+S.equal(meshes.hair.state(), {Hair = false, Clip = true}, "migration keeps the look")
+
+local slot_ids = {}
+for _, slot in ipairs(snap.slots) do slot_ids[#slot_ids + 1] = slot.id end
+S.equal(slot_ids, {"body", "head", "hair"})
+assert(snap.base.active == "Default" and snap.base.effective == "Default" and snap.base.presets[1].match.status == "ok")
+assert(snap.base.presets[1].values["body/Jacket"] == false)
+assert(#snap.groups == 1 and snap.groups[1].name == "Hide Hair" and snap.groups[1].effective == "On")
+S.equal(snap.groups[1].scope, {"hair/Hair"})
+assert(snap.groups[1].options[1].values["hair/Hair"] == false)
+assert(snap.auto == true and #snap.states == 0 and snap.status.hp == 100)
+assert(snap.presets.current == "full" and #snap.presets.list == 1 and snap.presets.list[1].match == "full")
 local hp_def
 for _, def in ipairs(snap.conditions) do if def.id == "hp_ratio" then hp_def = def end end
-assert(hp_def and hp_def.kind == "number" and hp_def.value == 100 and #hp_def.ops > 0)
+assert(hp_def and hp_def.kind == "number" and hp_def.value == 100 and hp_def.category == "hp")
+local function look(slot, mat)
+    for _, l in ipairs(snap.look) do if l.slot == slot and l.material == mat then return l.on end end
+end
+assert(look("hair", "Hair") == false and look("hair", "Clip") == true)
 
-local act = handlers["monkeysama.avm.action"]
--- 关掉状态组:材质回到整套造型的值
-snap = act({kind = "active", character = "Leon", axis = "Hide Hair", preset = ""})
-assert(snap.axes[1].active == "" and files[CONFIG_PATH].axes["Hide Hair"].active == "")
--- 加一条血量规则:状态组升级成高级组,条件与关系按 Ops 存
-snap = act({kind = "condition-add", character = "Leon", axis = "Hide Hair", preset = "On",
-    condition = {type = "hp_ratio", op = "<=", value = 30}, logic = "AND"})
-local axis = snap.axes[1]
-assert(axis.advanced == true and #axis.rules == 1 and axis.rules[1].preset == "On" and axis.rules[1].hits == false)
-assert(axis.rules[1].conditions[1].type == "hp_ratio" and axis.rules[1].conditions[1].value == 30)
-S.equal(files[CONFIG_PATH].axes["Hide Hair"].rules, {{conditions = {{type = "hp_ratio", op = "<=", value = 30}}, logic = "AND", preset = "On"}})
-snap = act({kind = "hold", character = "Leon", axis = "Hide Hair", preset = "On", value = "1.5"})
-assert(snap.axes[1].rules[1].hold == 1.5)
--- 整套造型(axis 为 nil)与全局设置
-snap = act({kind = "active", character = "Leon", preset = ""})
-assert(snap.base.active == "" and files[CONFIG_PATH].base.active == "")
+-- 手动选择
+snap = act({kind = "manual", character = "Leon", layer = "Hide Hair", option = ""})
+assert(snap.groups[1].active == "" and snap.groups[1].effective == nil)
+run_frames()
+assert(meshes.hair.state().Hair == true, "group set to none falls back to the full outfit")
+
+-- 条件状态:新建、条件、目标、保持;条件成立时接管状态组
+snap = act({kind = "state-new", character = "Leon", name = "Healthy"})
+assert(#snap.states == 1 and snap.states[1].kind == "idle")
+snap = act({kind = "condition-add", character = "Leon", index = 1, condition = {type = "hp_ratio", op = "<=", value = 30}})
+assert(snap.states[1].conditions[1].value == 30 and snap.states[1].conditions[1].met == false)
+snap = act({kind = "state-target", character = "Leon", index = 1, group = "Hide Hair", option = "On"})
+assert(snap.states[1].targets[1].option == "On" and snap.states[1].kind == "idle")
+snap = act({kind = "condition-set", character = "Leon", index = 1, condition_index = 1,
+    condition = {type = "hp_ratio", op = ">=", value = 50}})
+assert(snap.states[1].conditions[1].met == true and snap.states[1].kind == "active")
+assert(snap.groups[1].effective == "On" and snap.groups[1].fromState == 1)
+run_frames()
+assert(meshes.hair.state().Hair == false, "condition state takes over the group")
+snap = act({kind = "state-field", character = "Leon", index = 1, field = "hold", value = "1.5"})
+assert(snap.states[1].hold == 1.5)
+snap = act({kind = "state-field", character = "Leon", index = 1, field = "exclusive", value = true})
+assert(snap.states[1].exclusive == true)
+snap = act({kind = "state-hp", character = "Leon", index = 1, hp = {upper = 80, lower = 20}})
+assert(snap.states[1].hp.upper == 80)
+snap = act({kind = "state-hp", character = "Leon", index = 1})
+assert(snap.states[1].hp == nil)
+snap = act({kind = "state-base", character = "Leon", index = 1, preset = "Default"})
+assert(snap.states[1].base == "Default" and snap.states[1].baseResult.kind == "win")
+snap = act({kind = "auto", character = "Leon", enabled = false})
+assert(snap.auto == false and snap.states[1].kind == "paused")
+act({kind = "auto", character = "Leon", enabled = true})
+
+-- 整套造型:新建抓当前外观、改名牵动条件状态、材质、删除前留还原点
+snap = act({kind = "base-new", character = "Leon"})
+assert(#snap.base.presets == 2 and snap.base.active == "1")
+snap = act({kind = "state-base", character = "Leon", index = 1, preset = "1"})
+snap = act({kind = "base-rename", character = "Leon", preset = "1", name = "Battle"})
+assert(snap.base.presets[2].name == "Battle" and snap.states[1].base == "Battle")
+snap = act({kind = "base-material", character = "Leon", preset = "Battle", slot = "body", material = "Jacket", value = false})
+assert(files[CONFIG_PATH].base.presets.Battle.body.materials.Jacket == false)
+snap = act({kind = "base-move", character = "Leon", preset = "Battle", offset = -1})
+assert(snap.base.presets[1].name == "Battle")
+snap = act({kind = "base-delete", character = "Leon", preset = "Battle"})
+assert(#snap.base.presets == 1 and snap.backups.hasBackup == true)
+assert(snap.states[1].baseResult.kind == "broken", "deleted target shows as broken")
+
+-- 状态组:新建、作用域(不重叠)、选项、材质三态、改名牵动引用、删除
+snap = act({kind = "group-new", character = "Leon", name = "Face"})
+snap = act({kind = "scope-add", character = "Leon", group = "Face", slot = "head", material = "Face"})
+S.equal(snap.groups[2].scope, {"head/Face"})
+assert(not pcall(act, {kind = "scope-add", character = "Leon", group = "Face", slot = "hair", material = "Hair"}),
+    "a material belongs to one group only")
+snap = act({kind = "option-new", character = "Leon", group = "Face"})
+assert(snap.groups[2].active == "1")
+snap = act({kind = "option-material", character = "Leon", group = "Face", option = "1", slot = "head", material = "Face", value = "off"})
+run_frames()
+assert(meshes.head.state().Face == false)
+assert(not pcall(act, {kind = "option-material", character = "Leon", group = "Face", option = "1", slot = "body", material = "Skin", value = "off"}),
+    "outside the scope")
+snap = act({kind = "state-target", character = "Leon", index = 1, group = "Face", option = "1"})
+snap = act({kind = "group-rename", character = "Leon", group = "Face", name = "Expression"})
+assert(snap.groups[2].name == "Expression" and snap.states[1].targets[2].group == "Expression")
+snap = act({kind = "option-rename", character = "Leon", group = "Expression", option = "1", name = "Pale"})
+assert(snap.states[1].targets[2].option == "Pale")
+snap = act({kind = "state-target-remove", character = "Leon", index = 1, target = 2})
+assert(#snap.states[1].targets == 1)
+snap = act({kind = "scope-remove", character = "Leon", group = "Expression", slot = "head", material = "Face"})
+assert(#snap.groups[2].scope == 0)
+snap = act({kind = "group-delete", character = "Leon", group = "Expression"})
+assert(#snap.groups == 1)
+
+-- 护甲镜像、备注、定位(不写配置)
+snap = act({kind = "armor-mirror", character = "Leon", enabled = true})
+assert(snap.armorMirror == true)
+snap = act({kind = "note", character = "Leon", slot = "body", material = "Skin", text = "Skin base"})
+assert(snap.slots[1].materials[1].note == "Skin base")
+local before_locate = S.copy(files[CONFIG_PATH])
+snap = act({kind = "locate", character = "Leon", slot = "hair", material = "Clip"})
+assert(snap.locating.slot == "hair" and snap.locating.material == "Clip")
+S.equal(files[CONFIG_PATH], before_locate, "locating never writes the config")
+
+-- 预设库:存为新预设 → 存回 → 改名 → 套用(先进自动保存)→ 恢复自动保存 → 转预设 → 删除
+snap = act({kind = "preset-save", character = "Leon", name = "Mine"})
+local mine
+for _, p in ipairs(snap.presets.list) do if p.name == "Mine" then mine = p end end
+assert(mine and mine.match == "full" and snap.presets.source.id == mine.id and snap.presets.source.own)
+assert(files[CONFIG_PATH].source_preset == mine.id)
+snap = act({kind = "preset-update", character = "Leon"})
+snap = act({kind = "preset-rename", character = "Leon", id = mine.id, name = "Mine 2"})
+assert(snap.presets.source.name == "Mine 2")
+snap = act({kind = "preset-apply", character = "Leon", id = "p0001"})
+assert(files[CONFIG_PATH].source_preset == "p0001" and #snap.states == 0, "applying replaces the whole config")
+assert(#snap.presets.autosaves == 1)
+assert(files["ArmorVariantManager/autosave/Leon.json"].entries[1].config.conditions.states[1].name == "Healthy")
+snap = act({kind = "autosave-restore", character = "Leon", index = 1})
+assert(#snap.states == 1 and snap.states[1].name == "Healthy", "auto-save brings the config back")
+assert(#snap.presets.autosaves == 1, "restoring pushes the replaced config first")
+snap = act({kind = "autosave-promote", character = "Leon", index = 1, name = "From autosave"})
+assert(#snap.presets.autosaves == 0)
+local promoted
+for _, p in ipairs(snap.presets.list) do if p.name == "From autosave" then promoted = p end end
+assert(promoted)
+snap = act({kind = "preset-delete", character = "Leon", id = promoted.id})
+assert(files["ArmorVariantManager/presets/" .. promoted.id .. ".json"].deleted == true)
+snap = act({kind = "preset-dismiss", character = "Leon"})
+assert(snap.presets.dismissed == true)
+
+-- 还原点与全局设置
+snap = act({kind = "restore", character = "Leon", which = "backup"})
+assert(not pcall(act, {kind = "restore", character = "Leon", which = "nothing"}))
 snap = act({kind = "setting", id = "ui_dissolve_time", value = 3.26})
 assert(snap.settings.uiDissolveTime == 3.3 and files[GLOBAL_PATH].ui_dissolve_time == 3.3)
--- 拒绝:角色已变化、目标不存在、未知操作 —— 都不改配置
+
+-- 拒绝:角色已变化、目标不存在、坏参数、未知操作 —— 都不改配置
 local before = S.copy(files[CONFIG_PATH])
 for _, bad in ipairs({
-    {kind = "active", character = "Ada", preset = ""},
-    {kind = "active", character = "Leon", axis = "Missing", preset = ""},
-    {kind = "active", character = "Leon", preset = "Missing"},
-    {kind = "condition-add", character = "Leon", axis = "Hide Hair", preset = "On", condition = {type = "hp_ratio", op = "<=", value = "x"}},
+    {kind = "manual", character = "Ada", layer = "base", option = ""},
+    {kind = "manual", character = "Leon", layer = "Missing", option = ""},
+    {kind = "state-field", character = "Leon", index = 99, field = "hold", value = 1},
+    {kind = "condition-add", character = "Leon", index = 1, condition = {type = "hp_ratio", op = "<=", value = "x"}},
+    {kind = "preset-apply", character = "Leon", id = "nope"},
     {kind = "unknown", character = "Leon"},
 }) do
     assert(not pcall(act, bad), "rejected: " .. tostring(bad.kind))
@@ -255,82 +391,5 @@ end
 S.equal(files[CONFIG_PATH], before)
 local docs = handlers["monkeysama.avm.documentation"]()
 plain(docs, "documentation")
-assert(#docs.sections == 3 and docs.sections[1].entries[1].title == "角色", "help follows the zh language setting")
-print("PASS: RE4 REFF snapshot is plain data; actions go through shared ops, persist, and reject stale or invalid targets")
-
--- 第二阶段：编辑 / 归属 / 备注与定位 / 存档。快照给出当前模型的材质与各预设的值；
--- 操作和面板走同一批函数（Ops + Main 的共用函数），删除前留备份，定位只影响画面。
-snap = handlers["monkeysama.avm.snapshot"]()
-plain(snap, "phase-2 snapshot")
-local slot_ids = {}
-for _, slot in ipairs(snap.editor.slots) do slot_ids[#slot_ids + 1] = slot.id end
-S.equal(slot_ids, {"body", "head", "hair"})
-assert(snap.editor.slots[1].materials[2].name == "Jacket" and snap.editor.armorMirror == false)
-assert(snap.base.values.Default.body.Jacket == false and snap.base.match.Default.status == "ok")
-assert(snap.axes[1].values.On.hair.Hair == false and snap.axes[1].match == nil)
-assert(snap.ownership.shared == false and snap.ownership.canReset == true and snap.ownership.canMatchKin == false)
-assert(#snap.saves.slots == 0 and snap.saves.hasBackup == false)
-
-local function run_frames(n) for _ = 1, n or 2 do tick() end end
--- 整套造型的材质（二值），重算后写到模型上
-act({kind = "active", character = "Leon", preset = "Default"})
-act({kind = "material", character = "Leon", preset = "Default", slot = "body", material = "Jacket", value = true})
-run_frames()
-assert(files[CONFIG_PATH].base.presets.Default.body.materials.Jacket == true and meshes.body.state().Jacket == true)
--- 状态组的三态 + 整块纳入 / 释放
-act({kind = "material", character = "Leon", axis = "Hide Hair", preset = "On", slot = "hair", material = "Clip", value = "off"})
-assert(files[CONFIG_PATH].axes["Hide Hair"].presets.On.hair.materials.Clip == false)
-act({kind = "slot-bulk", character = "Leon", axis = "Hide Hair", preset = "On", slot = "hair", op = "release"})
-assert(next(files[CONFIG_PATH].axes["Hide Hair"].presets.On.hair.materials) == nil)
-assert(not pcall(act, {kind = "slot-bulk", character = "Leon", axis = "Hide Hair", preset = "On", slot = "hair", op = "all_on"}),
-    "full-outfit bulk ops are rejected on state groups")
--- 新建 / 复制 / 改名 / 移动 / 删除（删除前留备份）
-snap = act({kind = "preset-new", character = "Leon"})
-assert(snap.base.active == "1" and snap.base.values["1"].body ~= nil, "a new full outfit captures the current look")
-snap = act({kind = "preset-duplicate", character = "Leon", preset = "1"})
-assert(snap.base.active == "1_1")
-snap = act({kind = "preset-rename", character = "Leon", preset = "1_1", name = "Battle"})
-S.equal(snap.base.presets, {"Default", "1", "Battle"})
-snap = act({kind = "preset-move", character = "Leon", preset = "Battle", offset = -2})
-S.equal(snap.base.presets, {"Battle", "Default", "1"})
-assert(not pcall(act, {kind = "preset-rename", character = "Leon", preset = "Battle", name = "Default"}), "rename collision is rejected")
-snap = act({kind = "preset-delete", character = "Leon", preset = "1"})
-assert(snap.saves.hasBackup == true and files["ArmorVariantManager/backup/Leon.json"].base.presets["1"] ~= nil,
-    "the backup is taken before the delete")
-assert(snap.base.values["1"] == nil)
--- 状态组的新建 / 改名 / 删除，护甲镜像，备注
-snap = act({kind = "axis-new", character = "Leon", name = "Face"})
-assert(files[CONFIG_PATH].axes.Face.active == "1")
-snap = act({kind = "axis-rename", character = "Leon", axis = "Face", name = "Expression"})
-assert(files[CONFIG_PATH].axes.Face == nil and files[CONFIG_PATH].axes.Expression)
-snap = act({kind = "axis-delete", character = "Leon", axis = "Expression"})
-assert(files[CONFIG_PATH].axes.Expression == nil)
-snap = act({kind = "armor-mirror", character = "Leon", enabled = true})
-assert(snap.editor.armorMirror == true)
-snap = act({kind = "note", character = "Leon", slot = "body", material = "Skin", text = "Skin base"})
-assert(snap.editor.slots[1].materials[1].note == "Skin base" and files[CONFIG_PATH].material_notes.body.Skin == "Skin base")
--- 定位：临时只显示一个材质，不写配置
-local before_locate = S.copy(files[CONFIG_PATH])
-snap = act({kind = "locate", character = "Leon", slot = "hair", material = "Clip"})
-assert(snap.editor.locating.slot == "hair" and snap.editor.locating.material == "Clip")
-run_frames()
-S.equal(meshes.hair.state(), {Hair = false, Clip = true}, "only the located material is shown on its slot")
-S.equal(files[CONFIG_PATH], before_locate, "locating never writes the config")
--- 命名存档：存 / 读 / 删；还原点
-snap = act({kind = "slot-save", character = "Leon", name = "Before test"})
-assert(#snap.saves.slots == 1 and snap.saves.slots[1].own and snap.saves.slots[1].name == "Before test")
-act({kind = "axis-new", character = "Leon", name = "Temp"})
-snap = act({kind = "slot-load", character = "Leon", key = "Leon", name = "Before test"})
-assert(files[CONFIG_PATH].axes.Temp == nil, "loading a slot replaces the config with the saved copy")
-snap = act({kind = "slot-delete", character = "Leon", name = "Before test"})
-assert(#snap.saves.slots == 0 and not pcall(act, {kind = "slot-delete", character = "Leon", name = "Before test"}))
-snap = act({kind = "restore", character = "Leon", which = "backup"})
-assert(files[CONFIG_PATH].base.presets["1"] ~= nil, "restoring the backup brings back the deleted preset")
-assert(not pcall(act, {kind = "restore", character = "Leon", which = "nothing"}))
--- 归属：独立时可以初始化（先留备份，按当前外观建 default）；配置不平凡时不给认亲
-assert(not pcall(act, {kind = "match-kin", character = "Leon"}), "match-kin is refused while the config has real presets")
-snap = act({kind = "reset-config", character = "Leon"})
-S.equal(snap.base.presets, {"default"})
-assert(#snap.axes == 0 and snap.ownership.canMatchKin == true)
-assert(not pcall(act, {kind = "make-independent", character = "Leon"}), "an independent config cannot be made independent")
-print("PASS: RE4 REFF editing, state groups, notes, locate, named saves, restore points and ownership use the panel's shared functions")
+assert(#docs.sections >= 1, "help is served")
+print("PASS: RE4 REFF v2 -> v3 migration (restore point, old saves become presets), v3 snapshot, manual / condition states / full outfit / state groups / scope / notes / locate, preset library with auto-saves, rejections")

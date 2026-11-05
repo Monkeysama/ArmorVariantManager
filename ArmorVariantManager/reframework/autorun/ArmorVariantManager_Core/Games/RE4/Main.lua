@@ -2663,6 +2663,11 @@ function Main.start(ctx)
             restore_backup = restore_backup, restore_onload_backup = restore_onload_backup,
             start_preview = start_preview, get_preview = function() return preview end,
             documentation = require("ArmorVariantManager_Core.Games.RE4.Documentation"),
+            -- v3:迁移与预设库
+            migrate_to_v3 = migrate_to_v3, preset_view = preset_view, dismiss_preset_hint = dismiss_preset_hint,
+            apply_preset = apply_preset, save_current_as_preset = save_current_as_preset,
+            update_source_preset = update_source_preset, restore_autosave = restore_autosave,
+            promote_autosave = promote_autosave, preset_lib = preset_lib,
         })
     end)
     if not reff_ok then note_error("reff", reff_err) end

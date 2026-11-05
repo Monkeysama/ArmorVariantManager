@@ -40,6 +40,7 @@ return {
         v3_imgui_pending = "这份配置已是新版(v3),目前请在 REFF 的差分管理器页面里使用。",
         autosave_before_apply = "套用「%s」前",
         autosave_before_restore = "恢复自动保存前",
+        reff_needs_migration = "这份配置还是旧版,请先在「杂项」里迁移旧配置",
         none_option = "(无)",
         overridden_by_rule = "条件规则接管",
 
@@ -258,6 +259,7 @@ return {
         v3_imgui_pending = "This config is already the new format (v3); use the Armor Variant Manager page in REFF for now.",
         autosave_before_apply = "Before applying \"%s\"",
         autosave_before_restore = "Before restoring an auto-save",
+        reff_needs_migration = "This config is still the old format; migrate it under Misc first",
         none_option = "(none)",
         overridden_by_rule = "driven by rule",
 

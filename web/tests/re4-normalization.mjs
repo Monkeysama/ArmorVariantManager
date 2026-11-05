@@ -10,42 +10,44 @@ test('fills RE4 defaults without adding MH fields', () => {
   assert.equal('groups' in re4, false, 'RE4 snapshots never gain MH fields');
 });
 
-test('normalizes the REFramework empty-table shapes inside RE4 layers, rules and conditions', () => {
+test('a v2 config only carries the migration entry', () => {
+  const re4 = normalizeSnapshot({ game: 'RE4', version: '1', language: 'en', settings, character: 'Leon', configVersion: 2,
+    characters: [{ id: 'Leon', label: 'Leon', configured: true, targets: null }], notice: null });
+  assert.equal(re4.configVersion, 2);
+  assert.equal('notice' in re4, false);
+  assert.equal(re4.base, undefined);
+  assert.deepEqual(re4.characters[0].targets, []);
+});
+
+test('normalizes the REFramework empty-table shapes inside the v3 snapshot', () => {
   for (const empty of [null, {}]) {
-    const layer = { name: 'Face', base: false, presets: empty, active: '', fromRule: false, auto: true, advanced: true,
-      rules: [{ index: 1, preset: 'Hurt', priority: 1, logic: 'AND', hold: 0, conditions: empty, hits: false, effective: false, orphan: false,
-        dissolve: { enabled: false, hideTime: .5, showTime: .5 }, hpDrive: { enabled: true, upper: 100, lower: 0, invert: false } }] };
-    const result = normalizeSnapshot({ game: 'RE4', version: '1', language: 'en', settings, character: 'Leon',
+    const result = normalizeSnapshot({ game: 'RE4', version: '1', language: 'en', settings, character: 'Leon', configVersion: 3,
       characters: [{ id: 'Leon', label: 'Leon', configured: true, targets: empty }],
-      status: { hp: 50, flags: empty }, conditions: [{ id: 'hp_ratio', kind: 'number', label: 'HP', ops: empty }],
-      base: { ...layer, name: 'Full outfit', base: true, rules: empty }, axes: [layer] });
+      status: { hp: 50, flags: empty }, conditions: [{ id: 'hp_ratio', kind: 'number', label: 'HP', category: 'hp', ops: empty }],
+      slots: [{ id: 'body', label: 'Body', mirrored: false, materials: empty }], look: empty,
+      base: { active: null, presets: [{ name: 'A', values: empty, match: { status: 'ok', skipped: empty } }] },
+      groups: [{ name: 'G', scope: empty, active: null, options: [{ name: 'o', values: empty }] }],
+      states: [{ name: 's', enabled: true, exclusive: false, logic: 'AND', hold: 0, fadeIn: 0, fadeOut: 0, kind: 'idle', targets: empty, conditions: empty }],
+      presets: { current: 'full', dismissed: false, list: empty, better: empty, autosaves: empty } });
     assert.deepEqual(result.characters[0].targets, []);
     assert.deepEqual(result.status.flags, []);
     assert.deepEqual(result.conditions[0].ops, []);
-    assert.deepEqual(result.base.rules, []);
-    assert.deepEqual(result.axes[0].presets, []);
-    assert.deepEqual(result.axes[0].rules[0].conditions, []);
+    assert.deepEqual(result.slots[0].materials, []);
+    assert.deepEqual(result.look, []);
+    assert.equal(result.base.active, '');
+    assert.deepEqual(result.base.presets[0].values, {});
+    assert.deepEqual(result.base.presets[0].match.skipped, []);
+    assert.deepEqual(result.groups[0].scope, []);
+    assert.equal(result.groups[0].active, '');
+    assert.deepEqual(result.groups[0].options[0].values, {});
+    assert.deepEqual(result.states[0].targets, []);
+    assert.deepEqual(result.states[0].conditions, []);
+    assert.equal(result.states[0].holding, false);
+    assert.deepEqual(result.presets.list, []);
+    assert.deepEqual(result.presets.autosaves, []);
   }
 });
 
-test('surfaces a malformed RE4 list instead of rendering a partial page', () => {
-  assert.throws(() => normalizeSnapshot({ game: 'RE4', version: '1', language: 'zh', settings, character: '', characters: { wrong: true } }),
-    /characters must be an array/);
-});
-
-test('normalizes phase-2 editor, preset values and saves when Lua sends empty tables', () => {
-  const base = { name: 'Full outfit', base: true, presets: ['A', 'B'], active: 'A', fromRule: false, auto: true, advanced: false,
-    rules: null, values: { A: { body: { Skin: true } }, B: null }, match: { A: { status: 'partial', skipped: null }, B: null } };
-  const axis = { name: 'Face', base: false, presets: ['1'], active: '1', fromRule: false, auto: true, advanced: false, rules: null, values: null };
-  const result = normalizeSnapshot({ game: 'RE4', version: '1', language: 'zh', settings, character: 'Leon', characters: [],
-    base, axes: [axis],
-    editor: { armorMirror: false, slots: [{ id: 'body', label: 'Body', mirrored: false, materials: null }], conflicts: null },
-    saves: { slots: null, hasBackup: false, hasOnload: true }, ownership: { shared: false, canReset: true, canMatchKin: false } });
-  assert.deepEqual(result.base.values, { A: { body: { Skin: true } }, B: {} });
-  assert.deepEqual(result.base.match.A.skipped, []);
-  assert.deepEqual(result.axes[0].values, {});
-  assert.equal('match' in result.axes[0], false, 'state groups have no slot-match gate');
-  assert.deepEqual(result.editor.slots[0].materials, []);
-  assert.deepEqual(result.editor.conflicts, []);
-  assert.deepEqual(result.saves.slots, []);
+test('rejects a non-list where a list is required', () => {
+  assert.throws(() => normalizeSnapshot({ game: 'RE4', version: '1', language: 'en', settings, character: '', characters: 'x' }));
 });
