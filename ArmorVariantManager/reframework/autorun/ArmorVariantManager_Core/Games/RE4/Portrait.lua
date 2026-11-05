@@ -35,6 +35,47 @@ function Portrait.settings(value)
     return { distance = num(value.distance, 3.0, 1.2, 8.0), height = num(value.height, 0.0, -1.0, 1.0) }
 end
 
+-- 网页上预览区的鼠标交互(滚轮缩放 / 左键平移 / 右键旋转)给出的相机参数。
+--   yaw   绕角色竖轴转(弧度,0 = 正面)        pitch 俯仰(弧度,正 = 从上往下看)
+--   zoom  放大倍数(1 = 竖向正好容纳约 1.95 m)  pan_x / pan_y 目标点在画面里的平移(米)
+local CAMERA_DEFAULT = { yaw = 0.0, pitch = 0.0, zoom = 1.0, pan_x = 0.0, pan_y = 0.0 }
+function Portrait.camera(value)
+    value = type(value) == "table" and value or {}
+    local function num(v, d, lo, hi)
+        v = tonumber(v)
+        if not v or v ~= v or v == math.huge or v == -math.huge then v = d end
+        return math.max(lo, math.min(hi, v)) + 0.0
+    end
+    local yaw = num(value.yaw, 0, -1e6, 1e6)
+    yaw = (yaw + math.pi) % (2 * math.pi) - math.pi
+    return { yaw = yaw, pitch = num(value.pitch, 0, -1.2, 1.2), zoom = num(value.zoom, 1, 0.5, 8),
+        pan_x = num(value.pan_x, 0, -2, 2), pan_y = num(value.pan_y, 0, -2, 2) }
+end
+
+-- 相机在角色根节点本地空间里的姿态(纯函数,便于离线测试)。
+-- 根节点 +Z 朝前、+Y 朝上;相机本身沿本地 -Z 看。旋转 = 绕 Y 转 yaw,再绕 X 转 -pitch,
+-- 四元数按 Quaternion.new(w, x, y, z)(同 Wilds 的 PortraitCamera)。
+-- distance 只决定透视(背景多少);人物大小由 zoom 决定:竖向可见高度 = 1.95 m / zoom。
+-- aspect = 槽位宽 / 高;DLL 等比裁切,槽位比 rtex 扁时裁上下,这时放大竖向视角补回来。
+function Portrait.pose(settings, camera, aspect, rtex_aspect)
+    local d, c = settings.distance, camera
+    local cy, sy = math.cos(c.yaw), math.sin(c.yaw)
+    local cp, sp = math.cos(c.pitch), math.sin(c.pitch)
+    local right = { cy, 0.0, -sy }
+    local up = { -sp * sy, cp, -sp * cy }
+    local back = { cp * sy, sp, cp * cy }
+    local target = { 0.0, 0.95 + settings.height, 0.0 }
+    for i = 1, 3 do target[i] = target[i] + right[i] * c.pan_x + up[i] * c.pan_y end
+    local pos = { target[1] + back[1] * d, target[2] + back[2] * d, target[3] + back[3] * d }
+    local hy, hx = math.cos(c.yaw * 0.5), math.sin(c.yaw * 0.5)
+    local hp, hq = math.cos(-c.pitch * 0.5), math.sin(-c.pitch * 0.5)
+    local rot = { hy * hp, hy * hq, hx * hp, -hx * hq }
+    local half = math.atan(0.975 / c.zoom / d)
+    local ratio = (rtex_aspect or aspect) / aspect
+    if ratio < 1 then half = math.atan(math.tan(half) / ratio) end
+    return { pos = pos, rot = rot, fov = math.deg(half * 2), far = d + 4.0 }
+end
+
 -- deps = { settings() -> { enabled, distance, height }, player() -> { root = 玩家根 Transform, meshes = { Mesh... } } | nil,
 --          should_show() -> bool, log(msg), clock, bridge() -> 原生接口表 }
 function Portrait.new(deps)
@@ -155,20 +196,16 @@ function Portrait.new(deps)
             R.attached, R.pose = root:get_address(), nil
         end
         local aspect = rect and rect.w > 0 and rect.h > 0 and rect.w / rect.h or ASPECT
-        local key = string.format("%g|%g|%g", settings.distance, settings.height, aspect)
+        local camera = Portrait.camera(deps.camera and deps.camera() or nil)
+        local key = string.format("%g|%g|%g|%g|%g|%g|%g|%g", settings.distance, settings.height, aspect,
+            camera.yaw, camera.pitch, camera.zoom, camera.pan_x, camera.pan_y)
         if R.pose == key then return end
-        -- 根节点 +Z 朝前、+Y 朝上:相机放在角色前方,沿本地 -Z 看回来
-        local center = 0.95 + settings.height
-        R.tr:call("set_LocalPosition", Vector3f.new(0.0, center, settings.distance))
-        R.tr:call("set_LocalRotation", Quaternion.new(1.0, 0.0, 0.0, 0.0))
-        -- 竖向容纳约 1.95 m。DLL 等比裁切:槽位比 rtex 窄时裁左右(竖向不变);
-        -- 槽位比 rtex 扁时裁上下,这时才需要放大竖向视角,裁完仍是这个高度
-        local half = math.atan(0.975 / settings.distance)
-        local ratio = ASPECT / aspect
-        if ratio < 1 then half = math.atan(math.tan(half) / ratio) end
-        R.cam:call("set_FOV", math.deg(half * 2) + 0.0)
-        R.cam:call("set_NearClipPlane", 0.1)
-        R.cam:call("set_FarClipPlane", settings.distance + 4.0)
+        local pose = Portrait.pose(settings, camera, aspect, ASPECT)
+        R.tr:call("set_LocalPosition", Vector3f.new(pose.pos[1], pose.pos[2], pose.pos[3]))
+        R.tr:call("set_LocalRotation", Quaternion.new(pose.rot[1], pose.rot[2], pose.rot[3], pose.rot[4]))
+        R.cam:call("set_FOV", pose.fov + 0.0)
+        R.cam:call("set_NearClipPlane", 0.05)
+        R.cam:call("set_FarClipPlane", pose.far + 0.0)
         R.pose = key
     end
     local function props_of(obj, skip)
@@ -331,12 +368,14 @@ end
 function Portrait.connect(deps)
     local clock = deps.clock or os.clock
     local deadline = 0
+    local camera = Portrait.camera(nil)   -- 网页上鼠标交互给的相机参数,只在内存里,重载脚本即复位
     local function reff_visible()
         local native = rawget(_G, "reff_native")
         return native and native.is_visible and native.is_visible() == true
     end
     local preview = Portrait.new({
         settings = deps.settings, player = deps.player, log = deps.log, clock = clock, bridge = deps.bridge,
+        camera = function() return camera end,
         should_show = function() return deadline > clock() and reff_visible() end,
     })
     local web = {}
@@ -346,6 +385,7 @@ function Portrait.connect(deps)
     end
     function web.action(request)
         assert(type(request) == "table" and type(request.visible) == "boolean", "invalid preview request")
+        if type(request.camera) == "table" then camera = Portrait.camera(request.camera) end
         if request.visible and reff_visible() and preview.reff_available() then
             deadline = clock() + 0.5
             preview.set_rectangle({ x = 0, y = 0, w = tonumber(request.width) or 330, h = tonumber(request.height) or 360 })

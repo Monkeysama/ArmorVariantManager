@@ -26,6 +26,7 @@ sync_main_release.py
 !/tests/re4_dissolve.lua
 !/tests/re4_targets.lua
 !/tests/re4_input_guard.lua
+!/tests/re4_portrait_camera.lua
 !/tests/reff_bridge.lua
 !/tests/reff_conditions.lua
 !/tests/reff_settings.lua
