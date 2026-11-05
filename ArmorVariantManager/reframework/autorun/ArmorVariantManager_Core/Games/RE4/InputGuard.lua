@@ -122,24 +122,35 @@ function InputGuard.install(active, logger)
         if not ok_hook then warn("[AVM] InputGuard: hook share.hid.Device.update failed: " .. tostring(err)) end
     end
 
-    -- 2. 光标模式:saved 不为 nil 表示由我们接管着
+    -- 2. 光标模式:saved 不为 nil 表示我们在保持光标;saved.joined = 别的面板先接管了,我们只帮着保持、不负责还原。
+    --
+    -- 不能像以前那样"有别的面板在屏蔽就让给它":SKS 的规则是"有别的面板在屏蔽就不接管",
+    -- 两边同一帧都登记了屏蔽、又都还没接管时,谁也不切绝对模式,引擎就一直把光标拉回中间
+    -- (2026-11-05 用户在调色页拖滑条时遇到,时好时坏)。所以按光标的实际状态判断:
+    --   已经是绝对模式 → 别人接管了,我们 joined;还是相对模式 → 没人接管,我们接管并记下原值。
     local saved = nil
     local function release_cursor()
-        if other_panel() and not saved then return end
         pcall(function()
             if not saved then
                 -- 注意别写成 `type(x) == "boolean" and x or nil`:x 为 false 时会得到 nil
                 local absolute, clip = mouse("get_AbsoluteMode()"), mouse("get_ClipCursorToScreen()")
-                saved = {}
-                if type(absolute) == "boolean" then saved.absolute = absolute end
-                if type(clip) == "boolean" then saved.clip = clip end
+                if other_panel() and absolute == true then
+                    saved = { joined = true }
+                else
+                    saved = {}
+                    if type(absolute) == "boolean" then saved.absolute = absolute end
+                    if type(clip) == "boolean" then saved.clip = clip end
+                end
             end
-            if saved.absolute ~= nil and mouse("get_AbsoluteMode()") ~= true then mouse("set_AbsoluteMode(System.Boolean)", true) end
-            if saved.clip ~= nil and mouse("get_ClipCursorToScreen()") ~= false then mouse("set_ClipCursorToScreen(System.Boolean)", false) end
+            if (saved.joined or saved.absolute ~= nil) and mouse("get_AbsoluteMode()") ~= true then mouse("set_AbsoluteMode(System.Boolean)", true) end
+            if (saved.joined or saved.clip ~= nil) and mouse("get_ClipCursorToScreen()") ~= false then mouse("set_ClipCursorToScreen(System.Boolean)", false) end
         end)
     end
     local function restore_cursor()
-        if not saved or other_panel() then return end
+        if not saved then return end
+        -- 别的面板接管的:原值在它那里,由它还原
+        if saved.joined then saved = nil; return end
+        if other_panel() then return end
         local state = saved
         local ok = pcall(function()
             if state.absolute ~= nil then mouse("set_AbsoluteMode(System.Boolean)", state.absolute) end

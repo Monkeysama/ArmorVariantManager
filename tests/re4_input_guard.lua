@@ -96,6 +96,28 @@ assert(mouse_state.AbsoluteMode == true, "another panel still blocking: cursor l
 _G.__AVM_UI_INPUT_BLOCKER_STATES.ShapeKeySystem = false; frame()
 assert(mouse_state.AbsoluteMode == false, "restored once the other panel is done")
 
+-- 两边同一帧都登记了屏蔽、谁都还没接管(SKS 的规则是"有别的面板屏蔽就不接管"):
+-- 以前 AVM 也让路,结果谁都不切绝对模式,引擎一直把光标拉回中间。现在没人接管时 AVM 接管
+assert(mouse_state.AbsoluteMode == false)
+_G.__AVM_UI_INPUT_BLOCKER_STATES.ShapeKeySystem = true
+visible = true; frame()
+assert(mouse_state.AbsoluteMode == true and mouse_state.ClipCursorToScreen == false, "nobody had taken over: AVM takes over despite another blocker")
+_G.__AVM_UI_INPUT_BLOCKER_STATES.ShapeKeySystem = false
+visible = false; frame()
+assert(mouse_state.AbsoluteMode == false and mouse_state.ClipCursorToScreen == true, "AVM restores what it recorded")
+
+-- 别的面板先接管了(光标已是绝对模式):AVM 只帮着保持,不记原值、不还原,留给接管的那个面板
+mouse_state.AbsoluteMode, mouse_state.ClipCursorToScreen = true, false   -- SKS 已经切过
+_G.__AVM_UI_INPUT_BLOCKER_STATES.ShapeKeySystem = true
+visible = true; frame()
+mouse_state.AbsoluteMode = false; frame()     -- 引擎改回相对模式:AVM 也会拉回来
+assert(mouse_state.AbsoluteMode == true, "joined: still holds absolute mode")
+visible = false; frame()
+assert(mouse_state.AbsoluteMode == true, "joined: AVM does not restore, the other panel does")
+_G.__AVM_UI_INPUT_BLOCKER_STATES.ShapeKeySystem = false; frame()
+assert(mouse_state.AbsoluteMode == true, "joined: even after the other panel is done, AVM leaves the restore to it")
+mouse_state.AbsoluteMode, mouse_state.ClipCursorToScreen = false, true   -- SKS 自己还原
+
 -- 重载脚本时还原
 visible = true; frame()
 for _, f in ipairs(resets) do f() end
