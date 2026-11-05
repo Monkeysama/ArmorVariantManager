@@ -44,6 +44,9 @@ const paletteProfile: Re4PaletteProfile = {
       { param: 'LIL_RimParam2', component: 'x', kind: 'enum', enum: 'blend', label: { zh: '混合模式' } },
       { param: 'LIL_Switch', component: 'x', kind: 'bool', label: { zh: '总开关' } },
       { param: 'LIL_MatCapST', kind: 'vec', labels: { zh: ['缩放 U', '缩放 V', '偏移 U', '偏移 V'] }, label: { zh: 'UV 缩放 / 偏移' } }] },
+    { id: 'shadow_other', tier: 'other', section: 'light', label: { zh: '阴影' }, params: [
+      { param: 'LIL_ShadowParam2', component: 'x', kind: 'float', min: 0, max: 1, tier: 'other', label: { zh: '阴影接收（LIL_ShadowParam2）' } },
+      { param: 'LIL_ShadowParam2', component: 'y', kind: 'float', min: 0, max: 1, tier: 'other', label: { zh: 'SSS_Channel' } }] },
   ],
 };
 const paletteBase = (slot: string): Record<string, Re4PaletteValue> => slot === 'hair'
@@ -115,7 +118,15 @@ export function installRe4Fixture() {
     for (const [slot, mats] of Object.entries(catalog)) for (const material of mats) {
       const key = `${slot}/${material}`, ov = paletteOv[key];
       materials.push({ key, slot, material, note: config.notes[key], main: slot === 'hair' ? undefined : 'fx_toon', addons: [],
-        missing: [], generic: slot === 'hair' ? ['BaseColor', 'SpecularColor'] : undefined, overridden: ov ? Object.keys(ov).length : 0 });
+        missing: [], generic: slot === 'hair' ? ['BaseColor', 'SpecularColor'] : undefined, overridden: ov ? Object.keys(ov).length : 0,
+        // 默认贴图失效:边缘光整组(LIL_MaskMap 为黑)、第二层只有颜色(强度仍有效)
+        ineffective: slot === 'hair' ? undefined : {
+          LIL_RimColor: { comps: 'xyzw', why: [{ texture: 'LIL_MaskMap', null: 'systems/rendering/nullblack' }] },
+          LIL_RimParam2: { comps: 'xyzw', why: [{ texture: 'LIL_MaskMap', null: 'systems/rendering/nullblack' }] },
+          LIL_Switch: { comps: 'x', why: [{ texture: 'LIL_MaskMap', null: 'systems/rendering/nullblack' }] },
+          LIL_MatCapST: { comps: 'xyzw', why: [{ texture: 'LIL_MatCapMap', null: 'systems/rendering/nullblack' }] },
+          LIL_Main2ndColor: { comps: 'xyz', why: [{ texture: 'LIL_Main2nd', null: 'systems/rendering/nullblack' }] },
+        } });
       overrides[key] = ov ?? false;
       if (!paletteSel.includes(key)) continue;
       const v: Record<string, Re4PaletteValue> = JSON.parse(JSON.stringify(paletteBase(slot)));

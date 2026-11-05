@@ -60,14 +60,16 @@ export interface Re4PaletteEntry {
   param: string; kind: 'color' | 'float' | 'enum' | 'bool' | 'vec'; component?: Re4Comp; channels?: 'rgb' | 'rgba';
   min?: number; max?: number; step?: number; hard_min?: number; hard_max?: number;
   enum?: string; options?: Re4PaletteOption[]; labels?: { zh?: string[]; en?: string[] };
-  tier?: 'basic' | 'more'; label?: Re4Text; note?: Re4Text;
+  tier?: 'basic' | 'more' | 'other'; label?: Re4Text; note?: Re4Text;
 }
-export interface Re4PaletteGroup { id: string; tier: 'basic' | 'more'; section?: string; label?: Re4Text; note?: Re4Text; params: Re4PaletteEntry[] }
+export interface Re4PaletteGroup { id: string; tier: 'basic' | 'more' | 'other'; section?: string; label?: Re4Text; note?: Re4Text; params: Re4PaletteEntry[] }
 export interface Re4PaletteSection { id: string; label?: Re4Text }
 export interface Re4PaletteProfile { id: string; label: Re4Text; addon: boolean; enums: Record<string, Re4PaletteOption[]>; groups: Re4PaletteGroup[]; sections: Re4PaletteSection[] }
 export interface Re4PaletteMaterial {
   key: string; slot: string; material: string; note?: string; main?: string; addons: string[];
   missing: string[]; generic?: string[]; overridden: number;
+  // 贴图槽绑了默认(null)贴图而改了不生效的参数:comps = 失效的分量,why = 哪个槽绑了哪张 null 贴图
+  ineffective?: Record<string, { comps: string; why: { texture: string; null: string }[] }>;
 }
 // 当前值：float 是数字，float4 是 [x, y, z, w]；覆盖值：float 是数字，float4 只有改过的分量
 export type Re4PaletteValue = number | [number, number, number, number];

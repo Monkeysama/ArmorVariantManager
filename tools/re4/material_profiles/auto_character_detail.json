@@ -1,0 +1,1326 @@
+{
+  "format": 1,
+  "id": "auto_character_detail",
+  "source": "自动生成：tools/re4/gen_auto_profiles.py ← 离线材质库 library.json（_chainsaw/mastermaterial/master/character_detail.mmtr, _chainsaw/mastermaterial/master/character_detail_8weight.mmtr）",
+  "label": {
+    "zh": "原版：character_detail / character_detail_8weight",
+    "en": "Vanilla: character_detail / character_detail_8weight"
+  },
+  "priority": 10,
+  "match": {
+    "master": [
+      "_chainsaw/mastermaterial/master/character_detail.mmtr",
+      "_chainsaw/mastermaterial/master/character_detail_8weight.mmtr"
+    ]
+  },
+  "sections": [
+    {
+      "id": "color",
+      "label": {
+        "zh": "颜色层",
+        "en": "Colour layers"
+      }
+    },
+    {
+      "id": "light",
+      "label": {
+        "zh": "明暗",
+        "en": "Light and shade"
+      }
+    },
+    {
+      "id": "surface",
+      "label": {
+        "zh": "质感",
+        "en": "Surface"
+      }
+    },
+    {
+      "id": "emission",
+      "label": {
+        "zh": "发光",
+        "en": "Emission"
+      }
+    },
+    {
+      "id": "system",
+      "label": {
+        "zh": "系统",
+        "en": "System"
+      }
+    }
+  ],
+  "groups": [
+    {
+      "id": "base",
+      "section": "color",
+      "tier": "basic",
+      "label": {
+        "zh": "基础色",
+        "en": "Base colour"
+      },
+      "params": [
+        {
+          "param": "BaseColor",
+          "kind": "color",
+          "channels": "rgb",
+          "label": {
+            "zh": "基础色（主色）",
+            "en": "base colour"
+          },
+          "tier": "basic",
+          "note": {
+            "zh": "乘在 BaseDielectricMap 上；lilToon 母材质里同样是主色（lilToon 在原版反照率之上运算）",
+            "en": "乘在 BaseDielectricMap 上；lilToon 母材质里同样是主色（lilToon 在原版反照率之上运算）"
+          }
+        }
+      ]
+    },
+    {
+      "id": "detail",
+      "section": "color",
+      "tier": "basic",
+      "label": {
+        "zh": "细节贴图",
+        "en": "Detail map"
+      },
+      "params": [
+        {
+          "param": "Detail_Fade_StartEnd",
+          "component": "x",
+          "kind": "float",
+          "label": {
+            "zh": "细节淡出距离 · 起点（米）",
+            "en": "detail fade start / end · start"
+          },
+          "tier": "more",
+          "min": 0,
+          "max": null
+        },
+        {
+          "param": "Detail_Fade_StartEnd",
+          "component": "y",
+          "kind": "float",
+          "label": {
+            "zh": "细节淡出距离 · 终点（米）",
+            "en": "detail fade start / end · end"
+          },
+          "tier": "more",
+          "min": 0,
+          "max": null
+        },
+        {
+          "param": "DetailMap_Tiling_Offset",
+          "component": "x",
+          "kind": "float",
+          "label": {
+            "zh": "细节贴图 UV · 细节 U 缩放",
+            "en": "detail map tiling / offset · tiling U"
+          },
+          "tier": "more",
+          "min": 0.0,
+          "max": 100
+        },
+        {
+          "param": "DetailMap_Tiling_Offset",
+          "component": "y",
+          "kind": "float",
+          "label": {
+            "zh": "细节贴图 UV · 细节 V 缩放",
+            "en": "detail map tiling / offset · tiling V"
+          },
+          "tier": "more",
+          "min": 0.0,
+          "max": 100
+        },
+        {
+          "param": "DetailMap_Tiling_Offset",
+          "component": "z",
+          "kind": "float",
+          "label": {
+            "zh": "细节贴图 UV · 细节 U 偏移",
+            "en": "detail map tiling / offset · offset U"
+          },
+          "tier": "more",
+          "min": 0.0,
+          "max": 100
+        },
+        {
+          "param": "DetailMap_Tiling_Offset",
+          "component": "w",
+          "kind": "float",
+          "label": {
+            "zh": "细节贴图 UV · 细节 V 偏移",
+            "en": "detail map tiling / offset · offset V"
+          },
+          "tier": "more",
+          "min": 0.0,
+          "max": 100
+        },
+        {
+          "param": "MaskMap_UseSecondaryUV",
+          "kind": "bool",
+          "label": {
+            "zh": "遮罩使用第二 UV",
+            "en": "mask uses UV2"
+          },
+          "tier": "basic"
+        },
+        {
+          "param": "BaseDetail_TilingScale",
+          "kind": "float",
+          "min": 0.0,
+          "max": 2,
+          "label": {
+            "zh": "基础细节缩放",
+            "en": "BaseDetail_TilingScale"
+          },
+          "tier": "more"
+        },
+        {
+          "param": "DetailMap_Level",
+          "kind": "float",
+          "min": 0.0,
+          "max": 2,
+          "label": {
+            "zh": "细节贴图层号（数组索引）",
+            "en": "DetailMap_Level"
+          },
+          "tier": "more"
+        },
+        {
+          "param": "DetailColorIntensity",
+          "kind": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "label": {
+            "zh": "细节颜色强度",
+            "en": "DetailColorIntensity"
+          },
+          "tier": "more"
+        },
+        {
+          "param": "DetailColorBalance",
+          "kind": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "label": {
+            "zh": "细节颜色平衡",
+            "en": "DetailColorBalance"
+          },
+          "tier": "more"
+        },
+        {
+          "param": "DetailColorInvert",
+          "kind": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "label": {
+            "zh": "细节颜色反转",
+            "en": "DetailColorInvert"
+          },
+          "tier": "more"
+        },
+        {
+          "param": "DetailColorAddContrast",
+          "kind": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "label": {
+            "zh": "细节颜色对比度",
+            "en": "DetailColorAddContrast"
+          },
+          "tier": "more"
+        },
+        {
+          "param": "Detail_NormalBlend",
+          "kind": "float",
+          "min": 0.0,
+          "max": 2,
+          "label": {
+            "zh": "细节法线混合",
+            "en": "Detail_NormalBlend"
+          },
+          "tier": "more"
+        },
+        {
+          "param": "Detail_RoughnessBlend",
+          "kind": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "label": {
+            "zh": "细节粗糙度混合",
+            "en": "Detail_RoughnessBlend"
+          },
+          "tier": "more"
+        },
+        {
+          "param": "Detail_Cavity",
+          "kind": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "label": {
+            "zh": "细节腔隙",
+            "en": "Detail_Cavity"
+          },
+          "tier": "more"
+        }
+      ]
+    },
+    {
+      "id": "record_other",
+      "section": "color",
+      "tier": "other",
+      "label": {
+        "zh": "血迹 / 污渍 / 伤痕（记录系统）",
+        "en": "Blood / stain / injury (record system)"
+      },
+      "params": [
+        {
+          "param": "Rec_RTTChannelControl",
+          "component": "x",
+          "kind": "float",
+          "label": {
+            "zh": "Rec_RTTChannelControl · X",
+            "en": "Rec_RTTChannelControl · R"
+          },
+          "tier": "other",
+          "min": 0,
+          "max": 1
+        },
+        {
+          "param": "Rec_RTTChannelControl",
+          "component": "y",
+          "kind": "float",
+          "label": {
+            "zh": "Rec_RTTChannelControl · Y",
+            "en": "Rec_RTTChannelControl · G"
+          },
+          "tier": "other",
+          "min": 0,
+          "max": 1
+        },
+        {
+          "param": "Rec_RTTChannelControl",
+          "component": "z",
+          "kind": "float",
+          "label": {
+            "zh": "Rec_RTTChannelControl · Z",
+            "en": "Rec_RTTChannelControl · B"
+          },
+          "tier": "other",
+          "min": 0,
+          "max": 1
+        },
+        {
+          "param": "Rec_RTTChannelControl",
+          "component": "w",
+          "kind": "float",
+          "label": {
+            "zh": "Rec_RTTChannelControl · W",
+            "en": "Rec_RTTChannelControl · A"
+          },
+          "tier": "other",
+          "min": 0,
+          "max": 1
+        }
+      ]
+    },
+    {
+      "id": "record",
+      "section": "color",
+      "tier": "basic",
+      "label": {
+        "zh": "血迹 / 污渍 / 伤痕（记录系统）",
+        "en": "Blood / stain / injury (record system)"
+      },
+      "params": [
+        {
+          "param": "BloodColor",
+          "kind": "color",
+          "channels": "rgb",
+          "label": {
+            "zh": "血迹颜色",
+            "en": "blood colour"
+          },
+          "tier": "basic"
+        },
+        {
+          "param": "StainColor",
+          "kind": "color",
+          "channels": "rgb",
+          "label": {
+            "zh": "污渍颜色",
+            "en": "stain colour"
+          },
+          "tier": "basic"
+        },
+        {
+          "param": "UseRecode",
+          "kind": "bool",
+          "label": {
+            "zh": "记录系统开关（血迹 / 污渍 / 伤痕）",
+            "en": "record system"
+          },
+          "tier": "basic"
+        },
+        {
+          "param": "Rec_use_SecondaryUV",
+          "kind": "bool",
+          "label": {
+            "zh": "记录使用第二 UV",
+            "en": "Rec_use_SecondaryUV"
+          },
+          "tier": "basic"
+        },
+        {
+          "param": "BloodMask_Use_SecondaryUV",
+          "kind": "bool",
+          "label": {
+            "zh": "血迹遮罩使用第二 UV",
+            "en": "BloodMask_Use_SecondaryUV"
+          },
+          "tier": "basic"
+        },
+        {
+          "param": "BloodMask_Rate_0",
+          "kind": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "label": {
+            "zh": "血迹遮罩进度 0",
+            "en": "BloodMask_Rate_0"
+          },
+          "tier": "more"
+        },
+        {
+          "param": "BloodMask_Rate_1",
+          "kind": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "label": {
+            "zh": "血迹遮罩进度 1",
+            "en": "BloodMask_Rate_1"
+          },
+          "tier": "more"
+        },
+        {
+          "param": "BloodMask_Rate_2",
+          "kind": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "label": {
+            "zh": "血迹遮罩进度 2",
+            "en": "BloodMask_Rate_2"
+          },
+          "tier": "more"
+        },
+        {
+          "param": "BloodMask_Rate_3",
+          "kind": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "label": {
+            "zh": "血迹遮罩进度 3",
+            "en": "BloodMask_Rate_3"
+          },
+          "tier": "more"
+        },
+        {
+          "param": "Blood_DarkMask_min",
+          "kind": "float",
+          "min": 0.0,
+          "max": 2,
+          "label": {
+            "zh": "血迹暗部下限",
+            "en": "Blood_DarkMask_min"
+          },
+          "tier": "more"
+        },
+        {
+          "param": "Blood_DarkMask_max",
+          "kind": "float",
+          "min": 0.0,
+          "max": 2,
+          "label": {
+            "zh": "血迹暗部上限",
+            "en": "Blood_DarkMask_max"
+          },
+          "tier": "more"
+        },
+        {
+          "param": "Blood_unevenness",
+          "kind": "float",
+          "min": 0.0,
+          "max": 2,
+          "label": {
+            "zh": "血迹不均匀度",
+            "en": "Blood_unevenness"
+          },
+          "tier": "more"
+        },
+        {
+          "param": "Blood_NormalBlendRate",
+          "kind": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "label": {
+            "zh": "血迹法线混合",
+            "en": "Blood_NormalBlendRate"
+          },
+          "tier": "more"
+        },
+        {
+          "param": "BloodFlow_BlurRate",
+          "kind": "float",
+          "min": 0.0,
+          "max": 200,
+          "label": {
+            "zh": "血流模糊",
+            "en": "BloodFlow_BlurRate"
+          },
+          "tier": "more"
+        },
+        {
+          "param": "BloodFlow_min",
+          "kind": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "label": {
+            "zh": "血流下限",
+            "en": "BloodFlow_min"
+          },
+          "tier": "more"
+        },
+        {
+          "param": "BloodFlow_max",
+          "kind": "float",
+          "min": 0.0,
+          "max": 2,
+          "label": {
+            "zh": "血流上限",
+            "en": "BloodFlow_max"
+          },
+          "tier": "more"
+        },
+        {
+          "param": "Injury_uvScale",
+          "kind": "float",
+          "min": 0.0,
+          "max": 8,
+          "label": {
+            "zh": "伤痕 UV 缩放",
+            "en": "Injury_uvScale"
+          },
+          "tier": "more"
+        },
+        {
+          "param": "Injury_NormalHaightRange",
+          "kind": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "label": {
+            "zh": "伤痕法线高度范围",
+            "en": "Injury_NormalHaightRange"
+          },
+          "tier": "more"
+        },
+        {
+          "param": "Scar_BrackRate",
+          "kind": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "label": {
+            "zh": "伤疤变暗",
+            "en": "Scar_BrackRate"
+          },
+          "tier": "more"
+        },
+        {
+          "param": "Stain_uvScale",
+          "kind": "float",
+          "min": 0.0,
+          "max": 6,
+          "label": {
+            "zh": "污渍 UV 缩放",
+            "en": "Stain_uvScale"
+          },
+          "tier": "more"
+        },
+        {
+          "param": "Cloth_ON",
+          "kind": "bool",
+          "label": {
+            "zh": "布料模式",
+            "en": "Cloth_ON"
+          },
+          "tier": "basic"
+        },
+        {
+          "param": "use_DamagemaskON",
+          "kind": "bool",
+          "label": {
+            "zh": "损伤遮罩开关",
+            "en": "use_DamagemaskON"
+          },
+          "tier": "basic"
+        },
+        {
+          "param": "use_Damagemask_SecondaryUV",
+          "kind": "bool",
+          "label": {
+            "zh": "损伤遮罩使用第二 UV",
+            "en": "use_Damagemask_SecondaryUV"
+          },
+          "tier": "basic"
+        },
+        {
+          "param": "BloodIntensity",
+          "kind": "float",
+          "min": 0.0,
+          "max": 2,
+          "label": {
+            "zh": "血迹强度",
+            "en": "BloodIntensity"
+          },
+          "tier": "more"
+        },
+        {
+          "param": "BloodMask_Index",
+          "kind": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "label": {
+            "zh": "血迹遮罩索引",
+            "en": "BloodMask_Index"
+          },
+          "tier": "more"
+        },
+        {
+          "param": "BloodMask_Channel",
+          "kind": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "label": {
+            "zh": "血迹遮罩通道",
+            "en": "BloodMask_Channel"
+          },
+          "tier": "more"
+        },
+        {
+          "param": "BloodRoughness_Offset",
+          "kind": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "label": {
+            "zh": "血迹粗糙度偏移",
+            "en": "BloodRoughness_Offset"
+          },
+          "tier": "more"
+        },
+        {
+          "param": "BloodRoughness_Scaling",
+          "kind": "float",
+          "min": 0.0,
+          "max": 10,
+          "label": {
+            "zh": "血迹粗糙度缩放",
+            "en": "BloodRoughness_Scaling"
+          },
+          "tier": "more"
+        },
+        {
+          "param": "StainIntensity",
+          "kind": "float",
+          "min": 0.0,
+          "max": 2,
+          "label": {
+            "zh": "污渍强度",
+            "en": "StainIntensity"
+          },
+          "tier": "more"
+        },
+        {
+          "param": "StainMask_Index",
+          "kind": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "label": {
+            "zh": "污渍遮罩索引",
+            "en": "StainMask_Index"
+          },
+          "tier": "more"
+        },
+        {
+          "param": "StainMask_Channel",
+          "kind": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "label": {
+            "zh": "污渍遮罩通道",
+            "en": "StainMask_Channel"
+          },
+          "tier": "more"
+        },
+        {
+          "param": "StainRoughness",
+          "kind": "float",
+          "min": 0.0,
+          "max": 2,
+          "label": {
+            "zh": "污渍粗糙度",
+            "en": "StainRoughness"
+          },
+          "tier": "more"
+        },
+        {
+          "param": "Rec_Cloth",
+          "kind": "bool",
+          "label": {
+            "zh": "记录布料",
+            "en": "Rec_Cloth"
+          },
+          "tier": "basic"
+        }
+      ]
+    },
+    {
+      "id": "scar",
+      "section": "color",
+      "tier": "more",
+      "label": {
+        "zh": "伤疤细节",
+        "en": "Scar detail"
+      },
+      "params": [
+        {
+          "param": "ScarDetail_ON",
+          "kind": "bool",
+          "label": {
+            "zh": "伤疤细节开关",
+            "en": "ScarDetail_ON"
+          },
+          "tier": "basic"
+        }
+      ]
+    },
+    {
+      "id": "scar_other",
+      "section": "color",
+      "tier": "other",
+      "label": {
+        "zh": "伤疤细节",
+        "en": "Scar detail"
+      },
+      "params": [
+        {
+          "param": "ScarDetail_Scale",
+          "kind": "float",
+          "min": 0.0,
+          "max": 9,
+          "label": {
+            "zh": "伤疤缩放（ScarDetail_Scale）",
+            "en": "ScarDetail_Scale"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "ScarDetail_NormalRate",
+          "kind": "float",
+          "min": 0.0,
+          "max": 2,
+          "label": {
+            "zh": "伤疤法线强度（ScarDetail_NormalRate）",
+            "en": "ScarDetail_NormalRate"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "ScarDetail_BloodRoughness",
+          "kind": "float",
+          "min": 0.0,
+          "max": 2,
+          "label": {
+            "zh": "伤疤血迹粗糙度（ScarDetail_BloodRoughness）",
+            "en": "ScarDetail_BloodRoughness"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "ScarDetail_Shadow",
+          "kind": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "label": {
+            "zh": "伤疤阴影（ScarDetail_Shadow）",
+            "en": "ScarDetail_Shadow"
+          },
+          "tier": "other"
+        }
+      ]
+    },
+    {
+      "id": "native_rim",
+      "section": "light",
+      "tier": "basic",
+      "label": {
+        "zh": "原版边缘光",
+        "en": "Native rim colour"
+      },
+      "params": [
+        {
+          "param": "RimColor",
+          "kind": "color",
+          "channels": "rgb",
+          "label": {
+            "zh": "原版边缘光颜色",
+            "en": "native rim colour"
+          },
+          "tier": "basic"
+        },
+        {
+          "param": "RimColorIntensity",
+          "kind": "bool",
+          "label": {
+            "zh": "原版边缘光强度（0 = 关）",
+            "en": "rim intensity"
+          },
+          "tier": "basic"
+        },
+        {
+          "param": "RimColorPow",
+          "kind": "float",
+          "min": 0,
+          "max": null,
+          "label": {
+            "zh": "原版边缘光幂",
+            "en": "rim power"
+          },
+          "tier": "more"
+        }
+      ]
+    },
+    {
+      "id": "fresnel_other",
+      "section": "light",
+      "tier": "other",
+      "label": {
+        "zh": "菲涅尔 / 边缘光（原版）",
+        "en": "Fresnel / rim (native)"
+      },
+      "params": [
+        {
+          "param": "Rim_Translucency",
+          "kind": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "label": {
+            "zh": "边缘透光（Rim_Translucency）",
+            "en": "Rim_Translucency"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "Rim_Translucency_Grad",
+          "kind": "float",
+          "min": 0.0,
+          "max": 4,
+          "label": {
+            "zh": "边缘透光渐变（Rim_Translucency_Grad）",
+            "en": "Rim_Translucency_Grad"
+          },
+          "tier": "other"
+        }
+      ]
+    },
+    {
+      "id": "native_rim_other",
+      "section": "light",
+      "tier": "other",
+      "label": {
+        "zh": "原版边缘光",
+        "en": "Native rim colour"
+      },
+      "params": [
+        {
+          "param": "RimColorDetail",
+          "kind": "float",
+          "min": 0,
+          "max": 1,
+          "label": {
+            "zh": "RimColorDetail",
+            "en": "RimColorDetail"
+          },
+          "tier": "other"
+        }
+      ]
+    },
+    {
+      "id": "velvet",
+      "section": "light",
+      "tier": "more",
+      "label": {
+        "zh": "天鹅绒",
+        "en": "Velvet"
+      },
+      "params": [
+        {
+          "param": "Velvet_Enable",
+          "kind": "bool",
+          "label": {
+            "zh": "天鹅绒开关",
+            "en": "velvet enable"
+          },
+          "tier": "basic"
+        },
+        {
+          "param": "Velvet_ShadingIntensity",
+          "kind": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "label": {
+            "zh": "天鹅绒明暗强度",
+            "en": "Velvet_ShadingIntensity"
+          },
+          "tier": "more"
+        },
+        {
+          "param": "Velvet_ShadingPow",
+          "kind": "float",
+          "min": 0.0,
+          "max": 4,
+          "label": {
+            "zh": "天鹅绒明暗幂",
+            "en": "Velvet_ShadingPow"
+          },
+          "tier": "more"
+        },
+        {
+          "param": "Velvet_ShadingBiasPow",
+          "kind": "float",
+          "min": 0.0,
+          "max": 8,
+          "label": {
+            "zh": "天鹅绒偏移幂",
+            "en": "Velvet_ShadingBiasPow"
+          },
+          "tier": "more"
+        },
+        {
+          "param": "Velvet_RimColorIntensity",
+          "kind": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "label": {
+            "zh": "天鹅绒边缘强度",
+            "en": "Velvet_RimColorIntensity"
+          },
+          "tier": "more"
+        },
+        {
+          "param": "Velvet_RimColorPow",
+          "kind": "float",
+          "min": 0.0,
+          "max": 8,
+          "label": {
+            "zh": "天鹅绒边缘幂",
+            "en": "Velvet_RimColorPow"
+          },
+          "tier": "more"
+        },
+        {
+          "param": "Velvet_DetailNormal",
+          "kind": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "label": {
+            "zh": "天鹅绒细节法线",
+            "en": "Velvet_DetailNormal"
+          },
+          "tier": "more"
+        }
+      ]
+    },
+    {
+      "id": "surface",
+      "section": "surface",
+      "tier": "more",
+      "label": {
+        "zh": "表面（粗糙度 / 金属 / 透光）",
+        "en": "Surface (roughness / metal / translucency)"
+      },
+      "params": [
+        {
+          "param": "OcclusionMap_UseSecondaryUV",
+          "kind": "bool",
+          "label": {
+            "zh": "AO 使用第二 UV",
+            "en": "occlusion uses UV2"
+          },
+          "tier": "basic"
+        },
+        {
+          "param": "Metallic",
+          "kind": "float",
+          "min": 0,
+          "max": 1,
+          "label": {
+            "zh": "金属度",
+            "en": "metallic"
+          },
+          "tier": "more",
+          "note": {
+            "zh": "金属 = Metallic × (1 - BaseDielectricMap.A)（推断）",
+            "en": "金属 = Metallic × (1 - BaseDielectricMap.A)（推断）"
+          }
+        },
+        {
+          "param": "Roughness",
+          "kind": "float",
+          "min": 0,
+          "max": 1,
+          "label": {
+            "zh": "粗糙度",
+            "en": "roughness"
+          },
+          "tier": "more"
+        },
+        {
+          "param": "Translucency",
+          "kind": "float",
+          "min": 0,
+          "max": 1,
+          "label": {
+            "zh": "透光度",
+            "en": "translucency"
+          },
+          "tier": "more"
+        },
+        {
+          "param": "Cavity",
+          "kind": "float",
+          "min": 0,
+          "max": 1,
+          "label": {
+            "zh": "腔隙（Cavity）强度",
+            "en": "cavity"
+          },
+          "tier": "more"
+        },
+        {
+          "param": "Sheen",
+          "kind": "float",
+          "min": 0,
+          "max": 1,
+          "label": {
+            "zh": "光泽（Sheen）",
+            "en": "sheen"
+          },
+          "tier": "more",
+          "note": {
+            "zh": "写入 RT0；lilToon 母材质必须保持 0（RT0 被自发光占用）",
+            "en": "写入 RT0；lilToon 母材质必须保持 0（RT0 被自发光占用）"
+          }
+        }
+      ]
+    },
+    {
+      "id": "surface_other",
+      "section": "surface",
+      "tier": "other",
+      "label": {
+        "zh": "表面（粗糙度 / 金属 / 透光）",
+        "en": "Surface (roughness / metal / translucency)"
+      },
+      "params": [
+        {
+          "param": "SSSChannel",
+          "kind": "float",
+          "min": 0,
+          "max": null,
+          "label": {
+            "zh": "SSSChannel",
+            "en": "SSSChannel"
+          },
+          "tier": "other"
+        }
+      ]
+    },
+    {
+      "id": "alpha",
+      "section": "surface",
+      "tier": "more",
+      "label": {
+        "zh": "透明 / Alpha 测试",
+        "en": "Alpha / alpha test"
+      },
+      "params": [
+        {
+          "param": "AlphaTestRef",
+          "kind": "float",
+          "min": 0,
+          "max": 1,
+          "label": {
+            "zh": "Alpha 测试阈值",
+            "en": "alpha test ref"
+          },
+          "tier": "more"
+        },
+        {
+          "param": "Enable_BlueNoiseDither",
+          "kind": "bool",
+          "label": {
+            "zh": "蓝噪声抖动",
+            "en": "blue noise dither"
+          },
+          "tier": "basic",
+          "note": {
+            "zh": "LIL 母材质上开启曾导致崩溃",
+            "en": "LIL 母材质上开启曾导致崩溃"
+          }
+        }
+      ]
+    },
+    {
+      "id": "parallax_other",
+      "section": "surface",
+      "tier": "other",
+      "label": {
+        "zh": "视差",
+        "en": "Parallax"
+      },
+      "params": [
+        {
+          "param": "Parallax_Depth",
+          "kind": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "label": {
+            "zh": "视差深度（Parallax_Depth）",
+            "en": "Parallax_Depth"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "Parallax_Offset",
+          "kind": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "label": {
+            "zh": "视差偏移（Parallax_Offset）",
+            "en": "Parallax_Offset"
+          },
+          "tier": "other"
+        }
+      ]
+    },
+    {
+      "id": "alpha_other",
+      "section": "surface",
+      "tier": "other",
+      "label": {
+        "zh": "透明 / Alpha 测试",
+        "en": "Alpha / alpha test"
+      },
+      "params": [
+        {
+          "param": "Dissolve_Saturation",
+          "kind": "float",
+          "min": 0,
+          "max": 1,
+          "label": {
+            "zh": "抖动覆盖率（Dissolve_Saturation）",
+            "en": "Dissolve_Saturation"
+          },
+          "tier": "other",
+          "note": {
+            "zh": "原版 Alpha 测试 + 蓝噪声抖动用；与溶解行无关",
+            "en": "原版 Alpha 测试 + 蓝噪声抖动用；与溶解行无关"
+          }
+        }
+      ]
+    },
+    {
+      "id": "rain",
+      "section": "surface",
+      "tier": "more",
+      "label": {
+        "zh": "雨水 / 湿润",
+        "en": "Rain / wetness"
+      },
+      "params": [
+        {
+          "param": "Rec_Rain_WetRate",
+          "kind": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "label": {
+            "zh": "湿润程度",
+            "en": "Rec_Rain_WetRate"
+          },
+          "tier": "more"
+        },
+        {
+          "param": "Rec_Rain_RainRate",
+          "kind": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "label": {
+            "zh": "雨滴程度",
+            "en": "Rec_Rain_RainRate"
+          },
+          "tier": "more"
+        },
+        {
+          "param": "Rec_Rain_Scale",
+          "kind": "float",
+          "min": 0.0,
+          "max": 8,
+          "label": {
+            "zh": "雨滴缩放",
+            "en": "Rec_Rain_Scale"
+          },
+          "tier": "more"
+        },
+        {
+          "param": "Rec_Rain_UseSecondaryUV",
+          "kind": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "label": {
+            "zh": "雨水使用第二 UV",
+            "en": "Rec_Rain_UseSecondaryUV"
+          },
+          "tier": "more"
+        }
+      ]
+    },
+    {
+      "id": "wind",
+      "section": "system",
+      "tier": "more",
+      "label": {
+        "zh": "风（顶点）",
+        "en": "Wind (vertex)"
+      },
+      "params": [
+        {
+          "param": "Wind_SpeedXYZ",
+          "component": "x",
+          "kind": "float",
+          "label": {
+            "zh": "风速 · X",
+            "en": "Wind_SpeedXYZ · X"
+          },
+          "tier": "more",
+          "min": 0.0,
+          "max": 1.0
+        },
+        {
+          "param": "Wind_SpeedXYZ",
+          "component": "y",
+          "kind": "float",
+          "label": {
+            "zh": "风速 · Y",
+            "en": "Wind_SpeedXYZ · Y"
+          },
+          "tier": "more",
+          "min": 0.0,
+          "max": 1.0
+        },
+        {
+          "param": "Wind_SpeedXYZ",
+          "component": "z",
+          "kind": "float",
+          "label": {
+            "zh": "风速 · Z",
+            "en": "Wind_SpeedXYZ · Z"
+          },
+          "tier": "more",
+          "min": 0.0,
+          "max": 1.0
+        },
+        {
+          "param": "Wind_InfluenceXYZ",
+          "component": "x",
+          "kind": "float",
+          "label": {
+            "zh": "风影响轴 · X",
+            "en": "Wind_InfluenceXYZ · X"
+          },
+          "tier": "more",
+          "min": 0.0,
+          "max": 2
+        },
+        {
+          "param": "Wind_InfluenceXYZ",
+          "component": "y",
+          "kind": "float",
+          "label": {
+            "zh": "风影响轴 · Y",
+            "en": "Wind_InfluenceXYZ · Y"
+          },
+          "tier": "more",
+          "min": 0.0,
+          "max": 2
+        },
+        {
+          "param": "Wind_InfluenceXYZ",
+          "component": "z",
+          "kind": "float",
+          "label": {
+            "zh": "风影响轴 · Z",
+            "en": "Wind_InfluenceXYZ · Z"
+          },
+          "tier": "more",
+          "min": 0.0,
+          "max": 2
+        },
+        {
+          "param": "WindMaskMap_UseSecondaryUV",
+          "kind": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "label": {
+            "zh": "风遮罩使用第二 UV",
+            "en": "WindMaskMap_UseSecondaryUV"
+          },
+          "tier": "more"
+        },
+        {
+          "param": "Wind_Intensity",
+          "kind": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "label": {
+            "zh": "风强度",
+            "en": "Wind_Intensity"
+          },
+          "tier": "more"
+        },
+        {
+          "param": "Wind_Scale",
+          "kind": "float",
+          "min": 0.0,
+          "max": 2,
+          "label": {
+            "zh": "风尺度",
+            "en": "Wind_Scale"
+          },
+          "tier": "more"
+        },
+        {
+          "param": "WindRate",
+          "kind": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "label": {
+            "zh": "风速率",
+            "en": "WindRate"
+          },
+          "tier": "more"
+        }
+      ]
+    }
+  ]
+}

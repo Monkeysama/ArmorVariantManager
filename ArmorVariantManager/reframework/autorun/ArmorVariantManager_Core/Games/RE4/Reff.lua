@@ -11,6 +11,9 @@ local Ops = require("ArmorVariantManager_Core.Games.RE4.Ops")
 local OpsV3 = require("ArmorVariantManager_Core.Games.RE4.OpsV3")
 local M3 = require("ArmorVariantManager_Core.Games.RE4.ModelV3")
 local Palette = require("ArmorVariantManager_Core.Games.RE4.Palette")
+-- 默认贴图失效规则(离线材质库生成);加载失败就不做判断,不影响调色盘本身
+local ok_effects, MaterialEffects = pcall(require, "ArmorVariantManager_Core.Games.RE4.MaterialEffects")
+local effects_index = ok_effects and Palette.effects_index(MaterialEffects) or nil
 local Bridge = require("ArmorVariantManager_Core.UI.Reff.Bridge")
 
 local Reff = {}
@@ -158,7 +161,16 @@ function Reff.new(deps)
         local vars = Palette.read_vars(mesh, j)
         local has = {}
         for n, v in pairs(vars) do has[n] = v.t end
-        local main, addons = Palette.match(profiles, has)
+        -- 先认母材质(离线材质库):自动生成的原版母材质映射按它匹配,默认贴图失效也按它判断
+        local textures, master = nil, nil
+        if effects_index then
+            local ok_m = pcall(function()
+                textures = Palette.read_textures(mesh, j)
+                master = Palette.find_master(effects_index, mesh:call("getMaterialVariableNum", j), textures)
+            end)
+            if not ok_m then textures, master = nil, nil end
+        end
+        local main, addons = Palette.match(profiles, has, master and master.id or nil)
         local missing, seen = {}, {}
         local all = {}
         if main then all[1] = main end
@@ -172,8 +184,14 @@ function Reff.new(deps)
         end
         local ids = {}
         for _, a in ipairs(addons) do ids[#ids + 1] = a.id end
+        -- 哪些参数因为贴图槽绑了默认(null)贴图而改了不生效
+        local dead = nil
+        if master then
+            local ok_d, d = pcall(Palette.ineffective, effects_index, master, textures)
+            if ok_d then dead = d end
+        end
         c = { name = name, vars = vars, has = has, main = main, addons = ids, addon_list = addons, missing = missing,
-              generic = (not main) and Palette.generic(has) or nil }
+              generic = (not main) and Palette.generic(has) or nil, ineffective = dead }
         palette_cache[key] = c
         return c
     end
@@ -203,7 +221,7 @@ function Reff.new(deps)
                         for _ in pairs(ov or {}) do n = n + 1 end
                         out.materials[#out.materials + 1] = { key = key, slot = slot, material = c.name,
                             note = (notes[slot] or {})[c.name], main = c.main and c.main.id or nil, addons = c.addons,
-                            missing = c.missing, generic = c.generic, overridden = n }
+                            missing = c.missing, generic = c.generic, overridden = n, ineffective = c.ineffective }
                         if c.main then used[c.main.id] = c.main end
                         for _, a in ipairs(c.addon_list) do used[a.id] = a end
                         out.overrides[key] = ov or false

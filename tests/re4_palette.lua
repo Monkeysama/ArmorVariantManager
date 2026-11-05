@@ -152,4 +152,59 @@ assert(draft.groups[1].params[1].param == "BaseColor" and draft.groups[1].params
 Palette.prune(state, {})
 assert(next(state) == nil)
 
-print("PASS: RE4 palette: built-in profiles (114 lilToon entries), main + addon matching, priority, data override, generic fallback, type checks, sparse overrides, reset/clean, mesh writes (components, same-named materials, live components kept, restore), Dissolve_Flag sync, draft export and prune")
+-- 默认贴图失效:路径规范化、按签名认母材质、规则求值
+assert(Palette.norm_texture("natives/STM/Systems\\Rendering\\NullBlack.tex.143221013") == "systems/rendering/nullblack")
+assert(Palette.norm_texture("systems/rendering/NullBlack.tex") == "systems/rendering/nullblack" and Palette.norm_texture(nil) == nil)
+local fx = Palette.effects_index({
+    nulls = { "systems/rendering/nullblack", "systems/rendering/nullwhite" },
+    masters = { { id = "m", params = 3, textures = { "MapB", "MapA" }, rules = {
+        { "Glow", "xyz", "MapA", { 1 } }, { "Glow", "w", "MapB", { 2 } }, { "MapA_UV", "x", "MapA", "*" },
+    } } },
+})
+assert(Palette.find_master(fx, 3, { MapA = "x", MapB = "y" }).id == "m", "signature match")
+assert(Palette.find_master(fx, 99, { MapA = "x", MapB = "y" }).id == "m", "texture-set fallback when the param count differs")
+assert(Palette.find_master(fx, 3, { MapA = "x" }) == nil, "different slots: unknown master")
+local m = Palette.find_master(fx, 3, { MapA = "x", MapB = "y" })
+assert(Palette.ineffective(fx, m, { MapA = "some/real/texture", MapB = "systems/rendering/nullblack" }) == nil, "real textures: nothing dead")
+local dead = Palette.ineffective(fx, m, { MapA = "systems/rendering/nullblack", MapB = "systems/rendering/nullwhite" })
+assert(dead.Glow.comps == "xyzw" and #dead.Glow.why == 2, "components merged across slots, both reasons kept")
+assert(dead.MapA_UV.comps == "x", "'*' rule fires on any null texture")
+dead = Palette.ineffective(fx, m, { MapA = "systems/rendering/nullwhite", MapB = false })
+assert(dead.MapA_UV and dead.Glow == nil, "white MapA only kills the any-null rule")
+
+-- 按母材质匹配(自动生成的原版映射):只在认出的母材质上命中,名字匹配的手写映射优先级更高
+do
+    local list = Palette.load_profiles({
+        { id = "auto_x", priority = 10, match = { master = { "m/a.mmtr", "m/a_8weight.mmtr" } },
+          groups = { { id = "base", params = { { param = "BaseColor", kind = "color", channels = "rgb" } } } } },
+        { id = "hand", priority = 100, match = { all = { "LIL_Switch" } },
+          groups = { { id = "main", params = { { param = "BaseColor", kind = "color", channels = "rgb" } } } } },
+    })
+    local has = { BaseColor = Palette.TYPE_FLOAT4 }
+    assert(Palette.match(list, has, "m/a_8weight.mmtr").id == "auto_x", "shared-signature master matches the auto profile")
+    assert(Palette.match(list, has, nil) == nil and Palette.match(list, has, "m/other.mmtr") == nil, "unknown master: no auto profile")
+    has.LIL_Switch = Palette.TYPE_FLOAT4
+    assert(Palette.match(list, has, "m/a.mmtr").id == "hand", "a hand-written match wins over the auto profile")
+end
+-- 内置映射里的自动原版映射:每份都按母材质匹配
+local autos = 0
+for _, p in ipairs(Builtin) do
+    if p.id:find("^auto_") then autos = autos + 1; assert(p.match.master and #p.match.master > 0 and p.priority < 100, p.id) end
+end
+assert(autos >= 10, "auto vanilla profiles shipped: " .. autos)
+
+-- 真实规则(离线材质库):lilToon 的 LIL_EmissiveMap 绑 NullBlack 时自发光颜色失效
+local Effects = require("ArmorVariantManager_Core.Games.RE4.MaterialEffects")
+local fxr = Palette.effects_index(Effects)
+local lil
+for _, mm in ipairs(Effects.masters) do if mm.id:find("re4_liltoon.mmtr", 1, true) then lil = mm end end
+local tex = {}
+for _, n in ipairs(lil.textures) do tex[n] = "some/real/texture" end
+assert(Palette.find_master(fxr, lil.params, tex) == lil, "lilToon recognised by its signature")
+assert(Palette.ineffective(fxr, lil, tex) == nil, "all real textures: nothing dead")
+tex.LIL_EmissiveMap = "systems/rendering/nullblack"
+local d = Palette.ineffective(fxr, lil, tex)
+assert(d and d.LIL_EmissionColor and d.LIL_EmissionColor.comps:find("x") and d.LIL_EmissionColor.why[1].texture == "LIL_EmissiveMap",
+    "black emissive map kills the emission colour")
+
+print("PASS: RE4 palette: built-in profiles (114 lilToon entries), main + addon matching, priority, data override, generic fallback, type checks, sparse overrides, reset/clean, mesh writes (components, same-named materials, live components kept, restore), Dissolve_Flag sync, draft export and prune, null-texture effects (normalise, signature + texture-set match, merged components, any-null rules, real lilToon emission rule), master-matched auto vanilla profiles")

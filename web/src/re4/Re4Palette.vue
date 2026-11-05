@@ -48,7 +48,7 @@ const bySlot = computed(() => {
 const chosen = computed(() => selection.value.map(k => materials.value.find(m => m.key === k)).filter((m): m is Re4PaletteMaterial => !!m));
 
 // ---------------------------------------------------------------- 可编辑的项（所有选中材质都能用的）
-interface Row { group: string; groupLabel: string; groupNote?: string; tier: 'basic' | 'more'; entry: Re4PaletteEntry; options?: Re4PaletteOption[] }
+interface Row { group: string; groupLabel: string; groupNote?: string; tier: 'basic' | 'more' | 'other'; entry: Re4PaletteEntry; options?: Re4PaletteOption[] }
 function profilesOf(m: Re4PaletteMaterial) { return [m.main, ...m.addons].filter((x): x is string => !!x); }
 // 跨映射比较用的签名:同一个参数、同样的拆法就算同一项(比如 lilToon 的「主色」和通用兜底里的 BaseColor)
 const sig = (e: Re4PaletteEntry) => [e.param, e.kind, e.component ?? '', e.kind === 'color' ? e.channels ?? 'rgb' : ''].join('|');
@@ -64,7 +64,7 @@ const sigsOf = computed(() => {
   return out;
 });
 const usable = (m: Re4PaletteMaterial, e: Re4PaletteEntry) => sigsOf.value.get(m.key)?.has(sig(e)) ?? false;
-interface Group { key: string; section: string; label: string; note?: string; tier: 'basic' | 'more'; rows: Row[]; extraFrom: number }
+interface Group { key: string; section: string; label: string; note?: string; tier: 'basic' | 'more' | 'other'; rows: Row[]; extraFrom: number }
 const groups = computed(() => {
   const first = chosen.value[0];
   const out: Group[] = [];
@@ -98,8 +98,8 @@ const sectionLabel = (id: string) => {
   }
   return id === 'color' ? props.t('paletteSectionColor') : props.t('paletteSectionOther');
 };
-// 版面:基本 / 进阶 两块,每块里按类别(映射里的顺序)排组
-const areas = computed(() => (['basic', 'more'] as const).map(tier => {
+// 版面:基本 / 进阶 / 其他 三块,每块里按类别(映射里的顺序)排组。其他 = 含义按参数名推断、可能不准的项
+const areas = computed(() => (['basic', 'more', 'other'] as const).map(tier => {
   const sections: { id: string; label: string; groups: Group[] }[] = [];
   for (const g of groups.value.filter(x => x.tier === tier)) {
     let sec = sections.find(x => x.id === g.section);
@@ -112,6 +112,23 @@ const areas = computed(() => (['basic', 'more'] as const).map(tier => {
 const openGroups = reactive(new Set<string>());
 const toggleGroup = (key: string) => { if (openGroups.has(key)) openGroups.delete(key); else openGroups.add(key); };
 const groupModified = (g: Group) => g.rows.some(r => modified(r.entry));
+
+// ---------------------------------------------------------------- 默认贴图导致的失效
+// 贴图槽绑了游戏内置的 null 贴图时,和它相乘 / 被它遮罩的参数改了看不出变化(Lua 按离线材质库判断)。
+// 一项的全部分量在每个选中的材质上都失效才灰掉;一组全灰时在组标题右边写明
+const entryComps = (e: Re4PaletteEntry) => e.kind === 'color' ? (e.channels === 'rgba' ? 'xyzw' : 'xyz') : e.kind === 'vec' ? 'xyzw' : (e.component ?? 'x');
+function deadOn(m: Re4PaletteMaterial, e: Re4PaletteEntry) {
+  const d = m.ineffective?.[e.param];
+  return !!d && [...entryComps(e)].every(ch => d.comps.includes(ch));
+}
+const dead = (e: Re4PaletteEntry) => chosen.value.length > 0 && chosen.value.every(m => deadOn(m, e));
+const shortTex = (p: string) => p.split('/').pop() ?? p;
+function deadWhy(e: Re4PaletteEntry) {
+  const d = chosen.value[0]?.ineffective?.[e.param];
+  return d ? props.t('paletteDeadWhy', d.why.map(w => `${w.texture} = ${shortTex(w.null)}`).join('；')) : '';
+}
+const deadCount = (g: Group) => g.rows.filter(r => dead(r.entry)).length;
+const groupDead = (g: Group) => g.rows.length > 0 && deadCount(g) === g.rows.length;
 
 // ---------------------------------------------------------------- 取值
 const valueOf = (key: string, param: string): Re4PaletteValue | undefined => pal.value?.values[key]?.[param];
@@ -303,24 +320,28 @@ const clampSlider = (e: Re4PaletteEntry, v?: number) => Math.max(sliderMin(e), M
             <ElButton size="small" type="primary" :disabled="busy || (batch.hue === 0 && batch.sat === 100 && batch.val === 100)" @click="applyBatch">{{ t('paletteApply') }}</ElButton>
           </div>
           <div v-for="area in areas" :key="area.tier" class="re4-pal-area">
-            <div class="re4-pal-areahead">{{ area.tier === 'basic' ? t('paletteBasic') : t('paletteAdvanced') }}</div>
+            <div class="re4-pal-areahead">{{ area.tier === 'basic' ? t('paletteBasic') : area.tier === 'more' ? t('paletteAdvanced') : t('paletteOther') }}
+              <span v-if="area.tier === 'other'" class="re4-pal-areahint">{{ t('paletteOtherHint') }}</span></div>
             <div v-for="sec in area.sections" :key="sec.id" class="re4-pal-section">
               <div class="re4-pal-sechead">{{ sec.label }}</div>
-              <div v-for="g in sec.groups" :key="g.key" class="re4-pal-group" :class="{ open: openGroups.has(g.key) }">
+              <div v-for="g in sec.groups" :key="g.key" class="re4-pal-group" :class="{ open: openGroups.has(g.key), dead: groupDead(g) }">
                 <button class="re4-pal-ghead" :aria-expanded="openGroups.has(g.key)" @click="toggleGroup(g.key)">
                   <span class="re4-caret">{{ openGroups.has(g.key) ? '▾' : '▸' }}</span>
                   <span v-if="groupModified(g)" class="re4-pal-dot" :title="t('paletteModified')"></span>
                   <span class="re4-pal-gname">{{ g.label }}</span>
                   <span class="re4-muted re4-small">{{ g.rows.length }}</span>
+                  <span v-if="groupDead(g)" class="re4-pal-deadnote">{{ t('paletteDeadGroup') }}</span>
+                  <span v-else-if="deadCount(g)" class="re4-pal-deadnote">{{ t('paletteDeadSome', deadCount(g)) }}</span>
                 </button>
                 <ElTooltip v-if="g.note" :content="g.note" placement="top"><span class="re4-pal-i re4-pal-gi" tabindex="0">i</span></ElTooltip>
                 <div v-if="openGroups.has(g.key)" class="re4-pal-gbody">
                 <template v-for="(r, ri) in g.rows" :key="r.entry.param + (r.entry.component ?? '') + r.entry.kind">
                 <div v-if="ri === g.extraFrom" class="re4-pal-sub">{{ t('paletteAdvanced') }}</div>
-                <div class="re4-pal-row">
+                <div class="re4-pal-row" :class="{ dead: dead(r.entry) }">
                   <span class="re4-pal-label">
                     <span v-if="modified(r.entry)" class="re4-pal-dot" :title="t('paletteModified')"></span>{{ text(r.entry.label, r.entry.param) }}
                     <ElTooltip v-if="r.entry.note" :content="text(r.entry.note)" placement="top"><span class="re4-pal-i" tabindex="0">i</span></ElTooltip>
+                    <ElTooltip v-if="dead(r.entry)" :content="deadWhy(r.entry)" placement="top"><span class="re4-pal-deadtag" tabindex="0">{{ t('paletteDeadTag') }}</span></ElTooltip>
                   </span>
                   <span class="re4-pal-ctl">
                     <span v-if="r.entry.kind === 'color'" class="re4-pal-color" :title="colorTitle(r.entry)">
@@ -370,6 +391,7 @@ const clampSlider = (e: Re4PaletteEntry, v?: number) => Math.max(sliderMin(e), M
 .re4-pal-mat .re4-tag { border: 0; cursor: pointer; flex: none; }
 .re4-pal-area { display: grid; gap: 8px; padding: 8px 12px 10px; border-top: 1px solid var(--avm-line); }
 .re4-pal-areahead { font-size: 11px; letter-spacing: .1em; color: var(--avm-muted); }
+.re4-pal-areahint { letter-spacing: 0; margin-left: 8px; }
 .re4-pal-section { display: grid; gap: 4px; }
 .re4-pal-sechead { font-weight: 600; font-size: 13px; }
 .re4-pal-group { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; border: 1px solid var(--avm-line); border-radius: 6px; }
@@ -399,6 +421,11 @@ const clampSlider = (e: Re4PaletteEntry, v?: number) => Math.max(sliderMin(e), M
 .re4-pal-i { display: inline-grid; place-items: center; width: 15px; height: 15px; border-radius: 50%; border: 1px solid var(--avm-muted); color: var(--avm-muted);
   font: italic 600 10px/1 Georgia, serif; cursor: help; flex: none; }
 .re4-pal-i:hover, .re4-pal-i:focus { border-color: var(--avm-accent); color: var(--avm-accent); outline: none; }
+.re4-pal-row.dead .re4-pal-ctl { opacity: .4; }
+.re4-pal-row.dead .re4-pal-label { color: var(--avm-muted); }
+.re4-pal-group.dead .re4-pal-gname { color: var(--avm-muted); }
+.re4-pal-deadnote { margin-left: auto; font-size: 12px; color: var(--avm-muted); }
+.re4-pal-deadtag { font-size: 11px; padding: 0 5px; border: 1px solid var(--avm-line); border-radius: 8px; color: var(--avm-muted); cursor: help; flex: none; }
 .re4-pal-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--avm-accent); flex: none; }
 .re4-pal-batch { display: grid; grid-template-columns: repeat(auto-fill, minmax(12em, 1fr)); gap: 4px 16px; align-items: center; background: var(--re4-soft); }
 .re4-pal-batch .re4-pal-glabel { grid-column: 1 / -1; margin: 0; }

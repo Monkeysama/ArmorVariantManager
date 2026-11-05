@@ -34,10 +34,12 @@ local function clean_profile(p)
     local out = {
         id = p.id, label = is_tbl(p.label) and p.label or { zh = p.id, en = p.id },
         addon = p.addon == true, priority = tonumber(p.priority) or 0,
-        match = { all = names(match.all), any = names(match.any), none = names(match.none) },
+        -- master:按离线材质库认出的母材质(mmtr 路径)匹配,给自动生成的原版母材质映射用
+        match = { all = names(match.all), any = names(match.any), none = names(match.none),
+                  master = names(type(match.master) == "string" and { match.master } or match.master) },
         enums = is_tbl(p.enums) and p.enums or {}, ignore = names(p.ignore), groups = {},
     }
-    if #out.match.all == 0 and #out.match.any == 0 then return nil end
+    if #out.match.all == 0 and #out.match.any == 0 and #out.match.master == 0 then return nil end
     for _, g in ipairs(p.groups) do
         if is_tbl(g) and type(g.id) == "string" and is_tbl(g.params) then
             local params = {}
@@ -50,7 +52,8 @@ local function clean_profile(p)
             end
             if #params > 0 then
                 out.groups[#out.groups + 1] = { id = g.id, label = g.label, note = g.note,
-                    tier = g.tier == "more" and "more" or "basic", params = params,
+                    -- other:含义只能按参数名推断、可能不准的项,单独放在基本 / 进阶之外
+                    tier = (g.tier == "more" or g.tier == "other") and g.tier or "basic", params = params,
                     section = type(g.section) == "string" and g.section or nil }
             end
         end
@@ -87,7 +90,12 @@ function Palette.load_profiles(builtin, extras)
     return out, by_id
 end
 
-local function matches(p, has)
+local function matches(p, has, master)
+    if #p.match.master > 0 then
+        local hit = false
+        for _, id in ipairs(p.match.master) do if id == master then hit = true; break end end
+        if not hit then return false end
+    end
     for _, n in ipairs(p.match.all) do if not has[n] then return false end end
     if #p.match.any > 0 then
         local any = false
@@ -98,11 +106,11 @@ local function matches(p, has)
     return true
 end
 
--- has = { [参数名] = 类型 }。返回 main(可能 nil)、addons 列表
-function Palette.match(profiles, has)
+-- has = { [参数名] = 类型 },master = 认出的母材质 id(可为 nil)。返回 main(可能 nil)、addons 列表
+function Palette.match(profiles, has, master)
     local main, addons = nil, {}
     for _, p in ipairs(profiles) do
-        if matches(p, has) then
+        if matches(p, has, master) then
             if p.addon then addons[#addons + 1] = p elseif not main then main = p end
         end
     end
@@ -304,6 +312,93 @@ end
 -- 只保留当前还在的 mesh 的状态(换装后的旧 mesh 不再还原:它已经不显示了)
 function Palette.prune(state, live)
     for key in pairs(state) do if not live[key] then state[key] = nil end end
+end
+
+-- ============================================================ 默认贴图导致的失效
+-- 材质的某个贴图槽绑的是游戏内置的 null 贴图(纯黑、某通道为 0……)时,和它相乘 / 被它遮罩的参数改了也看不出变化。
+-- 规则来自离线材质库(MaterialEffects.lua,由 tools/re4/gen_material_effects.py 生成);母材质按签名认
+-- (参数个数 + 贴图槽名集合),认不出来就不判断。
+
+-- 贴图路径规范化:小写、正斜杠、去掉 natives/stm/ 前缀和 .tex(.版本号) 后缀,和材质库的写法一致
+function Palette.norm_texture(path)
+    if type(path) ~= "string" or path == "" then return nil end
+    local p = path:gsub("\\", "/"):lower():gsub("^natives/stm/", "")
+    p = p:gsub("%.tex%.%d+$", ""):gsub("%.tex$", "")
+    return p
+end
+
+-- 一个材质各贴图槽现在用的贴图:{ [槽名] = 规范化路径 }
+function Palette.read_textures(mesh, j)
+    local out = {}
+    local n = try(function() return mesh:call("getMaterialTextureNum", j) end) or 0
+    for t = 0, n - 1 do
+        local name = try(function() return mesh:call("getMaterialTextureName", j, t) end)
+        local holder = try(function() return mesh:call("getMaterialTexture", j, t) end)
+        local path = holder and try(function() return holder:call("get_ResourcePath") end)
+        if type(name) == "string" then out[name] = Palette.norm_texture(path) or false end
+    end
+    return out
+end
+
+local function signature(params, names)
+    local list = {}
+    for _, n in ipairs(names) do list[#list + 1] = n end
+    table.sort(list)
+    return tostring(params) .. "|" .. table.concat(list, ",")
+end
+
+-- effects = MaterialEffects 模块。返回查询用的索引(建一次就行)
+function Palette.effects_index(effects)
+    local index = { nulls = {}, by_sig = {}, by_tex = {} }
+    for i, path in ipairs(is_tbl(effects) and is_tbl(effects.nulls) and effects.nulls or {}) do index.nulls[path] = i end
+    for _, m in ipairs(is_tbl(effects) and is_tbl(effects.masters) and effects.masters or {}) do
+        if is_tbl(m.textures) and is_tbl(m.rules) then
+            index.by_sig[signature(m.params, m.textures)] = m
+            local tex_key = signature("", m.textures)
+            index.by_tex[tex_key] = index.by_tex[tex_key] == nil and m or false   -- 只按贴图槽认时,撞了就不认
+        end
+    end
+    return index
+end
+
+-- nparams = getMaterialVariableNum,textures = read_textures 的结果。先按完整签名找,再只按贴图槽名找
+function Palette.find_master(index, nparams, textures)
+    if not index then return nil end
+    local names = {}
+    for n in pairs(textures or {}) do names[#names + 1] = n end
+    if #names == 0 then return nil end
+    return index.by_sig[signature(nparams, names)] or index.by_tex[signature("", names)] or nil
+end
+
+-- 返回 { [参数名] = { comps = "xyz", why = { { texture = 槽名, null = 路径 }, ... } } };没有失效项时返回 nil
+function Palette.ineffective(index, master, textures)
+    if not (index and master and textures) then return nil end
+    local out, any = {}, false
+    for _, r in ipairs(master.rules) do
+        local param, comps, slot, nulls = r[1], r[2], r[3], r[4]
+        local path = textures[slot]
+        local id = path and index.nulls[path]
+        local hit = false
+        if id then
+            if nulls == "*" then hit = true
+            else for _, k in ipairs(nulls) do if k == id then hit = true; break end end end
+        end
+        if hit then
+            local e = out[param] or { comps = "", why = {} }
+            for ch in comps:gmatch("[xyzw]") do if not e.comps:find(ch, 1, true) then e.comps = e.comps .. ch end end
+            local seen = false
+            for _, w in ipairs(e.why) do if w.texture == slot then seen = true; break end end
+            if not seen then e.why[#e.why + 1] = { texture = slot, null = path } end
+            out[param], any = e, true
+        end
+    end
+    if not any then return nil end
+    for _, e in pairs(out) do
+        local sorted = {}
+        for _, ch in ipairs(Palette.COMPONENTS) do if e.comps:find(ch, 1, true) then sorted[#sorted + 1] = ch end end
+        e.comps = table.concat(sorted)
+    end
+    return out
 end
 
 -- ============================================================ 导出参数清单
