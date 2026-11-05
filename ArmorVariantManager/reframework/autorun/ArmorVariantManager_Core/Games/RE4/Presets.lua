@@ -20,6 +20,9 @@ local Presets = {}
 
 Presets.DIR = "ArmorVariantManager/presets/"
 Presets.AUTOSAVE_DIR = "ArmorVariantManager/autosave/"
+Presets.INDEX_ID = "_index"
+Presets.INDEX = Presets.DIR .. Presets.INDEX_ID .. ".json"
+Presets.PROBE_GAP = 8
 Presets.AUTOSAVE_KEEP = 5
 Presets.SLOT_MATCH_THRESHOLD = 0.25
 
@@ -101,30 +104,57 @@ function Presets.library(io)
 
     local function file_of(id) return Presets.DIR .. id .. ".json" end
 
+    local function read(id)
+        local data = io.load(file_of(id))
+        if is_tbl(data) and data.deleted ~= true and is_tbl(data.config) then
+            cache[id] = {
+                id = id,
+                name = (type(data.name) == "string" and data.name ~= "") and data.name or id,
+                source = data.source == "mod" and "mod" or "user",
+                character = type(data.character) == "string" and data.character or nil,
+                updated = tonumber(data.updated) or 0,
+                config = data.config,
+            }
+        elseif is_tbl(data) and data.deleted == true then
+            cache[id] = false    -- 墓碑:可复用的编号
+        end
+        return data ~= nil
+    end
+
+    -- 目录索引:glob 成功时写一份,glob 用不了时靠它(加上顺序探测 pNNNN)找回预设
+    local function write_index()
+        local ids = {}
+        for id in pairs(cache) do ids[#ids + 1] = id end
+        table.sort(ids)
+        pcall(io.dump, Presets.INDEX, { ids = ids })
+    end
+
     local function scan()
         cache = {}
-        local seen = {}
-        local patterns = { "ArmorVariantManager[/\\\\]presets[/\\\\].*\\.json" }
-        for _, pattern in ipairs(patterns) do
-            for _, raw in ipairs((io.glob and io.glob(pattern)) or {}) do
+        -- REFramework 的 fs.glob 会遍历整个 reframework/data(含别的 mod 和 WebView2 缓存),
+        -- 任何一个文件名转不成系统代码页(中文系统是 GBK,比如韩文、部分日文)就整体抛错:
+        -- "No mapping for the Unicode character exists in the target multi-byte code page."
+        -- 所以 glob 必须包 pcall,失败时退回索引 + 探测,不能让一次扫描把整个请求打断。
+        local ok, found = false, nil
+        if io.glob then ok, found = pcall(io.glob, "ArmorVariantManager[/\\\\]presets[/\\\\].*\\.json") end
+        if ok and type(found) == "table" then
+            for _, raw in ipairs(found) do
                 local id = tostring(raw):match("([^/\\]+)%.json$")
-                if id and not seen[id] then
-                    seen[id] = true
-                    local data = io.load(file_of(id))
-                    if is_tbl(data) and data.deleted ~= true and is_tbl(data.config) then
-                        cache[id] = {
-                            id = id,
-                            name = (type(data.name) == "string" and data.name ~= "") and data.name or id,
-                            source = data.source == "mod" and "mod" or "user",
-                            character = type(data.character) == "string" and data.character or nil,
-                            updated = tonumber(data.updated) or 0,
-                            config = data.config,
-                        }
-                    elseif is_tbl(data) and data.deleted == true then
-                        cache[id] = false    -- 墓碑:可复用的编号
-                    end
-                end
+                if id and cache[id] == nil and id ~= Presets.INDEX_ID then read(id) end
             end
+            write_index()
+            return
+        end
+        local index = io.load(Presets.INDEX)
+        for _, id in ipairs(is_tbl(index) and is_tbl(index.ids) and index.ids or {}) do
+            if type(id) == "string" and cache[id] == nil then read(id) end
+        end
+        -- 索引之外新存的 pNNNN:顺序探测,连续 PROBE_GAP 个空号就停
+        local misses, n = 0, 0
+        while misses < Presets.PROBE_GAP do
+            n = n + 1
+            local id = string.format("p%04d", n)
+            if cache[id] ~= nil or read(id) then misses = 0 else misses = misses + 1 end
         end
     end
 
@@ -173,6 +203,7 @@ function Presets.library(io)
             updated = io.now and io.now() or 0, config = config }
         cache[e.id] = e
         write(e)
+        write_index()
         return e.id
     end
 

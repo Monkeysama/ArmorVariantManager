@@ -85,6 +85,19 @@ do
     assert(lib2.save_new("又一个", cfg) == "p0001", "tombstone id reused")
     assert(lib2.save_new("再一个", cfg) == "p0003")
 
+    -- glob 抛错(data 目录里有转不成 GBK 的文件名):退回索引 + 顺序探测,不打断请求
+    assert(files[Presets.INDEX] and #files[Presets.INDEX].ids >= 3, "index written")
+    local broken_io = setmetatable({ glob = function() error("No mapping for the Unicode character exists in the target multi-byte code page.") end }, { __index = io })
+    local lib3 = Presets.library(broken_io)
+    local names = {}
+    for _, e in ipairs(lib3.list()) do names[e.id] = true end
+    assert(names.author_pack and names.p0001 and names.p0002 and names.p0003, "index + probe recover every preset")
+    assert(lib3.get(Presets.INDEX_ID) == nil, "index is not a preset")
+    files[Presets.INDEX] = nil
+    local lib4 = Presets.library(broken_io)
+    assert(lib4.get("p0003") and lib4.get("author_pack") == nil, "without index only pNNNN can be probed")
+    assert(lib4.save_new("索引重建", cfg) == "p0004" and files[Presets.INDEX], "saving rebuilds the index")
+
     -- 排序:完全适用 > 部分适用 > 不适用
     local ranked = Presets.ranked(lib2, live({"a"}, {"h"}))
     assert(ranked[1].entry.id == "author_pack" and ranked[1].match == "full")
