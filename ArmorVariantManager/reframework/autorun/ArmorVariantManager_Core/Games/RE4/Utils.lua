@@ -129,6 +129,21 @@ function Utils.get_material_names(mesh)
     return names
 end
 
+-- 材质名 -> 当前是否显示。读不到的材质不写(调用方按"显示"处理);同名材质以后出现的为准。
+-- 注意不能写成 `ok and cur or true`:cur=false 时会算成 true(同 capture_current_as_preset 的坑)。
+function Utils.current_material_states(mesh)
+    local out = {}
+    if not mesh then return out end
+    local ok, count = pcall(function() return mesh:call("get_MaterialNum") end)
+    if not ok or not count or count <= 0 then return out end
+    for i = 0, count - 1 do
+        local ok_n, name = pcall(function() return mesh:call("getMaterialName", i) end)
+        local ok_e, enabled = pcall(function() return mesh:call("getMaterialsEnable", i) end)
+        if ok_n and name and ok_e and type(enabled) == "boolean" then out[name] = enabled end
+    end
+    return out
+end
+
 -- 把当前实际显示状态整份抓下来当一个新预设。
 -- 这是刻意换掉"从空表开始手动勾"的创建方式:空表是稀疏 diff,只记录被点过的材质,
 -- 两个预设之间来回切时,谁都没提到的材质会保留切换前的状态("切一次有效,再切没反应"

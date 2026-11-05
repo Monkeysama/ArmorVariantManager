@@ -1,6 +1,10 @@
 return {
     zh = {
         title = "差分管理器 (RE4)",
+        -- REFF 网页操作被拒绝时的提示
+        reff_action_rejected = "操作无效或目标已不存在,请刷新后重试",
+        reff_character_changed = "当前角色已变化,请确认后重试",
+        reff_no_kin = "没有找到可共用的同角色配置",
         draw_error = "界面绘制出错(已保护,不影响其他 mod):",
         no_character = "未找到当前控制角色",
         char_no_config = "[该角色还没有配置]",
@@ -90,7 +94,7 @@ return {
         no_rules = "还没有规则",
         rule_active = "命中",
         rule_effective = "生效",
-        rule_shadowed = "命中,但被上面的压着",
+        rule_shadowed = "命中,但被覆盖",
         rule_orphan = "目标状态已不存在,永不生效",
         rules_by_priority = "按优先级(上面的先):",
         priority_hint = "顺序就是优先级:多个状态的条件同时成立时,取最上面那个。",
@@ -216,6 +220,10 @@ return {
     },
     en = {
         title = "Armor Variant Manager (RE4)",
+        -- REFF page action failures
+        reff_action_rejected = "Invalid action or the target no longer exists; refresh and try again",
+        reff_character_changed = "The current character changed; check and try again",
+        reff_no_kin = "No matching config of the same character was found",
         draw_error = "UI draw error (contained, other mods unaffected):",
         no_character = "No controlled character found",
         char_no_config = "[no config for this character yet]",

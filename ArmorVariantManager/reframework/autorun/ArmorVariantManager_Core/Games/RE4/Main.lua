@@ -16,6 +16,7 @@ function Main.start(ctx)
     local CharacterId = require("ArmorVariantManager_Core.Games.RE4.CharacterId")
     local Localization = require("ArmorVariantManager_Core.Games.RE4.Localization")
     local Dissolve = require("ArmorVariantManager_Core.Games.RE4.Dissolve")
+    local Ops = require("ArmorVariantManager_Core.Games.RE4.Ops")
 
     local global_config_path = "ArmorVariantManager/GlobalSettings.json"
     -- 默认英文(面板顶部有「中文」勾选框,勾了才切中文)。语言是全局的,不跟角色配置走。
@@ -165,7 +166,7 @@ function Main.start(ctx)
 
     -- 配置格式 v2:主层 + 轴,两者同构({presets, active, rules})。
     -- order = 状态(预设)的优先级顺序,靠前的优先。见 TransformManager.pick_active_preset
-    local function new_layer() return { presets = {}, active = "", rules = {}, order = {}, auto = true } end
+    local new_layer = Ops.new_layer
 
     -- armor_mirrors_body:护甲槛位是否直接照抄 body 的最终结果(按材质名对应)。
     -- **默认开启** —— 护甲和身体用同一套材质导出是常见做法,开着比关着更常对。
@@ -784,6 +785,13 @@ function Main.start(ctx)
     local force_reapply = false
     local function request_reapply() force_reapply = true end
 
+    -- Ops 的返回值 → 存盘 / 重写。ImGui 和 REFF 改配置都走这里。
+    local function commit(kind_id, changed, reapply)
+        if changed then save_config(kind_id) end
+        if changed and reapply then request_reapply() end
+        return changed
+    end
+
     -- 玩家的装备组件。调用链(2026-08 用 reframework MCP 实测确认过):
     --   context -> get_HeadUpdater() -> get_Equipment()
     -- 这条链只对**真玩家**有意义,不走 Targets 那套傀儡/雕像分支。
@@ -1149,6 +1157,54 @@ function Main.start(ctx)
         return true
     end
 
+    -- 只能删自己的存档:在这个角色的面板上删掉另一个角色的存档太意外了
+    local function delete_slot(kind_id, name)
+        local slots = get_slots(kind_id)
+        if not slots[name] then return false end
+        slots[name] = nil
+        save_slots_file(kind_id)
+        return true
+    end
+
+    -- 共用 → 独立:从当前(共用的)内容拷一份成为自己的,什么都不丢。
+    local function make_independent(kind_id)
+        local shared_src = cfg_key(kind_id)
+        if shared_src == kind_id then return false end
+        local cur = loaded_configs[shared_src]
+        local copy = normalize_config(deep_copy(cur or default_config()))
+        if global_config.aliases then global_config.aliases[kind_id] = nil end
+        save_global_settings()
+        loaded_configs[kind_id] = copy
+        save_config(kind_id)
+        ui_state = {}
+        request_reapply()
+        return true
+    end
+
+    -- 初始化(只在独立时允许:共用时初始化会把来源角色一起清空)。先留备份。
+    -- **不能产出完全空的配置**:空配置会立刻触发同族匹配、把共用又建回来,
+    -- 于是初始化看起来毫无效果(初始化 ↔ 匹配 的死循环)。
+    -- 带一个按当前显示状态抓的 default 整套预设,既撑成非空,也给了个可用基线。
+    local function reset_config(kind_id, source)
+        if cfg_key(kind_id) ~= kind_id then return false end
+        snapshot_before_destructive(kind_id)
+        local fresh = normalize_config(default_config())
+        fresh.base.presets["default"] = Utils.capture_current_as_preset(source)
+        fresh.base.order = { "default" }
+        fresh.base.active = "default"
+        loaded_configs[kind_id] = fresh
+        save_config(kind_id)
+        ui_state = {}
+        request_reapply()
+        return true
+    end
+
+    -- 「定位」:临时只显示这一个材质 PREVIEW_SECONDS 秒,只作用在指定目标上。
+    local function start_preview(target_id, slot, mat)
+        preview = { slot = slot, mat = mat, target_id = target_id, until_clock = os.clock() + PREVIEW_SECONDS }
+        request_reapply()
+    end
+
     local function cond_to_string(c)
         local def = Registry.get(c.type)
         local label = def and T(def.label_key) or tostring(c.type)
@@ -1259,10 +1315,10 @@ function Main.start(ctx)
             .. "###" .. id_prefix .. slot .. tostring(mat_index)
         local ch, nv = imgui.checkbox(widget_id, checked)
         if ch then
-            preset_data[slot].materials[mat_name] = nv
+            local changed, reapply = Ops.set_material(preset_data, slot, mat_name, nv, true)
+            -- 先写一次模型让点击当帧就有反馈,下一帧的重算会给出最终结果
             pcall(function() mesh:call("setMaterialsEnable", mat_index - 1, nv) end)
-            save_config(kind_id)
-            request_reapply()
+            commit(kind_id, changed, reapply)
         end
     end
 
@@ -1279,17 +1335,12 @@ function Main.start(ctx)
         local widget_id = T(TRI_KEY[state]) .. "###" .. id_prefix .. slot .. tostring(mat_index)
         if imgui.button(widget_id) then
             state = (state + 1) % 3
-            if state == 0 then
-                preset_data[slot].materials[mat_name] = nil
-            elseif state == 1 then
-                preset_data[slot].materials[mat_name] = false
-                pcall(function() mesh:call("setMaterialsEnable", mat_index - 1, false) end)
-            else
-                preset_data[slot].materials[mat_name] = true
-                pcall(function() mesh:call("setMaterialsEnable", mat_index - 1, true) end)
+            local changed, reapply = Ops.set_material(preset_data, slot, mat_name,
+                ({ [0] = "none", [1] = "off", [2] = "on" })[state], false)
+            if state ~= 0 then
+                pcall(function() mesh:call("setMaterialsEnable", mat_index - 1, state == 2) end)
             end
-            save_config(kind_id)
-            request_reapply()   -- 改成「—」时要退回基线值,交给下一帧重算
+            commit(kind_id, changed, reapply)   -- 改成「—」时要退回基线值,交给下一帧重算
         end
         imgui.same_line()
         imgui.text(display_mat_name(config, slot, mat_name))
@@ -1312,13 +1363,12 @@ function Main.start(ctx)
                     -- 它的某些槛位用的是没被 mod 替换的皮肤 mesh —— 整份覆写会把角色
                     -- 配置里正确的那部分替成原版材质名。判据和应用时的闸门是同一个。
                     local prev = layer.presets[state.editing]
-                    layer.presets[state.editing] = is_base
+                    local data = is_base
                         and Utils.capture_preserving_unmatched(source, prev,
                                 TransformManager.usable_slots(source, prev))
                         or Utils.capture_current_as_preset(source)
                     state.pending_recapture = false
-                    save_config(kind_id)
-                    request_reapply()
+                    commit(kind_id, Ops.replace_preset(layer, state.editing, data))
                     return
                 end
                 imgui.same_line()
@@ -1372,55 +1422,29 @@ function Main.start(ctx)
 
                     if ui_tree(summary .. "###slot_" .. id_prefix .. slot) then
                         if is_base then
-                            if imgui.button(T("all_on") .. "###on_" .. id_prefix .. slot) then
-                                if type(preset_data[slot]) ~= "table" then preset_data[slot] = { materials = {} } end
-                                for i, n in ipairs(names) do
-                                    preset_data[slot].materials[n] = true
-                                    pcall(function() mesh:call("setMaterialsEnable", i - 1, true) end)
+                            -- 全开 / 全关 / 反选:改完按预设里的新值先写一次模型,让当帧就有反馈
+                            for _, op in ipairs({ { "all_on", "###on_" }, { "all_off", "###off_" }, { "invert", "###inv_" } }) do
+                                if op[1] ~= "all_on" then imgui.same_line() end
+                                if imgui.button(T(op[1]) .. op[2] .. id_prefix .. slot) then
+                                    local changed, reapply = Ops.bulk_slot(preset_data, slot, op[1], names, nil, true)
+                                    for i, n in ipairs(names) do
+                                        local v = preset_data[slot].materials[n]
+                                        pcall(function() mesh:call("setMaterialsEnable", i - 1, v) end)
+                                    end
+                                    commit(kind_id, changed, reapply)
                                 end
-                                save_config(kind_id); request_reapply()
-                            end
-                            imgui.same_line()
-                            if imgui.button(T("all_off") .. "###off_" .. id_prefix .. slot) then
-                                if type(preset_data[slot]) ~= "table" then preset_data[slot] = { materials = {} } end
-                                for i, n in ipairs(names) do
-                                    preset_data[slot].materials[n] = false
-                                    pcall(function() mesh:call("setMaterialsEnable", i - 1, false) end)
-                                end
-                                save_config(kind_id); request_reapply()
-                            end
-                            imgui.same_line()
-                            if imgui.button(T("invert") .. "###inv_" .. id_prefix .. slot) then
-                                if type(preset_data[slot]) ~= "table" then preset_data[slot] = { materials = {} } end
-                                for i, n in ipairs(names) do
-                                    local v = not (preset_data[slot].materials[n] ~= false)
-                                    preset_data[slot].materials[n] = v
-                                    pcall(function() mesh:call("setMaterialsEnable", i - 1, v) end)
-                                end
-                                save_config(kind_id); request_reapply()
                             end
                         else
                             -- 「整块纳入」= 让这个状态接管整个部位,于是它就成了"这个部位独立选造型"。
                             -- 这就是"按身体部位用不同造型"的实现方式 —— 不需要额外的架构层,
                             -- 只是把逐个点三态这件事批量化了。
                             if imgui.button(T("claim_all") .. "###clm_" .. id_prefix .. slot) then
-                                if type(preset_data[slot]) ~= "table" then preset_data[slot] = { materials = {} } end
-                                for i, n in ipairs(names) do
-                                    local ok, cur = pcall(function() return mesh:call("getMaterialsEnable", i - 1) end)
-                                    -- 同 Utils.capture_current_as_preset 的坑:`and cur or true`
-                                    -- 在 cur=false 时会算成 true,整块纳入就只能纳入"显示"
-                                    local v = true
-                                    if ok and type(cur) == "boolean" then v = cur end
-                                    preset_data[slot].materials[n] = v
-                                end
-                                save_config(kind_id); request_reapply()
+                                commit(kind_id, Ops.bulk_slot(preset_data, slot, "claim", names,
+                                    Utils.current_material_states(mesh), false))
                             end
                             imgui.same_line()
                             if imgui.button(T("release_all") .. "###rel_" .. id_prefix .. slot) then
-                                if type(preset_data[slot]) == "table" then
-                                    preset_data[slot].materials = {}
-                                end
-                                save_config(kind_id); request_reapply()
+                                commit(kind_id, Ops.bulk_slot(preset_data, slot, "release", names, nil, false))
                             end
                         end
 
@@ -1516,8 +1540,7 @@ function Main.start(ctx)
                 end
             end
             if rule_to_delete then
-                table.remove(layer.rules, rule_to_delete)
-                save_config(kind_id); request_reapply()
+                commit(kind_id, Ops.delete_rule(layer, rule_to_delete))
                 return
             end
         end
@@ -1559,11 +1582,8 @@ function Main.start(ctx)
                 if imgui.button(T("delete_btn") .. "###delcond_" .. id_prefix .. i) then to_delete = i end
             end
             if to_delete then
-                table.remove(conds, to_delete)
-                -- 最后一个条件被删掉 = 这条规则不该继续存在(空条件永远不命中)
-                -- (血量驱动的规则不靠条件,删光条件也保留)
-                if #conds == 0 and rule_idx and rule.dissolve_hp_driven ~= true then table.remove(layer.rules, rule_idx) end
-                save_config(kind_id); request_reapply()
+                -- 删光条件会连规则一起删(血量驱动的规则除外),见 Ops.delete_condition
+                commit(kind_id, Ops.delete_condition(layer, target, to_delete))
                 return
             end
         end
@@ -1580,10 +1600,8 @@ function Main.start(ctx)
             if ch_h then rb.hold_buf = hv end
             imgui.same_line()
             if imgui.button(T("hold_apply") .. "###holdok_" .. id_prefix) then
-                local n = tonumber(rb.hold_buf)
-                rule.hold = (n and n > 0) and n or nil
+                commit(kind_id, Ops.set_hold(layer, target, rb.hold_buf))
                 rb.hold_buf = tostring(rule.hold or 0)
-                save_config(kind_id); request_reapply()
             end
             imgui.text("  " .. T("hold_hint"))
         end
@@ -1594,47 +1612,21 @@ function Main.start(ctx)
         imgui.separator()
         if rule then
             local ch_de, de = imgui.checkbox(T("dissolve_transition") .. "###dis_" .. id_prefix, rule.dissolve_enabled == true)
-            if ch_de then
-                rule.dissolve_enabled = de or nil
-                if de then
-                    rule.dissolve_hide_time = rule.dissolve_hide_time or 0.5
-                    rule.dissolve_show_time = rule.dissolve_show_time or 0.5
-                end
-                save_config(kind_id)
-            end
+            if ch_de then commit(kind_id, Ops.set_dissolve(layer, target, de)) end
             if rule.dissolve_enabled == true and rule.dissolve_hp_driven ~= true then
                 for _, field in ipairs({ "dissolve_hide_time", "dissolve_show_time" }) do
                     ui_w()
                     local ch_t, tv = imgui.slider_float(T(field) .. "###" .. field .. "_" .. id_prefix,
                         tonumber(rule[field]) or 0.5, 0.0, 10.0)
-                    if ch_t then
-                        rule[field] = math.floor(tv * 10 + 0.5) / 10
-                        save_config(kind_id)
-                    end
+                    if ch_t then commit(kind_id, Ops.set_dissolve_time(layer, target, field, tv)) end
                 end
             end
         end
         local driven = rule ~= nil and rule.dissolve_hp_driven == true
         local ch_hd, hd = imgui.checkbox(T("dissolve_hp_driven") .. "###hpd_" .. id_prefix, driven)
         if ch_hd then
-            if hd then
-                if not rule then
-                    rule = { conditions = {}, logic = "AND", preset = target }
-                    table.insert(layer.rules, rule)
-                end
-                rule.dissolve_hp_driven = true
-                rule.dissolve_hp_upper = rule.dissolve_hp_upper or 100
-                rule.dissolve_hp_lower = rule.dissolve_hp_lower or 0
-            elseif rule then
-                rule.dissolve_hp_driven = nil
-                -- 只为血量驱动建的空规则,取消后一并删掉(空条件永远不命中)
-                if #(rule.conditions or {}) == 0 then
-                    for i, r in ipairs(layer.rules) do
-                        if r == rule then table.remove(layer.rules, i); break end
-                    end
-                end
-            end
-            save_config(kind_id); request_reapply()
+            -- 没有规则时建一条空条件的规则来挂;取消时只为它建的空规则一并删掉,见 Ops.set_hp_driven
+            commit(kind_id, Ops.set_hp_driven(layer, target, hd))
             return
         end
         if driven then
@@ -1642,18 +1634,12 @@ function Main.start(ctx)
                 ui_w()
                 local ch_v, v = imgui.slider_float(T(field) .. "###" .. field .. "_" .. id_prefix,
                     tonumber(rule[field]) or (field == "dissolve_hp_upper" and 100 or 0), 0.0, 100.0)
-                if ch_v then
-                    rule[field] = math.floor(v + 0.5)
-                    save_config(kind_id)
-                end
+                if ch_v then commit(kind_id, Ops.set_hp_bound(layer, target, field, v)) end
             end
             ui_w()
             local ch_dir, dir = imgui.combo(T("dissolve_hp_dir") .. "###hpdir_" .. id_prefix,
                 rule.dissolve_hp_invert == true and 2 or 1, { T("dissolve_hp_dir_low"), T("dissolve_hp_dir_high") })
-            if ch_dir then
-                rule.dissolve_hp_invert = (dir == 2) or nil
-                save_config(kind_id)
-            end
+            if ch_dir then commit(kind_id, Ops.set_hp_invert(layer, target, dir == 2)) end
             imgui.text("  " .. T("dissolve_hp_hint"))
         end
 
@@ -1715,58 +1701,29 @@ function Main.start(ctx)
         end
 
         if imgui.button(T("cond_add") .. "###ca_" .. id_prefix) then
-            local cond = nil
+            local op, value
             if sel_def.kind == "bool" then
-                cond = { type = sel_def.id, value = (rb.cond_bool_idx == 1) }
+                value = (rb.cond_bool_idx == 1)
             elseif sel_def.kind == "enum" then
                 local opts = sel_def.options and sel_def.options(context, global_config.language) or {}
                 local chosen = opts[rb.cond_enum_idx]
-                if chosen then
-                    -- 算子索引和数值类共用 cond_op_idx,所以这里必须按 ENUM_OPS 取,
-                    -- 不能按 NUM_OPS —— 否则切换条件类型后会取到 "<=" 这种枚举用不了的算子
-                    cond = { type = sel_def.id, op = Registry.ENUM_OPS[rb.cond_op_idx] or "==", value = chosen.value }
-                end
+                -- 算子索引和数值类共用 cond_op_idx,所以这里必须按 ENUM_OPS 取,
+                -- 不能按 NUM_OPS —— 否则切换条件类型后会取到 "<=" 这种枚举用不了的算子
+                op, value = Registry.ENUM_OPS[rb.cond_op_idx] or "==", chosen and chosen.value
             else
-                local num = tonumber(rb.cond_num_value)
-                if num then
-                    cond = { type = sel_def.id, op = Registry.NUM_OPS[rb.cond_op_idx], value = num }
-                end
+                op, value = Registry.NUM_OPS[rb.cond_op_idx], rb.cond_num_value
             end
+            local cond = Ops.make_condition(sel_def, op, value, context, global_config.language)
             if cond then
+                -- 「关系」是整条规则共用的,加条件时是**改**它、不是只影响新条件 ——
+                -- 行间显示的那个连接词就是它,用户看得见自己改了什么
                 local logic = (rb.logic_idx == 1) and "AND" or "OR"
-                if not rule then
-                    -- 这个状态组还没有规则:加第一个条件时才建
-                    table.insert(layer.rules, { conditions = { cond }, logic = logic, preset = target })
-                else
-                    table.insert(rule.conditions, cond)
-                    -- 「关系」是整条规则共用的,所以这里是**改**它、不是只影响新条件 ——
-                    -- 行间显示的那个连接词就是它,用户看得见自己改了什么
-                    rule.logic = logic
-                end
                 rb.adding = false
-                save_config(kind_id); request_reapply()
+                commit(kind_id, Ops.add_condition(layer, target, cond, logic))
             end
         end
         imgui.same_line()
         if imgui.button(T("cancel_btn") .. "###cacx_" .. id_prefix) then rb.adding = false end
-    end
-
-    -- 改名要连带把引用旧名字的地方一起改掉,否则规则会指向一个不存在的预设
-    local function rename_preset(layer, old, new)
-        if old == new or new == "" then return false end
-        if layer.presets[new] then return false end
-        layer.presets[new] = layer.presets[old]
-        layer.presets[old] = nil
-        -- order 里就地换名 —— 只删不加会让这个状态被 reconcile_order 当成新名字补到末尾,
-        -- 改个名字优先级就变了(踩过这类问题,所以这里显式处理)
-        for i, n in ipairs(layer.order or {}) do
-            if n == old then layer.order[i] = new; break end
-        end
-        if layer.active == old then layer.active = new end
-        for _, rule in ipairs(layer.rules or {}) do
-            if rule.preset == old then rule.preset = new end
-        end
-        return true
     end
 
     -- 一个完整的层:预设库(新建/浏览编辑/改名/复制/删除)+ 编辑区 + 条件规则
@@ -1781,10 +1738,7 @@ function Main.start(ctx)
         if is_base then
             local ch_am, want_mirror = imgui.checkbox(
                 T("armor_mirror_label") .. "###armormirror_" .. id_prefix, config.armor_mirrors_body)
-            if ch_am then
-                config.armor_mirrors_body = want_mirror
-                save_config(kind_id); request_reapply()
-            end
+            if ch_am then commit(kind_id, Ops.set_armor_mirror(config, want_mirror)) end
             imgui.text("  " .. T("armor_mirror_hint"))
             imgui.separator()
         end
@@ -1792,18 +1746,13 @@ function Main.start(ctx)
         -- 新建:自动取名(1、2、3…),建完立刻选中。名字随后在「当前预设名」里改 ——
         -- "先取名再创建"对用户是多一道门槛,常规工具都是先建后改名。
         if imgui.button(TP("new_preset_btn", is_base) .. "###nb_" .. id_prefix) then
-            local n = 1
-            while layer.presets[tostring(n)] do n = n + 1 end
-            local newn = tostring(n)
             -- 整套造型抓当前显示状态(一整套的语义);状态组必须从空开始,
-            -- 一上来就整份快照 = 宣称拥有全部材质 = 叠加时互相踩
-            layer.presets[newn] = is_base and Utils.capture_current_as_preset(source) or {}
-            table.insert(layer.order, newn)          -- 优先级最低,想提上去用「上移」
-            layer.active = newn
+            -- 一上来就整份快照 = 宣称拥有全部材质 = 叠加时互相踩。新建的排最后,想提上去用「上移」
+            local changed, reapply, newn = Ops.new_preset(layer, is_base and Utils.capture_current_as_preset(source) or {})
             state.editing = newn
             state.name_buf = newn
             state.name_buf_for = newn
-            save_config(kind_id); request_reapply()
+            commit(kind_id, changed, reapply)
         end
 
         -- 当前预设名:就地改名(不是"新建用的名字")
@@ -1818,10 +1767,10 @@ function Main.start(ctx)
             imgui.same_line()
             -- 不做逐键改名:那样每敲一个字就要挪一次表 + 存一次盘,中途还可能撞上已有名字
             if imgui.button(T("rename_btn") .. "###rn_" .. id_prefix) then
-                if rename_preset(layer, state.editing, state.name_buf) then
+                -- 连带改掉 order / 手动选择 / 规则目标里的旧名字,见 Ops.rename_preset
+                if commit(kind_id, Ops.rename_preset(layer, state.editing, state.name_buf)) then
                     state.editing = state.name_buf
                     state.name_buf_for = state.name_buf
-                    save_config(kind_id)
                 end
             end
         end
@@ -1874,9 +1823,8 @@ function Main.start(ctx)
                 if state.editing == pname then
                     state.editing = nil          -- 再点一次收起编辑区(但保持生效)
                 else
-                    layer.active = pname
                     state.editing = pname
-                    save_config(kind_id); request_reapply()
+                    commit(kind_id, Ops.set_active(layer, pname))
                 end
             end
             -- 上移/下移。只在有得移的时候出现(第一行没有上移、最后一行没有下移),
@@ -1885,54 +1833,35 @@ function Main.start(ctx)
                 if pi > 1 then
                     imgui.same_line()
                     if imgui.button(T("move_up") .. "###mu_" .. id_prefix .. pname) then
-                        move = { from = pi, to = pi - 1 }
+                        move = { name = pname, offset = -1 }
                     end
                 end
                 if pi < #names then
                     imgui.same_line()
                     if imgui.button(T("move_down") .. "###md_" .. id_prefix .. pname) then
-                        move = { from = pi, to = pi + 1 }
+                        move = { name = pname, offset = 1 }
                     end
                 end
             end
             imgui.same_line()
             if imgui.button(T("duplicate_btn") .. "###du_" .. id_prefix .. pname) then
-                -- 后缀 _1 / _2 …,复制完直接切过去(跟新建一致:建完就在手上)
-                local i, newn = 1, pname .. "_1"
-                while layer.presets[newn] do i = i + 1; newn = pname .. "_" .. i end
-                local src, dst = layer.presets[pname], {}
-                for slot, data in pairs(src) do
-                    if type(data) == "table" then
-                        dst[slot] = { materials = {} }
-                        for m, v in pairs(data.materials or {}) do dst[slot].materials[m] = v end
-                    end
+                -- 后缀 _1 / _2 …,插在源的紧后面,复制完直接切过去(跟新建一致:建完就在手上)
+                local changed, reapply, newn = Ops.duplicate_preset(layer, pname)
+                if changed then
+                    state.editing = newn
+                    state.name_buf = newn
+                    state.name_buf_for = newn
                 end
-                layer.presets[newn] = dst
-                -- 插在源的紧后面:副本是源的变体,优先级也该紧邻,不该被甩到列表末尾
-                local at = #layer.order + 1
-                for i, n in ipairs(layer.order) do
-                    if n == pname then at = i + 1; break end
-                end
-                table.insert(layer.order, at, newn)
-                layer.active = newn
-                state.editing = newn
-                state.name_buf = newn
-                state.name_buf_for = newn
-                save_config(kind_id); request_reapply()
+                commit(kind_id, changed, reapply)
             end
             imgui.same_line()
             -- 删除要二次确认:它紧挨着复制和预设名按钮,误点概率最高,而且不可逆
             if state.pending_delete == pname then
                 if imgui.button(T("confirm_delete") .. "###cd_" .. id_prefix .. pname) then
                     snapshot_before_destructive(kind_id)
-                    layer.presets[pname] = nil
-                    for i, n in ipairs(layer.order) do
-                        if n == pname then table.remove(layer.order, i); break end
-                    end
-                    if layer.active == pname then layer.active = "" end
                     if state.editing == pname then state.editing = nil end
                     state.pending_delete = nil
-                    save_config(kind_id); request_reapply()
+                    commit(kind_id, Ops.delete_preset(layer, pname))
                 end
                 imgui.same_line()
                 if imgui.button(T("cancel_btn") .. "###cx_" .. id_prefix .. pname) then
@@ -1947,12 +1876,7 @@ function Main.start(ctx)
 
         -- 优先级改动:改 order 就够了(presets 是 map,不受顺序影响),存盘 + 重算一次 ——
         -- 顺序变了可能立刻换成另一个状态,不重算的话要等下一次条件变化才生效
-        if move then
-            local from, to = move.from, move.to
-            local n = table.remove(layer.order, from)
-            table.insert(layer.order, to, n)
-            save_config(kind_id); request_reapply()
-        end
+        if move then commit(kind_id, Ops.move_preset(layer, move.name, move.offset)) end
 
 
         if state.editing and layer.presets[state.editing] then
@@ -1985,10 +1909,7 @@ function Main.start(ctx)
         if #(layer.rules or {}) == 0 then return true end
         local on = layer.auto ~= false
         local ch, v = imgui.checkbox(T("auto_label") .. "###auto_" .. id_prefix, on)
-        if ch then
-            layer.auto = v
-            save_config(kind_id); request_reapply()
-        end
+        if ch then commit(kind_id, Ops.set_auto(layer, v)) end
         -- imgui.checkbox 的第二个返回值就是点完之后的值,无论这一帧有没有被点
         return v
     end
@@ -2014,10 +1935,7 @@ function Main.start(ctx)
             end
             ui_w()
             local ch, idx = imgui.combo(label .. "###q_" .. id_prefix, cur_idx, items)
-            if ch then
-                layer.active = (idx == 1) and "" or items[idx]
-                save_config(kind_id); request_reapply()
-            end
+            if ch then commit(kind_id, Ops.set_active(layer, (idx == 1) and "" or items[idx])) end
             if #(layer.rules or {}) > 0 then
                 imgui.same_line()
                 render_auto_toggle(layer, id_prefix, kind_id)
@@ -2049,10 +1967,7 @@ function Main.start(ctx)
                 end
                 ui_w()
                 local ch, idx = imgui.combo("###q_" .. id_prefix, cur_idx, items)
-                if ch then
-                    layer.active = (idx == 1) and "" or items[idx]
-                    save_config(kind_id); request_reapply()
-                end
+                if ch then commit(kind_id, Ops.set_active(layer, (idx == 1) and "" or items[idx])) end
             end
             return
         end
@@ -2062,10 +1977,7 @@ function Main.start(ctx)
         if #names == 1 then
             local only = names[1]
             local ch, v = imgui.checkbox(label .. "###q_" .. id_prefix, layer.active == only)
-            if ch then
-                layer.active = v and only or ""
-                save_config(kind_id); request_reapply()
-            end
+            if ch then commit(kind_id, Ops.set_active(layer, v and only or "")) end
             return
         end
 
@@ -2080,73 +1992,12 @@ function Main.start(ctx)
         end
         ui_w()
         local ch, idx = imgui.combo(label .. "###q_" .. id_prefix, cur_idx, items)
-        if ch then
-            layer.active = (idx == 1) and "" or items[idx]
-            save_config(kind_id); request_reapply()
-        end
+        if ch then commit(kind_id, Ops.set_active(layer, (idx == 1) and "" or items[idx])) end
     end
 
-    local function draw_panel()
-        if not ui_tree(T("title") .. " v" .. version) then return end
-
-        -- 语言开关放在最顶上、且在所有提前 return 之前:否则"未找到角色"那类提示会卡在
-        -- 用户看不懂的语言里,而他又没地方切。标签固定写「中文」,英文界面下也能认出来。
-        local ch_lang, want_zh = imgui.checkbox("中文###langtoggle", global_config.language == "zh")
-        if ch_lang then
-            global_config.language = want_zh and "zh" or "en"
-            save_global_settings()
-        end
-
-        -- 上一帧绘制出错时把它显示出来。不显示的话 pcall 会把错误吞掉,
-        -- 表现成"面板缺了一半"却没人知道为什么(日志里也有,但没人会去翻)。
-        if last_draw_error then
-            imgui.text(T("draw_error") .. " " .. last_draw_error)
-        end
-
-        -- 面板一次只编辑一个目标。目标 = 本地玩家 + 当前在场的 CG 傀儡。
-        --
-        -- 为什么必须让傀儡也能选中,而不是只在后台给它们应用配置:傀儡是按**自己带的**
-        -- CharacterKindID 登记的(实测 ch2a200_00_puppet 是 ch2_a200,不是 ch3_a8z0),
-        -- 首次出现时会自动去认亲。认亲认错了得有地方改 —— 而「独立/共用」那两个按钮
-        -- 操作的永远是"面板当前显示的这个角色"。选不中傀儡,它认错的别名就永远改不回来。
-        local all_targets = Targets.collect()
-
-        -- 隐藏收纳武器是全局功能,不属于任何一个角色分组,画在分组逻辑之外,就一个勾选框。
-        imgui.separator()
-        local ch_st, st = imgui.checkbox(T("weapon_hide_storage_enabled") .. "###wh_storage",
-            global_config.weapon_hide_storage == true)
-        if ch_st then
-            global_config.weapon_hide_storage = st
-            save_global_settings()
-        end
-        -- 界面切换溶解:在面板上手动切状态 / 预设时播放溶解(只作用于溶解模板的材质)
-        local ch_ud, ud = imgui.checkbox(T("ui_dissolve_enabled") .. "###ui_dissolve",
-            global_config.ui_dissolve_enabled ~= false)
-        if ch_ud then
-            global_config.ui_dissolve_enabled = ud
-            save_global_settings()
-        end
-        if global_config.ui_dissolve_enabled ~= false then
-            ui_w()
-            local ch_ut, ut = imgui.slider_float(T("ui_dissolve_time") .. "###ui_dissolve_time",
-                tonumber(global_config.ui_dissolve_time) or 1.0, 0.0, 30.0)
-            if ch_ut then
-                global_config.ui_dissolve_time = math.floor(ut * 10 + 0.5) / 10
-                save_global_settings()
-            end
-        end
-
-        -- ============================================================
-        -- 面板一次编辑一个**角色**,不是一个目标。
-        --
-        -- 同一个角色在场的所有目标(玩家 / CG 傀儡 / 鉴赏雕像)共用同一份配置 ——
-        -- 配置键就是角色名,所以"分开选"从数据上就没有意义:改哪个都是改同一份文件。
-        -- 之前按目标选是 kind 键时代的遗留(那时候一个傀儡可能有自己的配置)。
-        --
-        -- 顺带把"雕像不可选中"那条限制去掉了 —— 它当初是为了防止「从当前模型抓快照」
-        -- 把雕像的材质集写进角色配置。按角色分组之后,抓快照有明确的**代表目标**
-        -- (优先玩家),雕像不再是快照来源,那条限制的前提就不存在了。
-        -- ============================================================
+    -- 场上目标按**角色**分组:同一角色的玩家 / CG 傀儡 / 鉴赏雕像共用同一份配置(配置键就是角色名)。
+    -- ImGui 面板和 REFF 网页都用这一份分组,保证两边选中的是同一个东西。
+    local function collect_character_groups(all_targets)
         local groups, group_order = {}, {}
         for _, t in ipairs(all_targets) do
             -- 键可能是 nil(认出角色但那个角色还没有配置)。这种也要成组显示,
@@ -2169,6 +2020,77 @@ function Main.start(ctx)
                 if rank < g.rank then g.rep, g.rank = t, rank end
             end
         end
+        return groups, group_order
+    end
+
+    -- 默认选主控那一组(rank 1 = 玩家)。记的是组 id 而不是下标 ——
+    -- 傀儡/雕像随场景生灭,下标会指到别人身上去。
+    local function pick_character_group(groups, group_order, wanted)
+        if groups[wanted] then return groups[wanted] end
+        for _, gid in ipairs(group_order) do
+            if groups[gid].rank == 1 then return groups[gid] end
+        end
+        return groups[group_order[1]]
+    end
+
+    local function draw_panel()
+        if not ui_tree(T("title") .. " v" .. version) then return end
+
+        -- 语言开关放在最顶上、且在所有提前 return 之前:否则"未找到角色"那类提示会卡在
+        -- 用户看不懂的语言里,而他又没地方切。标签固定写「中文」,英文界面下也能认出来。
+        local ch_lang, want_zh = imgui.checkbox("中文###langtoggle", global_config.language == "zh")
+        if ch_lang and Ops.set_global(global_config, "language", want_zh and "zh" or "en") then
+            save_global_settings()
+        end
+
+        -- 上一帧绘制出错时把它显示出来。不显示的话 pcall 会把错误吞掉,
+        -- 表现成"面板缺了一半"却没人知道为什么(日志里也有,但没人会去翻)。
+        if last_draw_error then
+            imgui.text(T("draw_error") .. " " .. last_draw_error)
+        end
+
+        -- 面板一次只编辑一个目标。目标 = 本地玩家 + 当前在场的 CG 傀儡。
+        --
+        -- 为什么必须让傀儡也能选中,而不是只在后台给它们应用配置:傀儡是按**自己带的**
+        -- CharacterKindID 登记的(实测 ch2a200_00_puppet 是 ch2_a200,不是 ch3_a8z0),
+        -- 首次出现时会自动去认亲。认亲认错了得有地方改 —— 而「独立/共用」那两个按钮
+        -- 操作的永远是"面板当前显示的这个角色"。选不中傀儡,它认错的别名就永远改不回来。
+        local all_targets = Targets.collect()
+
+        -- 隐藏收纳武器是全局功能,不属于任何一个角色分组,画在分组逻辑之外,就一个勾选框。
+        imgui.separator()
+        local ch_st, st = imgui.checkbox(T("weapon_hide_storage_enabled") .. "###wh_storage",
+            global_config.weapon_hide_storage == true)
+        if ch_st and Ops.set_global(global_config, "weapon_hide_storage", st) then
+            save_global_settings()
+        end
+        -- 界面切换溶解:在面板上手动切状态 / 预设时播放溶解(只作用于溶解模板的材质)
+        local ch_ud, ud = imgui.checkbox(T("ui_dissolve_enabled") .. "###ui_dissolve",
+            global_config.ui_dissolve_enabled ~= false)
+        if ch_ud and Ops.set_global(global_config, "ui_dissolve_enabled", ud) then
+            save_global_settings()
+        end
+        if global_config.ui_dissolve_enabled ~= false then
+            ui_w()
+            local ch_ut, ut = imgui.slider_float(T("ui_dissolve_time") .. "###ui_dissolve_time",
+                tonumber(global_config.ui_dissolve_time) or 1.0, 0.0, 30.0)
+            if ch_ut and Ops.set_global(global_config, "ui_dissolve_time", ut) then
+                save_global_settings()
+            end
+        end
+
+        -- ============================================================
+        -- 面板一次编辑一个**角色**,不是一个目标。
+        --
+        -- 同一个角色在场的所有目标(玩家 / CG 傀儡 / 鉴赏雕像)共用同一份配置 ——
+        -- 配置键就是角色名,所以"分开选"从数据上就没有意义:改哪个都是改同一份文件。
+        -- 之前按目标选是 kind 键时代的遗留(那时候一个傀儡可能有自己的配置)。
+        --
+        -- 顺带把"雕像不可选中"那条限制去掉了 —— 它当初是为了防止「从当前模型抓快照」
+        -- 把雕像的材质集写进角色配置。按角色分组之后,抓快照有明确的**代表目标**
+        -- (优先玩家),雕像不再是快照来源,那条限制的前提就不存在了。
+        -- ============================================================
+        local groups, group_order = collect_character_groups(all_targets)
 
         if #group_order == 0 then
             imgui.text(T("no_character"))
@@ -2176,16 +2098,8 @@ function Main.start(ctx)
             return
         end
 
-        -- 默认选主控那一组(rank 1 = 玩家)。记的是组 id 而不是下标 ——
-        -- 傀儡/雕像随场景生灭,下标会指到别人身上去。
-        local group = groups[selected_target_id]
-        if not group then
-            for _, gid in ipairs(group_order) do
-                if groups[gid].rank == 1 then group = groups[gid]; break end
-            end
-            group = group or groups[group_order[1]]
-            selected_target_id = group.gid
-        end
+        local group = pick_character_group(groups, group_order, selected_target_id)
+        selected_target_id = group.gid
 
         if #group_order > 1 then
             local labels, cur = {}, 1
@@ -2250,16 +2164,8 @@ function Main.start(ctx)
             imgui.text(T("shared_hint"))
             if pending_ownership == "independent" then
                 if imgui.button(T("confirm_independent") .. "###ci_own") then
-                    -- 从当前(共用的)内容拷一份成为自己的,什么都不丢
-                    local cur = loaded_configs[shared_src]
-                    local copy = normalize_config(deep_copy(cur or default_config()))
-                    if global_config.aliases then global_config.aliases[kind_id] = nil end
-                    save_global_settings()
-                    loaded_configs[kind_id] = copy
-                    save_config(kind_id)
-                    ui_state = {}
+                    make_independent(kind_id)
                     pending_ownership = nil
-                    request_reapply()
                 end
                 imgui.same_line()
                 if imgui.button(T("cancel_btn") .. "###cx_own") then pending_ownership = nil end
@@ -2271,19 +2177,8 @@ function Main.start(ctx)
         else
             if pending_ownership == "reset" then
                 if imgui.button(T("confirm_reset_config") .. "###cr_reset") then
-                    snapshot_before_destructive(kind_id)      -- 初始化前先留一份
-                    -- **不能产出完全空的配置**:空配置会立刻触发同族匹配、把共用又建回来,
-                    -- 于是初始化看起来毫无效果(初始化 ↔ 匹配 的死循环)。
-                    -- 带一个按当前显示状态抓的 default 整套预设,既撑成非空,也给了个可用基线。
-                    local fresh = normalize_config(default_config())
-                    fresh.base.presets["default"] = Utils.capture_current_as_preset(source)
-                    fresh.base.order = { "default" }
-                    fresh.base.active = "default"
-                    loaded_configs[kind_id] = fresh
-                    save_config(kind_id)
-                    ui_state = {}
+                    reset_config(kind_id, source)      -- 先留备份,再按当前外观建一份 default
                     pending_ownership = nil
-                    request_reapply()
                 end
                 imgui.same_line()
                 if imgui.button(T("cancel_btn") .. "###cx_reset") then pending_ownership = nil end
@@ -2375,22 +2270,16 @@ function Main.start(ctx)
             local ch_an, anv = imgui.input_text(T("new_axis") .. "###newaxis", new_axis_name)
             if ch_an then new_axis_name = anv end
             if imgui.button(T("new_axis_btn")) and new_axis_name ~= "" then
-                if not config.axes[new_axis_name] then
-                    -- 顺手带一份预设并选中:绝大多数状态就是个二元开关,只要一份预设,
-                    -- 让用户再点一次"新建预设"是白费一步。选中它还有个必要作用 ——
-                    -- 编辑的必须是当前生效的那个,否则改动会被 resolve 冲掉。
-                    local layer = new_layer()
-                    layer.presets["1"] = {}
-                    layer.order = { "1" }
-                    layer.active = "1"
-                    config.axes[new_axis_name] = layer
+                -- 顺手带一份预设并选中(见 Ops.new_axis);编辑区直接打开它
+                local changed, reapply = Ops.new_axis(config, new_axis_name)
+                if changed then
                     local st = get_ui_state("ax_" .. new_axis_name)
                     st.editing = "1"
                     st.name_buf = "1"
                     st.name_buf_for = "1"
                     new_axis_name = ""
-                    save_config(kind_id); request_reapply()
                 end
+                commit(kind_id, changed, reapply)
             end
 
             -- 只报**真会打架的**:都写同一个值的算兼容,不报(见 find_scope_conflicts 的注释)。
@@ -2442,19 +2331,17 @@ function Main.start(ctx)
             end
             if axis_to_rename then
                 local o, n = axis_to_rename.old, axis_to_rename.new
-                -- 状态名没有任何跨引用(规则在状态内部),所以挪 key + 挪 UI 状态就够了
-                config.axes[n] = config.axes[o]
-                config.axes[o] = nil
-                ui_state["ax_" .. n] = ui_state["ax_" .. o]
-                ui_state["ax_" .. o] = nil
-                local st = ui_state["ax_" .. n]
-                if st then st.axis_name_buf = n; st.axis_name_buf_for = n end
-                save_config(kind_id)
+                -- 状态组名没有跨引用(规则在组内部),挪 key(Ops)+ 挪 UI 状态就够了
+                if commit(kind_id, Ops.rename_axis(config, o, n)) then
+                    ui_state["ax_" .. n] = ui_state["ax_" .. o]
+                    ui_state["ax_" .. o] = nil
+                    local st = ui_state["ax_" .. n]
+                    if st then st.axis_name_buf = n; st.axis_name_buf_for = n end
+                end
             end
             if axis_to_delete then
-                config.axes[axis_to_delete] = nil
                 ui_state["ax_" .. axis_to_delete] = nil
-                save_config(kind_id); request_reapply()
+                commit(kind_id, Ops.delete_axis(config, axis_to_delete))
             end
             ui_tree_pop()
         end
@@ -2471,18 +2358,13 @@ function Main.start(ctx)
                     local names = mesh and Utils.get_material_names(mesh) or {}
                     for mat_index, mat_name in ipairs(names) do
                         if imgui.button(T("locate_btn") .. "###loc_" .. slot .. mat_index) then
-                            preview = { slot = slot, mat = mat_name, target_id = target.id,
-                                        until_clock = os.clock() + PREVIEW_SECONDS }
-                            request_reapply()
+                            start_preview(target.id, slot, mat_name)
                         end
                         imgui.same_line()
                         local cur = config.material_notes[slot][mat_name] or ""
                         ui_w()
                         local ch, nv = imgui.input_text(mat_name .. "###noteinput_" .. slot .. mat_index, cur)
-                        if ch then
-                            config.material_notes[slot][mat_name] = (nv ~= "") and nv or nil
-                            save_config(kind_id)
-                        end
+                        if ch then commit(kind_id, Ops.set_note(config, slot, mat_name, nv)) end
                     end
                     ui_tree_pop()
                 end
@@ -2532,8 +2414,7 @@ function Main.start(ctx)
                 if sel.own then
                     imgui.same_line()
                     if imgui.button(T("slot_delete_btn") .. "###slotdel") then
-                        get_slots(kind_id)[sel.name] = nil
-                        save_slots_file(kind_id)
+                        delete_slot(kind_id, sel.name)
                         slot_sel_idx = 1
                     end
                 end
@@ -2594,6 +2475,29 @@ function Main.start(ctx)
             last_draw_error = note_error("on_draw_ui", err)
         end
     end)
+
+    -- REFF 网页界面(可选)。未安装 REFF 时不注册,REF 原生面板照常可用。
+    -- 网页与面板共用分组、配置读写和 Ops,只是各自记着自己选中的角色。
+    local reff_ok, reff_err = pcall(function()
+        Main.reff = require("ArmorVariantManager_Core.Games.RE4.Reff").connect({
+            version = version, global_config = global_config, save_global_settings = save_global_settings, T = T,
+            targets = Targets.collect, groups = collect_character_groups, pick_group = pick_character_group,
+            resolve_key = resolve_config_key, cfg_key = cfg_key, register_kind = register_kind,
+            load_config = load_config, commit = commit, reset_ui_state = function() ui_state = {} end,
+            ordered_presets = ordered_preset_names, char_display = char_display, target_label = target_display_name,
+            TransformManager = TransformManager, Registry = Registry, Utils = Utils,
+            -- 第二阶段:编辑、归属、备注与定位、存档 —— 和面板调用的是同一批函数
+            slot_label = slot_label, visible_slots = visible_slots, request_reapply = request_reapply,
+            snapshot_before_destructive = snapshot_before_destructive, config_is_trivial = config_is_trivial,
+            make_independent = make_independent, reset_config = reset_config, try_match_kin = try_match_kin,
+            save_slot = save_slot, load_slot = load_slot, delete_slot = delete_slot, all_slot_entries = all_slot_entries,
+            auto_slot_name = auto_slot_name, has_backup = has_backup, has_onload_backup = has_onload_backup,
+            restore_backup = restore_backup, restore_onload_backup = restore_onload_backup,
+            start_preview = start_preview, get_preview = function() return preview end,
+            documentation = require("ArmorVariantManager_Core.Games.RE4.Documentation"),
+        })
+    end)
+    if not reff_ok then note_error("reff", reff_err) end
 end
 
 return Main
