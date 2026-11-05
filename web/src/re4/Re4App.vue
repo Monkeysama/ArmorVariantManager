@@ -45,6 +45,12 @@ const showLook = computed(() => tab.value === 'base' || tab.value === 'groups' |
 // 全身预览：开关在顶栏，打开后画在左栏最上面（和荒野共用网页预览组件，文案换成 RE4 的）
 const previewIntent = shallowRef<boolean | null>(null);
 const previewOpen = computed(() => snapshot.value?.preview?.enabled === true && hasCharacter.value);
+// 全身预览「填满 / 原比例」。原比例时预览栏加宽,左栏让出来:游戏状态移到主栏最上面,最终材质不显示。
+// 选择是这台机器上的个人偏好,记在浏览器本地(读写失败就只是不记住)。
+const FIT_KEY = 'avm.re4.previewFit';
+const previewFit = shallowRef<'fill' | 'native'>((() => { try { return localStorage.getItem(FIT_KEY) === 'native' ? 'native' : 'fill'; } catch { return 'fill'; } })());
+watch(previewFit, value => { try { localStorage.setItem(FIT_KEY, value); } catch { /* 隐私模式等 */ } });
+const previewWide = computed(() => previewOpen.value && !!snapshot.value?.preview && previewFit.value === 'native');
 async function setPreview(value: unknown) {
   previewIntent.value = value === true;
   try { await perform({ kind: 'setting', id: 'portrait_enabled', value: previewIntent.value }); }
@@ -81,18 +87,20 @@ watch(() => snapshot.value?.notice, value => { if (value) notice.value = value; 
       <div class="avm-body">
         <!-- 和荒野同一布局:预览是正文外的整列(原生画面在网页下层,正文底色不能盖住它),随窗口高度伸缩 -->
         <PortraitPane v-if="previewOpen && snapshot?.preview" :client="avm.client" :preview="snapshot.preview" :t="previewText"
-          controls :controls-hint="t('previewControls')" />
+          controls :controls-hint="t('previewControls')" :fit-labels="{ fill: t('previewFill'), native: t('previewNative') }"
+          v-model:fit="previewFit" />
         <div class="avm-content">
           <div v-if="error" class="error-banner" role="alert"><span>{{ error }}</span>
             <ElButton v-if="!snapshot" :disabled="loading" @click="connect">{{ t('retry') }}</ElButton>
             <button v-else class="dismiss-error" :aria-label="t('dismiss')" @click="error = ''">×</button>
           </div>
           <div v-if="!snapshot" class="connection-state"><span v-if="loading" class="connection-dot"></span>{{ loading ? t('loading') : t('wait') }}</div>
-          <div v-else class="re4-layout" :class="{ single: !(hasCharacter && v3) }">
-            <div v-if="hasCharacter && v3" class="re4-left">
+          <div v-else class="re4-layout" :class="{ single: !(hasCharacter && v3) || previewWide }">
+            <div v-if="hasCharacter && v3 && !previewWide" class="re4-left">
               <Re4Side v-if="v3" :snapshot="snapshot" :t="t" :show-look="showLook" />
             </div>
             <div class="re4-main">
+              <Re4Side v-if="hasCharacter && v3 && previewWide" :snapshot="snapshot" :t="t" :show-look="false" inline />
               <div v-if="notice" class="re4-banner ok" role="status">
                 <span>{{ t('migrated') }}<template v-if="notice.presets"> {{ t('migratedPresets', notice.presets) }}</template></span>
                 <button class="dismiss-error" :aria-label="t('dismiss')" @click="notice = null">×</button>

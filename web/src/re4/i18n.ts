@@ -55,7 +55,7 @@ const zh = {
   help: '帮助', loadingHelp: '正在读取帮助…', retryHelp: '重新读取', noHelp: '暂无帮助内容。',
   preview: '全身预览', previewLive: '预览就绪', previewWaiting: '等待角色与预览相机…', previewWaitingForHost: '等待 REFF 绘制预览…',
   previewUnavailable: '更新 REFF 与预览插件后可使用网页预览。', previewSdr: '当前输出模式不支持预览，请切换为 SDR。',
-  previewControls: '滚轮缩放 · 右键旋转 · 中键（或 Shift+右键）平移 · 双击复位',
+  previewControls: '滚轮缩放 · 右键旋转 · 中键（或 Shift+右键）平移 · 双击复位', previewFill: '填满', previewNative: '原比例',
   previewDistance: '预览镜头距离', previewHeight: '预览镜头高度', meters: '米',
 };
 const en: Record<keyof typeof zh, string> = {
@@ -104,7 +104,7 @@ const en: Record<keyof typeof zh, string> = {
   help: 'Help', loadingHelp: 'Loading help…', retryHelp: 'Reload', noHelp: 'No help yet.',
   preview: 'Full-body preview', previewLive: 'Preview ready', previewWaiting: 'Waiting for character and preview camera…', previewWaitingForHost: 'Waiting for REFF to draw the preview…',
   previewUnavailable: 'Update REFF and the portrait plugin to use this preview.', previewSdr: 'Preview requires SDR output.',
-  previewControls: 'Wheel to zoom · Right-drag to rotate · Middle-drag (or Shift+right-drag) to pan · Double-click to reset',
+  previewControls: 'Wheel to zoom · Right-drag to rotate · Middle-drag (or Shift+right-drag) to pan · Double-click to reset', previewFill: 'Fill', previewNative: 'Original',
   previewDistance: 'Preview distance', previewHeight: 'Preview height', meters: 'm',
 };
 export type Re4Key = keyof typeof zh;

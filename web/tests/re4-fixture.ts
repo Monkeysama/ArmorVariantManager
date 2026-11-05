@@ -286,9 +286,14 @@ export function installRe4Fixture() {
   (window as Win).reffNativeCall = async (method, args) => {
     if (method === 'ui.status') return { ready: true, epoch: 1 };
     if (method === 'ui.layout.set') return { padding: 0, override: 0, defaultPadding: 24 };
+    // 原生预览槽:只回应能力与登记,不画画面(?re4&preview 用于测试预览框布局与鼠标操作)
+    if (method === 'ui.preview.capabilities') return { version: 1, layoutProtocol: 2, maxSlots: 4, composition: 'underlay-alpha', color: 'sdr-unorm8' };
+    if (method === 'ui.preview.register') return { pageId: 'avm-re4-preview-fixture' };
+    if (method === 'ui.preview.remove') return {};
     await wait();
     const out = (value: Re4Snapshot) => params.has('re4-null') ? nullify(value) : value;
     if (method === 'monkeysama.avm.snapshot') return out(snapshot());
+    if (method === 'monkeysama.avm.preview') return snapshot().preview;
     if (method === 'monkeysama.avm.documentation') return { sections: [{ id: 'usage', title: '日常使用', entries: [{ title: '整套造型与状态组', paragraphs: ['整套造型是完整的一套外观。'] }] }] };
     if (method === 'monkeysama.avm.action') { calls.push(args); act(args as unknown as Re4Action); return out(snapshot()); }
     throw new Error(`RE4 fixture: unknown method ${method}`);
