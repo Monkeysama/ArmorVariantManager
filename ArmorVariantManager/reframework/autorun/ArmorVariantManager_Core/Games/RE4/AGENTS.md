@@ -5,7 +5,11 @@
 带「别重新提议」「踩过」的条目是讨论后的定论。
 
 RE4 目前走**独立接入**:入口 `ArmorVariantManager.lua` 识别到 `re4` 后只调用 `Main.start`,
-共享的 `App` / `Presets` / `UI` 不参与。原因是数据模型不同 —— RE4 的配置是 `base` 整套造型 +
+共享的 `App` / `Presets` / `UI` 不参与(REFF 只复用共享的注册桥 `UI/Reff/Bridge.lua`)。
+
+**界面分工**:ImGui(REF 原生菜单)是 legacy 界面,保留 RE4 用户原有的操作习惯,不向 MH 的界面靠拢;
+新界面做在 REFF 上,按 RE4 的模型单独设计(`web/src/re4/`)。两边改配置一律走 `Ops.lua`,
+保证同一个操作在两个界面里语义一致;新增改配置的操作先加进 `Ops`,再让界面调用。原因是数据模型不同 —— RE4 的配置是 `base` 整套造型 +
 `axes` 状态组的层模型(见「层模型」),而 MH 两款是 `groups`。旧 JSON 的路径、字段与行为语义按
 兼容契约保留;以后要迁到共享界面,先证明 `Leon.json` / `Ada.json` 这类旧配置行为不变。
 
@@ -78,6 +82,10 @@ ArmorVariantManager/reframework/autorun/
     TransformManager.lua   条件求值 -> 差分覆盖层合并(含血量驱动的溶解链 hp_chain)
     Dissolve.lua           溶解过渡:只作用于带 Dissolve_Rate 的溶解模板材质,其余材质瞬间开关
     Localization.lua
+    Ops.lua                ImGui 与 REFF 共用的改配置操作(选择、自动、规则与条件、hold、溶解、全局设置,
+                           预设 / 状态编辑、材质与批量、状态组、护甲镜像、备注)
+    Reff.lua               REFF 接口:snapshot / action / documentation(只传可序列化数据)
+    Documentation.lua      REFF 帮助页内容(按 RE4 概念写,不复用 MH 的分组说明)
     Conditions/
       Registry.lua           条件注册表 + 规则求值(加条件从这里入口)
       Condition_HP.lua       HP 百分比(数值类)
@@ -90,6 +98,7 @@ tools/re4/MeshProbe.lua    独立探针:看各 mesh 槛位(不进包)
 tools/re4/README.md        已移除的条件探测面板:存档 + 恢复方式
 tools/re4/attic/*.lua.txt  它的代码(.txt 后缀 = 不会被加载)
 tests/re4_*.lua            离线回归(由 tests/run.py 统一执行)
+web/src/re4/               REFF 页面;web/tests/re4-*.{ts,mjs} 为夹具与单元测试
 ```
 
 ## 打包
@@ -99,7 +108,9 @@ RE4 与 MH 两款共用仓库根目录的 `build_release.py` 通用包(见 `DEVE
 - **版本号只有一个**:入口 `ArmorVariantManager.lua` 的 `local version`,经 `ctx.version` 传给
   `Main.start`。RE4 代码里不要再写第二个版本号。
 - `Games/RE4/**/*.lua` 自动进包;`tools/re4/` 下的调试脚本**不进包**。
-- 荒野预览 DLL 在非 `MHWILDS` 游戏里加载后不做任何事;REFF 清单不声明 RE4,RE4 只有 REF 原生面板。
+- 荒野预览 DLL 在非 `MHWILDS` 游戏里加载后不做任何事;REFF 清单声明 RE4,页面在 `web/src/re4/`,
+  覆盖 ImGui 面板的全部功能。面板里已经没有直接改配置的代码:改配置走 `Ops`,带文件 / 全局副作用的
+  (独立、初始化、认亲、命名存档、还原点、定位)是 `Main.start` 里的共用函数,通过 deps 交给 `Reff.lua`。
 - 用户数据仍在游戏的 `reframework/data/ArmorVariantManager/`,文件名与旧版一致,升级不用迁移。
 
 ## 条件系统

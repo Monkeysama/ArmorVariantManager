@@ -42,7 +42,7 @@ build_release.py                      发布目录、ZIP 与库存检查
 .github/workflows/release.yml          tag 发布与同版本日志提取
 ```
 
-共享业务不直接依赖游戏 SDK；游戏适配层处理托管对象和专属能力。`Game.detect` 标记为 `standalone` 的游戏（目前是 RE4）由入口直接调用 `Games/<游戏>/Main.lua` 的 `start({game, version, author})`，不装配共享 `App`、REFF 与预览；它的配置模型与 MH 的 groups 不同，迁入共享界面前先证明旧配置行为不变。界面通过 `App` 操作配置，角色活动状态不能混入界面选择状态。旧 JSON 与公开业务 `require` 转接仍有兼容用途，不按文件名批量删除。
+共享业务不直接依赖游戏 SDK；游戏适配层处理托管对象和专属能力。`Game.detect` 标记为 `standalone` 的游戏（目前是 RE4）由入口直接调用 `Games/<游戏>/Main.lua` 的 `start({game, version, author})`，不装配共享 `App` 与预览；RE4 的 REFF 接口在 `Games/RE4/Reff.lua`，只复用共享的 `UI/Reff/Bridge.lua` 注册；它的配置模型与 MH 的 groups 不同，迁入共享界面前先证明旧配置行为不变。界面通过 `App` 操作配置，角色活动状态不能混入界面选择状态。旧 JSON 与公开业务 `require` 转接仍有兼容用途，不按文件名批量删除。
 
 ## 开发环境
 
@@ -83,7 +83,7 @@ node web/scripts/reff.mjs dev --reff-root ../RE-FF
 node web/scripts/reff.mjs build --reff-root ../RE-FF
 ```
 
-开发服务为 `http://127.0.0.1:5178`；统一夹具在 `/tests/fixture.html`，`?preview&controls` 可检查预览状态、设置失败、语言和字号等场景。夹具不提供游戏人物或 GPU 验收。
+开发服务为 `http://127.0.0.1:5178`；统一夹具在 `/tests/fixture.html`，`?preview&controls` 可检查预览状态、设置失败、语言和字号等场景；`?re4` 切到 RE4 页面（`&re4-empty` 无角色，`&re4-null` 空 Lua 表，`&re4-shared` 共用配置）。网页入口 `Root.vue` 按快照的 `game` 渲染 MH 的 `App.vue` 或 `src/re4/` 下的 RE4 页面。夹具不提供游戏人物或 GPU 验收。
 
 生产构建直接更新 `reframework/reff/plugins/monkeysama.avm/ui/dist/` 并复制 REFF 许可。修改布局或交互后检查实际页面和关键操作；消费新 SDK 时确认可选能力失败不会阻断基础界面。
 
@@ -123,7 +123,7 @@ release/release-notes.md
 
 tag 的版本会写入产物中的 Lua 入口和 REFF 清单，源码不改。省略 `--tag` 时沿用 Lua 入口版本，也可用 `--version` 指定本地候选版本；`--release-notes` 提取该版本日志到包外。
 
-通用包同时供 RE4 使用；REFF 清单只声明 `MHWILDS` 和 `MHRISE`，RE4 只有 REF 原生面板，预览 DLL 在非荒野游戏中加载后不工作。`tools/re4/` 的调试脚本不进包。包内只有 Lua、独立预览 DLL、预览资产和 REFF 插件页面；不包含独立许可证、说明、更新日志、源码、测试、用户数据或 REFramework/REFF 本体。必要许可合并到页面的 `avm-notices` 元数据，源码许可文件继续保留。Lua、JavaScript、CSS 和 HTML 注释在打包副本中移除，字符串与游戏内帮助内容不变。
+通用包同时供 RE4 使用，REFF 清单声明 `MHWILDS`、`MHRISE` 和 `RE4`（`build_release.py` 的 `UNIVERSAL_GAMES`；旧的 `--game` 单游戏参数不含 RE4）。预览 DLL 在非荒野游戏中加载后不工作。`tools/re4/` 的调试脚本不进包。包内只有 Lua、独立预览 DLL、预览资产和 REFF 插件页面；不包含独立许可证、说明、更新日志、源码、测试、用户数据或 REFramework/REFF 本体。必要许可合并到页面的 `avm-notices` 元数据，源码许可文件继续保留。Lua、JavaScript、CSS 和 HTML 注释在打包副本中移除，字符串与游戏内帮助内容不变。
 
 同名产物已存在时默认拒绝覆盖，确认目标后才能用 `--overwrite`。旧自动化显式使用的 `--game wilds`、`--game rise`、`--game all` 仍保留原输出含义，日常构建不需要这些参数。
 

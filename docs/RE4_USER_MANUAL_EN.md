@@ -15,8 +15,11 @@ except its own config files.
 ## 1. Requirements & install
 
 **You only need [REFramework](https://github.com/praydog/REFramework).** Nothing else —
-no REFramework C#, no reframework-d2d, no .pak. On RE4 it runs as pure Lua: the preview DLL and
-REFF page in the package are for Monster Hunter Wilds and stay idle here; REFF is not used on RE4.
+no REFramework C#, no reframework-d2d, no .pak. On RE4 it runs as pure Lua; the preview DLL in the
+package is for Monster Hunter Wilds and stays idle here. If you also use [REFF](https://github.com/Monkeysama/REFF),
+Armor Variant Manager appears in its plugin list with an RE4 page that covers everything this
+manual describes (quick switch, editing, rules, saves, settings); it edits the same config as the REF
+panel.
 
 1. Install REFramework for RE4 (`dinput8.dll` in the game folder).
 2. Unzip the universal package **into the game's root folder**, so the files land as:
