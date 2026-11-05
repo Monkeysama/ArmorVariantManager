@@ -59,7 +59,7 @@ const en: Record<Key, string> = {
   applyValue: 'Save', validNumber: 'Enter a valid number',
 };
 export type Translate = (key: Key) => string;
-export function useText(snapshot: Ref<Snapshot | null>) {
+export function useText(snapshot: Readonly<Ref<Snapshot | null>>) {
   const english = computed(() => snapshot.value?.language.toLowerCase().startsWith('en') ?? false);
   const t: Translate = key => (english.value ? en : zh)[key];
   return { t, english };

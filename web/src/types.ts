@@ -1,3 +1,5 @@
+import type { Re4Action, Re4Snapshot } from './re4/types';
+
 export interface Material { name: string; enabled: boolean; hidden: boolean; groups: string[]; owner?: string; editable?: boolean }
 export interface Part { index: number; label: string; available: boolean; enabled: boolean; meshLocked: boolean; materials: Material[] }
 export interface ConditionTarget { index: number; group: string; preset: string }
@@ -67,3 +69,6 @@ export type Action =
   | { kind: 'import-preset'; path: string }
   | { kind: 'find' | 'restore' | 'dismiss-backup' };
 export type Perform = (actions: Action | Action[]) => Promise<boolean>;
+// RE4 走自己的数据契约（src/re4/types.ts），共用同一条 REFF 通道。
+export type AnySnapshot = Snapshot | Re4Snapshot;
+export type AnyAction = Action | Re4Action;
