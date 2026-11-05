@@ -85,6 +85,7 @@ function Portrait.new(deps)
     local res, R, masks, scan = {}, {}, {}, nil
     local rect, rect_at, next_tick, scanned_at, copied_at, shown_at = nil, 0, 0, nil, nil, nil
     local gpu_owned, first_draw, host_applied, failed, last_enabled = false, nil, false, false, nil
+    local live_player, live_settings = nil, nil   -- 预览显示中:每帧回调用它们跟上网页的相机操作
     local prop_cache = {}
     local T = {}
 
@@ -265,6 +266,7 @@ function Portrait.new(deps)
             if ok and result == 0 then gpu_owned, first_draw = false, nil end
         end
         show(false)
+        live_player, live_settings = nil, nil
         if next(masks) then pcall(restore_masks) end
         shown_at = nil
         if not failed then self.status = reason or "preview_off" end
@@ -278,6 +280,13 @@ function Portrait.new(deps)
     end
 
     function self.reset_error() failed, self.error = false, nil end
+
+    -- tick 只有 10 Hz;鼠标旋转 / 缩放 / 平移要每帧跟上,否则画面每秒只动 10 下。
+    -- 只摆相机(参数没变时 place 直接返回),资源、遮挡、曝光仍在 tick 里做。
+    function self.frame()
+        if not gpu_owned or not live_player or not R.tr then return end
+        if not pcall(place, live_player, live_settings) then live_player = nil end
+    end
 
     function self.tick()
         local now = clock()
@@ -321,6 +330,7 @@ function Portrait.new(deps)
             end
             local settings = Portrait.settings(s)
             place(player, settings)
+            live_player, live_settings = player, settings
             mark_player(player)
             step_scan(now)
             update_image(now)
@@ -358,6 +368,7 @@ function Portrait.new(deps)
         end)
         if not ok or not re.on_application_entry then return false end
         re.on_application_entry("UpdateBehavior", self.tick)
+        re.on_application_entry("LateUpdateBehavior", self.frame)
         re.on_script_reset(self.shutdown)
         return true
     end
