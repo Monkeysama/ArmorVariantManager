@@ -23,6 +23,7 @@ export function normalizeRe4(value: Re4Snapshot): Re4Snapshot {
     character: value.character ?? '',
   };
   if (value.notice === null) delete out.notice;
+  if (value.preview === null) delete out.preview;
   if (value.status) out.status = { ...value.status, flags: list<string>(value.status.flags, 'status.flags') };
   if (value.conditions !== undefined) {
     out.conditions = list<Re4ConditionDef>(value.conditions, 'conditions').map(def => ({

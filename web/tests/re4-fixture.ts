@@ -84,6 +84,7 @@ export function installRe4Fixture() {
   let notice: Re4Snapshot['notice'];
   let locating: { slot: string; material: string } | undefined;
   let dismissed = false;
+  let previewEnabled = false;
   let nextId = 4;
   const presets: Preset[] = [
     { id: 'p0001', name: '日常', source: 'user', match: 'full', config: initial() },
@@ -139,7 +140,8 @@ export function installRe4Fixture() {
   function snapshot(): Re4Snapshot {
     const base: Re4Snapshot = { game: 'RE4', version: '4.3.4', language: 'zh', settings: { ...settings },
       characters: params.has('re4-empty') ? [] : [{ id: 'Leon', label: '里昂', configured: true, targets: ['玩家', '过场傀儡'] }, { id: 'Ada', label: '艾达', configured: false, targets: ['过场傀儡'] }],
-      character: params.has('re4-empty') ? '' : character, notice };
+      character: params.has('re4-empty') ? '' : character, notice,
+      preview: { available: false, enabled: previewEnabled, status: 'preview_native_missing' } };
     notice = undefined;
     if (params.has('re4-empty')) return base;
     base.configVersion = version;
@@ -198,6 +200,8 @@ export function installRe4Fixture() {
     if (a.kind === 'setting') {
       if (a.id === 'weapon_hide_storage') settings.weaponHideStorage = a.value === true;
       else if (a.id === 'ui_dissolve_enabled') settings.uiDissolveEnabled = a.value === true;
+      else if (a.id === 'portrait_enabled') previewEnabled = a.value === true;
+      else if (a.id === 'portrait_distance' || a.id === 'portrait_height') return;
       else settings.uiDissolveTime = Math.round(Number(a.value) * 10) / 10;
       return;
     }

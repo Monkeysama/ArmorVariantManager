@@ -242,7 +242,10 @@ local SLOTS_PATH = "ArmorVariantManager/backup/Leon.slots.json"
 files, meshes, handlers, tick = run({player = true, config = leon, reff = true,
     files = {[SLOTS_PATH] = {slots = {Old = leon}}}})
 assert(handlers["monkeysama.avm.snapshot"] and handlers["monkeysama.avm.action"] and handlers["monkeysama.avm.documentation"])
-assert(handlers["monkeysama.avm.imports"] == nil and handlers["monkeysama.avm.preview"] == nil, "RE4 registers only what it serves")
+assert(handlers["monkeysama.avm.imports"] == nil, "RE4 registers only what it serves")
+-- 全身预览:测试环境里没有原生 DLL,如实报告不可用,不报错
+local preview_state = handlers["monkeysama.avm.preview"]({visible = true, width = 330, height = 360})
+assert(preview_state.available == false and preview_state.status == "preview_native_missing")
 local snap = handlers["monkeysama.avm.snapshot"]()
 plain(snap, "v2 snapshot")
 assert(snap.game == "RE4" and snap.character == "Leon" and #snap.characters == 1 and snap.configVersion == 2)

@@ -20,7 +20,8 @@ void log(const char*, ...) {}
 
 int main(int argc, char** argv) {
     assert(argc == 3);
-    const bool wilds = std::string_view(argv[2]) == "MHWILDS";
+    // 荒野与 RE4 注册预览回调(D3D12);崛起静默停用。
+    const bool wilds = std::string_view(argv[2]) == "MHWILDS" || std::string_view(argv[2]) == "RE4";
     const auto temporary = std::filesystem::canonical(std::filesystem::temp_directory_path());
     const auto root = temporary / ("avm-native-game-" + std::to_string(GetCurrentProcessId()));
     assert(root.parent_path() == temporary && std::filesystem::create_directory(root));
@@ -66,5 +67,5 @@ int main(int argc, char** argv) {
         assert(FreeLibrary(module));
         std::filesystem::remove_all(root);
     }
-    std::puts(wilds ? "PASS: Wilds portrait callbacks without UI/input startup" : "PASS: Rise loads native DLL without callbacks, input hooks or runtime files");
+    std::printf(wilds ? "PASS: %s portrait callbacks without UI/input startup\n" : "PASS: %s loads native DLL without callbacks, input hooks or runtime files\n", argv[2]);
 }

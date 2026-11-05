@@ -2,6 +2,7 @@
 #include <d3d12sdklayers.h>
 #include <iostream>
 #include <algorithm>
+#include <cstring>
 #include <string>
 namespace { int log_count{}; void record_log(const char*, ...) { ++log_count; } }
 
@@ -127,6 +128,31 @@ int main(int argc, char** argv) {
         invalid=desc;invalid.Flags|=D3D12_RESOURCE_FLAG_DENY_SHADER_RESOURCE;if(portrait_gpu::valid_desc(invalid)) throw std::runtime_error("deny SRV accepted");
         ComPtr<ID3D12Resource> rejected;if(SUCCEEDED(portrait_gpu::resolve(0,rejected))) throw std::runtime_error("null holder accepted");
         if(SUCCEEDED(portrait_gpu::resolve(0x10000,rejected))) throw std::runtime_error("invalid holder accepted");
+        // 两款游戏的引擎对象链:用本进程里的假对象(虚表在本 exe / d3d12.dll)核对每一层偏移
+        {
+            static const uintptr_t engine_vtable[1]{};
+            const auto d3d = reinterpret_cast<uintptr_t>(GetProcAddress(GetModuleHandleW(L"d3d12.dll"),"D3D12CreateDevice"));
+            if(!d3d) throw std::runtime_error("d3d12 export");
+            for (const auto* l : {&portrait_gpu::WILDS_LAYOUT,&portrait_gpu::RE4_LAYOUT}) {
+                alignas(16) static unsigned char holder[0x40],resource[0x100],texture[0x200],dx[0x40],native[0x10];
+                std::memset(holder,0,sizeof holder);std::memset(resource,0,sizeof resource);std::memset(texture,0,sizeof texture);std::memset(dx,0,sizeof dx);
+                auto put=[](unsigned char* base,uintptr_t offset,auto value){std::memcpy(base+offset,&value,sizeof value);};
+                const auto vt=reinterpret_cast<uintptr_t>(engine_vtable);
+                put(resource,0,vt);put(texture,0,vt);put(dx,0,vt);put(native,0,d3d);
+                put(holder,l->resource,reinterpret_cast<uintptr_t>(resource));
+                put(resource,l->texture,reinterpret_cast<uintptr_t>(texture));
+                put(texture,l->width,uint32_t(660));put(texture,l->height,uint32_t(720));
+                put(texture,l->dx,reinterpret_cast<uintptr_t>(dx));
+                put(dx,l->native,reinterpret_cast<uintptr_t>(native));
+                uintptr_t found{};uint32_t w{},h{};
+                if(!portrait_gpu::locate(reinterpret_cast<uintptr_t>(holder),*l,found,w,h)||found!=reinterpret_cast<uintptr_t>(native)||w!=660||h!=720)
+                    throw std::runtime_error("engine layout not followed");
+                const auto* other=l==&portrait_gpu::WILDS_LAYOUT?&portrait_gpu::RE4_LAYOUT:&portrait_gpu::WILDS_LAYOUT;
+                if(portrait_gpu::locate(reinterpret_cast<uintptr_t>(holder),*other,found,w,h)) throw std::runtime_error("foreign layout accepted");
+            }
+            if(portrait_gpu::layout_for("MHWILDS")!=&portrait_gpu::WILDS_LAYOUT||portrait_gpu::layout_for("RE4")!=&portrait_gpu::RE4_LAYOUT
+                ||portrait_gpu::layout_for("MHRISE")) throw std::runtime_error("layout selection");
+        }
         if(srgb) desc.Format=DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
         float rgba[]{.25f,.5f,.75f,alpha};
         if(premult)for(unsigned c=0;c<3;++c)rgba[c]*=alpha;

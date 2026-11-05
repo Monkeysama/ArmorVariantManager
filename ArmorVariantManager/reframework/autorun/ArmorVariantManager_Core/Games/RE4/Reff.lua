@@ -34,6 +34,7 @@ local CATEGORY = {
 --   TransformManager, Registry, Utils, documentation
 --   snapshot_before_destructive, has_backup, has_onload_backup, restore_backup, restore_onload_backup,
 --   start_preview, get_preview
+--   preview(可选):Portrait.connect 的网页接口 { snapshot(), action(request) }
 --   v3:migrate_to_v3, preset_view, dismiss_preset_hint, apply_preset, save_current_as_preset,
 --      update_source_preset, restore_autosave, promote_autosave, preset_lib
 function Reff.new(deps)
@@ -219,8 +220,10 @@ function Reff.new(deps)
         local snapshot = { game = "RE4", version = deps.version, language = language(),
             settings = { weaponHideStorage = g.weapon_hide_storage == true,
                 uiDissolveEnabled = g.ui_dissolve_enabled ~= false,
-                uiDissolveTime = tonumber(g.ui_dissolve_time) or 1.0 },
-            characters = {}, character = "", notice = notice }
+                uiDissolveTime = tonumber(g.ui_dissolve_time) or 1.0,
+                previewDistance = tonumber(g.portrait_distance) or 3.0, previewHeight = tonumber(g.portrait_height) or 0.0 },
+            characters = {}, character = "", notice = notice,
+            preview = deps.preview and deps.preview.snapshot() or nil }
         notice = nil
         local cur, groups, order = current()
         for _, gid in ipairs(order) do
@@ -376,6 +379,12 @@ function Reff.new(deps)
         -- 面板上正在填的表单按旧值缓存,改过之后让它重新读
         deps.reset_ui_state()
         return controller.snapshot()
+    end
+
+    -- 全身预览的心跳(可见、尺寸);没有预览能力时如实报告
+    function controller.preview(request)
+        if not deps.preview then return { available = false, enabled = false, status = "preview_native_missing" } end
+        return deps.preview.action(request)
     end
 
     function controller.documentation()

@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { computed, shallowRef, watch, watchEffect } from 'vue';
-import { ElButton, ElConfigProvider, ElOption, ElSelect, REFF_ELEMENT_LOCALES } from '@reff/ui';
+import { ElButton, ElConfigProvider, ElOption, ElSelect, ElSwitch, REFF_ELEMENT_LOCALES } from '@reff/ui';
 import { useAvmState } from '../avm';
+import PortraitPane from '../PortraitPane.vue';
+import type { Translate } from '../i18n';
 import Re4Side from './Re4Side.vue';
 import Re4Quick from './Re4Quick.vue';
 import Re4Layers from './Re4Layers.vue';
@@ -32,6 +34,16 @@ const presetDot = computed(() => {
   return !!p && p.current !== 'full' && p.better.length > 0 && !p.dismissed;
 });
 const showLook = computed(() => tab.value === 'base' || tab.value === 'groups' || tab.value === 'states');
+// 全身预览：开关在顶栏，打开后画在左栏最上面（和荒野共用网页预览组件，文案换成 RE4 的）
+const previewIntent = shallowRef<boolean | null>(null);
+const previewOpen = computed(() => snapshot.value?.preview?.enabled === true && hasCharacter.value);
+async function setPreview(value: unknown) {
+  previewIntent.value = value === true;
+  try { await perform({ kind: 'setting', id: 'portrait_enabled', value: previewIntent.value }); }
+  finally { previewIntent.value = null; }
+}
+const PREVIEW_KEYS = new Set(['preview', 'previewLive', 'previewWaiting', 'previewWaitingForHost', 'previewUnavailable', 'previewSdr']);
+const previewText = ((key: string) => PREVIEW_KEYS.has(key) ? t(key as Re4Key) : key) as unknown as Translate;
 // 一次性提示（迁移结果）：快照只带一次，留到用户关掉
 const notice = shallowRef<Re4Notice | null>(null);
 watch(() => snapshot.value?.notice, value => { if (value) notice.value = value; });
@@ -52,6 +64,9 @@ watch(() => snapshot.value?.notice, value => { if (value) notice.value = value; 
           <span v-else class="re4-character-name">{{ character?.label }}</span>
           <span v-if="character && character.targets.length" class="re4-muted re4-small">{{ t('onField') }}：{{ character.targets.join('、') }}</span>
         </div>
+        <label v-if="snapshot?.preview && hasCharacter" class="re4-preview-toggle">
+          <ElSwitch :model-value="previewIntent ?? previewOpen" :disabled="busy" size="small" @change="setPreview" />{{ t('preview') }}
+        </label>
         <div class="game-identity"><span>RE4</span><span class="version">{{ snapshot?.version }}</span></div>
       </header>
       <div class="avm-body">
@@ -62,7 +77,10 @@ watch(() => snapshot.value?.notice, value => { if (value) notice.value = value; 
           </div>
           <div v-if="!snapshot" class="connection-state"><span v-if="loading" class="connection-dot"></span>{{ loading ? t('loading') : t('wait') }}</div>
           <div v-else class="re4-layout">
-            <Re4Side v-if="hasCharacter && v3" :snapshot="snapshot" :t="t" :show-look="showLook" />
+            <div v-if="hasCharacter && (v3 || previewOpen)" class="re4-left">
+              <div v-if="previewOpen && snapshot.preview" class="re4-preview"><PortraitPane :client="avm.client" :preview="snapshot.preview" :t="previewText" /></div>
+              <Re4Side v-if="v3" :snapshot="snapshot" :t="t" :show-look="showLook" />
+            </div>
             <div class="re4-main">
               <div v-if="notice" class="re4-banner ok" role="status">
                 <span>{{ t('migrated') }}<template v-if="notice.overlaps"> {{ t('migratedOverlaps', notice.overlaps) }}</template><template v-if="notice.presets"> {{ t('migratedPresets', notice.presets) }}</template></span>
@@ -111,6 +129,10 @@ watch(() => snapshot.value?.notice, value => { if (value) notice.value = value; 
 .re4-layout { display: grid; grid-template-columns: minmax(0, 15em) minmax(0, 1fr); gap: 12px; padding: 10px 12px 16px; align-items: start; }
 @media (max-width: 720px) { .re4-layout { grid-template-columns: minmax(0, 1fr); } }
 .re4-main { display: grid; gap: 10px; min-width: 0; align-content: start; }
+.re4-left { display: grid; gap: 10px; align-content: start; min-width: 0; }
+.re4-preview { height: 380px; display: flex; border: 1px solid var(--avm-line); border-radius: 8px; overflow: hidden; }
+.re4 .re4-preview .portrait-pane { flex: 1 1 auto; border: 0; }
+.re4-preview-toggle { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; margin-right: 12px; cursor: pointer; }
 .re4-panel { border: 1px solid var(--avm-line); border-radius: 8px; background: var(--el-bg-color, transparent); min-width: 0; }
 .re4-panel-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 7px 12px; }
 .re4-panel-head + * { border-top: 1px solid var(--avm-line); }

@@ -10,7 +10,12 @@ export interface Re4ConditionDef {
   ops?: Re4Op[]; options?: Re4ConditionOption[]; value?: number | boolean;
 }
 export interface Re4Character { id: string; label: string; configured: boolean; targets: string[] }
-export interface Re4Settings { weaponHideStorage: boolean; uiDissolveEnabled: boolean; uiDissolveTime: number }
+export interface Re4Settings {
+  weaponHideStorage: boolean; uiDissolveEnabled: boolean; uiDissolveTime: number;
+  previewDistance?: number; previewHeight?: number;
+}
+// 全身预览(和荒野同一个原生插件);只在装了预览插件和新版 REFF 时可用
+export interface Re4Preview { available: boolean; enabled: boolean; status: string; error?: string }
 
 // 认领结果：win = 这一处由它决定；lose = 被第 by 个条件状态覆盖；broken = 引用的组 / 选项不存在
 export interface Re4Result { kind: 'win' | 'lose' | 'broken'; by?: number }
@@ -49,7 +54,7 @@ export interface Re4Notice { kind: 'migrated'; overlaps: number; presets: number
 export interface Re4Snapshot {
   game: 'RE4'; version: string; language: 'zh' | 'en';
   settings: Re4Settings; characters: Re4Character[]; character: string;
-  configVersion?: 2 | 3; notice?: Re4Notice;
+  configVersion?: 2 | 3; notice?: Re4Notice; preview?: Re4Preview;
   // 以下只在 v3 配置时出现
   status?: { hp?: number; flags: string[] };
   conditions?: Re4ConditionDef[];
@@ -65,7 +70,7 @@ export type Re4ConditionInput = { type: string; op?: Re4Op; value: number | stri
 type C = { character: string };
 export type Re4Action =
   | { kind: 'character'; id: string }
-  | { kind: 'setting'; id: 'weapon_hide_storage' | 'ui_dissolve_enabled' | 'ui_dissolve_time'; value: boolean | number }
+  | { kind: 'setting'; id: 'weapon_hide_storage' | 'ui_dissolve_enabled' | 'ui_dissolve_time' | 'portrait_enabled' | 'portrait_distance' | 'portrait_height'; value: boolean | number }
   | C & { kind: 'migrate' }
   | C & { kind: 'manual'; layer: string; option: string }
   | C & { kind: 'auto'; enabled: boolean }

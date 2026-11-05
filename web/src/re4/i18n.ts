@@ -55,6 +55,9 @@ const zh = {
   settings: '设置', armorMirror: '护甲同步身体外观', armorMirrorHint: '别关，除非护甲和身体用的不是同一套材质',
   weaponHide: '隐藏收纳武器', uiDissolve: '手动切换时溶解过渡', uiDissolveTime: '时长',
   help: '帮助', loadingHelp: '正在读取帮助…', retryHelp: '重新读取', noHelp: '暂无帮助内容。',
+  preview: '全身预览', previewLive: '预览就绪', previewWaiting: '等待角色与预览相机…', previewWaitingForHost: '等待 REFF 绘制预览…',
+  previewUnavailable: '更新 REFF 与预览插件后可使用网页预览。', previewSdr: '当前输出模式不支持预览，请切换为 SDR。',
+  previewDistance: '预览镜头距离', previewHeight: '预览镜头高度', meters: '米',
 };
 const en: Record<keyof typeof zh, string> = {
   title: 'Armor Variant Manager', loading: 'Connecting to REFF…', wait: 'Waiting for a character', retry: 'Retry', saving: 'Applying…', dismiss: 'Dismiss',
@@ -102,6 +105,9 @@ const en: Record<keyof typeof zh, string> = {
   settings: 'Settings', armorMirror: 'Armor mirrors body', armorMirrorHint: 'Leave on unless armor and body use different materials',
   weaponHide: 'Hide stowed weapons', uiDissolve: 'Dissolve on manual switches', uiDissolveTime: 'Duration',
   help: 'Help', loadingHelp: 'Loading help…', retryHelp: 'Reload', noHelp: 'No help yet.',
+  preview: 'Full-body preview', previewLive: 'Preview ready', previewWaiting: 'Waiting for character and preview camera…', previewWaitingForHost: 'Waiting for REFF to draw the preview…',
+  previewUnavailable: 'Update REFF and the portrait plugin to use this preview.', previewSdr: 'Preview requires SDR output.',
+  previewDistance: 'Preview distance', previewHeight: 'Preview height', meters: 'm',
 };
 export type Re4Key = keyof typeof zh;
 export type Re4Translate = (key: Re4Key, ...args: (string | number)[]) => string;

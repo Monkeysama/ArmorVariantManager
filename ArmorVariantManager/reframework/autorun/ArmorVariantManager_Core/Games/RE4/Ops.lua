@@ -176,8 +176,12 @@ function Ops.set_global(global_config, id, value)
     if id == "language" then
         if value ~= "zh" and value ~= "en" then return false end
         global_config.language = value
-    elseif id == "weapon_hide_storage" or id == "ui_dissolve_enabled" then
+    elseif id == "weapon_hide_storage" or id == "ui_dissolve_enabled" or id == "portrait_enabled" then
         global_config[id] = value == true
+    elseif id == "portrait_distance" or id == "portrait_height" then
+        local n = tonumber(value)
+        if not n then return false end
+        global_config[id] = id == "portrait_distance" and round1(clamp(n, 1.2, 8)) or round1(clamp(n, -1, 1))
     elseif id == "ui_dissolve_time" then
         local n = tonumber(value)
         if not n then return false end

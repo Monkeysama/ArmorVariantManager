@@ -36,6 +36,10 @@ function Main.start(ctx)
         end
         if type(loaded.ui_dissolve_enabled) == "boolean" then global_config.ui_dissolve_enabled = loaded.ui_dissolve_enabled end
         if tonumber(loaded.ui_dissolve_time) then global_config.ui_dissolve_time = tonumber(loaded.ui_dissolve_time) end
+        -- 全身预览(REFF 页面里显示)
+        if type(loaded.portrait_enabled) == "boolean" then global_config.portrait_enabled = loaded.portrait_enabled end
+        if tonumber(loaded.portrait_distance) then global_config.portrait_distance = tonumber(loaded.portrait_distance) end
+        if tonumber(loaded.portrait_height) then global_config.portrait_height = tonumber(loaded.portrait_height) end
     end
     local function save_global_settings()
         json.dump_file(global_config_path, global_config)
@@ -2676,6 +2680,29 @@ function Main.start(ctx)
     -- REFF 网页界面(可选)。未安装 REFF 时不注册,REF 原生面板照常可用。
     -- 网页与面板共用分组、配置读写和 Ops,只是各自记着自己选中的角色。
     local reff_ok, reff_err = pcall(function()
+        -- 全身预览:相机与 GPU 交接在 Portrait.lua,网页只发心跳。拿不到玩家时不画。
+        local portrait, portrait_web = require("ArmorVariantManager_Core.Games.RE4.Portrait").connect({
+            settings = function()
+                return { enabled = global_config.portrait_enabled == true,
+                    distance = global_config.portrait_distance, height = global_config.portrait_height }
+            end,
+            player = function()
+                local manager = sdk.get_managed_singleton("chainsaw.CharacterManager")
+                local context = manager and manager:call("getPlayerContextRef")
+                local body = context and context:call("get_BodyGameObject")
+                if not body or not body:call("get_Valid") then return nil end
+                local updater = context:call("get_BodyUpdater")
+                local meshes = {}
+                for _, slot in ipairs(Utils.MESH_SLOTS) do
+                    local mesh = updater and Utils.get_mesh(updater, slot)
+                    if mesh then meshes[#meshes + 1] = mesh end
+                end
+                return { root = body:call("get_Transform"), meshes = meshes }
+            end,
+            log = function(message) if log and log.info then log.info("[AVM Portrait] " .. message) end end,
+        })
+        if not portrait.register() then portrait_web = nil end
+        Main.portrait = portrait
         Main.reff = require("ArmorVariantManager_Core.Games.RE4.Reff").connect({
             version = version, global_config = global_config, save_global_settings = save_global_settings, T = T,
             targets = Targets.collect, groups = collect_character_groups, pick_group = pick_character_group,
@@ -2697,6 +2724,7 @@ function Main.start(ctx)
             apply_preset = apply_preset, save_current_as_preset = save_current_as_preset,
             update_source_preset = update_source_preset, restore_autosave = restore_autosave,
             promote_autosave = promote_autosave, preset_lib = preset_lib,
+            preview = portrait_web,
         })
     end)
     if not reff_ok then note_error("reff", reff_err) end

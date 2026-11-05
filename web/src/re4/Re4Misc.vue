@@ -11,7 +11,7 @@ const props = defineProps<{ snapshot: Re4Snapshot; busy: boolean; perform: Re4Pe
 defineEmits<{ 'retry-documentation': [] }>();
 const helpOpen = shallowRef(false);
 const old = () => props.snapshot.configVersion === 2;
-const setting = (id: 'weapon_hide_storage' | 'ui_dissolve_enabled' | 'ui_dissolve_time', value: boolean | number) =>
+const setting = (id: 'weapon_hide_storage' | 'ui_dissolve_enabled' | 'ui_dissolve_time' | 'portrait_distance' | 'portrait_height', value: boolean | number) =>
   props.perform({ kind: 'setting', id, value });
 </script>
 
@@ -45,6 +45,16 @@ const setting = (id: 'weapon_hide_storage' | 'ui_dissolve_enabled' | 'ui_dissolv
         <ElInputNumber :model-value="snapshot.settings.uiDissolveTime" :min="0" :max="30" :step="0.1" size="small" :disabled="busy"
           @change="v => typeof v === 'number' && setting('ui_dissolve_time', v)" />
         <span class="re4-muted re4-small">{{ t('seconds') }}</span>
+      </div>
+      <div v-if="snapshot.preview" class="re4-row">
+        <span>{{ t('previewDistance') }}</span>
+        <ElInputNumber :model-value="snapshot.settings.previewDistance ?? 3" :min="1.2" :max="8" :step="0.1" size="small" :disabled="busy"
+          @change="v => typeof v === 'number' && setting('portrait_distance', v)" />
+        <span class="re4-muted re4-small">{{ t('meters') }}</span>
+        <span>{{ t('previewHeight') }}</span>
+        <ElInputNumber :model-value="snapshot.settings.previewHeight ?? 0" :min="-1" :max="1" :step="0.05" size="small" :disabled="busy"
+          @change="v => typeof v === 'number' && setting('portrait_height', v)" />
+        <span class="re4-muted re4-small">{{ t('meters') }}</span>
       </div>
     </section>
 

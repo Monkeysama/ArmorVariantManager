@@ -3,6 +3,7 @@
 #include <string_view>
 #include "PortraitPreview.hpp"
 #include "PortraitPose.hpp"
+#include "PortraitGpuResolver.hpp"
 
 namespace {
 void register_portrait(sol::table table) {
@@ -61,8 +62,10 @@ extern "C" __declspec(dllexport) void reframework_plugin_required_version(REFram
 
 extern "C" __declspec(dllexport) bool reframework_plugin_initialize(const REFrameworkPluginInitializeParam* param) {
     if (!param || !param->version || !param->version->game_name) return false;
-    // 随通用包分发，崛起不注册预览能力和 GPU 回调。
-    if (std::string_view{param->version->game_name} != "MHWILDS") return true;
+    // 随通用包分发：荒野与 RE4 各用自己的纹理布局；崛起不注册预览能力和 GPU 回调。
+    const auto* layout = portrait_gpu::layout_for(param->version->game_name);
+    if (!layout) return true;
+    portrait_gpu::active_layout().store(layout);
     if (!param->renderer_data || param->renderer_data->renderer_type != REFRAMEWORK_RENDERER_D3D12) return false;
     reframework::API::initialize(param);
     if (!avm_portrait_initialize(param)) return false;
