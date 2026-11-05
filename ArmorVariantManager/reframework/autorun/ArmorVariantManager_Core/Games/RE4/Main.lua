@@ -1176,14 +1176,13 @@ function Main.start(ctx)
             if not now_drives[dkey] then Dissolve.drive_end(dkey); drive_stopped = true end
         end
         ds.drives = now_drives
-        -- 材质归属:这一帧写出它的层;基线(全启用)写出的,沿用上一次写它的层(那一层刚放手)
+        -- 材质归属 → 用哪一层的过渡:见 Dissolve.transition_layer(放手的层也要带过渡)
         local owner, prev_owner = info.owner, ds.owner
-        local function owner_of(slot, mat)
-            local o = owner[slot] and owner[slot][mat]
-            if o then return o end
-            return prev_owner[slot] and prev_owner[slot][mat]
-        end
         local trans = (not fresh) and ds.trans or nil
+        local function owner_of(slot, mat)
+            return Dissolve.transition_layer(owner[slot] and owner[slot][mat],
+                prev_owner[slot] and prev_owner[slot][mat], trans)
+        end
 
         -- 二:mesh 没换但开关被游戏重置了 —— 每帧全量核对太浪费,隔几十帧抽一次。
         -- 预览期间要跳过:那时 mesh 上的状态是故意和 resolved 不一致的,不是漂移。

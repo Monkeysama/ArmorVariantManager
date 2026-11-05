@@ -1,10 +1,12 @@
 -- 溶解过渡(移植自 MHWilds 差分管理器 4.4.0-community 的 Dissolve.lua)。
 --
 -- 只对带 `Dissolve_Rate` 变量的材质生效(LIL_Toon_RE4_Dissolve 这类溶解模板);其余材质照旧瞬间开关。
--- 变量语义和模板一致:
---   Dissolve_Rate  xyz = 进度 0..1,w = Reversing(0 正向:中心向外;1 反向:外向中心)
---   Dissolve_Flag  y = IsMorphed(1 出现方,0 消失方),x/z/w 保持 mdf2 原值。没有这个变量也能溶解,只是不切 y
--- 隐藏的一方与出现的一方共用同一张溶解图,在同一处交替;结束时把隐藏方关掉,变量恢复成 mdf2 的值。
+-- 变量语义(实测 RE4 的 Shinano 溶解模板,和崛起 DissolveTransition 的已验证做法一致):
+--   Dissolve_Rate  xyz = 已溶掉的比例 0..1(0 完整,1 全消失),w = Reversing(0 中心向外;1 外向中心)
+--   Dissolve_Flag  mdf2 默认 (1,0,0,0);动画期间 y 固定写 0,x/z/w 保持原值
+-- 消失 = 比例 0 → 1,结束时关掉材质;出现 = 先写成 1(全消失)再打开材质,比例 1 → 0,即消失倒放。
+-- 以前出现方写 y = 1(IsMorphed)、比例 0 → 1,模板并不按"出现方"解释 y,出现时直接闪现。
+-- 结束时变量恢复成 mdf2 的值。
 --
 -- 两种驱动:
 --   * 定时过渡:Dissolve.use(settings) 选好本次开关用的过渡,再调 set_material;update() 每帧推进
@@ -56,14 +58,13 @@ local function find_var(mesh, j)
     return v or nil
 end
 
--- u = 动画进度 0..1
+-- u = 动画进度 0..1;消失方溶掉 u,出现方溶掉 1 - u。forward 只决定溶解图的走向
 local function write(mesh, j, v, phase, forward, u)
-    local rate = forward and u or (1 - u)
+    local rate = phase == "hide" and u or (1 - u)
     try(function() mesh:call("setMaterialFloat4", j, v.rate, Vector4f.new(rate, rate, rate, forward and 0 or 1)) end)
     if v.flag then
         local f = v.flag0
-        local morphed = ((phase == "show") == forward) and 1 or 0
-        try(function() mesh:call("setMaterialFloat4", j, v.flag, Vector4f.new(f[1], morphed, f[3], f[4])) end)
+        try(function() mesh:call("setMaterialFloat4", j, v.flag, Vector4f.new(f[1], 0, f[3], f[4])) end)
     end
 end
 
@@ -80,9 +81,20 @@ local function step(dur)
     return dur > 0 and (1 / dur) or math.huge
 end
 
--- 反方向的动画还在跑:新动画从旧动画离开表面的位置接着走
+-- 反方向的动画还在跑:新动画从当前溶掉的比例接着走(消失到 u 时溶掉 u,出现从 1 - u 起也是溶掉 u)
 local function start_u(a)
     return a and (1 - a.u) or 0
+end
+
+-- 一个材质这次开关该用哪一层的过渡。owner = 这一帧写出它的层,prev = 上一次写它的层,
+-- trans[层键] = 这一层刚换选项时选好的过渡。
+-- 状态组放手时(选回"无"),材质交还给整套造型;整套造型自己没换选项、没有过渡,
+-- 只看 owner 的话出现那一下就是瞬间的(消失能溶解、显示不能)。所以 owner 没有过渡、
+-- 而刚放手的那一层有,就用放手那一层的。
+function Dissolve.transition_layer(owner, prev, trans)
+    if owner and trans and trans[owner] then return owner end
+    if prev and prev ~= owner and trans and trans[prev] then return prev end
+    return owner or prev
 end
 
 -- 材质开关(setMaterialsEnable)。cur = 调用前的 getMaterialsEnable
