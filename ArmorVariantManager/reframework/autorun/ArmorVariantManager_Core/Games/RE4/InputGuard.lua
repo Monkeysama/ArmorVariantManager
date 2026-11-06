@@ -159,6 +159,24 @@ function InputGuard.install(active, logger)
         if ok then saved = nil end
     end
 
+    -- 3. 让游戏自己放开光标:屏蔽期间 chainsaw.GuiManager.isMousePointerDispGui 回答 true。
+    -- 游戏在野外会用 SetCursorPos 把系统光标拉回屏幕中心(REFramework 只在它的菜单开着时拦这个调用),
+    -- 改 via.hid.Mouse 的绝对模式压不住;它自己的菜单(暂停等)就是靠这个函数放开光标的 ——
+    -- 2026-11-05 实测:暂停菜单开着时它返回 true、ClipCursorToScreen 变 false,野外返回 false。
+    -- 做法同 SKS 在荒野上 hook app.GUIManager.isMouseCursorAvailable。
+    pcall(function()
+        local gm = sdk.find_type_definition("chainsaw.GuiManager")
+        local m = gm and gm:get_method("isMousePointerDispGui(chainsaw.RenderOutputType, via.hid.GamePadButton)")
+        if not m then
+            warn("[AVM] InputGuard: chainsaw.GuiManager.isMousePointerDispGui unavailable; cursor may be pulled to the centre")
+            return
+        end
+        sdk.hook(m, nil, function(retval)
+            if blocking then return sdk.to_ptr(true) end
+            return retval
+        end)
+    end)
+
     re.on_frame(function()
         if update_state() then release_cursor() else restore_cursor() end
     end)

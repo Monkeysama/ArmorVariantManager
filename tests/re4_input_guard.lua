@@ -26,6 +26,9 @@ device_type = {
     end,
     get_method = function(_, sig) return sig == "update()" and "Device.update" or nil end,
 }
+local gui_type = { get_method = function(_, sig)
+    return sig == "isMousePointerDispGui(chainsaw.RenderOutputType, via.hid.GamePadButton)" and "Gui.isMousePointerDispGui" or nil
+end }
 local mouse_type = {}
 local device_bytes = {}
 local device = {
@@ -36,6 +39,7 @@ _G.sdk = {
     find_type_definition = function(name)
         if name == "via.hid.Mouse" then return mouse_type end
         if name == "share.hid.Device" then return device_type end
+        if name == "chainsaw.GuiManager" then return gui_type end
     end,
     get_native_singleton = function() return {} end,
     call_native_func = function(_, _, name, value)
@@ -49,6 +53,7 @@ _G.sdk = {
     end,
     hook = function(method, pre, post) hooks[method] = { pre = pre, post = post } end,
     to_managed_object = function(p) return p end,
+    to_ptr = function(v) return { ptr = v } end,
 }
 _G.thread = { get_hook_storage = function() return storage end }
 _G.re = { on_frame = function(f) frames[#frames + 1] = f end, on_script_reset = function(f) resets[#resets + 1] = f end }
@@ -66,13 +71,18 @@ local function device_update()
 end
 local function cleared() return device_bytes[0x19C] == 0 and device_bytes[0x198] == 0 and device_bytes[0x187] == 0 end
 
--- 面板关:不碰设备、不碰光标
+-- 面板关:不碰设备、不碰光标;游戏问"要不要显示鼠标指针"照原样回答
 frame(); device_update()
 assert(next(device_bytes) == nil and mouse_state.AbsoluteMode == false and mouse_state.ClipCursorToScreen == true)
+local gui_hook = hooks["Gui.isMousePointerDispGui"]
+assert(gui_hook and gui_hook.pre == nil, "isMousePointerDispGui is hooked (post only)")
+assert(gui_hook.post("orig") == "orig", "not blocking: the game's answer is kept")
 
 -- 面板开:清零鼠标字段,切到绝对模式、不裁剪,并登记
 visible = true; frame(); device_update()
 assert(cleared(), "mouse fields zeroed while the panel is visible")
+local answer = gui_hook.post("orig")
+assert(type(answer) == "table" and answer.ptr == true, "blocking: the game is told a pointer GUI is open, so it frees the cursor itself")
 assert(mouse_state.AbsoluteMode == true and mouse_state.ClipCursorToScreen == false, "cursor released")
 assert(_G.__AVM_UI_INPUT_BLOCKER_STATES.ArmorVariantManager == true and _G.__AVM_REFD2D_INPUT_BLOCKED == true)
 
