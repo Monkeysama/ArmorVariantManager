@@ -36,6 +36,8 @@ const base = computed(() => {
   return { layer: 'base', label: props.t('tabBase'), active: b.active, effective: b.effective, locked: b.fromState, none: false,
     options: b.presets.map(p => p.name) };
 });
+// 整套造型绑的快捷键(Alt + 数字),显示在按钮上
+const hotkeyOf = (name: string) => props.snapshot.base?.presets.find(p => p.name === name)?.hotkey;
 </script>
 
 <template>
@@ -46,7 +48,7 @@ const base = computed(() => {
         <span class="re4-seg" role="group" :aria-label="base.label">
           <button v-for="name in base.options" :key="name" :disabled="busy || !!base.locked"
             :aria-pressed="base.active === name" :class="{ eff: base.locked && base.effective === name }"
-            :title="base.locked ? t('lockedBy', owner(base.locked)) : ''" @click="pick('base', name)">{{ name }}</button>
+            :title="base.locked ? t('lockedBy', owner(base.locked)) : ''" @click="pick('base', name)">{{ name }}<span v-if="hotkeyOf(name) !== undefined" class="re4-qkey">Alt+{{ hotkeyOf(name) }}</span></button>
         </span>
       </div>
     </section>
@@ -112,6 +114,7 @@ const base = computed(() => {
 </template>
 
 <style>
+.re4-qkey { margin-left: 6px; font-size: 11px; opacity: 0.6; }
 .re4-qrow { display: grid; grid-template-columns: minmax(5em, 8em) minmax(0, 1fr); gap: 6px 12px; align-items: center; padding: 3px 0; }
 .re4-qrow + .re4-qrow { border-top: 1px solid var(--avm-line); padding-top: 6px; }
 @media (max-width: 520px) { .re4-qrow { grid-template-columns: minmax(0, 1fr); } }

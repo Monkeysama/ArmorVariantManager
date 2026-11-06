@@ -38,7 +38,8 @@ export type Re4Values = Record<string, boolean>;
 export interface Re4Match { status: 'ok' | 'partial' | 'mismatch'; skipped: string[] }
 // height:这个预设 / 选项设的模型高度（厘米）；没有 = 这一层不管高度
 // palette:选中这个预设 / 选项时叠加的调色方案（可能指向已删除的方案）
-export interface Re4BasePreset { name: string; values: Re4Values; match: Re4Match; height?: number; palette?: string }
+// hotkey:快捷键数字 0~9（Alt + 这个数字切到这套整套造型）
+export interface Re4BasePreset { name: string; values: Re4Values; match: Re4Match; height?: number; palette?: string; hotkey?: number }
 export interface Re4Base { active: string; effective?: string; fromState?: number; presets: Re4BasePreset[] }
 export interface Re4Option { name: string; values: Re4Values; height?: number; palette?: string }
 export interface Re4Group { name: string; scope: string[]; active: string; effective?: string; fromState?: number; options: Re4Option[] }
@@ -132,6 +133,7 @@ export type Re4Action =
   | C & { kind: 'base-move'; preset: string; offset: number }
   | C & { kind: 'base-material'; preset: string; slot: string; material: string; value: boolean }
   | C & { kind: 'base-height'; preset: string; cm?: number }
+  | C & { kind: 'base-hotkey'; preset: string; digit?: number }
   | C & { kind: 'option-height'; group: string; option: string; cm?: number }
   | C & { kind: 'height-override'; enabled?: boolean; cm?: number }
   | C & { kind: 'palette-view'; open: boolean; keys: string[]; scheme?: string }

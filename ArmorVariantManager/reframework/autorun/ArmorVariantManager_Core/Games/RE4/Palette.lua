@@ -351,6 +351,117 @@ function Palette.apply_mesh(mesh, slot_overrides, state, on_write, original)
     end
 end
 
+-- ============================================================ 渐变
+-- 调色方案组合变了且要渐变时:fade_begin 记下每个要动的参数「现在显示的值」(起点,被打断的渐变也从这里接着走)
+-- 和终点(slot_overrides 里的值,没有就是原值),fade_step 每帧按进度 p(0~1)写插值,结束后调用方再用
+-- apply_mesh 写一次终点(还原不再覆盖的参数、整理 touched)。
+-- 要动的参数 = 终点覆盖里有的 + 已经写过的(touched)。开始时把它们都记成 touched、原值记好,
+-- 这样渐变中途被打断或换了终点,之后的 apply_mesh 照样能把它们还原。
+-- discrete:{ ["参数"] = true, ["参数|分量"] = true } 枚举 / 开关类,不插值,进度过半时一次切到终点。
+-- original 同 apply_mesh(mdf2 文件里的原值)。返回这个网格的计划(列表),没有要动的返回 nil
+function Palette.fade_begin(mesh, slot_overrides, state, discrete, original)
+    local key = tostring(mesh)
+    local st = state[key]
+    if not st then st = { vars = {}, orig = {}, touched = {} }; state[key] = st end
+    discrete = discrete or {}
+    local count = try(function() return mesh:call("get_MaterialNum") end) or 0
+    local overrides = is_tbl(slot_overrides) and slot_overrides or {}
+    local plan = {}
+    for j = 0, count - 1 do
+        local name = try(function() return mesh:call("getMaterialName", j) end)
+        local ov = name and overrides[name]
+        local prefix = j .. "|"
+        local params = {}
+        for p in pairs(ov or {}) do params[p] = true end
+        for tk in pairs(st.touched) do
+            if tk:sub(1, #prefix) == prefix then params[tk:sub(#prefix + 1)] = true end
+        end
+        if next(params) then
+            st.vars[j] = st.vars[j] or Palette.read_vars(mesh, j)
+            local vars = st.vars[j]
+            for p in pairs(params) do
+                local var = vars[p]
+                local tk = prefix .. p
+                if var then
+                    local want = ov and ov[p]
+                    if st.orig[tk] == nil then
+                        local o = original and original(mesh, j, name, p)
+                        if var.t == Palette.TYPE_FLOAT and type(o) ~= "number" then o = nil end
+                        if var.t ~= Palette.TYPE_FLOAT and type(o) ~= "table" then o = nil end
+                        st.orig[tk] = o or Palette.read_value(mesh, j, var)
+                    end
+                    local orig, cur = st.orig[tk], Palette.read_value(mesh, j, var)
+                    if var.t == Palette.TYPE_FLOAT then
+                        local to = finite(want) and want or orig
+                        if finite(cur) and finite(to) then
+                            plan[#plan + 1] = { j = j, var = var, param = p, from = cur, to = to, discrete = discrete[p] == true }
+                            st.touched[tk] = true
+                        end
+                    elseif is_tbl(orig) and is_tbl(cur) then
+                        -- 只动改过的分量和要还原的分量,其余分量每帧保持当前值(可能正被溶解动画写着)
+                        local comps = is_tbl(st.touched[tk]) and st.touched[tk] or {}
+                        local wants = is_tbl(want) and want or {}
+                        local all = {}
+                        for c in pairs(comps) do all[c] = true end
+                        for c in pairs(wants) do if COMP_INDEX[c] and finite(wants[c]) then all[c] = true end end
+                        local list = {}
+                        for c in pairs(all) do
+                            local i = COMP_INDEX[c]
+                            local to = finite(wants[c]) and wants[c] or orig[i]
+                            if finite(cur[i]) and finite(to) then
+                                list[#list + 1] = { i = i, from = cur[i], to = to,
+                                    discrete = discrete[p .. "|" .. c] == true or discrete[p] == true }
+                            end
+                        end
+                        if #list > 0 then
+                            plan[#plan + 1] = { j = j, var = var, param = p, comps = list }
+                            st.touched[tk] = all
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return #plan > 0 and plan or nil
+end
+
+local function mix(a, b, p, discrete)
+    if discrete then return p < 0.5 and a or b end
+    return a + (b - a) * p
+end
+function Palette.fade_step(mesh, plan, p, on_write)
+    p = math.max(0, math.min(1, p))
+    for _, e in ipairs(plan or {}) do
+        if e.comps then
+            local cur = Palette.read_value(mesh, e.j, e.var)
+            if cur then
+                for _, c in ipairs(e.comps) do cur[c.i] = mix(c.from, c.to, p, c.discrete) end
+                try(function() write_value(mesh, e.j, e.var, cur) end)
+                if on_write then on_write(mesh, e.j, e.param, cur) end
+            end
+        else
+            local v = mix(e.from, e.to, p, e.discrete)
+            try(function() write_value(mesh, e.j, e.var, v) end)
+            if on_write then on_write(mesh, e.j, e.param, v) end
+        end
+    end
+end
+
+-- 映射里标成枚举 / 开关的参数(不插值)。profiles = load_profiles 的结果
+function Palette.discrete_params(profiles)
+    local out = {}
+    for _, prof in ipairs(is_tbl(profiles) and profiles or {}) do
+        for _, g in ipairs(prof.groups or {}) do
+            for _, e in ipairs(g.params or {}) do
+                if e.kind == "enum" or e.kind == "bool" then
+                    out[e.component and (e.param .. "|" .. e.component) or e.param] = true
+                end
+            end
+        end
+    end
+    return out
+end
+
 -- 参数的原值(mdf2 里的值):写过的取第一次写入前记下的;没写过的,当前值就是原值。
 -- float 返回数值,float4 返回 { x, y, z, w } 数组;读不到返回 nil
 function Palette.original(state, mesh, j, param)

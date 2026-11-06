@@ -77,6 +77,8 @@ const zh = {
   paletteScheme: '调色方案', paletteAlways: '初始', paletteSchemeOn: '生效中', paletteSchemeNew: '新建方案', paletteSchemeRename: '重命名方案',
   paletteSchemeName: '方案名', paletteSchemeTaken: '已有同名方案', paletteFromNone: '空白（从初始开始）', paletteFromCurrent: '复制「{0}」',
   paletteSchemeDelete: '删除调色方案', paletteSchemeDeleteBody: '删除方案「{0}」？引用它的 {1} 处会显示为引用失效，可以在各处改掉或清除。删除前会留还原点。',
+  hotkeyRef: '快捷键', hotkeyNone: '（无）', hotkeyUsedBy: '{0}（现在是「{1}」）',
+  hotkeyHint: '按住 Alt 再按数字切到这套整套造型（只对主控角色）。按住 Alt 时这个数字键不会换武器；先按数字再按 Alt 照常换武器。',
   paletteRef: '调色方案', paletteRefNone: '（不调色）', paletteRefBroken: '方案不存在',
 };
 const en: Record<keyof typeof zh, string> = {
@@ -147,6 +149,8 @@ const en: Record<keyof typeof zh, string> = {
   paletteScheme: 'Colour schemes', paletteAlways: 'Original', paletteSchemeOn: 'In effect', paletteSchemeNew: 'New scheme', paletteSchemeRename: 'Rename scheme',
   paletteSchemeName: 'Scheme name', paletteSchemeTaken: 'A scheme with this name already exists', paletteFromNone: 'Blank (start from the original)', paletteFromCurrent: 'Copy "{0}"',
   paletteSchemeDelete: 'Delete colour scheme', paletteSchemeDeleteBody: 'Delete the scheme "{0}"? The {1} places that use it will show a broken reference; you can change or clear them there. A restore point is kept first.',
+  hotkeyRef: 'Hotkey', hotkeyNone: '(none)', hotkeyUsedBy: '{0} (now "{1}")',
+  hotkeyHint: 'Hold Alt and press the number to switch to this full outfit (controlled character only). While Alt is held this number does not switch weapons; number first, then Alt, switches weapons as usual.',
   paletteRef: 'Colour scheme', paletteRefNone: '(no scheme)', paletteRefBroken: 'Scheme missing',
 };
 export type Re4Key = keyof typeof zh;

@@ -112,6 +112,7 @@ export function installRe4Fixture() {
   // 模型高度(夹具简化:不跟改名 / 删除走)。键:'base|预设' / 'g:组|选项'
   const heights: Record<string, number> = {};
   const heightOverride = { enabled: false, cm: 0 };
+  const hotkeys: Record<string, number> = {};   // 整套造型快捷键(夹具简化:不跟改名 / 删除走)
   let paletteOpen = false, paletteSel: string[] = [];
   // 调色方案(夹具简化:不跟整套造型 / 选项改名走)。'' = 初始(只读,在它上面改会自动新建方案);引用键同 heights
   type Ov = Record<string, Record<string, Re4PaletteOverride>>;
@@ -256,7 +257,7 @@ export function installRe4Fixture() {
       slots: Object.entries(catalog).map(([id, mats]) => ({ id, label: labels[id], mirrored: false, materials: mats.map(name => ({ name, note: config.notes[`${id}/${name}`] })) })),
       look: allKeys.map(k => { const [slot, material] = k.split('/'); return { slot, material, on: look[k] !== false }; }),
       base: { active: config.base.active, effective: effBase, fromState: r.claims.base?.i,
-        presets: config.base.order.map(name => ({ name, values: config.base.presets[name], match: { status: 'ok', skipped: [] }, height: heights['base|' + name], palette: palRefs['base|' + name] })) },
+        presets: config.base.order.map(name => ({ name, values: config.base.presets[name], match: { status: 'ok', skipped: [] }, height: heights['base|' + name], palette: palRefs['base|' + name], hotkey: hotkeys[name] })) },
       groups: config.groups.map(g => ({ name: g.name, scope: g.scope, active: g.active, effective: pick('g:' + g.name, g.active),
         fromState: r.claims['g:' + g.name]?.i, options: g.order.map(name => ({ name, values: g.options[name], height: heights[`g:${g.name}|${name}`], palette: palRefs[`g:${g.name}|${name}`] })) })),
       states, locating, height, heightSource, heightOverride: { ...heightOverride },
@@ -315,6 +316,10 @@ export function installRe4Fixture() {
         config.base.order.splice(config.base.order.indexOf(a.preset), 1); if (config.base.active === a.preset) config.base.active = ''; break;
       case 'base-recapture': if (!config.base.presets[a.preset]) fail(); backup = clone(config); config.base.presets[a.preset] = full(); break;
       case 'base-material': (config.base.presets[a.preset] ?? fail())[`${a.slot}/${a.material}`] = a.value; break;
+      case 'base-hotkey': { if (!config.base.presets[a.preset]) fail(); if (a.digit !== undefined && (a.digit < 0 || a.digit > 9)) fail();
+        if (hotkeys[a.preset] === a.digit) fail();
+        for (const n of Object.keys(hotkeys)) if (hotkeys[n] === a.digit) delete hotkeys[n];
+        if (a.digit === undefined) delete hotkeys[a.preset]; else hotkeys[a.preset] = a.digit; break; }
       case 'base-height': if (!config.base.presets[a.preset]) fail();
         if (a.cm === undefined) delete heights['base|' + a.preset]; else heights['base|' + a.preset] = a.cm; break;
       case 'palette-view': paletteOpen = a.open; paletteSel = [...a.keys]; break;

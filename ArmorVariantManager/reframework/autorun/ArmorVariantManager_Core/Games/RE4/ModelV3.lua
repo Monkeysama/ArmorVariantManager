@@ -12,6 +12,8 @@
 --     conditions = { auto = true, states = { 条件状态, ... } },   -- 数组顺序就是优先级
 --     material_notes = { [slot] = { [材质] = "备注" } }, armor_mirrors_body = true, source_preset = nil,
 --   }
+--   快捷键(可选):base.hotkeys = { [预设名] = 数字 0~9 } —— Alt + 这个数字切到这套整套造型(手动选择),
+--     一个数字只绑一套。按键处理见 Hotkeys.lua。
 --   模型高度(可选):base.heights = { [预设名] = 厘米 },groups[i].heights = { [选项名] = 厘米 }。
 --     不放进快照(快照顶层键都是槛位,预设指纹按它算)。解算见 height_of:按叠加顺序,后写覆盖先写。
 --   height_override = { enabled, cm }:全局覆盖(快速切换页),打开时无视各层,统一用 cm。
@@ -134,6 +136,18 @@ local function clean_palette_refs(refs, names)
     return next(out) and out or nil
 end
 
+-- 整套造型的快捷键:{ [预设名] = 数字 0~9 },只留指向现有预设的;一个数字只绑一套(按预设顺序,前面的留下)
+local function clean_hotkeys(h, names, order)
+    local out, used = {}, {}
+    local src = is_tbl(h) and h or {}
+    for _, n in ipairs(order) do
+        local d = math.tointeger(tonumber(src[n]))
+        if names[n] ~= nil and d and d >= 0 and d <= 9 and not used[d] then out[n], used[d] = d, true end
+    end
+    return next(out) and out or nil
+end
+M.clean_hotkeys = clean_hotkeys
+
 M.PALETTE_NAME_MAX = 64
 M.LEGACY_PALETTE = "常驻"   -- 旧的常驻调色迁移成的方案名
 function M.valid_palette_name(n)
@@ -208,6 +222,7 @@ function M.normalize(cfg)
     base.rules, base.auto = nil, nil
     base.heights = clean_heights(base.heights, presets)
     base.palettes = clean_palette_refs(base.palettes, presets)
+    base.hotkeys = clean_hotkeys(base.hotkeys, presets, base.order)
     cfg.base = base
 
     local groups, names = {}, {}
@@ -630,23 +645,58 @@ end
 -- 选中的方案和状态组的手动选择一样,会被引用(按条件切换的)盖住。返回方案名列表;不存在的方案跳过。
 -- ============================================================
 function M.palette_layers(cfg, r)
-    local names = {}
+    return (M.palette_sources(cfg, r))
+end
+
+-- 同 palette_layers,另外返回每个方案的来源(渐变用):src[i] = 条件状态序号(由条件状态带来:它自己引用的,
+-- 或者它认领的整套造型 / 状态组选项引用的)| false(手动选择带来的)
+function M.palette_sources(cfg, r)
+    local names, src = {}, {}
     local schemes = cfg.palettes or {}
-    local function add(n) if type(n) == "string" and schemes[n] then names[#names + 1] = n end end
-    add(cfg.palette_active)
+    local function add(n, by) if type(n) == "string" and schemes[n] then names[#names + 1] = n; src[#src + 1] = by or false end end
+    add(cfg.palette_active, false)
     local picks = r and r.picks or {}
+    local layers = r and r.layers or {}
     local base = cfg.base or {}
-    if picks.base then add((base.palettes or {})[picks.base]) end
+    if picks.base then add((base.palettes or {})[picks.base], (layers.base or {}).prio) end
     for _, g in ipairs(cfg.groups or {}) do
-        local pick = picks[M.layer_key(g.name)]
-        if pick then add((g.palettes or {})[pick]) end
+        local key = M.layer_key(g.name)
+        local pick = picks[key]
+        if pick then add((g.palettes or {})[pick], (layers[key] or {}).prio) end
     end
     local states = (cfg.conditions or {}).states or {}
     for i = #states, 1, -1 do
         local t = r and r.targets and r.targets[i]
-        if t and t.palette and t.palette.kind == "win" then add(states[i].palette) end
+        if t and t.palette and t.palette.kind == "win" then add(states[i].palette, i) end
     end
-    return names
+    return names, src
+end
+
+-- 调色方案组合从 prev 变成 cur 时渐变多久(秒)。prev / cur = { names, src, states }(states = 当时的条件状态表)。
+-- 进来的方案用带来它的条件状态的 fade_in,离开的用 fade_out,手动选择带来的用 manual(界面溶解时间,关掉时为 0);
+-- 取最长的。只是顺序变了也算变化(叠加结果可能不同)
+function M.palette_fade_time(prev, cur, manual)
+    if not prev or not cur then return 0 end
+    local function count(list)
+        local c = {}
+        for _, n in ipairs(list.names or {}) do c[n] = (c[n] or 0) + 1 end
+        return c
+    end
+    local pc, cc = count(prev), count(cur)
+    local function time_of(list, k, field)
+        local by = list.src and list.src[k]
+        local st = by and list.states and list.states[by]
+        if st then return tonumber(st[field]) or 0 end
+        return manual or 0
+    end
+    local t, any = 0, false
+    for k, n in ipairs(cur.names or {}) do
+        if (pc[n] or 0) < (cc[n] or 0) or prev.names[k] ~= n then any = true; t = math.max(t, time_of(cur, k, "fade_in")) end
+    end
+    for k, n in ipairs(prev.names or {}) do
+        if (cc[n] or 0) < (pc[n] or 0) or cur.names[k] ~= n then any = true; t = math.max(t, time_of(prev, k, "fade_out")) end
+    end
+    return any and t or 0
 end
 
 -- 护甲同步身体外观:护甲的调色照抄身体的(按材质名,同材质开关的镜像)。

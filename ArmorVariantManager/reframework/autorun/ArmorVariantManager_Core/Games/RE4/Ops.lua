@@ -268,6 +268,8 @@ function Ops.rename_preset(layer, old, new)
     layer.presets[old] = nil
     if type(layer.heights) == "table" then layer.heights[new], layer.heights[old] = layer.heights[old], nil end
     if type(layer.palettes) == "table" then layer.palettes[new], layer.palettes[old] = layer.palettes[old], nil end
+    -- 整套造型的快捷键跟着改名;复制时不复制(一个数字只绑一套)
+    if type(layer.hotkeys) == "table" then layer.hotkeys[new], layer.hotkeys[old] = layer.hotkeys[old], nil end
     local i = order_index(layer, old)
     if i then layer.order[i] = new end
     if layer.active == old then layer.active = new end
@@ -284,6 +286,10 @@ function Ops.delete_preset(layer, name)
     layer.presets[name] = nil
     if type(layer.heights) == "table" then layer.heights[name] = nil end
     if type(layer.palettes) == "table" then layer.palettes[name] = nil end
+    if type(layer.hotkeys) == "table" then
+        layer.hotkeys[name] = nil
+        if next(layer.hotkeys) == nil then layer.hotkeys = nil end
+    end
     local i = order_index(layer, name)
     if i then table.remove(layer.order, i) end
     if layer.active == name then layer.active = "" end

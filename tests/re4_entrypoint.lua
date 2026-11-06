@@ -426,6 +426,13 @@ snap = act({kind = "manual", character = "Leon", layer = "base", option = ""})
 snap = act({kind = "palette-view", character = "Leon", open = false, keys = {}})
 run_frames()
 
+-- 整套造型快捷键:绑定只存配置,不重写
+snap = act({kind = "base-hotkey", character = "Leon", preset = "Default", digit = 1})
+assert(snap.base.presets[1].hotkey == 1 and files[CONFIG_PATH].base.hotkeys.Default == 1)
+assert(not pcall(act, {kind = "base-hotkey", character = "Leon", preset = "Default", digit = 12}), "digits only")
+snap = act({kind = "base-hotkey", character = "Leon", preset = "Default"})
+assert(snap.base.presets[1].hotkey == nil)
+
 -- 护甲镜像、备注、定位(不写配置)
 snap = act({kind = "armor-mirror", character = "Leon", enabled = true})
 assert(snap.armorMirror == true)

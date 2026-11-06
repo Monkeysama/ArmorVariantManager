@@ -316,7 +316,7 @@ function Reff.new(deps)
         for _, name in ipairs(base.order) do
             snapshot.base.presets[#snapshot.base.presets + 1] = { name = name, values = values_of(base.presets[name]),
                 match = base_match(source, base.presets[name]), height = (base.heights or {})[name],
-                palette = (base.palettes or {})[name] }
+                palette = (base.palettes or {})[name], hotkey = (base.hotkeys or {})[name] }
         end
 
         snapshot.groups = {}
@@ -556,6 +556,8 @@ function Reff.new(deps)
         ["palette-ref"] = function(p, cfg) return OpsV3.set_palette_ref(cfg, str(p.layer), str(p.option), str(p.scheme) or "") end,
         ["state-palette"] = function(p, cfg) return OpsV3.set_state_palette(cfg, integer(p.index), str(p.scheme) or "") end,
         ["base-height"] = function(p, cfg) return OpsV3.set_height(cfg, "base", p.preset, p.cm) end,
+        -- 快捷键:Alt + digit(0~9)切到这套整套造型;digit = nil 取消。数字原来绑在别的预设上就移过来
+        ["base-hotkey"] = function(p, cfg) return OpsV3.set_base_hotkey(cfg, str(p.preset), p.digit) end,
         ["option-height"] = function(p, cfg) return OpsV3.set_height(cfg, p.group, p.option, p.cm) end,
         ["height-override"] = function(p, cfg)
             local enabled = nil

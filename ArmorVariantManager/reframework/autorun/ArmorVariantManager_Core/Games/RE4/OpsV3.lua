@@ -218,6 +218,26 @@ function OpsV3.set_height(cfg, layer, option, cm)
     return true, true
 end
 
+-- 整套造型的快捷键(Alt + 数字):digit = 0~9,nil 取消。这个数字原来绑在别的预设上就移过来。
+-- 只是绑定,不用重写
+function OpsV3.set_base_hotkey(cfg, preset, digit)
+    local base = cfg.base
+    if type(preset) ~= "string" or not base.presets[preset] then return false end
+    local d = nil
+    if digit ~= nil then
+        d = math.tointeger(tonumber(digit))
+        if not d or d < 0 or d > 9 then return false end
+    end
+    local keys = type(base.hotkeys) == "table" and base.hotkeys or {}
+    if keys[preset] == d then return false end
+    if d ~= nil then
+        for n, v in pairs(keys) do if v == d then keys[n] = nil end end
+    end
+    keys[preset] = d
+    base.hotkeys = next(keys) and keys or nil
+    return true, false
+end
+
 -- 全局覆盖(快速切换页):enabled / cm 给哪个改哪个,另一个保持。关掉时保留数值,下次打开接着用
 function OpsV3.set_height_override(cfg, enabled, cm)
     local cur = type(cfg.height_override) == "table" and cfg.height_override or { enabled = false, cm = 0 }

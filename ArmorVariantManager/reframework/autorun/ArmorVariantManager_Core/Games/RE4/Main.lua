@@ -22,6 +22,7 @@ function Main.start(ctx)
     local Ops = require("ArmorVariantManager_Core.Games.RE4.Ops")
     local ModelV3 = require("ArmorVariantManager_Core.Games.RE4.ModelV3")
     local Presets = require("ArmorVariantManager_Core.Games.RE4.Presets")
+    local Hotkeys = require("ArmorVariantManager_Core.Games.RE4.Hotkeys")
 
     local global_config_path = "ArmorVariantManager/GlobalSettings.json"
     -- 默认英文(面板顶部有「中文」勾选框,勾了才切中文)。语言是全局的,不跟角色配置走。
@@ -844,6 +845,9 @@ function Main.start(ctx)
     local palette_state = {}
     -- 调色方案:palette_sig[target.id] = 上次写入时生效的方案组合(名字串);组合变了就重写调色
     local palette_sig = {}
+    -- 整套造型快捷键(Hotkeys.lua):这一帧主控角色的配置和解算结果,没有主控 / 不是 v3 时为 nil
+    local hotkey_ctx = nil
+    local hotkey_logic = nil
     local function load_palette_profiles(reload)
         if palette_profiles and not reload then return palette_profiles, palette_by_id end
         local extras, errors = {}, {}
@@ -863,6 +867,10 @@ function Main.start(ctx)
         palette_profile_errors = errors
         return palette_profiles, palette_by_id
     end
+    -- 写调色时同步溶解的 Dissolve_Flag 底值
+    local function on_palette_write(m, j, param, value)
+        if param == "Dissolve_Flag" then Dissolve.set_flag_base(m, j, value) end
+    end
     -- pal:叠好的覆盖表(v3 = 生效的方案,v2 = config.palette)。还原的目标优先取 mdf2 文件里的原值
     -- (mdf2_cache:{ [相对路径] = 解析结果 | false },换 mdf / 重读映射时清空)
     local mdf2_cache = {}
@@ -878,12 +886,45 @@ function Main.start(ctx)
             local mesh = Utils.get_mesh(source, slot)
             if mesh then
                 live[tostring(mesh)] = true
-                Palette.apply_mesh(mesh, pal and pal[slot], state, function(m, j, param, value)
-                    if param == "Dissolve_Flag" then Dissolve.set_flag_base(m, j, value) end
-                end, file_original)
+                Palette.apply_mesh(mesh, pal and pal[slot], state, on_palette_write, file_original)
             end
         end
         Palette.prune(state, live)
+    end
+    -- 调色渐变:palette_fade[target.id] = { plans = { [mesh 键] = { mesh, plan } }, pal = 终点, dur, elapsed, last };
+    -- palette_prev[target.id] = 上一帧的方案组合 { names, src, states }(算渐变时长用)
+    local palette_fade, palette_prev = {}, {}
+    local palette_discrete, palette_discrete_for = nil, nil
+    local function discrete_params()
+        local profiles = load_palette_profiles()
+        if palette_discrete_for ~= profiles then
+            palette_discrete, palette_discrete_for = Palette.discrete_params(profiles), profiles
+        end
+        return palette_discrete
+    end
+    local function begin_palette_fade(target, source, pal, dur)
+        local state = palette_state[target.id] or {}
+        palette_state[target.id] = state
+        local fade = { plans = {}, pal = pal, dur = dur, elapsed = 0, last = os.clock() }
+        local discrete = discrete_params()
+        for _, slot in ipairs(Utils.MESH_SLOTS) do
+            local mesh = Utils.get_mesh(source, slot)
+            if mesh then
+                local plan = Palette.fade_begin(mesh, pal and pal[slot], state, discrete, file_original)
+                if plan then fade.plans[tostring(mesh)] = { mesh = mesh, plan = plan } end
+            end
+        end
+        return next(fade.plans) and fade or nil
+    end
+    -- 推进一帧;走完了返回 true(调用方再写一次终点)。卡顿时一帧最多算 0.1 秒,同溶解
+    local function step_palette_fade(fade)
+        local now = os.clock()
+        fade.elapsed = fade.elapsed + math.min(math.max(now - fade.last, 0), 0.1)
+        fade.last = now
+        local p = fade.dur > 0 and fade.elapsed / fade.dur or 1
+        if p >= 1 then return true end
+        for _, e in pairs(fade.plans) do Palette.fade_step(e.mesh, e.plan, p, on_palette_write) end
+        return false
     end
     local function request_reapply() force_reapply = true end
 
@@ -1201,6 +1242,9 @@ function Main.start(ctx)
         -- 同一个 kind 的两具傀儡同时在场时,用 kind_id 当键会让它俩互相顶掉签名,
         -- 表现成 changed 乱跳。
         local resolved, changed, info = TransformManager.resolve(target.id, config, target.context, source)
+        if info.v3 and not target.borrowed and type(target.id) == "string" and target.id:sub(1, 7) == "player:" then
+            hotkey_ctx = { kind_id = kind_id, config = config, v3 = info.v3, layers = info.layers }
+        end
 
         -- 模型高度:整套造型 → 状态组按叠加顺序,最后设过的那一层说了算
         if global_config.height_enabled ~= false and info.v3 then
@@ -1301,14 +1345,31 @@ function Main.start(ctx)
         -- 调色盘:和材质开关同一套时机(换实例 / 配置变了 / 被重置 / 强制重写);预览和血量驱动的
         -- 每帧重写不带它,调色值不会被那些路径改掉。v3 另外看生效的调色方案组合变了没有
         -- (条件状态只带调色方案时,材质开关的 changed 不会变)
-        local names = nil
-        if info.v3 then names = ModelV3.palette_layers(config, info.v3) end
+        -- 组合变了就渐变:进来的方案用带来它的条件状态的渐入时间,离开的用渐出,手动选择用界面溶解时间。
+        -- 渐变中途再变就从当前显示的值接着走;首次 / 换实例 / 组合没变时的重写(调色页里直接改值)都是瞬间的
+        local names, src = nil, nil
+        if info.v3 then names, src = ModelV3.palette_sources(config, info.v3) end
         local sig = names and table.concat(names, "\0") or ""
         local scheme_changed = palette_sig[target.id] ~= sig
         palette_sig[target.id] = sig
-        if changed or mesh_swapped or drifted or force_reapply or scheme_changed then
+        local cur = names and { names = names, src = src, states = config.conditions.states } or nil
+        local prev = palette_prev[target.id]
+        palette_prev[target.id] = cur
+        local fade = palette_fade[target.id]
+        if mesh_swapped or force_reapply or scheme_changed or (not fade and (changed or drifted)) then
             local pal = names and ModelV3.palette_of(config, names) or config.palette
-            apply_palette(target, source, ModelV3.mirror_palette(pal, config.armor_mirrors_body == true))
+            pal = ModelV3.mirror_palette(pal, config.armor_mirrors_body == true)
+            local manual = (global_config.ui_dissolve_enabled ~= false)
+                and math.max(0, math.min(30, tonumber(global_config.ui_dissolve_time) or 1.0)) or 0
+            -- 手动选方案 / 切整套造型这类操作提交时也会要求重写(force_reapply),所以只看组合变没变:
+            -- 变了就按规则渐变;没变(调色页里直接改值)才瞬间写
+            local dur = (scheme_changed and not mesh_swapped)
+                and ModelV3.palette_fade_time(prev, cur, manual) or 0
+            palette_fade[target.id] = dur > 0 and begin_palette_fade(target, source, pal, dur) or nil
+            if not palette_fade[target.id] then apply_palette(target, source, pal) end
+        elseif fade and step_palette_fade(fade) then
+            palette_fade[target.id] = nil
+            apply_palette(target, source, fade.pal)
         end
     end
 
@@ -1316,6 +1377,7 @@ function Main.start(ctx)
         -- 推进正在跑的溶解过渡(和有没有目标无关:目标消失时动画自己会清掉)
         Dissolve.update()
         frame_heights = {}
+        hotkey_ctx = nil
         local targets = Targets.collect()
         if #targets == 0 then
             if height_fix then height_fix.set_targets(frame_heights) end
@@ -1359,6 +1421,12 @@ function Main.start(ctx)
     re.on_frame(function()
         local ok, err = pcall(frame_logic)
         if not ok then note_error("on_frame", err) end
+        -- 整套造型快捷键:看这一帧新按下的 Alt + 数字;切换提示画在左上角
+        if hotkey_logic then
+            local ok_h, err_h = pcall(hotkey_logic.tick)
+            if not ok_h then note_error("hotkeys", err_h) end
+            pcall(Hotkeys.draw_toast)
+        end
         -- 调色页「替换 mdf」:等新 mdf2 加载完再换上(见 MdfReplace.lua)
         local ok_r, err_r = pcall(MdfReplace.tick)
         if not ok_r then note_error("mdf_replace", err_r) end
@@ -2810,6 +2878,47 @@ function Main.start(ctx)
                 and (InputGuard.reff_visible() or (Main.panel ~= nil and Main.panel.is_open()))
         end,
             function(msg) log.warn(msg) end)
+    end)
+
+    -- 整套造型快捷键:Alt + 数字切到绑定的整套造型(手动选择),按住 Alt 时不让游戏读到绑定的数字键(换武器)。
+    -- 只作用于主控角色;一个都没绑时不碰键盘
+    pcall(function()
+        local OpsV3 = require("ArmorVariantManager_Core.Games.RE4.OpsV3")
+        local function key_down(vk)
+            local ok, v = pcall(function() return reframework:is_key_down(vk) end)
+            return ok and v == true
+        end
+        local function bound()
+            local keys = hotkey_ctx and hotkey_ctx.config.base.hotkeys
+            if type(keys) ~= "table" then return nil end
+            local out = {}
+            for _, d in pairs(keys) do out[d] = true end
+            return out
+        end
+        local zh = function() return global_config.language == "zh" end
+        hotkey_logic = Hotkeys.new({
+            key_down = key_down,
+            alt_down = function() return key_down(Hotkeys.ALT_VK) end,
+            bound = bound,
+            fire = function(digit)
+                local ctx = hotkey_ctx
+                if not ctx then return end
+                local preset
+                for n, d in pairs(ctx.config.base.hotkeys or {}) do if d == digit then preset = n end end
+                if not preset then return end
+                commit(ctx.kind_id, OpsV3.set_manual(ctx.config, "base", preset))
+                local lines = { (zh() and "整套造型：" or "Full outfit: ") .. preset .. "  (Alt+" .. digit .. ")" }
+                -- 条件状态正接管整套造型时,手动选择要等它结束才生效
+                local by = ctx.layers and ctx.layers.base and ctx.layers.base.prio
+                local st = by and ctx.config.conditions.states[by]
+                if st then
+                    lines[2] = zh() and ("条件「" .. st.name .. "」接管中，结束后生效")
+                        or ("Condition \"" .. st.name .. "\" is in control; applies when it ends")
+                end
+                Hotkeys.toast(lines)
+            end,
+        })
+        Hotkeys.install(hotkey_logic, function() return bound() ~= nil end, function(msg) log.warn(msg) end)
     end)
 
     -- 模型高度。装不上只记日志,不影响其他功能

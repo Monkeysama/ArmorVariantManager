@@ -89,7 +89,7 @@ const stateName = (i?: number) => i ? props.snapshot.states?.[i - 1]?.name ?? ''
 
 interface Card {
   id: string; isBase: boolean; name: string; active: string; effective?: string; fromState?: number;
-  scope: string[]; options: { name: string; values: Re4Values; match?: { status: string; skipped: string[] }; height?: number; palette?: string }[];
+  scope: string[]; options: { name: string; values: Re4Values; match?: { status: string; skipped: string[] }; height?: number; palette?: string; hotkey?: number }[];
 }
 const cards = computed<Card[]>(() => {
   if (props.mode === 'base') {
@@ -146,6 +146,15 @@ const schemeNames = computed(() => (props.snapshot.palettes?.list ?? []).map(x =
 const schemeMissing = (name?: string) => !!name && !schemeNames.value.includes(name);
 const setPalette = (card: Card, option: string, scheme: string) =>
   props.perform({ kind: 'palette-ref', ...c(), layer: card.isBase ? 'base' : card.name, option, scheme });
+// 整套造型的快捷键:Alt + 数字(1~9、0)。选了别的整套造型占着的数字,就从那套移过来
+const DIGITS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 0];
+const hotkeyOwner = (d: number) => props.snapshot.base?.presets.find(p => p.hotkey === d)?.name;
+const hotkeyLabel = (d: number, self: string) => {
+  const owner = hotkeyOwner(d);
+  return owner && owner !== self ? props.t('hotkeyUsedBy', 'Alt+' + d, owner) : 'Alt+' + d;
+};
+const setHotkey = (preset: string, v: string | number) =>
+  props.perform({ kind: 'base-hotkey', ...c(), preset, digit: v === '' ? undefined : Number(v) });
 // 卡片按名字做键，改名后展开状态要跟着搬到新名字上，否则改完就收起了
 async function renameGroup(card: Card, input: HTMLInputElement) {
   const name = input.value.trim();
@@ -293,6 +302,7 @@ function scopeBulk(card: Card, list: { id: string; materials: { name: string }[]
                 <span v-else-if="opt.match?.status === 'partial'" class="re4-res broken">{{ t('partialSlots', opt.match.skipped.join('、')) }}</span>
                 <span v-if="users(card, opt.name).length" class="re4-used">{{ t('usedBy', users(card, opt.name).map(s => s.name).join('」「')) }}</span>
                 <span v-if="opt.height !== undefined" class="re4-tag" :title="t('heightHint')">{{ t('heightTag', cmText(opt.height)) }}</span>
+                <span v-if="opt.hotkey !== undefined" class="re4-tag" :title="t('hotkeyHint')">Alt+{{ opt.hotkey }}</span>
                 <span v-if="opt.palette" class="re4-tag" :class="{ 're4-res broken': schemeMissing(opt.palette) }"
                   :title="schemeMissing(opt.palette) ? t('paletteRefBroken') : t('paletteRef')">🎨 {{ opt.palette }}</span>
               </span>
@@ -335,6 +345,13 @@ function scopeBulk(card: Card, list: { id: string; materials: { name: string }[]
                     <ElOption value="" :label="t('paletteRefNone')" />
                     <ElOption v-for="n in schemeNames" :key="n" :value="n" :label="n" />
                     <ElOption v-if="schemeMissing(opt.palette)" :value="opt.palette!" :label="t('paletteRefBroken') + '：' + opt.palette" disabled />
+                  </ElSelect></label>
+                <!-- 快捷键(只有整套造型):按住 Alt 再按数字切到这套 -->
+                <label v-if="card.isBase" class="re4-height" :title="t('hotkeyHint')">{{ t('hotkeyRef') }}
+                  <ElSelect :model-value="opt.hotkey ?? ''" :empty-values="[null, undefined]" size="small" style="width:13em" :disabled="busy"
+                    :aria-label="t('hotkeyRef')" @change="v => setHotkey(opt.name, v)">
+                    <ElOption value="" :label="t('hotkeyNone')" />
+                    <ElOption v-for="d in DIGITS" :key="d" :value="d" :label="hotkeyLabel(d, opt.name)" />
                   </ElSelect></label>
               </div>
               <span v-if="!card.scope.length" class="re4-muted re4-small">{{ t('emptyScope') }}</span>
