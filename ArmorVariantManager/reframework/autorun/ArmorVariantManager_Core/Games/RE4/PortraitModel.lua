@@ -45,6 +45,7 @@ PortraitModel.RIG = {
 -- 世界里的角色由 lil_toon_light_re4.lua 每帧按场景灯光写,副本绑定时会抄到那个值,所以副本要自己写一份。
 -- 鉴赏里没人写它,材质保持默认 (0.4, 0.8, 0.45):这里也用这个方向(角色根本地空间,随角色转身)。
 local LIL_VAR, LIL_HASH = "LIL_LightDir", 486944339
+local DYNAMIC_VARS = { Dissolve_Rate = true, Dissolve_Flag = true }   -- 溶解过渡每帧改写的参数
 PortraitModel.LIL_DIR = { 0.4, 0.8, 0.45 }
 
 local function identity(value) return tostring(value:get_address()) end
@@ -201,9 +202,10 @@ function PortraitModel.game_adapter(deps)
     -- 把原网格当前的材质参数(float / float4)整份抄到副本:AVM 改的颜色、调色盘、溶解进度,
     -- 以及别的脚本写的参数都在原网格的实例上,副本只拿到 mdf2 默认值。顺便记下 LIL_LightDir 的位置。
     -- 建副本时抄一次;调色盘改了值(Palette.revision 变了)再抄一次,见 refresh_params。
+    -- 溶解参数(Dissolve_Rate / Dissolve_Flag)在过渡期间每帧都变,单独记下位置,每次同步都抄(见 sync_dynamic)。
     local function copy_params(entry)
         local src, dst = entry.source, entry.copy_mesh
-        entry.lil = {}
+        entry.lil, entry.dynamic = {}, {}
         for m = 0, math.min(src:call("get_MaterialNum"), dst:call("get_MaterialNum")) - 1 do
             -- 个别材质读写失败只跳过这一个材质,不让整个预览报错
             pcall(function()
@@ -213,6 +215,7 @@ function PortraitModel.game_adapter(deps)
                     local kind = src:call("getMaterialVariableType", m, v)
                     if kind == 4 then
                         dst:call("setMaterialFloat4", m, v, src:call("getMaterialFloat4", m, v))
+                        if DYNAMIC_VARS[src:call("getMaterialVariableName", m, v)] then entry.dynamic[#entry.dynamic + 1] = { m, v } end
                     elseif kind == 1 then
                         dst:call("setMaterialFloat", m, v, src:call("getMaterialFloat", m, v) + 0.0)
                     end
@@ -247,6 +250,17 @@ function PortraitModel.game_adapter(deps)
             if entry.copy_mesh then pcall(copy_params, entry) end
         end
         lil_key = nil
+    end
+    -- 每次同步姿态时把溶解参数从原网格抄到副本(切造型的溶解过渡每帧都在改它们)
+    function adapter.sync_dynamic(entries)
+        for _, entry in ipairs(entries) do
+            local src, dst = entry.source, entry.copy_mesh
+            if dst and entry.dynamic then
+                for _, slot in ipairs(entry.dynamic) do
+                    pcall(function() dst:call("setMaterialFloat4", slot[1], slot[2], src:call("getMaterialFloat4", slot[1], slot[2])) end)
+                end
+            end
+        end
     end
     function adapter.ready(entries)
         for _, entry in ipairs(entries) do
@@ -419,6 +433,7 @@ function PortraitModel.new(deps)
             local current = revision_of()
             if current ~= params_revision then adapter.refresh_params(entries); params_revision = current end
         end
+        if adapter.sync_dynamic then adapter.sync_dynamic(entries) end
         if adapter.light_follow then adapter.light_follow(rig, context) end
         return true
     end
