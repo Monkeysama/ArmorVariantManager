@@ -177,4 +177,43 @@ assert(near(ashley.lp.y, 0), "script reset restores")
 entries.LateUpdateBehavior()
 assert(near(ashley.lp.y, 0), "no lifting after shutdown")
 
-print("PASS: RE4 model height: config cleaning, stacking (group over base, later group wins, explicit 0), OpsV3.set_height, rename/duplicate/delete carry heights, HeightFix restore-before-motion / lift-before-LateUpdateBehavior / fallback, shared skeletons, foreign writes, errors and reset")
+
+-- ---------------------------------------------------------------- 脚锁定点(IkLeg2)
+-- 引擎在抬高后的姿态上记锁定点(世界坐标);下一帧 UpdateMotion 之后、IK 之前要减掉上一帧的抬高量
+local e2 = {}
+local re2 = {
+    on_pre_application_entry = function(name, fn) e2["pre" .. name] = fn end,
+    on_application_entry = function(name, fn) e2["post" .. name] = fn end,
+}
+local function fake_ik(addr)
+    local ik = { addr = addr, lock = { [0] = { x = 0, y = 0, z = 0 }, [1] = { x = 0, y = 0, z = 0 } }, sets = 0, parent_local = false }
+    function ik:get_address() return self.addr end
+    function ik:call(m, i, v)
+        if m == "get_FootLockParentLocal" then return self.parent_local
+        elseif m == "getFootLockPosition" then local l = self.lock[i]; return { x = l.x, y = l.y, z = l.z }
+        elseif m == "setFootLockPosition" then self.sets = self.sets + 1; self.lock[i] = { x = v.x, y = v.y, z = v.z } end
+    end
+    return ik
+end
+local j2, ik2 = joint(10), fake_ik(20)
+local hf2 = HeightFix.new({ re = re2, skeleton_of = function() return skeleton(j2) end, ik_of = function() return ik2 end })
+local function frame2(capture)
+    e2.preUpdateMotion(); e2.postUpdateMotion()   -- 还原,然后在 IK 之前修锁定点
+    e2.preLateUpdateBehavior(); e2.prePrepareRendering()
+    if capture then ik2.lock[0] = { x = 0, y = capture, z = 0 } end  -- 引擎在抬高后的姿态上新记了一次
+end
+hf2.set_targets({ { source = "x", cm = 5 } })
+frame2(1.05)                                     -- 脚落地,锁定点记在抬高后的 1.05
+frame2()
+assert(near(ik2.lock[0].y, 1.00), "lock point captured on the lifted pose is moved back down by the lift")
+local sets = ik2.sets
+frame2(); frame2()
+assert(near(ik2.lock[0].y, 1.00) and ik2.sets == sets, "an unchanged (already fixed) lock point is not lowered again")
+frame2(1.25); frame2()
+assert(near(ik2.lock[0].y, 1.20), "a newly captured lock point is fixed once")
+hf2.set_targets({}); frame2(); local y = ik2.lock[0].y; frame2()
+assert(near(ik2.lock[0].y, y), "no lift -> lock points left alone")
+ik2.parent_local = true; hf2.set_targets({ { source = "x", cm = 5 } }); frame2(2.05); frame2()
+assert(near(ik2.lock[0].y, 2.05), "parent-local lock points are not touched")
+
+print("PASS: RE4 model height: config cleaning, stacking (group over base, later group wins, explicit 0), OpsV3.set_height, rename/duplicate/delete carry heights, HeightFix restore-before-motion / lift-before-LateUpdateBehavior / fallback, shared skeletons, foreign writes, errors and reset, IK foot-lock correction")

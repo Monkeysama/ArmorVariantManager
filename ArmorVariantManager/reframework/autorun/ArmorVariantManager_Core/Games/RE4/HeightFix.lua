@@ -13,7 +13,14 @@
 --
 -- 还原只在 root 的局部坐标仍是我们写的值时才做 —— 别的动画或 MOD 改过就不碰。
 --
+-- 踩地 IK(via.motion.IkLeg2)的脚锁定按世界坐标记脚的位置,记下的是抬高后的脚;下一帧 IK 在
+-- UpdateMotion 之后、我们抬高之前把脚拉回那个点,等于脚又被抬了一次(腿弯、脚浮空)。
+-- 2026-11-06 实测(tools/ik_probe,Leon,5 cm):脚锁定开时 IK 后脚踝比不抬高时高 5 cm、锁定点高 4.7 cm,
+-- 关掉脚锁定就没有。所以每帧 UpdateMotion 之后把锁定点减去上一帧的抬高量;只在锁定点变了
+-- (引擎新记了一次)时才减,没变说明还是我们改好的值,不再重复减。
+--
 -- 用法:local hf = HeightFix.new({ skeleton_of = fn(source) -> via.Transform })
+--       deps.ik_of(source) -> via.motion.IkLeg2 可选,默认取骨架所在对象上的 IkLeg2
 --       每帧 hf.set_targets({ { source = ..., cm = 8 }, ... })(cm 为 0 / nil 的不用传)
 local HeightFix = {}
 
@@ -31,6 +38,8 @@ function HeightFix.new(deps)
     local applied = {}        -- 关节地址 -> { joint, base, written }
     local alive = true
     local reported = {}
+    local pending_locks = {}  -- IK 地址 -> { ik, dy }:上一帧抬过的骨架,本帧要修它的脚锁定点
+    local lock_written = {}   -- IK 地址 -> { [0] = vec, [1] = vec }:上次改好的锁定点
 
     local function report(err)
         local msg = tostring(err)
@@ -44,9 +53,45 @@ function HeightFix.new(deps)
         return tr and tr:call("getJointByName", "root")
     end
 
+    local ik_type
+    local function ik_of(source)
+        if deps.ik_of then return deps.ik_of(source) end
+        if not ik_type then
+            if not (sdk and sdk.typeof) then return nil end
+            ik_type = sdk.typeof("via.motion.IkLeg2")
+            if not ik_type then return nil end
+        end
+        local tr = deps.skeleton_of(source)
+        local go = tr and tr:call("get_GameObject")
+        return go and go:call("getComponent(System.Type)", ik_type)
+    end
+
+    local function fix_locks()
+        local list = pending_locks
+        pending_locks = {}
+        local keep = {}
+        for key, p in pairs(list) do
+            local ok, err = pcall(function()
+                if p.ik:call("get_FootLockParentLocal") then return end -- 父对象局部坐标,不受抬高影响
+                local w = lock_written[key] or {}
+                for i = 0, 1 do
+                    local v = p.ik:call("getFootLockPosition", i)
+                    if v and not same(v, w[i]) then
+                        p.ik:call("setFootLockPosition", i, Vector3f.new(v.x, v.y - p.dy, v.z))
+                        w[i] = vec(p.ik:call("getFootLockPosition", i))
+                    end
+                end
+                keep[key] = w
+            end)
+            if not ok then report(err) end
+        end
+        lock_written = keep
+    end
+
     local function restore_all()
         for key, a in pairs(applied) do
             applied[key] = nil
+            if a.ik then pending_locks[a.ik_key] = { ik = a.ik, dy = a.dy } end
             local ok, err = pcall(function()
                 if same(a.joint:call("get_LocalPosition"), a.written) then
                     a.joint:call("set_LocalPosition", a.base)
@@ -69,8 +114,12 @@ function HeightFix.new(deps)
         end
         local base = vec(root:call("get_LocalPosition"))
         local p = root:call("get_Position")
-        root:call("set_Position", Vector3f.new(p.x, p.y + entry.cm / 100.0, p.z))
-        applied[key] = { joint = root, base = base, written = vec(root:call("get_LocalPosition")) }
+        local dy = entry.cm / 100.0
+        root:call("set_Position", Vector3f.new(p.x, p.y + dy, p.z))
+        local ok_ik, ik = pcall(ik_of, entry.source)
+        if not ok_ik then report(ik); ik = nil end
+        applied[key] = { joint = root, base = base, written = vec(root:call("get_LocalPosition")),
+                         dy = dy, ik = ik, ik_key = ik and ik:get_address() }
     end
 
     local function lift_all(only_missing)
@@ -93,12 +142,20 @@ function HeightFix.new(deps)
         alive = false
         wanted = {}
         restore_all()
+        fix_locks()  -- 抬高撤掉了,最后一帧记下的锁定点也拉回来
     end
 
     -- 测试用
     api._restore, api._lift, api._fallback = restore_all, function() lift_all(false) end, function() lift_all(true) end
+    api._fix_locks = fix_locks
 
     re_.on_pre_application_entry("UpdateMotion", function() if alive then restore_all() end end)
+    -- 动画之后、IK 之前修脚锁定点;没有 post 回调(测试替身)时退到动画前
+    if re_.on_application_entry then
+        re_.on_application_entry("UpdateMotion", function() if alive then fix_locks() end end)
+    else
+        re_.on_pre_application_entry("UpdateMotion", function() if alive then restore_all(); fix_locks() end end)
+    end
     re_.on_pre_application_entry("LateUpdateBehavior", function() if alive then lift_all(false) end end)
     re_.on_pre_application_entry("PrepareRendering", function() if alive then lift_all(true) end end)
     if re_.on_script_reset then re_.on_script_reset(api.shutdown) end
