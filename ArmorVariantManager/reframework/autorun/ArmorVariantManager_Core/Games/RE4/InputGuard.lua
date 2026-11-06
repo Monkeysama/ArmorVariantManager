@@ -84,6 +84,9 @@ function InputGuard.install(active, logger)
     end
 
     local blocking = false   -- 这一帧是否在屏蔽(面板显示,或刚关、还在等松开)
+    -- 已知(2026-11-05 实测日志):面板开着时从别的程序用左键点回游戏,抬起被 REFF 吞掉,引擎一直认为左键按着;
+    -- 这时关面板(比如按 ESC 进暂停),这里会一直等松开 —— 再点一下左键(引擎收到抬起)就放开,第一下点击被吞。
+    -- 用户认为可以接受,没有改成别的判断。
     local function update_state()
         local ok, on = pcall(active)
         on = ok and on == true
