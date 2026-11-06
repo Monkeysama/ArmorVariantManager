@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import Re4Num from './Re4Num.vue';
 import { computed, reactive, shallowRef } from 'vue';
-import { ElButton, ElInput, ElSwitch } from '@reff/ui';
+import { ElButton, ElInput, ElOption, ElSelect, ElSwitch } from '@reff/ui';
 import type { Re4Translate } from './i18n';
 import type { Re4Perform, Re4Snapshot, Re4Values } from './types';
 import { keyOf, shortSlot, splitKey, usersOf } from './util';
@@ -89,7 +89,7 @@ const stateName = (i?: number) => i ? props.snapshot.states?.[i - 1]?.name ?? ''
 
 interface Card {
   id: string; isBase: boolean; name: string; active: string; effective?: string; fromState?: number;
-  scope: string[]; options: { name: string; values: Re4Values; match?: { status: string; skipped: string[] }; height?: number }[];
+  scope: string[]; options: { name: string; values: Re4Values; match?: { status: string; skipped: string[] }; height?: number; palette?: string }[];
 }
 const cards = computed<Card[]>(() => {
   if (props.mode === 'base') {
@@ -141,6 +141,11 @@ function setHeight(card: Card, option: string, value: number | undefined) {
   return card.isBase ? props.perform({ kind: 'base-height', ...c(), preset: option, cm })
     : props.perform({ kind: 'option-height', ...c(), group: card.name, option, cm });
 }
+// 调色方案:选中这个预设 / 选项时叠加的方案。"" = 不调色;指向已删除的方案时下拉框里另列一项「方案不存在」
+const schemeNames = computed(() => (props.snapshot.palettes?.list ?? []).map(x => x.name));
+const schemeMissing = (name?: string) => !!name && !schemeNames.value.includes(name);
+const setPalette = (card: Card, option: string, scheme: string) =>
+  props.perform({ kind: 'palette-ref', ...c(), layer: card.isBase ? 'base' : card.name, option, scheme });
 // 卡片按名字做键，改名后展开状态要跟着搬到新名字上，否则改完就收起了
 async function renameGroup(card: Card, input: HTMLInputElement) {
   const name = input.value.trim();
@@ -288,6 +293,8 @@ function scopeBulk(card: Card, list: { id: string; materials: { name: string }[]
                 <span v-else-if="opt.match?.status === 'partial'" class="re4-res broken">{{ t('partialSlots', opt.match.skipped.join('、')) }}</span>
                 <span v-if="users(card, opt.name).length" class="re4-used">{{ t('usedBy', users(card, opt.name).map(s => s.name).join('」「')) }}</span>
                 <span v-if="opt.height !== undefined" class="re4-tag" :title="t('heightHint')">{{ t('heightTag', cmText(opt.height)) }}</span>
+                <span v-if="opt.palette" class="re4-tag" :class="{ 're4-res broken': schemeMissing(opt.palette) }"
+                  :title="schemeMissing(opt.palette) ? t('paletteRefBroken') : t('paletteRef')">🎨 {{ opt.palette }}</span>
               </span>
               <span class="re4-oact">
                 <template v-if="renaming?.id === card.id + '|' + opt.name">
@@ -321,6 +328,14 @@ function scopeBulk(card: Card, list: { id: string; materials: { name: string }[]
                   <Re4Num :value="opt.height" :min="HEIGHT_MIN" :max="HEIGHT_MAX" :placeholder="t('heightUnset')" allow-empty
                     :disabled="busy" @change="v => setHeight(card, opt.name, v)" />cm</label>
                 <button v-if="opt.height !== undefined" class="re4-link" :disabled="busy" @click="setHeight(card, opt.name, undefined)">{{ t('heightClear') }}</button>
+                <!-- 调色方案:选中这个预设 / 选项时叠加(在调色页新建和编辑方案) -->
+                <label class="re4-height">{{ t('paletteRef') }}
+                  <ElSelect :model-value="opt.palette ?? ''" :empty-values="[null, undefined]" size="small" style="width:11em" :disabled="busy" :aria-label="t('paletteRef')"
+                    @change="v => setPalette(card, opt.name, String(v))">
+                    <ElOption value="" :label="t('paletteRefNone')" />
+                    <ElOption v-for="n in schemeNames" :key="n" :value="n" :label="n" />
+                    <ElOption v-if="schemeMissing(opt.palette)" :value="opt.palette!" :label="t('paletteRefBroken') + '：' + opt.palette" disabled />
+                  </ElSelect></label>
               </div>
               <span v-if="!card.scope.length" class="re4-muted re4-small">{{ t('emptyScope') }}</span>
               <div class="re4-mlist" :class="{ notes }">

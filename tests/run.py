@@ -18,6 +18,7 @@ DEFAULT_TESTS = (
     "tests/re4_dissolve.lua",
     "tests/re4_height.lua",
     "tests/re4_palette.lua",
+    "tests/re4_palette_schemes.lua",
     "tests/re4_mdf2.lua",
     "tests/re4_targets.lua",
     "tests/re4_input_guard.lua",

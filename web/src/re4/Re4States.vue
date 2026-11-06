@@ -15,6 +15,7 @@ const states = computed(() => props.snapshot.states ?? []);
 const defs = computed(() => props.snapshot.conditions ?? []);
 const defOf = (id: string) => defs.value.find(d => d.id === id);
 const groups = computed(() => props.snapshot.groups ?? []);
+const schemeNames = computed(() => (props.snapshot.palettes?.list ?? []).map(x => x.name));
 const basePresets = computed(() => props.snapshot.base?.presets.map(p => p.name) ?? []);
 const open = reactive(new Set<number>());
 const confirming = shallowRef(0);
@@ -182,6 +183,17 @@ const { from: dragFrom, drop: dropAt, start: startDrag } = usePointerReorder('.r
               <ElOption v-for="name in basePresets" :key="name" :value="name" :label="name" />
             </ElSelect>
             <span class="re4-res" :class="st.baseResult?.kind">{{ resultText(st.baseResult, states, t) }}</span>
+          </div>
+          <!-- 调色方案:命中时叠加;不独占,几个状态的方案按优先级叠起来 -->
+          <div class="re4-target">
+            <span class="re4-muted re4-small">{{ t('paletteRef') }}</span>
+            <ElSelect class="re4-sel-target" :model-value="st.palette ?? ''" :empty-values="[null, undefined]" :disabled="busy" size="small" :aria-label="t('paletteRef')"
+              @change="v => perform({ kind: 'state-palette', ...c(), index: k + 1, scheme: String(v ?? '') })">
+              <ElOption value="" :label="t('paletteRefNone')" />
+              <ElOption v-if="st.palette && !schemeNames.includes(st.palette)" :value="st.palette" :label="st.palette + ' · ' + t('moved')" />
+              <ElOption v-for="name in schemeNames" :key="name" :value="name" :label="name" />
+            </ElSelect>
+            <span v-if="st.palette" class="re4-res" :class="st.paletteResult?.kind">{{ resultText(st.paletteResult, states, t) }}</span>
           </div>
           <div v-for="(tg, ti) in st.targets" :key="tg.group" class="re4-target">
             <ElSelect class="re4-sel-target" :model-value="tg.group" :disabled="busy" size="small" @change="v => perform({ kind: 'state-target-group', ...c(), index: k + 1, target: ti + 1, group: String(v) })">

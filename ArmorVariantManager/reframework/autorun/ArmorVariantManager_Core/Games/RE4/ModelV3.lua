@@ -16,9 +16,15 @@
 --     不放进快照(快照顶层键都是槛位,预设指纹按它算)。解算见 height_of:按叠加顺序,后写覆盖先写。
 --   height_override = { enabled, cm }:全局覆盖(快速切换页),打开时无视各层,统一用 cm。
 --   palette = { [slot] = { [材质] = { [参数] = 数值 | {x..w} } } }:调色盘的覆盖值,见 Palette.lua。
+--     这一份是「常驻」调色:一直生效,垫在所有调色方案下面。
+--   palettes = { [方案名] = 同 palette 的结构 }, palette_order = { 方案名, ... }:调色方案(子预设),
+--     palette_order 是新建的先后,只用来排列表(不影响叠加)。
+--     palette_active = 方案名:调色页里选中的方案,选中就一直生效(相当于调色的手动选择)。
+--     另外可以被引用:base.palettes = { [预设名] = 方案名 },groups[i].palettes = { [选项名] = 方案名 },
+--     条件状态的 palette = 方案名。叠加顺序见 palette_layers。引用到不存在的方案时保留原样,解算时跳过。
 --   条件状态 = { name, enabled, exclusive, logic, conditions, hold, fade_in, fade_out,
 --               hp = nil | { upper, lower, invert }, base = nil | "整套造型名",
---               targets = { { group, option }, ... } }
+--               targets = { { group, option }, ... }, palette = nil | "调色方案名" }
 --
 -- 状态组以名字为标识;改名统一走 OpsV3,顺带更新条件状态里的引用。引用到不存在的组 / 选项时
 -- 保留原样,解算时当作"引用失效"跳过,界面上能看见、能删。
@@ -118,6 +124,21 @@ local function clean_heights(h, names)
     return out
 end
 
+-- 调色方案引用:{ [预设 / 选项名] = 方案名 },只留指向现有预设 / 选项的;方案不存在也保留(显示为引用失效)。
+-- 空表返回 nil,省得每份配置都多一个字段
+local function clean_palette_refs(refs, names)
+    local out = {}
+    for n, v in pairs(is_tbl(refs) and refs or {}) do
+        if names[n] ~= nil and type(v) == "string" and v ~= "" then out[n] = v end
+    end
+    return next(out) and out or nil
+end
+
+M.PALETTE_NAME_MAX = 64
+function M.valid_palette_name(n)
+    return type(n) == "string" and n ~= "" and #n <= M.PALETTE_NAME_MAX and not n:match("^%s") and not n:match("%s$")
+end
+
 -- 这一帧的模型高度:全局覆盖打开时直接用它;否则整套造型先写,再按状态组顺序覆盖;
 -- 没有任何一层设过 → nil(不抬高)。第二个返回值是来源:
 --   { layer = "override" } / { layer = "base", option = 预设名 } / { layer = 状态组名, option = 选项名 }
@@ -165,6 +186,7 @@ function M.normalize_state(st)
         end
     end
     st.targets = targets
+    if type(st.palette) ~= "string" or st.palette == "" then st.palette = nil end
     return st
 end
 
@@ -184,6 +206,7 @@ function M.normalize(cfg)
     if type(base.active) ~= "string" or (base.active ~= "" and not presets[base.active]) then base.active = "" end
     base.rules, base.auto = nil, nil
     base.heights = clean_heights(base.heights, presets)
+    base.palettes = clean_palette_refs(base.palettes, presets)
     cfg.base = base
 
     local groups, names = {}, {}
@@ -203,6 +226,7 @@ function M.normalize(cfg)
                 order = M.reconcile_order(g.order, options),
                 active = (type(g.active) == "string" and options[g.active]) and g.active or "",
                 heights = clean_heights(g.heights, options),
+                palettes = clean_palette_refs(g.palettes, options),
             }
         end
     end
@@ -228,6 +252,18 @@ function M.normalize(cfg)
     -- 调色盘的覆盖值(见 Palette.lua);空表不留,省得每份配置都多一个字段
     local palette = Palette.clean(cfg.palette)
     cfg.palette = next(palette) and palette or nil
+    -- 调色方案:空方案也保留(刚建好还没调的)
+    local schemes = {}
+    for n, pal in pairs(is_tbl(cfg.palettes) and cfg.palettes or {}) do
+        if M.valid_palette_name(n) then schemes[n] = Palette.clean(pal) end
+    end
+    if next(schemes) then
+        cfg.palettes = schemes
+        cfg.palette_order = M.reconcile_order(cfg.palette_order, schemes)
+    else
+        cfg.palettes, cfg.palette_order = nil, nil
+    end
+    if type(cfg.palette_active) ~= "string" or not schemes[cfg.palette_active] then cfg.palette_active = nil end
     if type(cfg.source_preset) ~= "string" then cfg.source_preset = nil end
     return cfg
 end
@@ -408,12 +444,27 @@ local function hp_chain(items, hp)
     return { chain = chain, names = names }, items
 end
 
+-- 血量状态的进度(0~1),同 hp_chain 里单个状态的算法;> 0 表示这个状态在起作用
+local function hp_progress(h, hp)
+    local p
+    if h.upper > h.lower then
+        p = math.max(0, math.min(1, (h.upper - hp) / (h.upper - h.lower)))
+    else
+        p = hp <= h.upper and 1 or 0
+    end
+    if h.invert then p = 1 - p end
+    return p
+end
+
 -- 返回:
 --   picks   { base = 名 | nil, ["group:<组名>"] = 名 | nil }   各层这一帧的选择
 --   layers  { [层键] = { name, rule = 过渡设置 | nil, prio = 条件状态序号 | nil } }
 --   drives  { [层键] = { chain, names } }   血量驱动(同 v2)
 --   status  { [i] = { kind = "active"|"partial"|"outranked"|"idle"|"off"|"paused", by = 序号, holding } }
---   targets { [i] = { base = 认领结果 | nil, [j] = 认领结果 } }  认领结果 = false(没命中)| { kind = "win"|"lose"|"broken", by }
+--   targets { [i] = { base = 认领结果 | nil, palette = 认领结果 | nil, [j] = 认领结果 } }
+--           认领结果 = false(没命中)| { kind = "win"|"lose"|"broken", by }
+--   调色方案不独占:命中的状态各自生效,按优先级叠加(见 palette_layers),只有独占状态能挡住后面的。
+--   血量状态的调色在血量进入它的区间(进度 > 0)时生效。
 function M.resolve(cfg, context)
     local base = cfg.base
     local cond = cfg.conditions
@@ -422,6 +473,12 @@ function M.resolve(cfg, context)
 
     local claims, status, targets, hp_items = {}, {}, {}, {}
     local stop = nil
+    local schemes = cfg.palettes or {}
+    local hp, touched = nil, {}
+    local function get_hp()
+        if hp == nil then hp = M.hp_of(context) or false end
+        return hp
+    end
     for i, st in ipairs(cond.states) do
         local list = {}
         if st.base then list[#list + 1] = { key = "base", option = st.base, valid = base.presets[st.base] ~= nil, is_base = true } end
@@ -429,6 +486,8 @@ function M.resolve(cfg, context)
             local g = groups[t.group]
             list[#list + 1] = { key = M.layer_key(t.group), option = t.option, valid = g ~= nil and g.options[t.option] ~= nil }
         end
+        -- 调色方案放在最后,不影响状态组目标的序号(血量驱动那里按序号回填)
+        if st.palette then list[#list + 1] = { key = "palette", option = st.palette, valid = schemes[st.palette] ~= nil, is_palette = true } end
         local ts = {}
         for j, x in ipairs(list) do ts[j] = (not x.valid) and { kind = "broken" } or false end
 
@@ -443,7 +502,14 @@ function M.resolve(cfg, context)
             else
                 status[i] = { kind = "idle" }
                 for j, x in ipairs(list) do
-                    if not ts[j] then
+                    if x.is_palette then
+                        if not ts[j] then
+                            local v = get_hp()
+                            local on = type(v) == "number" and hp_progress(st.hp, v) > 0
+                            ts[j] = on and { kind = "win" } or false
+                            if on then touched[i] = true end
+                        end
+                    elseif not ts[j] then
                         hp_items[x.key] = hp_items[x.key] or {}
                         table.insert(hp_items[x.key], { st = st, i = i, j = j, option = x.option })
                     end
@@ -459,7 +525,10 @@ function M.resolve(cfg, context)
             else
                 local won, valid, by = 0, 0, nil
                 for j, x in ipairs(list) do
-                    if not ts[j] then
+                    if not ts[j] and x.is_palette then
+                        valid, won = valid + 1, won + 1
+                        ts[j] = { kind = "win" }
+                    elseif not ts[j] then
                         valid = valid + 1
                         local c = claims[x.key]
                         if c == nil then
@@ -481,7 +550,7 @@ function M.resolve(cfg, context)
         end
         local out = {}
         for j, x in ipairs(list) do
-            if x.is_base then out.base = ts[j] else out[#out + 1] = ts[j] end
+            if x.is_base then out.base = ts[j] elseif x.is_palette then out.palette = ts[j] else out[#out + 1] = ts[j] end
         end
         targets[i] = out
     end
@@ -501,8 +570,7 @@ function M.resolve(cfg, context)
     for _, g in ipairs(cfg.groups) do pick(M.layer_key(g.name), g.active) end
 
     -- 血量驱动:每层一条链。排在第一个血量状态之前的普通状态认领了这一层时,这一层不驱动
-    local drives, hp = {}, nil
-    local touched = {}
+    local drives = {}
     for key, items in pairs(hp_items) do
         local first = math.huge
         for _, it in ipairs(items) do first = math.min(first, it.i) end
@@ -517,7 +585,7 @@ function M.resolve(cfg, context)
                 end
             end
         else
-            if hp == nil then hp = M.hp_of(context) or false end
+            get_hp()
             if type(hp) == "number" then
                 local d, sorted = hp_chain(items, hp)
                 drives[key] = d
@@ -536,6 +604,50 @@ function M.resolve(cfg, context)
     end
 
     return { picks = picks, layers = layers, drives = drives, status = status, targets = targets }
+end
+
+-- ============================================================
+-- 调色方案:这一帧哪些方案生效、按什么顺序叠加
+--
+-- 从下到上:常驻(cfg.palette,不在返回的名字里)→ 调色页选中的方案(palette_active)→ 整套造型的选择
+-- 引用的方案 → 状态组按叠加顺序各自的选择引用的方案 → 条件状态(优先级低的先叠,高的盖在上面)。
+-- 选中的方案和状态组的手动选择一样,会被引用(按条件切换的)盖住。返回方案名列表;不存在的方案跳过。
+-- ============================================================
+function M.palette_layers(cfg, r)
+    local names = {}
+    local schemes = cfg.palettes or {}
+    local function add(n) if type(n) == "string" and schemes[n] then names[#names + 1] = n end end
+    add(cfg.palette_active)
+    local picks = r and r.picks or {}
+    local base = cfg.base or {}
+    if picks.base then add((base.palettes or {})[picks.base]) end
+    for _, g in ipairs(cfg.groups or {}) do
+        local pick = picks[M.layer_key(g.name)]
+        if pick then add((g.palettes or {})[pick]) end
+    end
+    local states = (cfg.conditions or {}).states or {}
+    for i = #states, 1, -1 do
+        local t = r and r.targets and r.targets[i]
+        if t and t.palette and t.palette.kind == "win" then add(states[i].palette) end
+    end
+    return names
+end
+
+-- 护甲同步身体外观:护甲的调色照抄身体的(按材质名,同材质开关的镜像)。
+-- 护甲自己调过的值留在配置里,关掉同步后恢复;返回新表,不改输入
+function M.mirror_palette(pal, on)
+    if not on or not is_tbl(pal) then return pal end
+    local copy = {}
+    for slot, mats in pairs(pal) do copy[slot] = mats end
+    copy.armor = copy.body
+    return copy
+end
+
+-- 叠好的覆盖表(交给 Palette.apply_mesh)
+function M.palette_of(cfg, names)
+    local list = { cfg.palette }
+    for _, n in ipairs(names or {}) do list[#list + 1] = (cfg.palettes or {})[n] end
+    return Palette.merge(list)
 end
 
 return M

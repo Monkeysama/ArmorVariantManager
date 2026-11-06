@@ -43,6 +43,7 @@ local CATEGORY = {
 --   preview(可选):Portrait.connect 的网页接口 { snapshot(), action(request) }
 --   v3:migrate_to_v3, preset_view, dismiss_preset_hint, apply_preset, save_current_as_preset,
 --      update_source_preset, restore_autosave, promote_autosave, preset_lib
+--   调色:palette_profiles, palette_profile_errors, palette_dump, all_meshes, forget_palette
 function Reff.new(deps)
     local controller = {}
     local selected = nil
@@ -54,6 +55,16 @@ function Reff.new(deps)
     -- palette_cache[mesh|序号] = { name, has = {参数 = 类型}, main, addons, missing },mesh 换实例就是新键
     local palette_open, palette_sel, palette_cache = false, {}, {}
     local palette_dirty = false   -- 拖动中的实时写入还没存盘
+    -- 一份调色覆盖表;create = 常驻调色还没有时建一个。方案不存在返回 nil
+    local function palette_table(cfg, scheme, create)
+        if scheme == nil or scheme == "" then
+            if create and type(cfg.palette) ~= "table" then cfg.palette = {} end
+            return cfg.palette
+        end
+        return type(cfg.palettes) == "table" and cfg.palettes[scheme] or nil
+    end
+    -- 调色页编辑的就是选中的那一份:cfg.palette_active(选中就生效),没有 = 常驻调色
+    local function selected_scheme(cfg) return cfg.palette_active or "" end
 
     local function language() return deps.global_config.language == "zh" and "zh" or "en" end
 
@@ -114,7 +125,7 @@ function Reff.new(deps)
             hold = st.hold, fadeIn = st.fade_in, fadeOut = st.fade_out, base = st.base,
             baseResult = result_of(t.base), kind = s.kind, by = s.by, holding = s.holding == true,
             hp = st.hp and { upper = st.hp.upper, lower = st.hp.lower, invert = st.hp.invert } or nil,
-            targets = {}, conditions = {} }
+            targets = {}, conditions = {}, palette = st.palette, paletteResult = result_of(t.palette) }
         for j, tg in ipairs(st.targets) do
             row.targets[j] = { group = tg.group, option = tg.option, result = result_of(t[j]) }
         end
@@ -201,14 +212,16 @@ function Reff.new(deps)
     local function palette_snapshot(cur)
         local profiles = deps.palette_profiles()
         local source, config = cur.target.source, cur.config
-        local pal = config.palette or {}
+        local scheme = selected_scheme(config)
+        local pal = palette_table(config, scheme) or {}
         local out = { materials = {}, profiles = {}, values = {}, overrides = {}, selected = {},
-                      errors = deps.palette_profile_errors() }
+                      errors = deps.palette_profile_errors(), scheme = scheme }
         local used, live, sel, listed = {}, {}, {}, {}
         for _, k in ipairs(palette_sel) do sel[k] = true end
         local notes = config.material_notes or {}
         out.replacing = MdfReplace.busy()
-        for _, slot in ipairs(deps.visible_slots(source)) do
+        -- 护甲同步身体外观时护甲的调色照抄身体(按材质名),护甲的材质不列出来
+        for _, slot in ipairs(deps.visible_slots(source, config.armor_mirrors_body == true)) do
             local mesh = Utils.get_mesh(source, slot)
             -- 「替换 mdf」能不能用:ok / packed(不是松散文件)/ plugin(原生插件太旧)
             local replace = mesh and MdfReplace.check(mesh) or nil
@@ -301,7 +314,8 @@ function Reff.new(deps)
         snapshot.base = { active = base.active, effective = v3.picks.base, fromState = base_layer.prio, presets = {} }
         for _, name in ipairs(base.order) do
             snapshot.base.presets[#snapshot.base.presets + 1] = { name = name, values = values_of(base.presets[name]),
-                match = base_match(source, base.presets[name]), height = (base.heights or {})[name] }
+                match = base_match(source, base.presets[name]), height = (base.heights or {})[name],
+                palette = (base.palettes or {})[name] }
         end
 
         snapshot.groups = {}
@@ -311,7 +325,8 @@ function Reff.new(deps)
                 fromState = (info.layers[key] or {}).prio, options = {} }
             for k, s in ipairs(g.scope) do row.scope[k] = s end
             for _, name in ipairs(g.order) do
-                row.options[#row.options + 1] = { name = name, values = values_of(g.options[name]), height = (g.heights or {})[name] }
+                row.options[#row.options + 1] = { name = name, values = values_of(g.options[name]), height = (g.heights or {})[name],
+                    palette = (g.palettes or {})[name] }
             end
             snapshot.groups[#snapshot.groups + 1] = row
         end
@@ -322,6 +337,20 @@ function Reff.new(deps)
         snapshot.height, snapshot.heightSource = cm, src
         local o = config.height_override
         snapshot.heightOverride = { enabled = type(o) == "table" and o.enabled == true, cm = type(o) == "table" and o.cm or 0 }
+
+        -- 调色方案:列表(按 palette_order)、各自被引用几次、这一帧生效的(从下到上,不含编辑预览)
+        local schemes = config.palettes or {}
+        local used = {}
+        local function count(n) if type(n) == "string" then used[n] = (used[n] or 0) + 1 end end
+        for _, n in pairs(base.palettes or {}) do count(n) end
+        for _, g in ipairs(config.groups) do for _, n in pairs(g.palettes or {}) do count(n) end end
+        for _, st in ipairs(config.conditions.states) do count(st.palette) end
+        snapshot.palettes = { list = {}, active = M3.palette_layers(config, v3) }
+        for _, n in ipairs(config.palette_order or {}) do
+            local mats = 0
+            for _, ms in pairs(schemes[n] or {}) do for _ in pairs(ms) do mats = mats + 1 end end
+            snapshot.palettes.list[#snapshot.palettes.list + 1] = { name = n, used = used[n] or 0, materials = mats }
+        end
 
         if palette_open then
             local ok, pal = pcall(palette_snapshot, cur)
@@ -410,8 +439,9 @@ function Reff.new(deps)
                 Utils.capture_preserving_unmatched(source, prev, TM.usable_slots(source, prev)))
         end,
         -- 调色盘。view:网页打开 / 关闭调色页、换选中的材质(不改配置)
-        ["palette-view"] = function(p)
+        ["palette-view"] = function(p, cfg)
             palette_open = p.open == true
+
             local keys = {}
             for _, k in ipairs(type(p.keys) == "table" and p.keys or {}) do
                 if type(k) == "string" and #keys < 64 then keys[#keys + 1] = k end
@@ -425,8 +455,10 @@ function Reff.new(deps)
         -- live = 拖动中:只改内存里的配置并重写模型,不存盘;松手 / 确定时再发一次不带 live 的,存盘
         ["palette-set"] = function(p, cfg)
             local changed = false
+            local pal = palette_table(cfg, str(p.scheme), true)
+            if not pal then return false end
             for _, w in ipairs(type(p.writes) == "table" and p.writes or {}) do
-                if Palette.set(cfg, w) then changed = true end
+                if Palette.set_in(pal, w) then changed = true end
             end
             if p.live == true then
                 if changed then palette_dirty = true; deps.request_reapply() end
@@ -440,9 +472,11 @@ function Reff.new(deps)
         -- reset:targets = { { slot, material }, ... };param / component 可选(缺省 = 全部)
         ["palette-reset"] = function(p, cfg)
             local changed = false
+            local pal = palette_table(cfg, str(p.scheme))
             for _, t in ipairs(type(p.targets) == "table" and p.targets or {}) do
-                if type(t) == "table" and Palette.reset(cfg, t.slot, t.material, str(p.param), str(p.component)) then changed = true end
+                if type(t) == "table" and Palette.reset_in(pal, t.slot, t.material, str(p.param), str(p.component)) then changed = true end
             end
+            if pal and pal == cfg.palette and next(pal) == nil then cfg.palette = nil end
             if not changed then return "saved" end
             return true, true
         end,
@@ -500,6 +534,44 @@ function Reff.new(deps)
             notice = { kind = "mdf-replaced", path = info.path }
             return "saved"
         end,
+        -- 调色方案。new:from = nil 空方案 / "" 复制常驻 / 方案名 复制那个;建好就切到它编辑
+        -- 空白方案(from = nil)= 原版:常驻调色改过的每一项都写成 mdf2 里的原值,选中后看到的就是原版材质
+        -- (常驻没改的参数本来就是原值,不用写)。当前模型上没有的材质跳过
+        ["palette-scheme-new"] = function(p, cfg, cur)
+            local ok, reapply, name = OpsV3.new_palette(cfg, str(p.name), str(p.from))
+            if ok and p.from == nil and deps.palette_original then
+                local scheme, cache = cfg.palettes[name], {}
+                for slot, mats in pairs(cfg.palette or {}) do
+                    for mat, params in pairs(mats) do
+                        for param, v in pairs(params) do
+                            local o = deps.palette_original(cur.target, slot, mat, param, cache)
+                            if type(v) == "number" and type(o) == "number" then
+                                Palette.set_in(scheme, { slot = slot, material = mat, param = param, value = o })
+                            elseif type(v) == "table" and type(o) == "table" then
+                                for comp in pairs(v) do
+                                    local i = ({ x = 1, y = 2, z = 3, w = 4 })[comp]
+                                    if i and type(o[i]) == "number" then
+                                        Palette.set_in(scheme, { slot = slot, material = mat, param = param, component = comp, value = o[i] })
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+            return ok, reapply
+        end,
+        -- 选中:选中的方案一直生效,调色页也编辑它;scheme = "" 只用常驻调色
+        ["palette-scheme-select"] = function(p, cfg) return OpsV3.set_palette_active(cfg, str(p.scheme) or "") end,
+        ["palette-scheme-rename"] = function(p, cfg) return OpsV3.rename_palette(cfg, str(p.scheme), str(p.name)) end,
+        ["palette-scheme-delete"] = function(p, cfg, cur)
+            if not palette_table(cfg, str(p.scheme)) or str(p.scheme) == "" then return false end
+            deps.snapshot_before_destructive(cur.kind_id)
+            return OpsV3.delete_palette(cfg, p.scheme)
+        end,
+        -- 引用:layer = "base" / 状态组名 + option;scheme = "" 取消
+        ["palette-ref"] = function(p, cfg) return OpsV3.set_palette_ref(cfg, str(p.layer), str(p.option), str(p.scheme) or "") end,
+        ["state-palette"] = function(p, cfg) return OpsV3.set_state_palette(cfg, integer(p.index), str(p.scheme) or "") end,
         ["base-height"] = function(p, cfg) return OpsV3.set_height(cfg, "base", p.preset, p.cm) end,
         ["option-height"] = function(p, cfg) return OpsV3.set_height(cfg, p.group, p.option, p.cm) end,
         ["height-override"] = function(p, cfg)

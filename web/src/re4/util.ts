@@ -51,6 +51,7 @@ export function targetSentence(state: Re4State, t: Re4Translate) {
   // 箭头只留给"条件 → 切换目标"这一层，目标里的"组：选项"用冒号
   if (state.base) parts.push(t('targetPair', t('baseTarget'), state.base));
   for (const target of state.targets) parts.push(t('targetPair', target.group, target.option));
+  if (state.palette) parts.push(t('targetPair', t('paletteRef'), state.palette));
   return parts.join(t('targetSep')) || t('noTargets');
 }
 

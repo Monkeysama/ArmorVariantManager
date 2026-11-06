@@ -29,15 +29,18 @@ export interface Re4State {
   hp?: { upper: number; lower: number; invert: boolean };
   base?: string; baseResult?: Re4Result; targets: Re4StateTarget[]; conditions: Re4StateCondition[];
   kind: Re4StateKind; by?: number; holding: boolean;
+  // 命中时叠加的调色方案；paletteResult：win = 生效 / lose = 被独占状态挡住 / broken = 方案不存在
+  palette?: string; paletteResult?: Re4Result;
 }
 
 // 材质值：键是 "slot/材质"。整套造型是整份（每个材质都有值）；状态组稀疏，没写 = 不管
 export type Re4Values = Record<string, boolean>;
 export interface Re4Match { status: 'ok' | 'partial' | 'mismatch'; skipped: string[] }
 // height:这个预设 / 选项设的模型高度（厘米）；没有 = 这一层不管高度
-export interface Re4BasePreset { name: string; values: Re4Values; match: Re4Match; height?: number }
+// palette:选中这个预设 / 选项时叠加的调色方案（可能指向已删除的方案）
+export interface Re4BasePreset { name: string; values: Re4Values; match: Re4Match; height?: number; palette?: string }
 export interface Re4Base { active: string; effective?: string; fromState?: number; presets: Re4BasePreset[] }
-export interface Re4Option { name: string; values: Re4Values; height?: number }
+export interface Re4Option { name: string; values: Re4Values; height?: number; palette?: string }
 export interface Re4Group { name: string; scope: string[]; active: string; effective?: string; fromState?: number; options: Re4Option[] }
 
 export interface Re4Material { name: string; note?: string }
@@ -84,7 +87,12 @@ export interface Re4Palette {
   overrides: Record<string, Record<string, Re4PaletteOverride> | false>;
   selected: string[]; errors: string[]; error?: string;
   replacing?: boolean;   // 替换 mdf 正在等新 mdf2 加载
+  scheme: string;        // 选中的方案（选中就生效，调色页也编辑它）："" = 只用常驻调色；overrides / overridden 都按它
 }
+// 调色方案（子预设）：used = 被引用几次，materials = 改了几个材质
+export interface Re4PaletteScheme { name: string; used: number; materials: number }
+// active：这一帧生效的方案（从下到上叠加：选中的 → 被引用的；常驻垫在最下面，不在列表里）
+export interface Re4PaletteSchemes { list: Re4PaletteScheme[]; active: string[] }
 export interface Re4PaletteWrite { slot: string; material: string; param: string; component?: Re4Comp; value: number }
 
 export interface Re4Snapshot {
@@ -101,6 +109,7 @@ export interface Re4Snapshot {
   heightSource?: { layer: string; option?: string };   // layer: 'override' / 'base' / 状态组名
   heightOverride?: { enabled: boolean; cm: number };   // 快速切换页的全局覆盖（存在当前配置里）
   palette?: Re4Palette;   // 只在调色页打开时出现
+  palettes?: Re4PaletteSchemes;
   locating?: { slot: string; material: string };
   presets?: Re4Presets;
   backups?: { hasBackup: boolean; hasOnload: boolean };
@@ -125,9 +134,15 @@ export type Re4Action =
   | C & { kind: 'base-height'; preset: string; cm?: number }
   | C & { kind: 'option-height'; group: string; option: string; cm?: number }
   | C & { kind: 'height-override'; enabled?: boolean; cm?: number }
-  | C & { kind: 'palette-view'; open: boolean; keys: string[] }
-  | C & { kind: 'palette-set'; writes: Re4PaletteWrite[]; live?: boolean }
-  | C & { kind: 'palette-reset'; targets: { slot: string; material: string }[]; param?: string; component?: Re4Comp }
+  | C & { kind: 'palette-view'; open: boolean; keys: string[]; scheme?: string }
+  | C & { kind: 'palette-set'; writes: Re4PaletteWrite[]; live?: boolean; scheme?: string }
+  | C & { kind: 'palette-reset'; targets: { slot: string; material: string }[]; param?: string; component?: Re4Comp; scheme?: string }
+  | C & { kind: 'palette-scheme-new'; name: string; from?: string }
+  | C & { kind: 'palette-scheme-select'; scheme: string }
+  | C & { kind: 'palette-scheme-rename'; scheme: string; name: string }
+  | C & { kind: 'palette-scheme-delete'; scheme: string }
+  | C & { kind: 'palette-ref'; layer: string; option: string; scheme: string }
+  | C & { kind: 'state-palette'; index: number; scheme: string }
   | C & { kind: 'palette-reload' }
   | C & { kind: 'palette-export'; slot: string; material: string; name: string }
   | C & { kind: 'palette-replace'; slot: string }

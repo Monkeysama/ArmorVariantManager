@@ -265,6 +265,38 @@ function Mdf2.export(mesh, j, material, palette, effects_index)
     return Mdf2.preset_from_runtime(material, props, textures, mmtr), reason
 end
 
+-- 网格当前 mdf2 文件里某个材质参数的值(原版值):float 返回数值,float4 返回 { x, y, z, w } 数组。
+-- cache 可选:{ [相对路径] = 解析结果 | false },一次操作里读很多参数时避免重复读文件。
+-- 读不到(材质打包在 pak 里、原生插件太旧、文件里没有这个材质 / 参数)返回 nil, 原因
+function Mdf2.file_value(mesh, material, param, cache)
+    local ok, v, why = pcall(function()
+        local holder = mesh:call("get_Material")
+        local rel = Mdf2.original_rel(Mdf2.file_path(holder and holder:call("get_ResourcePath")))
+        if not rel then return nil, "no mdf2 resource path" end
+        local parsed = cache and cache[rel]
+        if parsed == nil then
+            local bridge = rawget(_G, "avm_portrait")
+            local reader = type(bridge) == "table" and bridge.read_game_file
+            if type(reader) ~= "function" then return nil, "native plugin too old (no read_game_file)" end
+            local data = reader(rel)
+            parsed = data and Mdf2.parse(data) or false
+            if cache then cache[rel] = parsed end
+        end
+        if not parsed then return nil, rel .. ": not readable" end
+        local mat = Mdf2.find(parsed, material)
+        if not mat then return nil, "material not in file" end
+        for _, p in ipairs(mat.props) do
+            if p.name == param then
+                if p.count == 1 then return p.values[1] end
+                return { p.values[1], p.values[2], p.values[3], p.values[4] }
+            end
+        end
+        return nil, "parameter not in file"
+    end)
+    if not ok then return nil, tostring(v) end
+    return v, why
+end
+
 -- 预设名:RE Mesh Editor 用它当文件名。只允许英文字母、数字、空格、- 和 _,1~64 个字符,首字符不能是空格
 function Mdf2.valid_name(name)
     return type(name) == "string" and #name >= 1 and #name <= 64 and name:match("^[%w_%-][%w _%-]*$") ~= nil

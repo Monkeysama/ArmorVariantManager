@@ -10,7 +10,9 @@ import type {
 
 // 调色页。左边选材质（可多选，跨部位），右边按材质映射列出参数：通用含义、拆开的分量、「i」里的注释。
 // 多选时只列所有选中材质都有的项，改一次全部生效；「整体调色」对选中材质的颜色项转色相 / 调饱和度和明度。
-// 值存在角色配置里（cfg.palette），跟着预设走；映射只决定怎么显示。
+// 值存在角色配置里，跟着预设走；映射只决定怎么显示。
+// 顶部选中哪一份就生效哪一份(存进配置):常驻调色(cfg.palette,一直生效)或某个调色方案(cfg.palettes[名],
+// 垫在被整套造型 / 状态组 / 条件状态引用的方案下面)。调色页编辑的就是选中的那一份。
 const props = defineProps<{ snapshot: Re4Snapshot; busy: boolean; perform: Re4Perform; t: Re4Translate }>();
 const c = () => ({ character: props.snapshot.character });
 const pal = computed<Re4Palette | undefined>(() => props.snapshot.palette);
@@ -21,6 +23,9 @@ const CI: Record<Re4Comp, number> = { x: 0, y: 1, z: 2, w: 3 };
 
 // ---------------------------------------------------------------- 选择
 const selection = shallowRef<string[]>([]);
+// 选中的那一份("" = 常驻)。以快照为准:选中 / 新建 / 改名 / 删除都由 Lua 改
+const scheme = shallowRef('');
+watch(() => pal.value?.scheme, v => { if (typeof v === 'string' && v !== scheme.value) { void cancelBatch(); local.clear(); scheme.value = v; } });
 function view(open: boolean) { return props.perform({ kind: 'palette-view', ...c(), open, keys: open ? selection.value : [] }); }
 // 页签由 KeepAlive 缓存:切走是 deactivated 而不是卸载。关掉后 Lua 不再在快照里带调色数据
 const close = () => { void cancelBatch(); void props.perform({ kind: 'palette-view', ...c(), open: false, keys: [] }); };
@@ -199,13 +204,13 @@ const targets = () => chosen.value.map(m => ({ slot: m.slot, material: m.materia
 // 上一个完成后立刻补发,所以松手时最后的值一定会送到。页面正忙(别的操作在途)时稍后重试。
 let inflight = false;
 // live 的写入只改内存、不存盘;最后一次(松手 / 确定)不带 live,由 Lua 存盘
-let pending: { writes: Re4PaletteWrite[]; live: boolean } | null = null;
+let pending: { writes: Re4PaletteWrite[]; live: boolean; scheme: string } | null = null;
 function pump() {
   if (inflight || !pending) return;
   const job = pending;
   pending = null;
   inflight = true;
-  void props.perform({ kind: 'palette-set', ...c(), writes: job.writes, live: job.live || undefined }).then(ok => {
+  void props.perform({ kind: 'palette-set', ...c(), writes: job.writes, live: job.live || undefined, scheme: job.scheme }).then(ok => {
     if (!ok && !pending) { pending = job; window.setTimeout(pump, 60); }
   }).finally(() => { inflight = false; pump(); });
 }
@@ -213,7 +218,7 @@ function write(list: Omit<Re4PaletteWrite, 'slot' | 'material'>[], live = false)
   const writes: Re4PaletteWrite[] = [];
   for (const t of targets()) for (const w of list) writes.push({ ...t, ...w });
   if (!writes.length) return;
-  pending = { writes, live };
+  pending = { writes, live, scheme: scheme.value };
   pump();
 }
 // 拖动中的本地显示值(滑条位置 / 取色器颜色)。快照比拖动慢,直接用快照的值滑块会被拽回去;
@@ -224,10 +229,10 @@ watch(selection, () => { local.clear(); void cancelBatch(); });
 function reset(e: Re4PaletteEntry) {
   const comps: (Re4Comp | undefined)[] = e.kind === 'color' ? (e.channels === 'rgba' ? COMP : ['x', 'y', 'z']) : e.kind === 'vec' ? [undefined] : [e.component];
   void (async () => {
-    for (const component of comps) await props.perform({ kind: 'palette-reset', ...c(), targets: targets(), param: e.param, component });
+    for (const component of comps) await props.perform({ kind: 'palette-reset', ...c(), targets: targets(), param: e.param, component, scheme: scheme.value });
   })();
 }
-const resetAll = () => props.perform({ kind: 'palette-reset', ...c(), targets: targets() });
+const resetAll = () => props.perform({ kind: 'palette-reset', ...c(), targets: targets(), scheme: scheme.value });
 const setNumber = (e: Re4PaletteEntry, v: number | undefined | null) => {
   if (typeof v !== 'number' || !Number.isFinite(v)) return;
   return write([e.component ? { param: e.param, component: e.component, value: v } : { param: e.param, value: v }]);
@@ -282,6 +287,7 @@ const colorRows = computed(() => groups.value.filter(g => g.tier === 'basic').fl
 // 原本没改过的颜色,还原时取消覆盖而不是写回原值,免得平白多出「已改」。
 interface BatchBase { slot: string; material: string; key: string; param: string; rgb: [number, number, number]; had: boolean }
 let base: BatchBase[] | null = null;
+let batchScheme = '';   // 开始预览时选中的那一份;换方案会先取消预览
 const touched = new Set<string>();
 const batchNeutral = () => batch.hue === 0 && batch.sat === 100 && batch.val === 100;
 const previewing = shallowRef(false);
@@ -297,6 +303,7 @@ function captureBase() {
     if (cur) base.push({ slot: m.slot, material: m.material, key: m.key, param: r.entry.param, rgb: [...cur], had: hadOverride(m.key, r.entry.param) });
   }
   touched.clear();
+  batchScheme = scheme.value;
   previewing.value = true;
 }
 const batchOut = (b: BatchBase) => {
@@ -307,7 +314,7 @@ const rgbWrites = (b: BatchBase, c3: [number, number, number]): Re4PaletteWrite[
   COMP.slice(0, 3).map((k, i) => ({ slot: b.slot, material: b.material, param: b.param, component: k, value: c3[i] }));
 function enqueue(writes: Re4PaletteWrite[], live: boolean) {
   if (!writes.length) return;
-  pending = { writes, live };
+  pending = { writes, live, scheme: batchScheme };
   pump();
 }
 const idle = () => new Promise<void>(res => { const tick = () => (inflight || pending ? window.setTimeout(tick, 30) : res()); tick(); });
@@ -335,9 +342,9 @@ function endBatch() {
 // 把 list 里的颜色还原:原本改过的写回 base,原本没改过的取消覆盖
 async function restore(list: BatchBase[]) {
   const writes = list.filter(b => b.had).flatMap(b => rgbWrites(b, b.rgb));
-  if (writes.length) await must({ kind: 'palette-set', ...c(), writes });
+  if (writes.length) await must({ kind: 'palette-set', ...c(), writes, scheme: batchScheme });
   for (const b of list.filter(b => !b.had))
-    await must({ kind: 'palette-reset', ...c(), targets: [{ slot: b.slot, material: b.material }], param: b.param });
+    await must({ kind: 'palette-reset', ...c(), targets: [{ slot: b.slot, material: b.material }], param: b.param, scheme: batchScheme });
 }
 async function applyBatch() {
   if (!base) return;
@@ -362,6 +369,40 @@ async function cancelBatch() {
   if (list.length) await restore(list);
 }
 
+// ---------------------------------------------------------------- 调色方案
+const schemes = computed(() => props.snapshot.palettes?.list ?? []);
+const activeSchemes = computed(() => props.snapshot.palettes?.active ?? []);
+const current = computed(() => schemes.value.find(x => x.name === scheme.value));
+// 选中就生效(存进配置),调色页也编辑选中的那一份;"" = 只用常驻调色
+async function pickScheme(name: string) {
+  if (name === scheme.value) return;
+  await cancelBatch();
+  local.clear();
+  if (await props.perform({ kind: 'palette-scheme-select', ...c(), scheme: name })) scheme.value = name;
+}
+// 新建 / 改名共用一个对话框。from:'none' 原版(Lua 把常驻改过的项写成 mdf2 的原值)/ 'always' 复制常驻 / 'current' 复制选中的方案
+const dialog = reactive({ open: false, mode: 'new' as 'new' | 'rename', name: '', from: 'none' as 'none' | 'always' | 'current' });
+const nameTaken = computed(() => schemes.value.some(x => x.name === dialog.name.trim()) && !(dialog.mode === 'rename' && dialog.name.trim() === scheme.value));
+const dialogOk = computed(() => !!dialog.name.trim() && dialog.name.trim().length <= 64 && !nameTaken.value);
+function openNew() { Object.assign(dialog, { open: true, mode: 'new', name: '', from: scheme.value ? 'current' : 'none' }); }
+function openRename() { Object.assign(dialog, { open: true, mode: 'rename', name: scheme.value, from: 'none' }); }
+async function submitDialog() {
+  if (!dialogOk.value) return;
+  const name = dialog.name.trim();
+  await cancelBatch();
+  const ok = dialog.mode === 'rename'
+    ? await props.perform({ kind: 'palette-scheme-rename', ...c(), scheme: scheme.value, name })
+    : await props.perform({ kind: 'palette-scheme-new', ...c(), name,
+      from: dialog.from === 'always' ? '' : dialog.from === 'current' && scheme.value ? scheme.value : undefined });
+  if (ok) dialog.open = false;
+}
+const confirmDelete = shallowRef(false);
+async function doDelete() {
+  confirmDelete.value = false;
+  await cancelBatch();
+  await props.perform({ kind: 'palette-scheme-delete', ...c(), scheme: scheme.value });
+}
+
 const labels = (e: Re4PaletteEntry) => (en.value ? e.labels?.en : e.labels?.zh) ?? COMP.map(k => k.toUpperCase());
 const sliderMin = (e: Re4PaletteEntry) => e.min ?? 0;
 const sliderMax = (e: Re4PaletteEntry) => e.max ?? 1;
@@ -375,7 +416,45 @@ const clampSlider = (e: Re4PaletteEntry, v?: number) => Math.max(sliderMin(e), M
     <div v-if="pal?.error" class="re4-banner" role="alert">{{ pal.error }}</div>
     <div v-if="pal?.errors?.length" class="re4-banner" role="status">{{ t('paletteBadFiles', pal.errors.join('、')) }}</div>
     <div v-if="!pal" class="re4-muted re4-small">{{ t('loading') }}</div>
-    <div v-else class="re4-pal-layout">
+    <section v-if="pal" class="re4-panel re4-pal-schemes" :aria-label="t('paletteScheme')">
+      <div class="re4-panel-body re4-row">
+        <ElSelect :model-value="scheme" :empty-values="[null, undefined]" size="small" style="width:16em" :aria-label="t('paletteScheme')" @change="v => pickScheme(String(v))">
+          <ElOption value="" :label="t('paletteAlways')" />
+          <ElOption v-for="s in schemes" :key="s.name" :value="s.name" :label="s.name">
+            <span>{{ s.name }}</span>
+            <span v-if="activeSchemes.includes(s.name)" class="re4-tag on re4-pal-opttag">{{ t('paletteSchemeOn') }}</span>
+          </ElOption>
+        </ElSelect>
+        <ElButton size="small" :disabled="busy" @click="openNew">{{ t('paletteSchemeNew') }}</ElButton>
+        <template v-if="scheme">
+          <ElButton size="small" :disabled="busy" @click="openRename">{{ t('rename') }}</ElButton>
+          <ElButton size="small" type="danger" plain :disabled="busy" @click="confirmDelete = true">{{ t('delete') }}</ElButton>
+        </template>
+      </div>
+      <ElDialog v-model="dialog.open" :title="dialog.mode === 'rename' ? t('paletteSchemeRename') : t('paletteSchemeNew')" width="420px" append-to-body>
+        <div class="re4-pal-dialog">
+          <ElInput v-model="dialog.name" size="small" :placeholder="t('paletteSchemeName')" maxlength="64" @keyup.enter="submitDialog" />
+          <span v-if="nameTaken" class="re4-small re4-bad-text">{{ t('paletteSchemeTaken') }}</span>
+          <template v-if="dialog.mode === 'new'">
+            <label class="re4-small"><input v-model="dialog.from" type="radio" value="none"> {{ t('paletteFromNone') }}</label>
+            <label class="re4-small"><input v-model="dialog.from" type="radio" value="always"> {{ t('paletteFromAlways') }}</label>
+            <label v-if="scheme" class="re4-small"><input v-model="dialog.from" type="radio" value="current"> {{ t('paletteFromCurrent', scheme) }}</label>
+          </template>
+        </div>
+        <template #footer>
+          <ElButton size="small" @click="dialog.open = false">{{ t('cancel') }}</ElButton>
+          <ElButton size="small" type="primary" :disabled="busy || !dialogOk" @click="submitDialog">{{ t('confirm') }}</ElButton>
+        </template>
+      </ElDialog>
+      <ElDialog v-model="confirmDelete" :title="t('paletteSchemeDelete')" width="420px" append-to-body>
+        <p class="re4-small">{{ t('paletteSchemeDeleteBody', scheme, current?.used ?? 0) }}</p>
+        <template #footer>
+          <ElButton size="small" @click="confirmDelete = false">{{ t('cancel') }}</ElButton>
+          <ElButton size="small" type="danger" :disabled="busy" @click="doDelete">{{ t('delete') }}</ElButton>
+        </template>
+      </ElDialog>
+    </section>
+    <div v-if="pal" class="re4-pal-layout">
       <section class="re4-panel re4-pal-list" :aria-label="t('paletteMaterials')">
         <div class="re4-panel-head">
           <span class="re4-panel-title">{{ t('paletteMaterials') }}</span>
@@ -404,7 +483,7 @@ const clampSlider = (e: Re4PaletteEntry, v?: number) => Math.max(sliderMin(e), M
             <ElButton size="small" :disabled="busy" @click="locate">{{ t('locate') }}</ElButton>
             <ElButton size="small" :disabled="busy" @click="startExport">{{ t('paletteExport') }}</ElButton>
             <!-- 灰掉时只在悬停时说明原因(禁用的按钮收不到悬停,包一层 span) -->
-            <ElTooltip :content="replaceTip" :disabled="!replaceTip" placement="bottom">
+            <ElTooltip v-if="!scheme" :content="replaceTip" :disabled="!replaceTip" placement="bottom">
               <span><ElButton size="small" type="danger" plain :disabled="busy || replaceState !== 'ok' || pal?.replacing"
                 @click="confirmReplace = true">{{ t('paletteReplace') }}</ElButton></span>
             </ElTooltip>
@@ -550,6 +629,11 @@ const clampSlider = (e: Re4PaletteEntry, v?: number) => Math.max(sliderMin(e), M
 .re4-pal-batch { display: grid; grid-template-columns: repeat(auto-fill, minmax(12em, 1fr)); gap: 4px 16px; align-items: center; background: var(--re4-soft); }
 .re4-pal-batch .re4-pal-glabel { grid-column: 1 / -1; margin: 0; }
 .re4-pal-batchbtns { display: flex; gap: 6px; }
+.re4-pal-schemes { margin-bottom: 8px; }
+.re4-pal-schemes .re4-row { flex-wrap: wrap; gap: 6px; align-items: center; }
+.re4-pal-schemes .el-button + .el-button { margin-left: 0; }
+.re4-pal-opttag { margin-left: 8px; }
+.re4-pal-dialog { display: grid; gap: 8px; }
 .re4-pal-batchbtns .el-button + .el-button { margin-left: 0; }
 .re4-pal-batch label { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px; align-items: center; font-size: 12.5px; color: var(--avm-muted); }
 </style>

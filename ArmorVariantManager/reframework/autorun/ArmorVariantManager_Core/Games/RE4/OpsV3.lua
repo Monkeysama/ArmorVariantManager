@@ -236,6 +236,104 @@ function OpsV3.set_height_override(cfg, enabled, cm)
     return true, true
 end
 
+-- ============================================================ 调色方案(子预设)
+-- 方案本身的结构同 cfg.palette(见 Palette.lua);由整套造型的预设、状态组的选项、条件状态引用。
+local function deep_copy(v)
+    if type(v) ~= "table" then return v end
+    local o = {}
+    for k, x in pairs(v) do o[k] = deep_copy(x) end
+    return o
+end
+
+-- from:nil = 空方案;"" = 复制常驻调色;方案名 = 复制那个方案。返回 changed, reapply, 新名字
+function OpsV3.new_palette(cfg, name, from)
+    if not M3.valid_palette_name(name) then return false end
+    cfg.palettes = type(cfg.palettes) == "table" and cfg.palettes or {}
+    if cfg.palettes[name] then return false end
+    local src = {}
+    if from == "" then src = deep_copy(cfg.palette or {})
+    elseif type(from) == "string" then
+        if not cfg.palettes[from] then return false end
+        src = deep_copy(cfg.palettes[from])
+    end
+    cfg.palettes[name] = src
+    cfg.palette_order = type(cfg.palette_order) == "table" and cfg.palette_order or {}
+    table.insert(cfg.palette_order, name)
+    -- 新建的方案直接选中(选中就生效)
+    cfg.palette_active = name
+    return true, true, name
+end
+
+-- 选中一个方案(选中就生效);"" / nil = 只用常驻调色
+function OpsV3.set_palette_active(cfg, name)
+    local v = (name ~= "" and name) or nil
+    if v ~= nil and (type(cfg.palettes) ~= "table" or not cfg.palettes[v]) then return false end
+    if cfg.palette_active == v then return false end
+    cfg.palette_active = v
+    return true, true
+end
+
+-- 改名连带改掉所有引用
+function OpsV3.rename_palette(cfg, old, new)
+    local schemes = cfg.palettes
+    if type(schemes) ~= "table" or not schemes[old] or not M3.valid_palette_name(new) or schemes[new] then return false end
+    schemes[new], schemes[old] = schemes[old], nil
+    if cfg.palette_active == old then cfg.palette_active = new end
+    for i, n in ipairs(cfg.palette_order or {}) do if n == old then cfg.palette_order[i] = new end end
+    local function fix(refs)
+        for k, v in pairs(type(refs) == "table" and refs or {}) do if v == old then refs[k] = new end end
+    end
+    fix(cfg.base.palettes)
+    for _, g in ipairs(cfg.groups) do fix(g.palettes) end
+    for _, st in ipairs(cfg.conditions.states) do if st.palette == old then st.palette = new end end
+    return true, false
+end
+
+-- 删除后引用保留,显示为「引用失效」(同删除整套造型 / 状态组);调用方先留还原点
+function OpsV3.delete_palette(cfg, name)
+    local schemes = cfg.palettes
+    if type(schemes) ~= "table" or not schemes[name] then return false end
+    schemes[name] = nil
+    if cfg.palette_active == name then cfg.palette_active = nil end
+    for i, n in ipairs(cfg.palette_order or {}) do
+        if n == name then table.remove(cfg.palette_order, i); break end
+    end
+    if next(schemes) == nil then cfg.palettes, cfg.palette_order = nil, nil end
+    return true, true
+end
+
+local function scheme_ok(cfg, scheme)
+    return scheme == nil or scheme == "" or (type(scheme) == "string" and type(cfg.palettes) == "table" and cfg.palettes[scheme] ~= nil)
+end
+
+-- 整套造型的预设 / 状态组的选项引用哪个方案。layer:"base" 或状态组名;scheme = nil / "" 取消引用
+function OpsV3.set_palette_ref(cfg, layer, option, scheme)
+    local holder, names
+    if layer == "base" then
+        holder, names = cfg.base, cfg.base.presets
+    else
+        local g = M3.find_group(cfg, layer)
+        if not g then return false end
+        holder, names = g, g.options
+    end
+    if type(option) ~= "string" or not names[option] or not scheme_ok(cfg, scheme) then return false end
+    local v = (scheme ~= "" and scheme) or nil
+    local refs = type(holder.palettes) == "table" and holder.palettes or {}
+    if refs[option] == v then return false end
+    refs[option] = v
+    holder.palettes = next(refs) and refs or nil
+    return true, true
+end
+
+function OpsV3.set_state_palette(cfg, i, scheme)
+    local st = cfg.conditions.states[tonumber(i) or -1]
+    if not st or not scheme_ok(cfg, scheme) then return false end
+    local v = (scheme ~= "" and scheme) or nil
+    if st.palette == v then return false end
+    st.palette = v
+    return true, true
+end
+
 -- ============================================================ 条件状态
 local function state_at(cfg, i)
     return cfg.conditions.states[tonumber(i) or -1]

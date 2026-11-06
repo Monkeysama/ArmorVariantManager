@@ -1,6 +1,6 @@
 import type {
   Re4BasePreset, Re4Character, Re4ConditionDef, Re4Group, Re4Look, Re4Option, Re4Palette, Re4PaletteEntry, Re4PaletteGroup,
-  Re4PaletteMaterial, Re4PaletteOption, Re4PaletteOverride, Re4PaletteProfile, Re4PaletteSection, Re4PaletteValue, Re4PresetEntry, Re4Slot, Re4Snapshot, Re4State,
+  Re4PaletteMaterial, Re4PaletteOption, Re4PaletteOverride, Re4PaletteProfile, Re4PaletteScheme, Re4PaletteSection, Re4PaletteValue, Re4PresetEntry, Re4Slot, Re4Snapshot, Re4State,
 } from './types';
 
 // REFramework 把空 Lua 表序列化成 null（有的编码器给 {}）；缺省字段按空处理。
@@ -38,7 +38,8 @@ function palette(value: Re4Palette): Re4Palette {
       // 没有主映射的材质走通用兜底:一定给一个列表(没有 *Color 参数时 Lua 发来的是空表 → null)
       generic: m.main ? undefined : list<string>(m.generic, 'material.generic'),
       overridden: Number(m.overridden) || 0 })),
-    selected: list<string>(value.selected, 'palette.selected'), errors: list<string>(value.errors, 'palette.errors') };
+    selected: list<string>(value.selected, 'palette.selected'), errors: list<string>(value.errors, 'palette.errors'),
+    scheme: typeof value.scheme === 'string' ? value.scheme : '' };
 }
 
 export function normalizeRe4(value: Re4Snapshot): Re4Snapshot {
@@ -73,6 +74,11 @@ export function normalizeRe4(value: Re4Snapshot): Re4Snapshot {
   }
   if (value.states !== undefined) out.states = list<Re4State>(value.states, 'states').map(state);
   if (value.palette) out.palette = palette(value.palette);
+  // 调色方案:没有方案 / 没有生效的方案时 Lua 发来空表 → null
+  if (value.palettes) {
+    out.palettes = { list: list<Re4PaletteScheme>(value.palettes.list, 'palettes.list').map(x => ({ ...x, used: Number(x.used) || 0, materials: Number(x.materials) || 0 })),
+      active: list<string>(value.palettes.active, 'palettes.active') };
+  }
   if (value.presets) {
     out.presets = { ...value.presets, dismissed: value.presets.dismissed === true,
       list: list<Re4PresetEntry>(value.presets.list, 'presets.list'),

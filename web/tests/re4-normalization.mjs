@@ -78,3 +78,15 @@ test('palette snapshot survives the REFramework empty-table shapes (null / {} fo
   assert.equal(bare.error, 'boom');
   assert.deepEqual(bare.materials, []);
 });
+
+test('colour schemes survive empty-table shapes; the edited scheme defaults to always-on', () => {
+  for (const empty of [null, {}]) {
+    const result = normalizeSnapshot({ game: 'RE4', version: '1', language: 'zh', settings, character: 'Leon', configVersion: 3, characters: [],
+      palettes: { list: empty, active: empty }, palette: { materials: null, profiles: null, values: null, overrides: null, selected: null, errors: null } });
+    assert.deepEqual(result.palettes, { list: [], active: [] });
+    assert.equal(result.palette.scheme, '');
+  }
+  const one = normalizeSnapshot({ game: 'RE4', version: '1', language: 'zh', settings, character: 'Leon', configVersion: 3, characters: [],
+    palettes: { list: [{ name: 'Pale', used: 2, materials: 1 }], active: ['Pale'] } });
+  assert.deepEqual(one.palettes.list, [{ name: 'Pale', used: 2, materials: 1 }]);
+});

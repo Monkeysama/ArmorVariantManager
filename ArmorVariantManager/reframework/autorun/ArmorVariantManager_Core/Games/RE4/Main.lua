@@ -835,12 +835,15 @@ function Main.start(ctx)
     -- 同 id 的外部文件覆盖内置;按需读一次,网页上「重新读取映射」时重读。
     -- palette_state[target.id] = Palette.apply_mesh 的状态(各 mesh 的原值与写过的参数)
     local Palette = require("ArmorVariantManager_Core.Games.RE4.Palette")
+    local Mdf2 = require("ArmorVariantManager_Core.Games.RE4.Mdf2")
     -- 必须在脚本加载时 require:REFramework 只在加载 autorun 期间把 autorun 目录放进 package.path,
     -- 之后(网页请求、每帧回调里)再 require 会找不到模块
     local PaletteProfiles = require("ArmorVariantManager_Core.Games.RE4.PaletteProfiles")
     local PALETTE_DIR = "ArmorVariantManager/material_profiles/"
     local palette_profiles, palette_by_id, palette_profile_errors = nil, nil, {}
     local palette_state = {}
+    -- 调色方案:palette_sig[target.id] = 上次写入时生效的方案组合(名字串);组合变了就重写调色
+    local palette_sig = {}
     local function load_palette_profiles(reload)
         if palette_profiles and not reload then return palette_profiles, palette_by_id end
         local extras, errors = {}, {}
@@ -860,9 +863,10 @@ function Main.start(ctx)
         palette_profile_errors = errors
         return palette_profiles, palette_by_id
     end
-    local function apply_palette(target, source, config)
+    -- pal:叠好的覆盖表(v3 = 常驻 + 生效的方案,v2 = config.palette)
+    local function apply_palette(target, source, pal)
         local state = palette_state[target.id]
-        local pal = config.palette
+        if pal and next(pal) == nil then pal = nil end
         if not pal and not state then return end
         state = state or {}
         palette_state[target.id] = state
@@ -1292,9 +1296,16 @@ function Main.start(ctx)
             end
         end
         -- 调色盘:和材质开关同一套时机(换实例 / 配置变了 / 被重置 / 强制重写);预览和血量驱动的
-        -- 每帧重写不带它,调色值不会被那些路径改掉
-        if changed or mesh_swapped or drifted or force_reapply then
-            apply_palette(target, source, config)
+        -- 每帧重写不带它,调色值不会被那些路径改掉。v3 另外看生效的调色方案组合变了没有
+        -- (条件状态只带调色方案时,材质开关的 changed 不会变)
+        local names = nil
+        if info.v3 then names = ModelV3.palette_layers(config, info.v3) end
+        local sig = names and table.concat(names, "\0") or ""
+        local scheme_changed = palette_sig[target.id] ~= sig
+        palette_sig[target.id] = sig
+        if changed or mesh_swapped or drifted or force_reapply or scheme_changed then
+            local pal = names and ModelV3.palette_of(config, names) or config.palette
+            apply_palette(target, source, ModelV3.mirror_palette(pal, config.armor_mirrors_body == true))
         end
     end
 
@@ -2908,6 +2919,21 @@ function Main.start(ctx)
             forget_palette = function(mesh)
                 local key = tostring(mesh)
                 for _, state in pairs(palette_state) do state[key] = nil end
+            end,
+            -- 某个材质参数的原值:先读 mdf2 文件(Mdf2.file_value,不受脚本重载影响);读不到(pak 里的原版材质等)
+            -- 退回运行时第一次写入前记下的值(Palette.original;脚本重载后它记到的是重载前已经改过的值)。
+            -- cache 由调用方给,一次操作里共用。同名材质取第一个
+            palette_original = function(target, slot, material, param, cache)
+                local mesh = Utils.get_mesh(target.source, slot)
+                if not mesh then return nil end
+                local v = Mdf2.file_value(mesh, material, param, cache)
+                if v ~= nil then return v end
+                local ok, count = pcall(function() return mesh:call("get_MaterialNum") end)
+                for j = 0, (ok and count or 0) - 1 do
+                    local okn, name = pcall(function() return mesh:call("getMaterialName", j) end)
+                    if okn and name == material then return Palette.original(palette_state[target.id], mesh, j, param) end
+                end
+                return nil
             end,
         })
     end)

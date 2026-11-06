@@ -167,14 +167,14 @@ end
 -- 一次写入:{ slot, material, param, component = "x".."w" | nil, value = 数值 }
 -- component 为 nil 表示 float 参数。返回 changed
 local function round(v) return math.floor(v * 1e5 + 0.5) / 1e5 end
-function Palette.set(cfg, w)
-    if not is_tbl(w) or type(w.slot) ~= "string" or type(w.material) ~= "string" or type(w.param) ~= "string" then return false end
+-- set_in / reset_in 作用在一份覆盖表上(cfg.palette 或 cfg.palettes[方案名]),结构同 cfg.palette
+function Palette.set_in(pal, w)
+    if not is_tbl(pal) or not is_tbl(w) or type(w.slot) ~= "string" or type(w.material) ~= "string" or type(w.param) ~= "string" then return false end
     local v = tonumber(w.value)
     if not finite(v) then return false end
     v = round(v)
     if w.component ~= nil and not COMP_INDEX[w.component] then return false end
-    cfg.palette = is_tbl(cfg.palette) and cfg.palette or {}
-    local slot = cfg.palette[w.slot] or {}
+    local slot = pal[w.slot] or {}
     local mat = slot[w.material] or {}
     local cur = mat[w.param]
     if w.component == nil then
@@ -186,14 +186,20 @@ function Palette.set(cfg, w)
         t[w.component] = v
         mat[w.param] = t
     end
-    slot[w.material], cfg.palette[w.slot] = mat, slot
+    slot[w.material], pal[w.slot] = mat, slot
     return true
+end
+function Palette.set(cfg, w)
+    cfg.palette = is_tbl(cfg.palette) and cfg.palette or {}
+    return Palette.set_in(cfg.palette, w)
 end
 
 -- 取消覆盖:param 为 nil = 这个材质的全部;component 为 nil = 这个参数的全部分量
 function Palette.reset(cfg, slot, material, param, component)
-    local pal = is_tbl(cfg.palette) and cfg.palette or nil
-    local mats = pal and pal[slot]
+    return Palette.reset_in(is_tbl(cfg.palette) and cfg.palette or nil, slot, material, param, component)
+end
+function Palette.reset_in(pal, slot, material, param, component)
+    local mats = is_tbl(pal) and pal[slot] or nil
     local params = mats and mats[material]
     if not params then return false end
     if param == nil then
@@ -212,6 +218,35 @@ function Palette.reset(cfg, slot, material, param, component)
     end
     if next(mats) == nil then pal[slot] = nil end
     return true
+end
+
+-- 叠加几份覆盖表:后面的覆盖前面的,按参数 + 分量合并(float4 只盖写了的分量)。不改输入
+function Palette.merge(list)
+    local out = {}
+    for _, pal in ipairs(list) do
+        for slot, mats in pairs(is_tbl(pal) and pal or {}) do
+            if is_tbl(mats) then
+                local os = out[slot] or {}
+                out[slot] = os
+                for mat, params in pairs(mats) do
+                    if is_tbl(params) then
+                        local om = os[mat] or {}
+                        os[mat] = om
+                        for name, v in pairs(params) do
+                            if is_tbl(v) then
+                                local c = is_tbl(om[name]) and om[name] or {}
+                                for k, x in pairs(v) do c[k] = x end
+                                om[name] = c
+                            else
+                                om[name] = v
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return out
 end
 
 -- ============================================================ 引擎读写
@@ -307,6 +342,17 @@ function Palette.apply_mesh(mesh, slot_overrides, state, on_write)
             end
         end
     end
+end
+
+-- 参数的原值(mdf2 里的值):写过的取第一次写入前记下的;没写过的,当前值就是原值。
+-- float 返回数值,float4 返回 { x, y, z, w } 数组;读不到返回 nil
+function Palette.original(state, mesh, j, param)
+    local st = state and state[tostring(mesh)]
+    local o = st and st.orig[j .. "|" .. param]
+    if o ~= nil then return o end
+    local vars = (st and st.vars[j]) or Palette.read_vars(mesh, j)
+    local var = vars[param]
+    return var and Palette.read_value(mesh, j, var) or nil
 end
 
 -- 只保留当前还在的 mesh 的状态(换装后的旧 mesh 不再还原:它已经不显示了)

@@ -11,6 +11,7 @@ interface Cond { type: string; op?: string; value: number | string | boolean }
 interface State {
   name: string; enabled: boolean; exclusive: boolean; logic: 'AND' | 'OR'; hold: number; fade_in: number; fade_out: number;
   hp?: { upper: number; lower: number; invert: boolean }; base?: string; targets: { group: string; option: string }[]; conditions: Cond[];
+  palette?: string;
 }
 interface Group { name: string; scope: string[]; options: Record<string, Values>; order: string[]; active: string }
 interface Config {
@@ -112,8 +113,14 @@ export function installRe4Fixture() {
   const heights: Record<string, number> = {};
   const heightOverride = { enabled: false, cm: 0 };
   let paletteOpen = false, paletteSel: string[] = [];
-  const paletteOv: Record<string, Record<string, Re4PaletteOverride>> = {};
+  // 调色方案(夹具简化:不跟整套造型 / 选项改名走)。'' = 常驻;引用键同 heights
+  type Ov = Record<string, Record<string, Re4PaletteOverride>>;
+  const schemeOv: Record<string, Ov> = { '': {} };
+  let schemeOrder: string[] = [], editing = '';   // editing = 选中的方案(选中就生效)
+  const palRefs: Record<string, string> = {};
+  const ovOf = (name?: string) => schemeOv[name ?? ''] ?? fail();
   function paletteSnapshot(): Re4Palette {
+    const paletteOv = ovOf(editing);
     const materials: Re4PaletteMaterial[] = [], values: Re4Palette['values'] = {}, overrides: Re4Palette['overrides'] = {};
     for (const [slot, mats] of Object.entries(catalog)) for (const material of mats) {
       const key = `${slot}/${material}`, ov = paletteOv[key];
@@ -137,7 +144,7 @@ export function installRe4Fixture() {
       }
       values[key] = v;
     }
-    return { materials, profiles: { fx_toon: paletteProfile }, values, overrides, selected: [...paletteSel], errors: [] };
+    return { materials, profiles: { fx_toon: paletteProfile }, values, overrides, selected: [...paletteSel], errors: [], scheme: editing };
   }
   let character = 'Leon';
   let backup: Config | undefined;
@@ -167,7 +174,7 @@ export function installRe4Fixture() {
   function resolve() {
     const claims: Record<string, { i: number; option: string }> = {};
     const status: { kind: Re4StateKind; by?: number }[] = [];
-    const results: { base?: Re4Result; targets: (Re4Result | undefined)[] }[] = [];
+    const results: { base?: Re4Result; targets: (Re4Result | undefined)[]; palette?: Re4Result }[] = [];
     let stop = 0;
     config.states.forEach((st, k) => {
       const i = k + 1;
@@ -190,8 +197,12 @@ export function installRe4Fixture() {
         status[k] = { kind: valid === 0 ? 'idle' : won === 0 ? 'outranked' : won < valid ? 'partial' : 'active', by: won === 0 ? by : undefined };
         if (st.exclusive) stop = i;
       }
-      const out: { base?: Re4Result; targets: (Re4Result | undefined)[] } = { targets: [] };
+      const out: { base?: Re4Result; targets: (Re4Result | undefined)[]; palette?: Re4Result } = { targets: [] };
       list.forEach((x, j) => { if (x.isBase) out.base = res[j]; else out.targets.push(res[j]); });
+      // 调色方案不独占:命中且没被独占状态挡住就生效(夹具不算血量状态)
+      if (st.palette) out.palette = !schemeOv[st.palette] ? { kind: 'broken' }
+        : stop && stop < i ? { kind: 'lose', by: stop } : st.enabled && config.auto && hit && !st.hp ? { kind: 'win' } : undefined;
+      if (out.palette?.kind === 'win' && status[k].kind === 'idle') status[k] = { kind: 'active' };
       results[k] = out;
     });
     return { claims, status, results };
@@ -219,7 +230,16 @@ export function installRe4Fixture() {
       if (o && heights[`g:${g.name}|${o}`] !== undefined) { height = heights[`g:${g.name}|${o}`]; heightSource = { layer: g.name, option: o }; }
     }
     if (heightOverride.enabled) { height = heightOverride.cm; heightSource = { layer: 'override' }; }
+    // 生效的调色方案:整套造型 → 状态组 → 条件状态(优先级低的先)
+    const activePal: string[] = [];
+    const addPal = (n?: string) => { if (n && schemeOv[n]) activePal.push(n); };
+    addPal(editing);
+    if (effBase) addPal(palRefs['base|' + effBase]);
+    for (const g of config.groups) { const o = pick('g:' + g.name, g.active); if (o) addPal(palRefs[`g:${g.name}|${o}`]); }
+    for (let k = config.states.length - 1; k >= 0; k--) if (r.results[k].palette?.kind === 'win') addPal(config.states[k].palette);
+    const used = (n: string) => Object.values(palRefs).filter(v => v === n).length + config.states.filter(st => st.palette === n).length;
     const states: Re4State[] = config.states.map((st, k) => ({
+      palette: st.palette, paletteResult: r.results[k].palette,
       name: st.name, enabled: st.enabled, exclusive: st.exclusive, logic: st.logic, hold: st.hold, fadeIn: st.fade_in, fadeOut: st.fade_out,
       hp: st.hp, base: st.base, baseResult: r.results[k].base, kind: r.status[k].kind, by: r.status[k].by, holding: false,
       targets: st.targets.map((t, j) => ({ ...t, result: r.results[k].targets[j] })),
@@ -236,11 +256,12 @@ export function installRe4Fixture() {
       slots: Object.entries(catalog).map(([id, mats]) => ({ id, label: labels[id], mirrored: false, materials: mats.map(name => ({ name, note: config.notes[`${id}/${name}`] })) })),
       look: allKeys.map(k => { const [slot, material] = k.split('/'); return { slot, material, on: look[k] !== false }; }),
       base: { active: config.base.active, effective: effBase, fromState: r.claims.base?.i,
-        presets: config.base.order.map(name => ({ name, values: config.base.presets[name], match: { status: 'ok', skipped: [] }, height: heights['base|' + name] })) },
+        presets: config.base.order.map(name => ({ name, values: config.base.presets[name], match: { status: 'ok', skipped: [] }, height: heights['base|' + name], palette: palRefs['base|' + name] })) },
       groups: config.groups.map(g => ({ name: g.name, scope: g.scope, active: g.active, effective: pick('g:' + g.name, g.active),
-        fromState: r.claims['g:' + g.name]?.i, options: g.order.map(name => ({ name, values: g.options[name], height: heights[`g:${g.name}|${name}`] })) })),
+        fromState: r.claims['g:' + g.name]?.i, options: g.order.map(name => ({ name, values: g.options[name], height: heights[`g:${g.name}|${name}`], palette: palRefs[`g:${g.name}|${name}`] })) })),
       states, locating, height, heightSource, heightOverride: { ...heightOverride },
       palette: paletteOpen ? paletteSnapshot() : undefined,
+      palettes: { list: schemeOrder.map(name => ({ name, used: used(name), materials: Object.keys(schemeOv[name]).length })), active: activePal },
       presets: { current: config.source === 'p0002' ? 'partial' : 'full', dismissed,
         source: source ? { id: source.id, name: source.name, own: source.source === 'user' } : undefined,
         list: presets.map(p => ({ id: p.id, name: p.name, source: p.source, match: p.match })),
@@ -297,12 +318,12 @@ export function installRe4Fixture() {
       case 'base-height': if (!config.base.presets[a.preset]) fail();
         if (a.cm === undefined) delete heights['base|' + a.preset]; else heights['base|' + a.preset] = a.cm; break;
       case 'palette-view': paletteOpen = a.open; paletteSel = [...a.keys]; break;
-      case 'palette-set': for (const w of a.writes) {
+      case 'palette-set': { const paletteOv = ovOf(a.scheme); for (const w of a.writes) {
         const key = `${w.slot}/${w.material}`, ov = (paletteOv[key] ??= {});
         if (w.component) { const cur = ov[w.param]; const o = typeof cur === 'object' ? cur : {}; o[w.component] = w.value; ov[w.param] = o; }
         else ov[w.param] = w.value;
-      } break;
-      case 'palette-reset': for (const t of a.targets) {
+      } break; }
+      case 'palette-reset': { const paletteOv = ovOf(a.scheme); for (const t of a.targets) {
         const key = `${t.slot}/${t.material}`, ov = paletteOv[key];
         if (!ov) continue;
         if (!a.param) { delete paletteOv[key]; continue; }
@@ -310,7 +331,22 @@ export function installRe4Fixture() {
         if (a.component && typeof cur === 'object') { delete cur[a.component]; if (!Object.keys(cur).length) delete ov[a.param]; }
         else delete ov[a.param];
         if (!Object.keys(ov).length) delete paletteOv[key];
-      } break;
+      } break; }
+      case 'palette-scheme-new': if (!a.name || schemeOv[a.name] || (a.from && !schemeOv[a.from])) fail();
+        schemeOv[a.name] = a.from === undefined ? {} : JSON.parse(JSON.stringify(schemeOv[a.from])); schemeOrder.push(a.name); editing = a.name; break;
+      case 'palette-scheme-select': if (a.scheme && !schemeOv[a.scheme]) fail(); if (a.scheme === editing) fail(); editing = a.scheme; break;
+      case 'palette-scheme-rename': if (!a.scheme || !schemeOv[a.scheme] || !a.name || schemeOv[a.name]) fail();
+        schemeOv[a.name] = schemeOv[a.scheme]; delete schemeOv[a.scheme]; schemeOrder = schemeOrder.map(n => n === a.scheme ? a.name : n);
+        for (const k of Object.keys(palRefs)) if (palRefs[k] === a.scheme) palRefs[k] = a.name;
+        config.states.forEach(st => { if (st.palette === a.scheme) st.palette = a.name; });
+        if (editing === a.scheme) editing = a.name; break;
+      case 'palette-scheme-delete': if (!a.scheme || !schemeOv[a.scheme]) fail();
+        delete schemeOv[a.scheme]; schemeOrder = schemeOrder.filter(n => n !== a.scheme); if (editing === a.scheme) editing = ''; break;
+      case 'palette-ref': { const key = a.layer === 'base' ? 'base|' + a.option : `g:${a.layer}|${a.option}`;
+        if (a.scheme && !schemeOv[a.scheme]) fail();
+        if ((palRefs[key] ?? '') === a.scheme) fail();
+        if (a.scheme) palRefs[key] = a.scheme; else delete palRefs[key]; break; }
+      case 'state-palette': { const s = stateAt(a.index); if (a.scheme && !schemeOv[a.scheme]) fail(); s.palette = a.scheme || undefined; break; }
       case 'palette-reload': break;
       // 替换 mdf:夹具里只给出完成提示(真实流程要等新 mdf2 加载、再清空涉及的调色配置)
       case 'palette-replace': notice = { kind: 'mdf-replaced', path: `natives/STM/_Chainsaw/Character/ch/${a.slot}.mdf2.32` }; break;
