@@ -10,11 +10,6 @@ end
 local version = "4.3.4"
 local author = "MK,Moon,AZUSA,Ensicht"
 
-if game.standalone then
-    require(game.prefix .. "Main").start({game = game, version = version, author = author})
-    return
-end
-
 -- =============================================================================
 -- 多语言与全局配置系统
 -- =============================================================================

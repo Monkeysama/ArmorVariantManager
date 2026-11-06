@@ -1,17 +1,13 @@
 import { computed, onBeforeUnmount, onMounted, shallowRef, watch, type Ref } from 'vue';
 import { REFF_UI_VERSION } from '@reff/ui';
 import { createEmbeddedTransport, createReffClient, installInputFocusReporter } from '@reff-sdk/index';
-import type { AnyAction, AnySnapshot, Documentation, Imports } from './types';
+import type { Documentation, Imports, Perform, Snapshot } from './types';
 import { normalizeDocumentation, normalizeImports, normalizeSnapshot } from './snapshot';
-import { normalizeRe4 } from './re4/snapshot';
-
-// 同一条通道服务多款游戏：RE4 的快照走自己的归一化，MH 的保持原样。
-const normalize = (value: AnySnapshot): AnySnapshot => value.game === 'RE4' ? normalizeRe4(value) : normalizeSnapshot(value);
 
 export function useAvm(helpOpen: Readonly<Ref<boolean>>) {
   const client = createReffClient(createEmbeddedTransport());
   const stopInput = installInputFocusReporter(client);
-  const snapshot = shallowRef<AnySnapshot | null>(null);
+  const snapshot = shallowRef<Snapshot | null>(null);
   const busy = shallowRef(false);
   const loading = shallowRef(true);
   const error = shallowRef('');
@@ -30,8 +26,8 @@ export function useAvm(helpOpen: Readonly<Ref<boolean>>) {
 
   function refresh() {
     if (disposed || busy.value || read || documentationRead || importsRead || document.hidden || !ready) return;
-    read = client.call<AnySnapshot>('monkeysama.avm.snapshot').then(value => {
-      if (!disposed) snapshot.value = normalize(value);
+    read = client.call<Snapshot>('monkeysama.avm.snapshot').then(value => {
+      if (!disposed) snapshot.value = normalizeSnapshot(value);
     }).catch(reason => { if (!disposed) error.value = reason instanceof Error ? reason.message : String(reason); })
       .finally(() => { read = undefined; loading.value = false; });
     return read;
@@ -83,10 +79,9 @@ export function useAvm(helpOpen: Readonly<Ref<boolean>>) {
     finally { loading.value = false; }
   }
   // Polls, on-demand reads and writes share one lane; older reads cannot overwrite action results.
-  const perform = async (actions: AnyAction | AnyAction[]): Promise<boolean> => {
+  const perform: Perform = async actions => {
     if (busy.value || !ready || disposed) return false;
-    const current = snapshot.value;
-    const bodyId = current && current.game !== 'RE4' ? current.bodyId : '';
+    const bodyId = snapshot.value?.bodyId ?? '';
     busy.value = true;
     notice.value = '';
     try {
@@ -95,12 +90,10 @@ export function useAvm(helpOpen: Readonly<Ref<boolean>>) {
       // The picker displays list-read errors; they must not block unrelated writes.
       await importsRead?.catch(() => undefined);
       for (const action of Array.isArray(actions) ? actions : [actions]) {
-        // RE4 的操作自带角色 id，不附加 MH 的装备 id。
-        const params = current?.game === 'RE4' ? { ...action }
-          : action.kind === 'mode' || action.kind === 'theme' ? action : { ...action, bodyId };
-        const value = await client.call<AnySnapshot>('monkeysama.avm.action', params);
+        const params = action.kind === 'mode' || action.kind === 'theme' ? action : { ...action, bodyId };
+        const value = await client.call<Snapshot>('monkeysama.avm.action', params);
         if (disposed) return false;
-        snapshot.value = normalize(value);
+        snapshot.value = normalizeSnapshot(value);
       }
       error.value = '';
       return true;

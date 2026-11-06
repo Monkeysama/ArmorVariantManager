@@ -7,7 +7,6 @@ release
 # docs 默认仅保留本地；面向用户的使用文档按实际路径添加允许项
 # 规划、开发、进度和测试文档不加入允许项
 /docs/*
-!/docs/RE4_USER_MANUAL_EN.md
 
 Debug/
 ArmorVariantManager/reframework/data/ArmorVariantManager/Runtime/
@@ -18,9 +17,6 @@ sync_main_release.py
 /tests/*
 !/tests/run.py
 !/tests/entrypoint.lua
-!/tests/re4_entrypoint.lua
-!/tests/re4_localization.lua
-!/tests/re4_ops.lua
 !/tests/reff_bridge.lua
 !/tests/reff_conditions.lua
 !/tests/reff_settings.lua

@@ -10,7 +10,7 @@
     "build": "node scripts/reff.mjs build",
     "typecheck": "node scripts/reff.mjs typecheck",
     "dev": "node scripts/reff.mjs dev",
-    "test": "node --experimental-strip-types --test tests/normalization.mjs tests/re4-normalization.mjs tests/catalog-sort.mjs"
+    "test": "node --experimental-strip-types --test tests/normalization.mjs tests/catalog-sort.mjs"
   },
   "dependencies": {
     "element-plus": "2.10.7",

@@ -102,7 +102,7 @@ class ReleaseTests(unittest.TestCase):
                 self.assertEqual(archive.read(name), (directory / name).read_bytes())
         manifest_path = directory / "reframework/reff/plugins/monkeysama.avm/manifest.json"
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        self.assertEqual(manifest["games"], release.UNIVERSAL_GAMES if game == "universal" else [release.GAMES[game]])
+        self.assertEqual(manifest["games"], list(release.GAMES.values()) if game == "universal" else [release.GAMES[game]])
         self.assertEqual(manifest["extra"], {"keep": True})
 
     def test_all_games_have_complete_separate_inventories_and_manifests(self):

@@ -29,8 +29,6 @@ LICENSE = ROOT / "LICENSE"
 CHANGELOG = ROOT / "CHANGELOG.md"
 NATIVE_LICENSES = SOURCE_REFRAMEWORK / "plugins" / "source" / "THIRD_PARTY_LICENSES.txt"
 GAMES = {"wilds": "MHWILDS", "rise": "MHRISE"}
-# 通用包还服务 RE4(独立适配,只用 REF 原生面板与 REFF 页面);旧的单游戏参数不含 RE4。
-UNIVERSAL_GAMES = [*GAMES.values(), "RE4"]
 
 
 def long_bracket_end(text: str, start: int) -> tuple[str, int] | None:
@@ -209,7 +207,7 @@ def copy_reff_plugin(destination: Path, game: str = "universal", version: str | 
     target = destination / "reframework" / "reff" / "plugins" / REFF_PLUGIN.name
     target.mkdir(parents=True, exist_ok=True)
     manifest = json.loads((REFF_PLUGIN / "manifest.json").read_text(encoding="utf-8"))
-    manifest["games"] = UNIVERSAL_GAMES if game == "universal" else [GAMES[game]]
+    manifest["games"] = list(GAMES.values()) if game == "universal" else [GAMES[game]]
     if version is not None:
         manifest["version"] = version
     (target / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -239,7 +237,7 @@ def copy_native_plugins(destination: Path, game: str = "universal") -> None:
 def verify_reff_plugin(release_directory: Path, game: str = "universal") -> None:
     target = release_directory / "reframework" / "reff" / "plugins" / REFF_PLUGIN.name
     manifest = json.loads((target / "manifest.json").read_text(encoding="utf-8"))
-    expected_games = UNIVERSAL_GAMES if game == "universal" else [GAMES[game]]
+    expected_games = list(GAMES.values()) if game == "universal" else [GAMES[game]]
     if manifest.get("games") != expected_games:
         raise RuntimeError(f"Release verification failed: REFF manifest does not target {game}")
     if not (target / manifest["ui"]["entry"]).is_file():
