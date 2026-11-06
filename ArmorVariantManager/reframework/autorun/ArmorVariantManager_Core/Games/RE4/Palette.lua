@@ -285,8 +285,10 @@ local function write_value(mesh, j, var, value)
 end
 
 -- 每个目标一份状态:{ [mesh 键] = { vars = { [j] = 参数表 }, orig = { ["j|参数"] = 原值 }, touched = { ["j|参数"] = { 分量集合 | true } } } }
--- slot_overrides = cfg.palette[slot];on_write(mesh, j, param, value) 可选(溶解用来同步 Dissolve_Flag 的底值)
-function Palette.apply_mesh(mesh, slot_overrides, state, on_write)
+-- slot_overrides = 叠好的覆盖表[slot];on_write(mesh, j, param, value) 可选(溶解用来同步 Dissolve_Flag 的底值)。
+-- original(mesh, j, 材质名, 参数) 可选:参数的原值(mdf2 文件里的);给了就用它当还原的目标,
+-- 读不到(返回 nil)再用第一次写入前从网格读到的值(脚本重载后网格上可能还留着上次写的值,所以优先文件)
+function Palette.apply_mesh(mesh, slot_overrides, state, on_write, original)
     local key = tostring(mesh)
     local st = state[key]
     if not st then st = { vars = {}, orig = {}, touched = {} }; state[key] = st end
@@ -312,7 +314,12 @@ function Palette.apply_mesh(mesh, slot_overrides, state, on_write)
                 local tk = prefix .. p
                 if var then
                     local want = ov and ov[p]
-                    if st.orig[tk] == nil then st.orig[tk] = Palette.read_value(mesh, j, var) end
+                    if st.orig[tk] == nil then
+                        local o = original and original(mesh, j, name, p)
+                        if var.t == Palette.TYPE_FLOAT and type(o) ~= "number" then o = nil end
+                        if var.t ~= Palette.TYPE_FLOAT and type(o) ~= "table" then o = nil end
+                        st.orig[tk] = o or Palette.read_value(mesh, j, var)
+                    end
                     local orig = st.orig[tk]
                     if var.t == Palette.TYPE_FLOAT then
                         local v = finite(want) and want or orig

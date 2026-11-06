@@ -863,7 +863,10 @@ function Main.start(ctx)
         palette_profile_errors = errors
         return palette_profiles, palette_by_id
     end
-    -- pal:叠好的覆盖表(v3 = 常驻 + 生效的方案,v2 = config.palette)
+    -- pal:叠好的覆盖表(v3 = 生效的方案,v2 = config.palette)。还原的目标优先取 mdf2 文件里的原值
+    -- (mdf2_cache:{ [相对路径] = 解析结果 | false },换 mdf / 重读映射时清空)
+    local mdf2_cache = {}
+    local function file_original(mesh, _, material, param) return Mdf2.file_value(mesh, material, param, mdf2_cache) end
     local function apply_palette(target, source, pal)
         local state = palette_state[target.id]
         if pal and next(pal) == nil then pal = nil end
@@ -877,7 +880,7 @@ function Main.start(ctx)
                 live[tostring(mesh)] = true
                 Palette.apply_mesh(mesh, pal and pal[slot], state, function(m, j, param, value)
                     if param == "Dissolve_Flag" then Dissolve.set_flag_base(m, j, value) end
-                end)
+                end, file_original)
             end
         end
         Palette.prune(state, live)
@@ -2919,22 +2922,9 @@ function Main.start(ctx)
             forget_palette = function(mesh)
                 local key = tostring(mesh)
                 for _, state in pairs(palette_state) do state[key] = nil end
+                mdf2_cache = {}
             end,
-            -- 某个材质参数的原值:先读 mdf2 文件(Mdf2.file_value,不受脚本重载影响);读不到(pak 里的原版材质等)
-            -- 退回运行时第一次写入前记下的值(Palette.original;脚本重载后它记到的是重载前已经改过的值)。
-            -- cache 由调用方给,一次操作里共用。同名材质取第一个
-            palette_original = function(target, slot, material, param, cache)
-                local mesh = Utils.get_mesh(target.source, slot)
-                if not mesh then return nil end
-                local v = Mdf2.file_value(mesh, material, param, cache)
-                if v ~= nil then return v end
-                local ok, count = pcall(function() return mesh:call("get_MaterialNum") end)
-                for j = 0, (ok and count or 0) - 1 do
-                    local okn, name = pcall(function() return mesh:call("getMaterialName", j) end)
-                    if okn and name == material then return Palette.original(palette_state[target.id], mesh, j, param) end
-                end
-                return nil
-            end,
+            forget_mdf2 = function() mdf2_cache = {} end,
         })
     end)
     if not reff_ok then note_error("reff", reff_err) end

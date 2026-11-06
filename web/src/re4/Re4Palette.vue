@@ -11,8 +11,9 @@ import type {
 // 调色页。左边选材质（可多选，跨部位），右边按材质映射列出参数：通用含义、拆开的分量、「i」里的注释。
 // 多选时只列所有选中材质都有的项，改一次全部生效；「整体调色」对选中材质的颜色项转色相 / 调饱和度和明度。
 // 值存在角色配置里，跟着预设走；映射只决定怎么显示。
-// 顶部选中哪一份就生效哪一份(存进配置):常驻调色(cfg.palette,一直生效)或某个调色方案(cfg.palettes[名],
-// 垫在被整套造型 / 状态组 / 条件状态引用的方案下面)。调色页编辑的就是选中的那一份。
+// 顶部选中哪一份就生效哪一份(存进配置):初始(mdf2 原值,只读)或某个调色方案(cfg.palettes[名],
+// 垫在被整套造型 / 状态组 / 条件状态引用的方案下面)。调色页编辑的就是选中的那一份;
+// 选着初始时一改,Lua 自动新建一个方案并选中,改动记在新方案里。
 const props = defineProps<{ snapshot: Re4Snapshot; busy: boolean; perform: Re4Perform; t: Re4Translate }>();
 const c = () => ({ character: props.snapshot.character });
 const pal = computed<Re4Palette | undefined>(() => props.snapshot.palette);
@@ -23,9 +24,14 @@ const CI: Record<Re4Comp, number> = { x: 0, y: 1, z: 2, w: 3 };
 
 // ---------------------------------------------------------------- 选择
 const selection = shallowRef<string[]>([]);
-// 选中的那一份("" = 常驻)。以快照为准:选中 / 新建 / 改名 / 删除都由 Lua 改
+// 选中的那一份("" = 初始)。以快照为准:选中 / 新建 / 改名 / 删除都由 Lua 改
 const scheme = shallowRef('');
-watch(() => pal.value?.scheme, v => { if (typeof v === 'string' && v !== scheme.value) { void cancelBatch(); local.clear(); scheme.value = v; } });
+watch(() => pal.value?.scheme, v => {
+  if (typeof v !== 'string' || v === scheme.value) return;
+  // 选着初始时一改,Lua 自动新建方案并选中:这是我们自己的改动,接着用新方案,拖动中的预览不取消
+  if (scheme.value === '' && v) { if (base) batchScheme = v; scheme.value = v; return; }
+  void cancelBatch(); local.clear(); scheme.value = v;
+});
 function view(open: boolean) { return props.perform({ kind: 'palette-view', ...c(), open, keys: open ? selection.value : [] }); }
 // 页签由 KeepAlive 缓存:切走是 deactivated 而不是卸载。关掉后 Lua 不再在快照里带调色数据
 const close = () => { void cancelBatch(); void props.perform({ kind: 'palette-view', ...c(), open: false, keys: [] }); };
@@ -373,15 +379,15 @@ async function cancelBatch() {
 const schemes = computed(() => props.snapshot.palettes?.list ?? []);
 const activeSchemes = computed(() => props.snapshot.palettes?.active ?? []);
 const current = computed(() => schemes.value.find(x => x.name === scheme.value));
-// 选中就生效(存进配置),调色页也编辑选中的那一份;"" = 只用常驻调色
+// 选中就生效(存进配置),调色页也编辑选中的那一份;"" = 初始
 async function pickScheme(name: string) {
   if (name === scheme.value) return;
   await cancelBatch();
   local.clear();
   if (await props.perform({ kind: 'palette-scheme-select', ...c(), scheme: name })) scheme.value = name;
 }
-// 新建 / 改名共用一个对话框。from:'none' 原版(Lua 把常驻改过的项写成 mdf2 的原值)/ 'always' 复制常驻 / 'current' 复制选中的方案
-const dialog = reactive({ open: false, mode: 'new' as 'new' | 'rename', name: '', from: 'none' as 'none' | 'always' | 'current' });
+// 新建 / 改名共用一个对话框。from:'none' 空白(= 初始)/ 'current' 复制选中的方案
+const dialog = reactive({ open: false, mode: 'new' as 'new' | 'rename', name: '', from: 'none' as 'none' | 'current' });
 const nameTaken = computed(() => schemes.value.some(x => x.name === dialog.name.trim()) && !(dialog.mode === 'rename' && dialog.name.trim() === scheme.value));
 const dialogOk = computed(() => !!dialog.name.trim() && dialog.name.trim().length <= 64 && !nameTaken.value);
 function openNew() { Object.assign(dialog, { open: true, mode: 'new', name: '', from: scheme.value ? 'current' : 'none' }); }
@@ -393,7 +399,7 @@ async function submitDialog() {
   const ok = dialog.mode === 'rename'
     ? await props.perform({ kind: 'palette-scheme-rename', ...c(), scheme: scheme.value, name })
     : await props.perform({ kind: 'palette-scheme-new', ...c(), name,
-      from: dialog.from === 'always' ? '' : dialog.from === 'current' && scheme.value ? scheme.value : undefined });
+      from: dialog.from === 'current' && scheme.value ? scheme.value : undefined });
   if (ok) dialog.open = false;
 }
 const confirmDelete = shallowRef(false);
@@ -437,7 +443,6 @@ const clampSlider = (e: Re4PaletteEntry, v?: number) => Math.max(sliderMin(e), M
           <span v-if="nameTaken" class="re4-small re4-bad-text">{{ t('paletteSchemeTaken') }}</span>
           <template v-if="dialog.mode === 'new'">
             <label class="re4-small"><input v-model="dialog.from" type="radio" value="none"> {{ t('paletteFromNone') }}</label>
-            <label class="re4-small"><input v-model="dialog.from" type="radio" value="always"> {{ t('paletteFromAlways') }}</label>
             <label v-if="scheme" class="re4-small"><input v-model="dialog.from" type="radio" value="current"> {{ t('paletteFromCurrent', scheme) }}</label>
           </template>
         </div>
@@ -483,7 +488,7 @@ const clampSlider = (e: Re4PaletteEntry, v?: number) => Math.max(sliderMin(e), M
             <ElButton size="small" :disabled="busy" @click="locate">{{ t('locate') }}</ElButton>
             <ElButton size="small" :disabled="busy" @click="startExport">{{ t('paletteExport') }}</ElButton>
             <!-- 灰掉时只在悬停时说明原因(禁用的按钮收不到悬停,包一层 span) -->
-            <ElTooltip v-if="!scheme" :content="replaceTip" :disabled="!replaceTip" placement="bottom">
+            <ElTooltip v-if="scheme" :content="replaceTip" :disabled="!replaceTip" placement="bottom">
               <span><ElButton size="small" type="danger" plain :disabled="busy || replaceState !== 'ok' || pal?.replacing"
                 @click="confirmReplace = true">{{ t('paletteReplace') }}</ElButton></span>
             </ElTooltip>

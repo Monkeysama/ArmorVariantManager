@@ -1,7 +1,7 @@
 -- 调色页的「替换 mdf」:把调色覆盖值写进 mod 的 mdf2(原地改参数字节),当场换上,并清空涉及的调色配置。
 --
 -- 流程(2026-11-05 在游戏里实测过运行时替换,见 tests/re4_mdf2.lua 的说明):
---   1. 读原文件(natives/STM/<路径>.32,原生插件读),把 cfg.palette[槽位] 里这个 mdf2 的材质的覆盖值写进去
+--   1. 读原文件(natives/STM/<路径>.32,原生插件读),把选中的调色方案里这个槽位、这个 mdf2 的材质的覆盖值写进去
 --   2. 覆盖原文件(原生插件第一次会先留 <文件>.avm_bak);再写一份重载副本 <名字>_avmr<n>.mdf2.32 ——
 --      同一路径的资源引擎会缓存,文件改了也不会重新读,只有新路径才从磁盘读
 --   3. create_resource(副本) 后等 RELOAD_DELAY 帧再 set_Material:资源是异步加载的,立刻换上会是黄白格子(缺材质)
@@ -46,7 +46,7 @@ function Replace.busy() return job ~= nil end
 
 -- opts:
 --   mesh          要替换的网格(调色页选中材质所在槽位的网格)
---   overrides     cfg.palette[槽位]
+--   overrides     选中方案的覆盖表[槽位]
 --   meshes()      当前所有目标的所有槽位网格(找同一个 mdf2 的,一起换)
 --   forget(mesh)  清掉调色模块里这个网格的状态(不还原)
 --   clear(names)  清空配置里这些材质的调色覆盖值并存盘(names = { [材质名] = true })

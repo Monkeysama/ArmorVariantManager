@@ -87,7 +87,7 @@ export interface Re4Palette {
   overrides: Record<string, Record<string, Re4PaletteOverride> | false>;
   selected: string[]; errors: string[]; error?: string;
   replacing?: boolean;   // 替换 mdf 正在等新 mdf2 加载
-  scheme: string;        // 选中的方案（选中就生效，调色页也编辑它）："" = 只用常驻调色；overrides / overridden 都按它
+  scheme: string;        // 选中的方案（选中就生效，调色页也编辑它）："" = 初始（mdf2 原值，只读）；overrides / overridden 都按它
 }
 // 调色方案（子预设）：used = 被引用几次，materials = 改了几个材质
 export interface Re4PaletteScheme { name: string; used: number; materials: number }

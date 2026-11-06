@@ -80,9 +80,10 @@ assert(not Palette.reset(cfg, "body", "Skin", "BaseColor"), "nothing left to res
 assert(Palette.reset(cfg, "body", "Skin") and cfg.palette.body == nil, "reset the whole material and drop empty tables")
 local cleaned = Palette.clean({ body = { Skin = { A = 1, B = { x = 1, y = "no" }, C = { y = 0 / 0 }, D = "x" } }, hair = {} })
 assert(cleaned.body.Skin.A == 1 and cleaned.body.Skin.B.x == 1 and cleaned.body.Skin.B.y == nil and cleaned.body.Skin.C == nil and cleaned.body.Skin.D == nil and cleaned.hair == nil)
--- ModelV3 一起清洗,空的不留
-assert(M3.normalize({ palette = { body = {} } }).palette == nil)
-assert(M3.normalize({ palette = { body = { Skin = { A = 2 } } } }).palette.body.Skin.A == 2)
+-- ModelV3 一起清洗,空的不留;旧的常驻调色迁移成选中的「常驻」方案(见 re4_palette_schemes.lua)
+assert(M3.normalize({ palette = { body = {} } }).palette == nil and M3.normalize({ palette = { body = {} } }).palettes == nil)
+local migrated = M3.normalize({ palette = { body = { Skin = { A = 2 } } } })
+assert(migrated.palette == nil and migrated.palettes[migrated.palette_active].body.Skin.A == 2)
 
 -- ---------------------------------------------------------------- 写到 mesh 上
 local function fake_mesh(mats)

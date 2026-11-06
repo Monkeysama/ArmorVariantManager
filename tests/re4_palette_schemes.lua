@@ -30,7 +30,6 @@ local function config(states)
             order = {"Full", "Shirt"}, active = "Full", palettes = {Full = "Warm", Ghost = "Warm"}},
         groups = {{name = "Face", scope = {"head/f"}, options = {Clean = {}, Hurt = {}}, active = "Clean",
             palettes = {Hurt = "Pale", Clean = ""}}},
-        palette = {body = {Skin = {Base = col(1, 1, 1), Rough = 0.5}}},
         palettes = {
             Warm = {body = {Skin = {Base = {x = 0.9}}}},
             Pale = {body = {Skin = {Base = {y = 0.2}}}, head = {Face = {Base = col(0.3, 0.3, 0.3)}}},
@@ -54,6 +53,27 @@ do
     assert(cfg.conditions.states[1].palette == nil, "empty state palette dropped")
     local plain = M3.normalize({version = 3})
     assert(plain.palettes == nil and plain.palette_order == nil and plain.base.palettes == nil)
+end
+
+-- 旧的常驻调色迁移成「常驻」方案,外观不变
+do
+    local old = {body = {Skin = {Base = col(1, 1, 1), Rough = 0.5}}}
+    local cfg = M3.normalize({version = 3, palette = old})
+    assert(cfg.palette == nil and cfg.palette_active == "常驻" and cfg.palette_order[1] == "常驻")
+    S.equal(cfg.palettes["常驻"], old)
+    -- 已经选了别的方案:常驻的值补进选中的方案(它原来就叠在常驻上),选中的值优先
+    cfg = M3.normalize({version = 3, palette = old, palette_active = "A", palettes = {A = {body = {Skin = {Base = {x = 0}}}}}})
+    assert(cfg.palette == nil and cfg.palette_active == "A" and cfg.palettes["常驻"] == nil)
+    S.equal(cfg.palettes.A.body.Skin, {Base = {x = 0, y = 1, z = 1}, Rough = 0.5})
+    -- 同名方案已存在:换个名字
+    cfg = M3.normalize({version = 3, palette = old, palettes = {["常驻"] = {}}})
+    assert(cfg.palette_active == "常驻 2")
+    -- 选着初始时调色:自动新建并选中
+    cfg = M3.normalize({version = 3})
+    assert(OpsV3.ensure_palette(cfg, "方案") == "方案 1" and cfg.palette_active == "方案 1")
+    assert(OpsV3.ensure_palette(cfg, "方案") == "方案 1", "already selected")
+    assert(OpsV3.set_palette_active(cfg, ""))
+    assert(OpsV3.ensure_palette(cfg, "方案") == "方案 2")
 end
 
 -- ============================================================ 合并
@@ -86,7 +106,7 @@ do
     assert(r.targets[1].palette.kind == "win" and r.targets[3].palette.kind == "broken")
     S.equal(M3.palette_layers(cfg, r), {"Warm", "Pale", "Dark"}, "states above groups; broken skipped")
     local merged = M3.palette_of(cfg, M3.palette_layers(cfg, r))
-    S.equal(merged.body.Skin, {Base = {x = 0.1, y = 0.2, z = 1}, Rough = 0.9}, "always-on layer at the bottom")
+    S.equal(merged.body.Skin, {Base = {x = 0.1, y = 0.2}, Rough = 0.9}, "nothing under the schemes but the original")
     S.equal(merged.head.Face, {Base = col(0.3, 0.3, 0.3)})
 
     -- 两个状态都带方案:高优先级的盖在上面
@@ -121,11 +141,13 @@ do
     assert(not OpsV3.new_palette(cfg, "Pale"), "duplicate name")
     assert(not OpsV3.new_palette(cfg, "", nil), "empty name")
     assert(not OpsV3.new_palette(cfg, "X", "Nope"), "copy from missing")
-    local ok, _, name = OpsV3.new_palette(cfg, "Copy", "")
+    local ok, _, name = OpsV3.new_palette(cfg, "Copy", "Dark")
     assert(ok and name == "Copy" and cfg.palette_active == "Copy", "new scheme is selected")
-    S.equal(cfg.palettes.Copy, cfg.palette, "copied from always-on")
+    S.equal(cfg.palettes.Copy, cfg.palettes.Dark, "copied")
     cfg.palettes.Copy.body.Skin.Rough = 0.1
-    assert(cfg.palette.body.Skin.Rough == 0.5, "deep copy")
+    assert(cfg.palettes.Dark.body.Skin.Rough == 0.9, "deep copy")
+    assert(OpsV3.new_palette(cfg, "Blank") and next(cfg.palettes.Blank) == nil, "blank = empty = original")
+    assert(not OpsV3.new_palette(cfg, "X", ""), "no always-on layer to copy any more")
     assert(OpsV3.new_palette(cfg, "Copy2", "Pale"))
     S.equal(cfg.palettes.Copy2, cfg.palettes.Pale)
     assert(cfg.palette_order[#cfg.palette_order] == "Copy2")
@@ -203,12 +225,24 @@ do
     assert(vals[0] == 0.9 and vals[1].x == 0, "written")
     S.equal(Palette.original(state, mesh, 0, "Base"), {1, 0.5, 0.25, 1}, "written = recorded original")
     assert(Palette.original(state, mesh, 0, "Rough") == 0.5)
+    -- 脚本重载后:网格上还留着改过的值(0.9),新的状态表不知道原值;给了文件原值就还原到文件的值
+    local fresh = {}
+    local file = function(_, _, material, param) return material == "Skin" and param == "Rough" and 0.25 or nil end
+    Palette.apply_mesh(mesh, {Skin = {Rough = 0.7}}, fresh, nil, file)
+    assert(vals[0] == 0.7)
+    Palette.apply_mesh(mesh, nil, fresh, nil, file)
+    assert(vals[0] == 0.25, "restored to the mdf2 value, not to what the mesh held")
+    -- 文件读不到:退回网格上读到的值
+    local fallback = {}
+    Palette.apply_mesh(mesh, {Skin = {Base = {y = 0}}}, fallback, nil, file)
+    Palette.apply_mesh(mesh, nil, fallback, nil, file)
+    assert(vals[1].y == 0.5)
 end
 
 -- mdf2 文件里的原值:用一份最小的 mdf2(一个材质、一个 float 和一个 float4)走一遍解析
 do
     local Mdf2 = require("ArmorVariantManager_Core.Games.RE4.Mdf2")
-    local function u16(s) local t = {} for _, c in utf8.codes(s) do t[#t + 1] = string.pack("<I2", c) end return table.concat(t) .. "  " end
+    local function u16(s) local t = {} for _, c in utf8.codes(s) do t[#t + 1] = string.pack("<I2", c) end return table.concat(t) .. "\0\0" end
     -- 布局:头 16 + 材质条目 100 + 参数头 2×24,之后是字符串和参数数据
     local strings_at = 16 + 100 + 48
     local mat_name, p1, p2 = u16("Skin"), u16("Rough"), u16("Base")

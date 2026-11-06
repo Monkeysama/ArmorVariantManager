@@ -55,15 +55,16 @@ function Reff.new(deps)
     -- palette_cache[mesh|序号] = { name, has = {参数 = 类型}, main, addons, missing },mesh 换实例就是新键
     local palette_open, palette_sel, palette_cache = false, {}, {}
     local palette_dirty = false   -- 拖动中的实时写入还没存盘
-    -- 一份调色覆盖表;create = 常驻调色还没有时建一个。方案不存在返回 nil
+    -- 一份调色覆盖表(方案)。scheme = "" / nil 表示「选中的那一份」:初始(mdf2 原值)只读,
+    -- create = true 时选着初始就自动新建一个方案并选中,接住这次修改。方案不存在返回 nil
     local function palette_table(cfg, scheme, create)
         if scheme == nil or scheme == "" then
-            if create and type(cfg.palette) ~= "table" then cfg.palette = {} end
-            return cfg.palette
+            if create then OpsV3.ensure_palette(cfg, deps.global_config.language == "zh" and "方案" or "Scheme") end
+            scheme = cfg.palette_active
         end
-        return type(cfg.palettes) == "table" and cfg.palettes[scheme] or nil
+        return type(scheme) == "string" and type(cfg.palettes) == "table" and cfg.palettes[scheme] or nil
     end
-    -- 调色页编辑的就是选中的那一份:cfg.palette_active(选中就生效),没有 = 常驻调色
+    -- 调色页编辑的就是选中的那一份:cfg.palette_active(选中就生效),没有 = 初始
     local function selected_scheme(cfg) return cfg.palette_active or "" end
 
     local function language() return deps.global_config.language == "zh" and "zh" or "en" end
@@ -455,8 +456,11 @@ function Reff.new(deps)
         -- live = 拖动中:只改内存里的配置并重写模型,不存盘;松手 / 确定时再发一次不带 live 的,存盘
         ["palette-set"] = function(p, cfg)
             local changed = false
+            -- 选着初始时自动新建方案:这算改了配置结构,即使是拖动中也要存盘
+            local had = cfg.palette_active
             local pal = palette_table(cfg, str(p.scheme), true)
             if not pal then return false end
+            if cfg.palette_active ~= had then p.live = nil end
             for _, w in ipairs(type(p.writes) == "table" and p.writes or {}) do
                 if Palette.set_in(pal, w) then changed = true end
             end
@@ -476,13 +480,13 @@ function Reff.new(deps)
             for _, t in ipairs(type(p.targets) == "table" and p.targets or {}) do
                 if type(t) == "table" and Palette.reset_in(pal, t.slot, t.material, str(p.param), str(p.component)) then changed = true end
             end
-            if pal and pal == cfg.palette and next(pal) == nil then cfg.palette = nil end
             if not changed then return "saved" end
             return true, true
         end,
         ["palette-reload"] = function()
             deps.palette_profiles(true)
             palette_cache = {}
+            if deps.forget_mdf2 then deps.forget_mdf2() end
             return "saved"
         end,
         -- 导出 mdf2 材质预设(RE Mesh Editor 格式,见 Mdf2.lua):写到 data/ArmorVariantManager/mdf2_presets/RE4/<预设名>.json,
@@ -514,14 +518,17 @@ function Reff.new(deps)
             local mesh = Utils.get_mesh(cur.target.source, slot)
             if not mesh then return false end
             local kind_id = cur.kind_id
+            -- 写进去的是选中方案里这个槽位的值(写完从方案里清掉,它们成了新的初始);选着初始时没有可写的
+            local pal = palette_table(cfg, "")
+            if not pal then error(T("reff_replace_nothing")) end
             local ok, info = pcall(MdfReplace.start, {
-                mesh = mesh, overrides = (cfg.palette or {})[slot],
+                mesh = mesh, overrides = pal[slot],
                 meshes = deps.all_meshes, forget = deps.forget_palette, reapply = deps.request_reapply,
                 clear = function(names)
-                    local mats = (cfg.palette or {})[slot]
+                    local mats = pal[slot]
                     if not mats then return end
                     for name in pairs(names) do mats[name] = nil end
-                    if next(mats) == nil then cfg.palette[slot] = nil end
+                    if next(mats) == nil then pal[slot] = nil end
                     deps.commit(kind_id, true, true)
                 end,
                 log = function(msg) if log and log.info then log.info("[AVM] " .. msg) end end,
@@ -535,32 +542,8 @@ function Reff.new(deps)
             return "saved"
         end,
         -- 调色方案。new:from = nil 空方案 / "" 复制常驻 / 方案名 复制那个;建好就切到它编辑
-        -- 空白方案(from = nil)= 原版:常驻调色改过的每一项都写成 mdf2 里的原值,选中后看到的就是原版材质
-        -- (常驻没改的参数本来就是原值,不用写)。当前模型上没有的材质跳过
-        ["palette-scheme-new"] = function(p, cfg, cur)
-            local ok, reapply, name = OpsV3.new_palette(cfg, str(p.name), str(p.from))
-            if ok and p.from == nil and deps.palette_original then
-                local scheme, cache = cfg.palettes[name], {}
-                for slot, mats in pairs(cfg.palette or {}) do
-                    for mat, params in pairs(mats) do
-                        for param, v in pairs(params) do
-                            local o = deps.palette_original(cur.target, slot, mat, param, cache)
-                            if type(v) == "number" and type(o) == "number" then
-                                Palette.set_in(scheme, { slot = slot, material = mat, param = param, value = o })
-                            elseif type(v) == "table" and type(o) == "table" then
-                                for comp in pairs(v) do
-                                    local i = ({ x = 1, y = 2, z = 3, w = 4 })[comp]
-                                    if i and type(o[i]) == "number" then
-                                        Palette.set_in(scheme, { slot = slot, material = mat, param = param, component = comp, value = o[i] })
-                                    end
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-            return ok, reapply
-        end,
+        -- from = nil:空方案(= 初始);方案名:复制那个方案
+        ["palette-scheme-new"] = function(p, cfg) return OpsV3.new_palette(cfg, str(p.name), str(p.from)) end,
         -- 选中:选中的方案一直生效,调色页也编辑它;scheme = "" 只用常驻调色
         ["palette-scheme-select"] = function(p, cfg) return OpsV3.set_palette_active(cfg, str(p.scheme) or "") end,
         ["palette-scheme-rename"] = function(p, cfg) return OpsV3.rename_palette(cfg, str(p.scheme), str(p.name)) end,

@@ -74,8 +74,8 @@ const zh = {
   heightFromBase: '来自整套造型「{0}」', heightFromGroup: '来自状态组「{0}」·{1}', heightOverride: '全局覆盖',
   heightOverrideHint: '打开后不看各预设 / 选项里的高度，统一用这个值；跟当前配置一起保存',
   previewDistance: '预览镜头距离', previewHeight: '预览镜头高度', meters: '米',
-  paletteScheme: '调色方案', paletteAlways: '常驻调色', paletteSchemeOn: '生效中', paletteSchemeNew: '新建方案', paletteSchemeRename: '重命名方案',
-  paletteSchemeName: '方案名', paletteSchemeTaken: '已有同名方案', paletteFromNone: '原版（mdf2 里的值）', paletteFromAlways: '复制常驻调色', paletteFromCurrent: '复制「{0}」',
+  paletteScheme: '调色方案', paletteAlways: '初始', paletteSchemeOn: '生效中', paletteSchemeNew: '新建方案', paletteSchemeRename: '重命名方案',
+  paletteSchemeName: '方案名', paletteSchemeTaken: '已有同名方案', paletteFromNone: '空白（从初始开始）', paletteFromCurrent: '复制「{0}」',
   paletteSchemeDelete: '删除调色方案', paletteSchemeDeleteBody: '删除方案「{0}」？引用它的 {1} 处会显示为引用失效，可以在各处改掉或清除。删除前会留还原点。',
   paletteRef: '调色方案', paletteRefNone: '（不调色）', paletteRefBroken: '方案不存在',
 };
@@ -144,8 +144,8 @@ const en: Record<keyof typeof zh, string> = {
   heightFromBase: 'from full outfit "{0}"', heightFromGroup: 'from state group "{0}" · {1}', heightOverride: 'Global override',
   heightOverrideHint: 'When on, ignores the heights on presets / options and uses this value; saved with the current configuration',
   previewDistance: 'Preview distance', previewHeight: 'Preview height', meters: 'm',
-  paletteScheme: 'Colour schemes', paletteAlways: 'Always-on colours', paletteSchemeOn: 'In effect', paletteSchemeNew: 'New scheme', paletteSchemeRename: 'Rename scheme',
-  paletteSchemeName: 'Scheme name', paletteSchemeTaken: 'A scheme with this name already exists', paletteFromNone: 'Original (values from the mdf2)', paletteFromAlways: 'Copy the always-on colours', paletteFromCurrent: 'Copy "{0}"',
+  paletteScheme: 'Colour schemes', paletteAlways: 'Original', paletteSchemeOn: 'In effect', paletteSchemeNew: 'New scheme', paletteSchemeRename: 'Rename scheme',
+  paletteSchemeName: 'Scheme name', paletteSchemeTaken: 'A scheme with this name already exists', paletteFromNone: 'Blank (start from the original)', paletteFromCurrent: 'Copy "{0}"',
   paletteSchemeDelete: 'Delete colour scheme', paletteSchemeDeleteBody: 'Delete the scheme "{0}"? The {1} places that use it will show a broken reference; you can change or clear them there. A restore point is kept first.',
   paletteRef: 'Colour scheme', paletteRefNone: '(no scheme)', paletteRefBroken: 'Scheme missing',
 };

@@ -237,7 +237,7 @@ function OpsV3.set_height_override(cfg, enabled, cm)
 end
 
 -- ============================================================ 调色方案(子预设)
--- 方案本身的结构同 cfg.palette(见 Palette.lua);由整套造型的预设、状态组的选项、条件状态引用。
+-- 方案 = 一份覆盖表(见 Palette.lua),叠在初始(mdf2 原值)上;由整套造型的预设、状态组的选项、条件状态引用。
 local function deep_copy(v)
     if type(v) ~= "table" then return v end
     local o = {}
@@ -245,14 +245,13 @@ local function deep_copy(v)
     return o
 end
 
--- from:nil = 空方案;"" = 复制常驻调色;方案名 = 复制那个方案。返回 changed, reapply, 新名字
+-- from:nil = 空方案(= 初始);方案名 = 复制那个方案。返回 changed, reapply, 新名字
 function OpsV3.new_palette(cfg, name, from)
     if not M3.valid_palette_name(name) then return false end
     cfg.palettes = type(cfg.palettes) == "table" and cfg.palettes or {}
     if cfg.palettes[name] then return false end
     local src = {}
-    if from == "" then src = deep_copy(cfg.palette or {})
-    elseif type(from) == "string" then
+    if type(from) == "string" then
         if not cfg.palettes[from] then return false end
         src = deep_copy(cfg.palettes[from])
     end
@@ -265,6 +264,18 @@ function OpsV3.new_palette(cfg, name, from)
 end
 
 -- 选中一个方案(选中就生效);"" / nil = 只用常驻调色
+-- 没有选中方案(选着「初始」)时自动新建一个空方案并选中,用来接住在初始上做的修改。返回方案名
+function OpsV3.ensure_palette(cfg, base_name)
+    if type(cfg.palette_active) == "string" and type(cfg.palettes) == "table" and cfg.palettes[cfg.palette_active] then
+        return cfg.palette_active
+    end
+    local stem = M3.valid_palette_name(base_name) and base_name or "1"
+    local name, i = stem .. " 1", 2
+    while type(cfg.palettes) == "table" and cfg.palettes[name] do name = stem .. " " .. i; i = i + 1 end
+    OpsV3.new_palette(cfg, name)
+    return name
+end
+
 function OpsV3.set_palette_active(cfg, name)
     local v = (name ~= "" and name) or nil
     if v ~= nil and (type(cfg.palettes) ~= "table" or not cfg.palettes[v]) then return false end

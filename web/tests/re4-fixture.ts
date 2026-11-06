@@ -113,7 +113,7 @@ export function installRe4Fixture() {
   const heights: Record<string, number> = {};
   const heightOverride = { enabled: false, cm: 0 };
   let paletteOpen = false, paletteSel: string[] = [];
-  // 调色方案(夹具简化:不跟整套造型 / 选项改名走)。'' = 常驻;引用键同 heights
+  // 调色方案(夹具简化:不跟整套造型 / 选项改名走)。'' = 初始(只读,在它上面改会自动新建方案);引用键同 heights
   type Ov = Record<string, Record<string, Re4PaletteOverride>>;
   const schemeOv: Record<string, Ov> = { '': {} };
   let schemeOrder: string[] = [], editing = '';   // editing = 选中的方案(选中就生效)
@@ -318,12 +318,13 @@ export function installRe4Fixture() {
       case 'base-height': if (!config.base.presets[a.preset]) fail();
         if (a.cm === undefined) delete heights['base|' + a.preset]; else heights['base|' + a.preset] = a.cm; break;
       case 'palette-view': paletteOpen = a.open; paletteSel = [...a.keys]; break;
-      case 'palette-set': { const paletteOv = ovOf(a.scheme); for (const w of a.writes) {
+      case 'palette-set': { if (!a.scheme && !editing) { let n = 1; while (schemeOv['方案 ' + n]) n++; editing = '方案 ' + n; schemeOv[editing] = {}; schemeOrder.push(editing); }
+        const paletteOv = ovOf(a.scheme || editing); for (const w of a.writes) {
         const key = `${w.slot}/${w.material}`, ov = (paletteOv[key] ??= {});
         if (w.component) { const cur = ov[w.param]; const o = typeof cur === 'object' ? cur : {}; o[w.component] = w.value; ov[w.param] = o; }
         else ov[w.param] = w.value;
       } break; }
-      case 'palette-reset': { const paletteOv = ovOf(a.scheme); for (const t of a.targets) {
+      case 'palette-reset': { const paletteOv = ovOf(a.scheme || editing); for (const t of a.targets) {
         const key = `${t.slot}/${t.material}`, ov = paletteOv[key];
         if (!ov) continue;
         if (!a.param) { delete paletteOv[key]; continue; }

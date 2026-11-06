@@ -15,9 +15,9 @@
 --   模型高度(可选):base.heights = { [预设名] = 厘米 },groups[i].heights = { [选项名] = 厘米 }。
 --     不放进快照(快照顶层键都是槛位,预设指纹按它算)。解算见 height_of:按叠加顺序,后写覆盖先写。
 --   height_override = { enabled, cm }:全局覆盖(快速切换页),打开时无视各层,统一用 cm。
---   palette = { [slot] = { [材质] = { [参数] = 数值 | {x..w} } } }:调色盘的覆盖值,见 Palette.lua。
---     这一份是「常驻」调色:一直生效,垫在所有调色方案下面。
---   palettes = { [方案名] = 同 palette 的结构 }, palette_order = { 方案名, ... }:调色方案(子预设),
+--   调色的底是「初始」= mdf2 里的原值,只读,不存在配置里。
+--   palettes = { [方案名] = { [slot] = { [材质] = { [参数] = 数值 | {x..w} } } } }(见 Palette.lua),
+--     palette_order = { 方案名, ... }:调色方案(子预设),
 --     palette_order 是新建的先后,只用来排列表(不影响叠加)。
 --     palette_active = 方案名:调色页里选中的方案,选中就一直生效(相当于调色的手动选择)。
 --     另外可以被引用:base.palettes = { [预设名] = 方案名 },groups[i].palettes = { [选项名] = 方案名 },
@@ -135,6 +135,7 @@ local function clean_palette_refs(refs, names)
 end
 
 M.PALETTE_NAME_MAX = 64
+M.LEGACY_PALETTE = "常驻"   -- 旧的常驻调色迁移成的方案名
 function M.valid_palette_name(n)
     return type(n) == "string" and n ~= "" and #n <= M.PALETTE_NAME_MAX and not n:match("^%s") and not n:match("%s$")
 end
@@ -249,14 +250,29 @@ function M.normalize(cfg)
     end
     if not is_tbl(cfg.material_notes) then cfg.material_notes = {} end
     if cfg.armor_mirrors_body ~= false then cfg.armor_mirrors_body = true end
-    -- 调色盘的覆盖值(见 Palette.lua);空表不留,省得每份配置都多一个字段
-    local palette = Palette.clean(cfg.palette)
-    cfg.palette = next(palette) and palette or nil
     -- 调色方案:空方案也保留(刚建好还没调的)
     local schemes = {}
     for n, pal in pairs(is_tbl(cfg.palettes) and cfg.palettes or {}) do
         if M.valid_palette_name(n) then schemes[n] = Palette.clean(pal) end
     end
+    -- 旧的「常驻」调色(cfg.palette,一直生效、垫在方案下面)→ 一个叫「常驻」的方案,外观不变:
+    -- 没选方案时选中它;已经选了别的方案时,把选中方案没写的参数从常驻补进去(原来就是叠在常驻上的)
+    local legacy = Palette.clean(cfg.palette)
+    if next(legacy) then
+        local active = type(cfg.palette_active) == "string" and schemes[cfg.palette_active] or nil
+        if active then
+            schemes[cfg.palette_active] = Palette.merge({ legacy, active })
+        else
+            local name, i = M.LEGACY_PALETTE, 2
+            while schemes[name] do name = M.LEGACY_PALETTE .. " " .. i; i = i + 1 end
+            schemes[name] = legacy
+            cfg.palette_active = name
+            local order = is_tbl(cfg.palette_order) and cfg.palette_order or {}
+            table.insert(order, 1, name)
+            cfg.palette_order = order
+        end
+    end
+    cfg.palette = nil
     if next(schemes) then
         cfg.palettes = schemes
         cfg.palette_order = M.reconcile_order(cfg.palette_order, schemes)
@@ -609,7 +625,7 @@ end
 -- ============================================================
 -- 调色方案:这一帧哪些方案生效、按什么顺序叠加
 --
--- 从下到上:常驻(cfg.palette,不在返回的名字里)→ 调色页选中的方案(palette_active)→ 整套造型的选择
+-- 从下到上:初始(mdf2 原值,不在返回的名字里)→ 调色页选中的方案(palette_active)→ 整套造型的选择
 -- 引用的方案 → 状态组按叠加顺序各自的选择引用的方案 → 条件状态(优先级低的先叠,高的盖在上面)。
 -- 选中的方案和状态组的手动选择一样,会被引用(按条件切换的)盖住。返回方案名列表;不存在的方案跳过。
 -- ============================================================
@@ -645,7 +661,7 @@ end
 
 -- 叠好的覆盖表(交给 Palette.apply_mesh)
 function M.palette_of(cfg, names)
-    local list = { cfg.palette }
+    local list = {}
     for _, n in ipairs(names or {}) do list[#list + 1] = (cfg.palettes or {})[n] end
     return Palette.merge(list)
 end
