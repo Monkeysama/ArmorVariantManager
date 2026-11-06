@@ -106,6 +106,7 @@ end
 Registry.register(require("ArmorVariantManager_Core.Games.RE4.Conditions.Condition_HP"))
 Registry.register(require("ArmorVariantManager_Core.Games.RE4.Conditions.Condition_Vital"))
 Registry.register(require("ArmorVariantManager_Core.Games.RE4.Conditions.Condition_HasArmor"))
+Registry.register(require("ArmorVariantManager_Core.Games.RE4.Conditions.Condition_WeaponKind"))
 for _, def in ipairs(require("ArmorVariantManager_Core.Games.RE4.Conditions.Condition_HPChange")) do
     Registry.register(def)
 end

@@ -13,6 +13,10 @@
 --   * IsShooting 真打出子弹才亮;IsPullTrigger 是按了射击键就亮(空枪也算);
 --     **空枪击发本身有专门的一条 IsShootDryFire**,别再用 PullTrigger AND not Shooting 去凑
 --     —— 正常开枪时"按下"到"出弹"之间也会满足那个组合
+--   * IsHolding 举枪/举刀的**完整**状态(2026-11-05 用闩锁探针实测,手枪/霰弹枪/刀):
+--     IsAiming 与 IsWheel 亮的帧它**全亮**(漏 0),另外还补上两者之间的空档(起手、停步、
+--     放下的过渡帧,约占举枪总帧数的 1/3)。空格举刀也亮。IsReticleDisp、State.Hold
+--     与它逐帧一致,不重复收。要"举着武器"就用它;IsAiming/IsWheel 留给只要移动/只要站定的场合
 --   * IsPumpAction 名字像泵动霰弹枪上膛,实测是**栓狙拉栓**(2026-08-25;其他武器未测)
 --   * IsDamaging 被普通攻击命中就算(零伤害也算),但被控/特写类攻击掉血时不亮
 --
@@ -45,6 +49,7 @@ local BOOL_CONDITIONS = {
     { id = "is_battle",           method = "get_IsBattle"          },
     { id = "is_aiming",           method = "get_IsAiming"          },
     { id = "is_wheel",            method = "get_IsWheel"           },
+    { id = "is_holding",          method = "get_IsHolding"         },
     { id = "is_combating",        method = "get_IsCombating"       },
     { id = "is_shooting",         method = "get_IsShooting"        },
     { id = "is_pull_trigger",     method = "get_IsPullTrigger"     },

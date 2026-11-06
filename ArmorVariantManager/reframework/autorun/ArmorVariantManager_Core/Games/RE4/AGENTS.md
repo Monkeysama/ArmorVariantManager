@@ -476,6 +476,9 @@ HP 和瞄准乱跳,唯一办法是去删规则,删了还得重建。而没有规
 
 **`PlayerBaseContext` 上还有一大批方法从来没进过这份 backlog**(上面那份清单是当年
 探针面板的候选,不是全集)。按 TDB 数过,值得再测的至少有:Hold 系列 8 个
+(2026-11-05 已测这一族:`IsHolding` 实装为 `is_holding`;`IsReticleDisp`、`State.Hold` 与它逐帧一致;
+`IsHoldStart` / `IsHoldIdle` / `IsHoldEndIdle` / `State.HoldEnd` 是它的子阶段,单用会漏;
+`IsHoldHanding` / `IsHoldVariation` / `IsHoldSkip` / `IsKnifeHoldWithoutKnife` 全程没亮。下面原清单保留)
 (`IsHolding` / `IsHoldStart` / `IsHoldIdle` / `IsHoldEndIdle` / `IsHoldHanding` /
 `IsHoldVariation` / `IsHoldSkip` / `IsSlowHoldEnd` —— **最后这个返回
 `Nullable<Boolean>`,`PlayerBools` 里 `type(v) == "boolean"` 的过滤会把它整个丢掉**)、
@@ -510,6 +513,8 @@ HP 和瞄准乱跳,唯一办法是去删规则,删了还得重建。而没有规
   (`EquipType` = `Main`/`Sub`/`StealthKill`)。**`EquipWeaponTypeBackup` 实测粒度太粗**:
   刀 = `Sub(1)`,枪械和手雷**都是** `Main(0)` —— 分不出"拿枪还是拿雷",
   当"拿刀 / 拿别的"用还行,不值得为它单独开一个 `kind = "enum"`。
+  **已改用 PlayerEquipment 的四个布尔实装粗分 = `weapon_kind`(2026-11-05)**:枪械/刀/投掷物/徒手/其他,
+  路径与"为什么不做细种类"见 `Conditions/Condition_WeaponKind.lua` 顶部注释。
 
 ### 实测出来的语义坑(改文案前必读)
 
@@ -520,6 +525,7 @@ HP 和瞄准乱跳,唯一办法是去删规则,删了还得重建。而没有规
 |---|---|---|
 | `IsAiming` | 只要在瞄准 | **瞄准中还在动**才为真 —— **人物移动或视角移动都算**,站定不动就灭 |
 | `IsWheel` | 船舵/转轮 | **站定瞄准/举刀**(含 space 举刀)。跟船没关系,`IsBoat` 才是船 |
+| `IsHolding` | 举着武器 | **名副其实**,而且是 `IsAiming` ∪ `IsWheel` 的严格超集:两者亮的帧它全亮,另外补上起手/停步/放下的过渡帧;空格举刀也亮。已实装 = `is_holding`(2026-11-05) |
 | `IsSprint` | 冲刺 | 正常跑步只亮 `IsRun`,没见 `IsSprint` 亮过 |
 | `IsGround` | 站在地面 | 确实是站在地面 —— 但**几乎恒为真**,没有区分度 |
 | `IsCombating` | 泛指交战 | 只有**近战攻击**(刀)才亮 |

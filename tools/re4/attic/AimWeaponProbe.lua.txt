@@ -1,0 +1,345 @@
+-- 临时探针(测完就删):持枪种类 + 更精细的瞄准判定。独立脚本,不 require 差分管理器。
+--
+-- 1) 武器:读 PlayerEquipment 的当前武器 ID,并在玩家身上的组件里找 WeaponMountUserdata,
+--    把引擎自带的「WeaponCategory -> WeaponID 列表」整表导出到
+--    reframework/data/avm_weapon_probe.json(按钮触发)。
+-- 2) 瞄准:对每个候选统计
+--      补 = 候选为真、但 (IsAiming or IsWheel) 为假 的帧数   —— 现有组合漏掉、它能补上的
+--      漏 = (IsAiming or IsWheel) 为真、但候选为假 的帧数     —— 它自己会漏掉的
+--    外加闩锁(亮过几帧 / 最长连亮 / 上次几帧前)。
+--
+-- 只用局部变量(autorun 共享同一个 Lua 状态)。
+
+local version = "0.2.0"
+
+local function player_context()
+    local cm = sdk.get_managed_singleton("chainsaw.CharacterManager")
+    if not cm then return nil end
+    local ok, ctx = pcall(function() return cm:call("getPlayerContextRef") end)
+    if ok and ctx and sdk.is_managed_object(ctx) then return ctx end
+    return nil
+end
+
+local function has_method(obj, name, cache)
+    if cache[name] ~= nil then return cache[name] end
+    local ok, td = pcall(function() return obj:get_type_definition() end)
+    td = ok and td or nil
+    while td do
+        local ok_m, m = pcall(function() return td:get_method(name) end)
+        if ok_m and m then cache[name] = true; return true end
+        local ok_p, p = pcall(function() return td:get_parent_type() end)
+        td = ok_p and p or nil
+    end
+    cache[name] = false
+    return false
+end
+
+local ctx_methods, eq_methods = {}, {}
+local function read(obj, name, cache)
+    if not obj or not has_method(obj, name, cache) then return nil end
+    local ok, v = pcall(function() return obj:call(name) end)
+    if ok then return v end
+    return nil
+end
+
+-- ---------- 枚举反查 ----------
+
+local function enum_table(type_name)
+    local out = {}
+    local td = sdk.find_type_definition(type_name)
+    if not td then return out end
+    for _, f in ipairs(td:get_fields() or {}) do
+        local ok, v = pcall(function() if f:is_static() then return f:get_data(nil) end end)
+        if ok and v ~= nil then out[f:get_name()] = v end
+    end
+    return out
+end
+
+local function reverse(t)
+    local r = {}
+    for k, v in pairs(t) do r[tostring(v)] = k end
+    return r
+end
+
+local STATE = enum_table("chainsaw.PlayerDefine.State")
+local CATEGORY = enum_table("chainsaw.WeaponCategory")
+local CATEGORY_NAME = reverse(CATEGORY)
+local WEAPON_NAME = reverse(enum_table("chainsaw.WeaponID"))
+local ITEMTYPE_NAME = reverse(enum_table("chainsaw.ItemType"))
+local EQUIPTYPE_NAME = reverse(enum_table("chainsaw.EquipType"))
+
+-- ---------- 装备 ----------
+
+local function body_go(ctx)
+    local go = read(ctx, "get_BodyGameObject", ctx_methods)
+    if go and sdk.is_managed_object(go) then return go end
+    return nil
+end
+
+local function get_component(go, type_name)
+    local t = sdk.typeof(type_name)
+    if not t then return nil end
+    local ok, c = pcall(function() return go:call("getComponent(System.Type)", t) end)
+    if ok and c and sdk.is_managed_object(c) then return c end
+    return nil
+end
+
+-- v0.1 实测:PlayerEquipment 不在 body GameObject 上。改为全场景找,挑 Context 是当前玩家的那个。
+local eq_cache, eq_ctx = nil, nil
+local eq_where = "未找到"
+local function equipment(ctx)
+    if eq_cache and eq_ctx == ctx and sdk.is_managed_object(eq_cache) then return eq_cache end
+    eq_cache, eq_ctx = nil, ctx
+    local go = body_go(ctx)
+    local c = go and get_component(go, "chainsaw.PlayerEquipment")
+    if c then eq_cache, eq_where = c, "body GameObject"; return c end
+    local ok, list = pcall(function()
+        return sdk.call_native_func(sdk.get_native_singleton("via.SceneManager"),
+            sdk.find_type_definition("via.SceneManager"), "get_CurrentScene()")
+            :call("findComponents(System.Type)", sdk.typeof("chainsaw.PlayerEquipment"))
+    end)
+    if not ok or not list then eq_where = "findComponents 失败"; return nil end
+    local ok_n, n = pcall(function() return list:get_size() end)
+    n = ok_n and n or 0
+    local my_addr = ctx:get_address()
+    for i = 0, n - 1 do
+        local ok_e, e = pcall(function() return list:get_element(i) end)
+        local ok_c, ec = pcall(function() return e:call("get_Context") end)
+        if ok_e and e and ok_c and ec and ec:get_address() == my_addr then
+            eq_cache = e
+            local ok_g, g = pcall(function() return e:call("get_GameObject"):call("get_Name") end)
+            eq_where = "场景搜索,GameObject=" .. tostring(ok_g and g or "?") .. "(共 " .. n .. " 个)"
+            return e
+        end
+    end
+    eq_where = "场景里 " .. n .. " 个 PlayerEquipment,没有一个 Context 是玩家"
+    return nil
+end
+
+local seen_weapons = {}   -- [名字] = ItemType 名字
+
+-- 在一个对象的类型层级里找类型名匹配的字段,返回字段值
+local function find_field_of_type(obj, want)
+    local ok, td = pcall(function() return obj:get_type_definition() end)
+    td = ok and td or nil
+    while td do
+        for _, f in ipairs(td:get_fields() or {}) do
+            local ok_t, ft = pcall(function() return f:get_type():get_full_name() end)
+            if ok_t and ft == want and not f:is_static() then
+                local ok_v, v = pcall(function() return f:get_data(obj) end)
+                if ok_v and v then return v, td:get_full_name() .. "." .. f:get_name() end
+            end
+        end
+        local ok_p, p = pcall(function() return td:get_parent_type() end)
+        td = ok_p and p or nil
+    end
+    return nil
+end
+
+local function each_component(go, fn)
+    local ok, comp = pcall(function() return go:call("get_Transform") end)
+    comp = ok and comp or nil
+    local guard = 0
+    while comp and guard < 256 do
+        guard = guard + 1
+        fn(comp)
+        local ok_n, nxt = pcall(function() return comp:call("get_Chain") end)
+        comp = ok_n and nxt or nil
+    end
+end
+
+local dump_status = "未导出"
+local category_of = {}   -- [WeaponID 数值] = WeaponCategory 数值
+
+local function dump_mapping()
+    local ctx = player_context()
+    if not ctx then dump_status = "没有角色"; return end
+    local go = body_go(ctx)
+    if not go then dump_status = "没有 body GameObject"; return end
+
+    local userdata, where = nil, nil
+    local function scan_go(g)
+        each_component(g, function(c)
+            if userdata then return end
+            local v, w = find_field_of_type(c, "chainsaw.WeaponMountUserdata")
+            if v then userdata, where = v, w end
+        end)
+    end
+    local eq = equipment(ctx)
+    if eq then
+        local ok_g, eg = pcall(function() return eq:call("get_GameObject") end)
+        if ok_g and eg then scan_go(eg) end
+    end
+    if not userdata then scan_go(go) end
+    local comps = {}
+    each_component(go, function(c)
+        local ok, n = pcall(function() return c:get_type_definition():get_full_name() end)
+        comps[#comps + 1] = ok and n or "?"
+    end)
+
+    local out = { found_at = where, equipment_at = eq_where, components = comps,
+                  seen_weapons = seen_weapons, categories = {} }
+    if userdata then
+        local datas = read(userdata, "get_Datas", {})
+        local n = datas and datas:call("get_Count") or (datas and datas:call("get_Length")) or 0
+        for i = 0, (n or 0) - 1 do
+            local cd = datas:call("get_Item", i)
+            if cd then
+                local cat = cd:call("get_WeaponCategory")
+                local entry = { category = CATEGORY_NAME[tostring(cat)] or tostring(cat), value = cat, weapons = {} }
+                local wds = cd:call("get_WeaponDatas")
+                local m = wds and (wds:call("get_Count") or wds:call("get_Length")) or 0
+                for j = 0, (m or 0) - 1 do
+                    local wd = wds:call("get_Item", j)
+                    if wd then
+                        local ok_td, td = pcall(function() return wd:get_type_definition() end)
+                        for _, f in ipairs(ok_td and td:get_fields() or {}) do
+                            local ok_t, ft = pcall(function() return f:get_type():get_full_name() end)
+                            if ok_t and ft == "chainsaw.WeaponID" and not f:is_static() then
+                                local id = f:get_data(wd)
+                                entry.weapons[#entry.weapons + 1] = WEAPON_NAME[tostring(id)] or tostring(id)
+                                category_of[id] = cat
+                            end
+                        end
+                    end
+                end
+                out.categories[#out.categories + 1] = entry
+            end
+        end
+        dump_status = "已导出:" .. tostring(where)
+    else
+        dump_status = "组件里没找到 WeaponMountUserdata(组件清单已写入文件)"
+    end
+    json.dump_file("avm_weapon_probe.json", out)
+end
+
+-- ---------- 瞄准候选 ----------
+
+local CANDIDATES = {
+    { m = "get_IsHolding" }, { m = "get_IsHoldStart" }, { m = "get_IsHoldIdle" },
+    { m = "get_IsHoldEndIdle" }, { m = "get_IsHoldHanding" }, { m = "get_IsHoldVariation" },
+    { m = "get_IsHoldSkip" }, { m = "get_IsReticleDisp" }, { m = "get_IsShootEnable" },
+    { m = "get_IsTakeOutKnifeBeforeHold" }, { m = "get_IsKnifeHoldWithoutKnife" },
+    { s = "Hold" }, { s = "HoldStart" }, { s = "HoldIdle" }, { s = "HoldHand" }, { s = "HoldEnd" },
+    { s = "Wheeling" },
+    { eq = "get_IsReticle" },
+    { u = "hold_or" },   -- 组合:IsHolding or IsHoldStart or IsHoldIdle or IsHoldEndIdle
+}
+for _, c in ipairs(CANDIDATES) do
+    c.key = c.m and c.m:gsub("^get_", "") or c.s and ("State." .. c.s) or c.eq and ("Equip." .. c.eq:gsub("^get_", "")) or c.u
+end
+
+local frame, base_frames = 0, 0
+local st = {}
+local function S(k)
+    local s = st[k]
+    if not s then s = { t = 0, last = nil, streak = 0, max = 0, add = 0, miss = 0, cur = nil }; st[k] = s end
+    return s
+end
+
+local cur_weapon = {}
+
+local function check_state(ctx, name)
+    local v = STATE[name]
+    if v == nil then return nil end
+    local ok, r = pcall(function() return ctx:call("checkState", v) end)
+    if ok and type(r) == "boolean" then return r end
+    return nil
+end
+
+local function sample()
+    local ctx = player_context()
+    if not ctx then return end
+    frame = frame + 1
+    local aim = read(ctx, "get_IsAiming", ctx_methods) == true
+    local wheel = read(ctx, "get_IsWheel", ctx_methods) == true
+    local base = aim or wheel
+    if base then base_frames = base_frames + 1 end
+    local eq = equipment(ctx)
+
+    local vals = {}
+    for _, c in ipairs(CANDIDATES) do
+        local v
+        if c.m then v = read(ctx, c.m, ctx_methods)
+        elseif c.s then v = check_state(ctx, c.s)
+        elseif c.eq then v = read(eq, c.eq, eq_methods)
+        elseif c.u == "hold_or" then
+            v = vals.Holding == true or vals.HoldStart == true or vals.HoldIdle == true or vals.HoldEndIdle == true
+        end
+        vals[c.key] = v
+        local s = S(c.key)
+        s.cur = v
+        if v == true then
+            s.t = s.t + 1; s.last = frame; s.streak = s.streak + 1
+            if s.streak > s.max then s.max = s.streak end
+            if not base then s.add = s.add + 1 end
+        else
+            s.streak = 0
+            if base and v ~= nil then s.miss = s.miss + 1 end
+        end
+    end
+
+    cur_weapon = { aim = aim, wheel = wheel }
+    if eq then
+        local id = read(eq, "get_EquipWeaponID", eq_methods)
+        cur_weapon.id = id
+        cur_weapon.name = WEAPON_NAME[tostring(id)] or tostring(id)
+        cur_weapon.cat = id and category_of[id] and (CATEGORY_NAME[tostring(category_of[id])]) or "?"
+        local at = read(eq, "get_ActiveType", eq_methods)
+        cur_weapon.active = EQUIPTYPE_NAME[tostring(at)] or tostring(at)
+        cur_weapon.gun = read(eq, "get_IsEquipGun", eq_methods)
+        cur_weapon.knife = read(eq, "get_IsEquipKnife", eq_methods)
+        cur_weapon.grenade = read(eq, "get_IsEquipGrenade", eq_methods)
+        cur_weapon.bare = read(eq, "get_IsBareHands", eq_methods)
+        local ok_i, item = pcall(function() return eq:call("getEquipWeaponItem") end)
+        if ok_i and item then
+            local ok_t, it = pcall(function() return item:call("get_ItemType") end)
+            if ok_t then cur_weapon.itemtype = ITEMTYPE_NAME[tostring(it)] or tostring(it) end
+        end
+        if cur_weapon.name then seen_weapons[cur_weapon.name] = cur_weapon.itemtype or "?" end
+    else
+        cur_weapon.name = "(PlayerEquipment 取不到)"
+    end
+end
+
+re.on_frame(function() pcall(sample) end)
+
+-- ---------- 界面 ----------
+
+local GREEN, GREY = 0xFF00FF00, 0xFF808080
+local last_error = nil
+
+local function draw()
+    if not imgui.tree_node("AVM 持枪/瞄准探针 v" .. version) then return end
+    local ok, err = pcall(function()
+        if last_error then imgui.text("出错: " .. last_error) end
+        imgui.text("当前武器: " .. tostring(cur_weapon.name) .. "   种类: " .. tostring(cur_weapon.cat)
+            .. "   ActiveType: " .. tostring(cur_weapon.active) .. "   ItemType: " .. tostring(cur_weapon.itemtype))
+        imgui.text(string.format("IsEquipGun=%s Knife=%s Grenade=%s BareHands=%s",
+            tostring(cur_weapon.gun), tostring(cur_weapon.knife), tostring(cur_weapon.grenade), tostring(cur_weapon.bare)))
+        imgui.text("PlayerEquipment: " .. eq_where)
+        local hold = S("Holding").cur
+        imgui.text_colored(string.format(">>> IsHolding=%s   IsAiming=%s   IsWheel=%s",
+            tostring(hold), tostring(cur_weapon.aim), tostring(cur_weapon.wheel)), hold and GREEN or GREY)
+        if imgui.button("导出武器种类表###avmprobe_dump") then dump_mapping() end
+        imgui.same_line()
+        imgui.text(dump_status)
+        imgui.separator()
+        imgui.text(string.format("采样 %d 帧;现有组合 (IsAiming or IsWheel) 为真 %d 帧;现在 Aiming=%s Wheel=%s",
+            frame, base_frames, tostring(cur_weapon.aim), tostring(cur_weapon.wheel)))
+        if imgui.button("清空统计###avmprobe_reset") then st = {}; frame = 0; base_frames = 0 end
+        imgui.text("补 = 它亮而现有组合不亮(能补上的空档)   漏 = 现有组合亮而它不亮")
+        for _, c in ipairs(CANDIDATES) do
+            local s = S(c.key)
+            local line = string.format("%-26s 亮%6d 最长%5d 补%6d 漏%6d 上次%s帧前",
+                c.key, s.t, s.max, s.add, s.miss, s.last and tostring(frame - s.last) or "-")
+            if s.cur == true then imgui.text_colored(line .. "  ● NOW", GREEN)
+            elseif s.cur == nil then imgui.text_colored(line .. "  (读不到)", GREY)
+            else imgui.text(line) end
+        end
+    end)
+    last_error = (not ok) and tostring(err) or nil
+    imgui.tree_pop()
+end
+
+re.on_draw_ui(function() pcall(draw) end)
