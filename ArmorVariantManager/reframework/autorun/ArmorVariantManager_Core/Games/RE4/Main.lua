@@ -3,6 +3,7 @@
 -- 存储和 ImGui 面板,只复用入口的游戏识别与版本号。设计约束见同目录 AGENTS.md。
 local Main = {}
 -- REFramework 只在加载脚本时解析 autorun 模块:绘制回调里再 require 会报 module not found,所以在这里先载入
+local ImGuiV3 = require("ArmorVariantManager_Core.Games.RE4.ImGuiV3")
 local MdfReplace = require("ArmorVariantManager_Core.Games.RE4.MdfReplace")
 
 function Main.start(ctx)
@@ -47,6 +48,14 @@ function Main.start(ctx)
         if type(loaded.portrait_enabled) == "boolean" then global_config.portrait_enabled = loaded.portrait_enabled end
         if tonumber(loaded.portrait_distance) then global_config.portrait_distance = tonumber(loaded.portrait_distance) end
         if tonumber(loaded.portrait_height) then global_config.portrait_height = tonumber(loaded.portrait_height) end
+        -- 独立面板(没有 REFF 时的兜底界面)的窗口位置与大小
+        if type(loaded.panel_window) == "table" then global_config.panel_window = loaded.panel_window end
+        -- standalone_panel = true:装了 REFF 也显示独立面板的入口(测试用;REFF 坏掉时的退路)。界面上不提供这个开关
+        if type(loaded.standalone_panel) == "boolean" then global_config.standalone_panel = loaded.standalone_panel end
+        if type(loaded.panel_hotkey) == "string" then global_config.panel_hotkey = loaded.panel_hotkey end
+        if type(loaded.panel_hotkey_mod) == "string" then global_config.panel_hotkey_mod = loaded.panel_hotkey_mod end
+        -- 独立面板调色页的颜色滑条:"rgb"(默认)/ "hsv"
+        if loaded.palette_sliders == "hsv" or loaded.palette_sliders == "rgb" then global_config.palette_sliders = loaded.palette_sliders end
     end
     local function save_global_settings()
         json.dump_file(global_config_path, global_config)
@@ -1339,6 +1348,14 @@ function Main.start(ctx)
         -- 调色页「替换 mdf」:等新 mdf2 加载完再换上(见 MdfReplace.lua)
         local ok_r, err_r = pcall(MdfReplace.tick)
         if not ok_r then note_error("mdf_replace", err_r) end
+        -- 独立面板(没有 REFF 时的兜底界面):采样输入 → 布局并绘制 → 原位输入框。各自保护,出错不影响应用
+        local panel = Main.panel
+        if panel then
+            local ok_f, err_f = pcall(panel.frame)
+            if not ok_f then note_error("panel_frame", err_f) end
+            panel.draw()
+            panel.draw_inputs()
+        end
     end)
 
     -- ============================================================
@@ -2295,6 +2312,13 @@ function Main.start(ctx)
             save_global_settings()
         end
 
+        -- 没装 REFF 时,在最上面给独立面板的入口(另有快捷键,默认 F8)。GlobalSettings 里 standalone_panel = true 时总是给
+        local panel = Main.panel
+        if panel and panel.entry_enabled() and panel.available() then
+            local label = (panel.is_open() and T("panel_close") or T("panel_open")) .. " (" .. panel.hotkey_text() .. ")"
+            if imgui.button(label .. "###avm_panel_toggle") then panel.toggle() end
+        end
+
         -- 上一帧绘制出错时把它显示出来。不显示的话 pcall 会把错误吞掉,
         -- 表现成"面板缺了一半"却没人知道为什么(日志里也有,但没人会去翻)。
         if last_draw_error then
@@ -2431,7 +2455,7 @@ function Main.start(ctx)
                 if imgui.button(T("cancel_btn") .. "###mig_ok") then ui_state.migrate_report = nil end
             end
             ui_state.v3 = ui_state.v3 or {}
-            require("ArmorVariantManager_Core.Games.RE4.ImGuiV3").draw({
+            ImGuiV3.draw({
                 T = T, config = config, kind_id = kind_id, target = target, context = context, source = source,
                 TM = TransformManager, ui = ui_state.v3,
                 commit = function(changed, reapply) return commit(kind_id, changed, reapply) end,
@@ -2767,7 +2791,10 @@ function Main.start(ctx)
     -- REFF 面板显示时屏蔽游戏的鼠标并接管光标模式(键盘不拦)。装不上(类型变了)只记日志,不影响其他功能。
     pcall(function()
         local InputGuard = require("ArmorVariantManager_Core.Games.RE4.InputGuard")
-        InputGuard.install(function() return global_config.block_game_mouse ~= false and InputGuard.reff_visible() end,
+        InputGuard.install(function()
+            return global_config.block_game_mouse ~= false
+                and (InputGuard.reff_visible() or (Main.panel ~= nil and Main.panel.is_open()))
+        end,
             function(msg) log.warn(msg) end)
     end)
 
@@ -2885,6 +2912,23 @@ function Main.start(ctx)
         })
     end)
     if not reff_ok then note_error("reff", reff_err) end
+
+    -- 独立面板:没有 REFF 时的兜底图形界面(外观照 SKS)。数据走同一个 Reff 控制器,和网页语义一致。
+    -- 装了 REFF 也创建(不显示入口),便于以后放开;画不了(REFramework 太旧)时 available() 为 false
+    if Main.reff then
+        local ok_p, err_p = pcall(function()
+            Main.panel = require("ArmorVariantManager_Core.Games.RE4.Panel.Panel").new({
+                controller = Main.reff, global_config = global_config, save_global_settings = save_global_settings,
+                version = version, hotkeys = Ops.PANEL_KEYS,
+                -- 入口(按钮和快捷键):没装 REFF 时;GlobalSettings 里 standalone_panel = true 时总是
+                entry_enabled = function() return not rawget(_G, "reff_native") or global_config.standalone_panel == true end,
+                set_language = function(lang)
+                    if Ops.set_global(global_config, "language", lang) then save_global_settings() end
+                end,
+            })
+        end)
+        if not ok_p then note_error("panel", err_p) end
+    end
 end
 
 return Main

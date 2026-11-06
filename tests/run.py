@@ -21,6 +21,7 @@ DEFAULT_TESTS = (
     "tests/re4_mdf2.lua",
     "tests/re4_targets.lua",
     "tests/re4_input_guard.lua",
+    "tests/re4_panel.lua",
     "tests/re4_portrait_camera.lua",
     "tests/re4_portrait_copy.lua",
     "tests/app_ui.lua",

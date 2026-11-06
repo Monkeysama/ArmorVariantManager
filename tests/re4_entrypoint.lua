@@ -5,6 +5,7 @@ local autorun = arg[1] or "ArmorVariantManager/reframework/autorun"
 package.path = autorun .. "/?.lua;" .. package.path
 local main = autorun .. "/ArmorVariantManager.lua"
 local S = dofile("tests/support.lua")
+ORIGINAL_REQUIRE = require
 
 local Game = require("ArmorVariantManager_Core.Game")
 local re4 = assert(Game.detect("RE4"))
@@ -163,7 +164,7 @@ local function run(scenario)
     local texts = {}
     _G.imgui = imgui_stub(scenario.clicks, texts)
 
-    local native_require = require
+    local native_require = ORIGINAL_REQUIRE
     _G.require = function(name)
         imports[name] = true
         if name == "reff.sdk" then
@@ -175,7 +176,12 @@ local function run(scenario)
         return native_require(name)
     end
     local ok, err = pcall(dofile, main)
-    _G.require = native_require
+    -- 和 REFramework 一样:加载完以后再 require 没载入过的模块就找不到(回调里懒加载会在游戏里报错)
+    _G.require = function(name)
+        local loaded = package.loaded[name]
+        if loaded ~= nil then return loaded end
+        error("module '" .. tostring(name) .. "' not found (REFramework resolves autorun modules only while loading)")
+    end
     assert(ok, err)
 
     assert(#frames == 1 and #draws == 1, "RE4 registers exactly one frame and one draw callback")
@@ -422,3 +428,72 @@ local docs = handlers["monkeysama.avm.documentation"]()
 plain(docs, "documentation")
 assert(#docs.sections >= 1, "help is served")
 print("PASS: RE4 REFF v2 -> v3 migration (restore point, old saves become presets), v3 snapshot, manual / condition states / full outfit / state groups / scope / notes / locate, preset library with auto-saves, rejections")
+
+-- 没装 REFF 时的独立面板(Games/RE4/Panel)接在同一个控制器上:换上能画图的 ImGui 桩,
+-- 逐页把每个可点的地方点一遍,操作走真实控制器(会改配置;被拒绝的只提示)。页面不能报错。
+do
+    local Main = package.loaded["ArmorVariantManager_Core.Games.RE4.Main"]
+    assert(Main and Main.panel and Main.reff, "Main creates the standalone panel on the REFF controller")
+    local warns = {}
+    _G.log.warn = function(m) warns[#warns + 1] = m end
+    _G.log.error = function(m) warns[#warns + 1] = m end
+    local mouse = {x = -1, y = -1, down = false}
+    local dl = setmetatable({}, {__index = function() return function() end end})
+    local base_imgui = _G.imgui
+    _G.Vector2f = _G.Vector2f or {new = function(x, y) return {x = x, y = y} end}
+    _G.Vector4f = _G.Vector4f or {new = function(x, y, z, w) return {x = x, y = y, z = z, w = w} end}
+    _G.imgui = setmetatable({
+        get_background_draw_list = function() return dl end,
+        calc_text_size = function(s) return {x = utf8.len(s) * 7, y = 14} end,
+        get_display_size = function() return {x = 1920, y = 1080} end,
+        get_mouse = function() return {x = mouse.x, y = mouse.y} end,
+        is_mouse_down = function() return mouse.down end,
+        begin_window = function() return true end,
+        input_text = function(_, text) return false, text end,
+    }, {__index = function() return function() end end})
+    _G.reframework.is_drawing_ui = function() return true end   -- 鼠标瞬移:按 REF 菜单开着算(直接用系统光标)
+    local I = require("ArmorVariantManager_Core.Games.RE4.Panel.Input")
+    local rects
+    local real_click = I.click
+    I.click = function(x, y, w, h)
+        if rects then rects[#rects + 1] = {x + w / 2, y + h / 2, x, y, w} end
+        return real_click(x, y, w, h)
+    end
+    local panel = Main.panel
+    assert(panel.available())
+    panel.set_open(true)
+    local function frame() tick() end   -- Main 的 on_frame 里依次调用 panel.frame / draw / draw_inputs
+    frame()
+    local clicks = 0
+    for _, page in ipairs({"quick", "base", "groups", "states", "palette", "presets", "misc"}) do
+        panel._ctx.goto_page(page)
+        frame()
+        for pass = 1, 2 do
+            local done = {}
+            for _ = 1, 150 do
+                rects = {}
+                frame()
+                local list = rects
+                rects = nil
+                local target
+                for k = 1, #list do
+                    local r = list[pass == 1 and k or (#list - k + 1)]
+                    local key = math.floor(r[3]) .. ":" .. math.floor(r[4]) .. ":" .. math.floor(r[5])
+                    -- 不点标题栏(关闭 / 语言)和左边的页签
+                    if not done[key] and r[4] > 160 and r[3] > 252 then target = r; done[key] = true; break end
+                end
+                if not target then break end
+                mouse.x, mouse.y, mouse.down = target[1], target[2], true
+                frame()
+                mouse.down = false
+                frame(); frame()
+                clicks = clicks + 1
+                assert(#warns == 0, page .. ": " .. tostring(warns[1]))
+            end
+        end
+    end
+    assert(clicks > 100, "clicked through the standalone panel: " .. clicks)
+    panel.set_open(false)
+    _G.imgui = base_imgui
+    print("PASS: RE4 standalone panel (no REFF) drives the real controller through every page without errors (" .. clicks .. " clicks)")
+end

@@ -106,6 +106,11 @@ assert(Ops.set_global(g, "ui_dissolve_enabled", false) and g.ui_dissolve_enabled
 assert(Ops.set_global(g, "ui_dissolve_time", 1.26) and g.ui_dissolve_time == 1.3)
 assert(Ops.set_global(g, "ui_dissolve_time", 50) and g.ui_dissolve_time == 30)
 assert(not Ops.set_global(g, "unknown", 1))
+assert(Ops.set_global(g, "panel_hotkey", "F7") and g.panel_hotkey == "F7")
+assert(not Ops.set_global(g, "panel_hotkey", "F12") and not Ops.set_global(g, "panel_hotkey", "F10") and g.panel_hotkey == "F7")
+assert(Ops.set_global(g, "panel_hotkey_mod", "Ctrl") and g.panel_hotkey_mod == "Ctrl")
+assert(Ops.set_global(g, "panel_hotkey_mod", "") and g.panel_hotkey_mod == nil)
+assert(not Ops.set_global(g, "panel_hotkey_mod", "Win"))
 print("PASS: RE4 shared ops for selection, auto, rules/conditions, hold, dissolve, hp drive and global settings")
 
 -- 第二阶段：预设 / 状态编辑、材质、批量、状态组、护甲镜像、备注

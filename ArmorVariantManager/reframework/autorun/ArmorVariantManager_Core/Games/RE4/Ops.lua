@@ -172,6 +172,9 @@ function Ops.set_hp_invert(layer, preset, invert)
 end
 
 -- 全局设置。界面切换溶解时长按 0.1 秒取整,范围 0~30。
+-- 独立面板可选的快捷键。F10(Windows 菜单栏)、F12(Steam 截图)不给;默认 F8
+Ops.PANEL_KEYS = { "F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F11" }
+
 function Ops.set_global(global_config, id, value)
     if id == "language" then
         if value ~= "zh" and value ~= "en" then return false end
@@ -183,6 +186,16 @@ function Ops.set_global(global_config, id, value)
         local n = tonumber(value)
         if not n then return false end
         global_config[id] = id == "portrait_distance" and round1(clamp(n, 1.2, 8)) or round1(clamp(n, -1, 1))
+    elseif id == "panel_hotkey" then
+        -- 独立面板的快捷键(主键):只收 Ops.PANEL_KEYS 里的
+        local ok = false
+        for _, k in ipairs(Ops.PANEL_KEYS) do if k == value then ok = true end end
+        if not ok then return false end
+        global_config.panel_hotkey = value
+    elseif id == "panel_hotkey_mod" then
+        -- 修饰键:"" = 不用
+        if value ~= "" and value ~= "Ctrl" and value ~= "Shift" and value ~= "Alt" then return false end
+        global_config.panel_hotkey_mod = value ~= "" and value or nil
     elseif id == "ui_dissolve_time" then
         local n = tonumber(value)
         if not n then return false end
