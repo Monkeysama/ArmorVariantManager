@@ -11,6 +11,8 @@ local Ops = require("ArmorVariantManager_Core.Games.RE4.Ops")
 local OpsV3 = require("ArmorVariantManager_Core.Games.RE4.OpsV3")
 local M3 = require("ArmorVariantManager_Core.Games.RE4.ModelV3")
 local Palette = require("ArmorVariantManager_Core.Games.RE4.Palette")
+local Mdf2 = require("ArmorVariantManager_Core.Games.RE4.Mdf2")
+local MdfReplace = require("ArmorVariantManager_Core.Games.RE4.MdfReplace")
 -- 默认贴图失效规则(离线材质库生成);加载失败就不做判断,不影响调色盘本身
 local ok_effects, MaterialEffects = pcall(require, "ArmorVariantManager_Core.Games.RE4.MaterialEffects")
 local effects_index = ok_effects and Palette.effects_index(MaterialEffects) or nil
@@ -205,8 +207,11 @@ function Reff.new(deps)
         local used, live, sel, listed = {}, {}, {}, {}
         for _, k in ipairs(palette_sel) do sel[k] = true end
         local notes = config.material_notes or {}
+        out.replacing = MdfReplace.busy()
         for _, slot in ipairs(deps.visible_slots(source)) do
             local mesh = Utils.get_mesh(source, slot)
+            -- 「替换 mdf」能不能用:ok / packed(不是松散文件)/ plugin(原生插件太旧)
+            local replace = mesh and MdfReplace.check(mesh) or nil
             local ok, count = pcall(function() return mesh and mesh:call("get_MaterialNum") or 0 end)
             for j = 0, (ok and count or 0) - 1 do
                 local okc, c = pcall(palette_info, mesh, j, profiles)
@@ -221,7 +226,7 @@ function Reff.new(deps)
                         for _ in pairs(ov or {}) do n = n + 1 end
                         out.materials[#out.materials + 1] = { key = key, slot = slot, material = c.name,
                             note = (notes[slot] or {})[c.name], main = c.main and c.main.id or nil, addons = c.addons,
-                            missing = c.missing, generic = c.generic, overridden = n, ineffective = c.ineffective }
+                            missing = c.missing, generic = c.generic, overridden = n, ineffective = c.ineffective, replace = replace }
                         if c.main then used[c.main.id] = c.main end
                         for _, a in ipairs(c.addon_list) do used[a.id] = a end
                         out.overrides[key] = ov or false
@@ -446,17 +451,21 @@ function Reff.new(deps)
             palette_cache = {}
             return "saved"
         end,
-        -- 导出参数清单:写成映射草稿 material_profiles/drafts/<材质名>.json(drafts 不会被当成映射读进来)
+        -- 导出 mdf2 材质预设(RE Mesh Editor 格式,见 Mdf2.lua):写到 data/ArmorVariantManager/mdf2_presets/RE4/<预设名>.json,
+        -- 拷进插件的 Presets/RE4/ 就能在 Blender 里套用。参数值用当前的(调色改过的也在)。
+        -- 材质头、Flags、Padding、贴图、MMTRS / GPBF 取自 mod 的 mdf2(原生插件读 natives/STM/...);
+        -- 读不到(原版材质在 pak 里、原生插件太旧)时只用运行时数据,通知里标明是近似值和原因
         ["palette-export"] = function(p, _, cur)
+            local name = str(p.name)
+            if not Mdf2.valid_name(name) then error(T("reff_preset_name_invalid")) end
             local mesh = Utils.get_mesh(cur.target.source, str(p.slot))
             local count = mesh and mesh:call("get_MaterialNum") or 0
             for j = 0, count - 1 do
                 if mesh:call("getMaterialName", j) == p.material then
-                    local file = tostring(p.material):gsub("[^%w%-_%.]", "_") .. ".json"
-                    local path = deps.palette_dir .. "drafts/" .. file
-                    local ok = deps.palette_dump(path, Palette.draft(mesh, j))
-                    if not ok then return false end
-                    notice = { kind = "palette-exported", path = "reframework/data/" .. path }
+                    local preset, reason = Mdf2.export(mesh, j, p.material, Palette, effects_index)
+                    local path = "ArmorVariantManager/mdf2_presets/RE4/" .. name .. ".json"
+                    if not deps.palette_dump(path, preset) then return false end
+                    notice = { kind = "palette-exported", path = "reframework/data/" .. path, exact = reason == nil, reason = reason }
                     return "saved"
                 end
             end
@@ -464,6 +473,33 @@ function Reff.new(deps)
         end,
 
         -- 模型高度:cm = nil 清除
+        -- 替换 mdf:把这个槽位网格的 mdf2 里涉及的调色覆盖值写进原文件并当场换上,随后清空这些覆盖值(见 MdfReplace.lua)。
+        -- 换上要等几帧(资源异步加载),清配置和存盘在那时做;这里只开始
+        ["palette-replace"] = function(p, cfg, cur)
+            local slot = str(p.slot)
+            local mesh = Utils.get_mesh(cur.target.source, slot)
+            if not mesh then return false end
+            local kind_id = cur.kind_id
+            local ok, info = pcall(MdfReplace.start, {
+                mesh = mesh, overrides = (cfg.palette or {})[slot],
+                meshes = deps.all_meshes, forget = deps.forget_palette, reapply = deps.request_reapply,
+                clear = function(names)
+                    local mats = (cfg.palette or {})[slot]
+                    if not mats then return end
+                    for name in pairs(names) do mats[name] = nil end
+                    if next(mats) == nil then cfg.palette[slot] = nil end
+                    deps.commit(kind_id, true, true)
+                end,
+                log = function(msg) if log and log.info then log.info("[AVM] " .. msg) end end,
+            })
+            if not ok then
+                local msg = tostring(info):gsub("^.-%.lua:%d+: ", "")
+                local KNOWN = { busy = "reff_replace_busy", ["nothing to write"] = "reff_replace_nothing", ["not replaceable"] = "reff_replace_packed" }
+                error(KNOWN[msg] and T(KNOWN[msg]) or msg)
+            end
+            notice = { kind = "mdf-replaced", path = info.path }
+            return "saved"
+        end,
         ["base-height"] = function(p, cfg) return OpsV3.set_height(cfg, "base", p.preset, p.cm) end,
         ["option-height"] = function(p, cfg) return OpsV3.set_height(cfg, p.group, p.option, p.cm) end,
         ["height-override"] = function(p, cfg)

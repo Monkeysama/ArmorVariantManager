@@ -4,6 +4,7 @@
 #include "PortraitPreview.hpp"
 #include "PortraitPose.hpp"
 #include "PortraitGpuResolver.hpp"
+#include "GameFiles.hpp"
 
 namespace {
 void register_portrait(sol::table table) {
@@ -30,6 +31,32 @@ void register_portrait(sol::table table) {
     table["portrait_blend_version"] = &avm_portrait_blend_version;
     table["portrait_blend_sync"] = &avm_portrait_blend_sync;
     table["portrait_pose_error"] = [] { return std::string(avm_portrait_pose_error()); };
+    // 只读游戏目录 natives/ 下的 mdf2(RE4 调色导出 mdf2 材质预设用)。返回内容,或 nil + 原因
+    table["read_game_file"] = [](sol::this_state state, const std::string& relative) {
+        sol::state_view lua{state};
+        std::string data, error;
+        if (avm_game_files::read(relative, data, error)) {
+            return std::make_tuple(sol::make_object(lua, data), sol::object(sol::lua_nil));
+        }
+        return std::make_tuple(sol::object(sol::lua_nil), sol::make_object(lua, error));
+    };
+    // 「替换 mdf」:松散文件判断、覆盖原文件(第一次先留 .avm_bak)、写 / 清重载副本(<名字>_avmr<数字>.mdf2.<版本>)
+    table["game_file_exists"] = [](const std::string& relative) { return avm_game_files::exists(relative); };
+    table["write_game_file"] = [](sol::this_state state, const std::string& relative, const std::string& data) {
+        sol::state_view lua{state};
+        std::string error;
+        if (avm_game_files::overwrite(relative, data, error)) return std::make_tuple(true, sol::object(sol::lua_nil));
+        return std::make_tuple(false, sol::make_object(lua, error));
+    };
+    table["write_reload_copy"] = [](sol::this_state state, const std::string& relative, const std::string& data) {
+        sol::state_view lua{state};
+        std::string error;
+        if (avm_game_files::write_reload_copy(relative, data, error)) return std::make_tuple(true, sol::object(sol::lua_nil));
+        return std::make_tuple(false, sol::make_object(lua, error));
+    };
+    table["remove_reload_copies"] = [](const std::string& original, sol::optional<std::string> keep) {
+        return avm_game_files::remove_reload_copies(original, keep.value_or(std::string()));
+    };
 }
 
 void on_lua_state_created(lua_State* state) try {

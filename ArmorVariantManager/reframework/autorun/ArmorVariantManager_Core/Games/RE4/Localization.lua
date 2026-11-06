@@ -3,6 +3,9 @@ return {
         title = "差分管理器 (RE4)",
         -- REFF 网页操作被拒绝时的提示
         reff_action_rejected = "操作无效或目标已不存在,请刷新后重试",
+        reff_preset_name_invalid = "预设名只能用英文字母、数字、空格、- 和 _(1~64 个字符)",
+        reff_replace_busy = "上一次替换还没完成", reff_replace_nothing = "这个 mdf2 的材质没有调色改动,不需要替换",
+        reff_replace_packed = "非松散文件,无法导出",
         reff_character_changed = "当前角色已变化,请确认后重试",
         reff_no_kin = "没有找到可共用的同角色配置",
         draw_error = "界面绘制出错(已保护,不影响其他 mod):",
@@ -236,6 +239,9 @@ return {
         title = "Armor Variant Manager (RE4)",
         -- REFF page action failures
         reff_action_rejected = "Invalid action or the target no longer exists; refresh and try again",
+        reff_preset_name_invalid = "Preset names may only use English letters, digits, spaces, - and _ (1-64 characters)",
+        reff_replace_busy = "The previous replacement is still in progress", reff_replace_nothing = "No colour changes on this mdf2's materials; nothing to replace",
+        reff_replace_packed = "Not a loose file; cannot export",
         reff_character_changed = "The current character changed; check and try again",
         reff_no_kin = "No matching config of the same character was found",
         draw_error = "UI draw error (contained, other mods unaffected):",

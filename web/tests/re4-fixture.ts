@@ -119,6 +119,7 @@ export function installRe4Fixture() {
       const key = `${slot}/${material}`, ov = paletteOv[key];
       materials.push({ key, slot, material, note: config.notes[key], main: slot === 'hair' ? undefined : 'fx_toon', addons: [],
         missing: [], generic: slot === 'hair' ? ['BaseColor', 'SpecularColor'] : undefined, overridden: ov ? Object.keys(ov).length : 0,
+        replace: slot === 'hair' ? 'packed' : 'ok',
         // 默认贴图失效:边缘光整组(LIL_MaskMap 为黑)、第二层只有颜色(强度仍有效)
         ineffective: slot === 'hair' ? undefined : {
           LIL_RimColor: { comps: 'xyzw', why: [{ texture: 'LIL_MaskMap', null: 'systems/rendering/nullblack' }] },
@@ -311,7 +312,15 @@ export function installRe4Fixture() {
         if (!Object.keys(ov).length) delete paletteOv[key];
       } break;
       case 'palette-reload': break;
-      case 'palette-export': notice = { kind: 'palette-exported', path: `reframework/data/ArmorVariantManager/material_profiles/drafts/${a.material}.json` }; break;
+      // 替换 mdf:夹具里只给出完成提示(真实流程要等新 mdf2 加载、再清空涉及的调色配置)
+      case 'palette-replace': notice = { kind: 'mdf-replaced', path: `natives/STM/_Chainsaw/Character/ch/${a.slot}.mdf2.32` }; break;
+      // 同 Lua:预设名只允许英文;头发的材质假装读不到 mdf2(打包在 pak 里),走运行时数据
+      case 'palette-export':
+        if (!/^[A-Za-z0-9_-][A-Za-z0-9 _-]{0,63}$/.test(a.name) || /\s$/.test(a.name)) throw new Error('预设名只能用英文字母、数字、空格、- 和 _(1~64 个字符)');
+        notice = a.slot === 'hair'
+          ? { kind: 'palette-exported', path: `reframework/data/ArmorVariantManager/mdf2_presets/RE4/${a.name}.json`, exact: false, reason: `natives/STM/_Chainsaw/Character/ch/hair.mdf2.32: not found` }
+          : { kind: 'palette-exported', path: `reframework/data/ArmorVariantManager/mdf2_presets/RE4/${a.name}.json`, exact: true };
+        break;
       case 'height-override': if (a.enabled !== undefined) heightOverride.enabled = a.enabled; if (a.cm !== undefined) heightOverride.cm = a.cm; break;
       case 'option-height': { const g = groupOf(a.group) ?? fail(); if (!g.options[a.option]) fail();
         if (a.cm === undefined) delete heights[`g:${a.group}|${a.option}`]; else heights[`g:${a.group}|${a.option}`] = a.cm; break; }

@@ -2,6 +2,8 @@
 -- RE4 的配置模型(base 整套造型 + axes 状态组)与 MH 的 groups 不同,这里沿用自己的规则、
 -- 存储和 ImGui 面板,只复用入口的游戏识别与版本号。设计约束见同目录 AGENTS.md。
 local Main = {}
+-- REFramework 只在加载脚本时解析 autorun 模块:绘制回调里再 require 会报 module not found,所以在这里先载入
+local MdfReplace = require("ArmorVariantManager_Core.Games.RE4.MdfReplace")
 
 function Main.start(ctx)
     local mod_name = "ArmorVariantManager"
@@ -1334,6 +1336,9 @@ function Main.start(ctx)
     re.on_frame(function()
         local ok, err = pcall(frame_logic)
         if not ok then note_error("on_frame", err) end
+        -- 调色页「替换 mdf」:等新 mdf2 加载完再换上(见 MdfReplace.lua)
+        local ok_r, err_r = pcall(MdfReplace.tick)
+        if not ok_r then note_error("mdf_replace", err_r) end
     end)
 
     -- ============================================================
@@ -2862,6 +2867,21 @@ function Main.start(ctx)
             -- 调色盘:映射(reload = true 重读 data 目录)、读不了的映射文件名、草稿写盘
             palette_profiles = load_palette_profiles, palette_profile_errors = function() return palette_profile_errors end,
             palette_dump = function(path, data) return pcall(json.dump_file, path, data) end, palette_dir = PALETTE_DIR,
+            -- 替换 mdf:所有目标的所有槽位网格;清掉某个网格的调色状态(不还原,新 mdf2 里已经是写好的值)
+            all_meshes = function()
+                local out = {}
+                for _, target in ipairs(Targets.collect()) do
+                    for _, slot in ipairs(Utils.MESH_SLOTS) do
+                        local mesh = Utils.get_mesh(target.source, slot)
+                        if mesh then out[#out + 1] = mesh end
+                    end
+                end
+                return out
+            end,
+            forget_palette = function(mesh)
+                local key = tostring(mesh)
+                for _, state in pairs(palette_state) do state[key] = nil end
+            end,
         })
     end)
     if not reff_ok then note_error("reff", reff_err) end

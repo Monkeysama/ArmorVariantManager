@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onErrorCaptured, shallowRef, watch, watchEffect } from 'vue';
+import { computed, onBeforeUnmount, onErrorCaptured, onMounted, shallowRef, watch, watchEffect } from 'vue';
 import { ElButton, ElConfigProvider, ElOption, ElSelect, ElSwitch, REFF_ELEMENT_LOCALES } from '@reff/ui';
 import { useAvmState } from '../avm';
 
@@ -10,6 +10,17 @@ const blockSelect = (e: Event) => {
   const el = e.target instanceof Element ? e.target : (e.target as Node | null)?.parentElement;
   if (!el?.closest('input, textarea, [contenteditable="true"]')) e.preventDefault();
 };
+// 挂在 document 上而不是 <main>：ElColorPicker / ElSelect / ElTooltip 的弹层传送到 body，在 <main> 外面。
+// 只防 <main> 时，在取色面板里拖色相条会进原生拖拽循环，滑条拖不动、整个页面卡死。
+const blockDrag = (e: Event) => e.preventDefault();
+onMounted(() => {
+  document.addEventListener('dragstart', blockDrag, true);
+  document.addEventListener('selectstart', blockSelect, true);
+});
+onBeforeUnmount(() => {
+  document.removeEventListener('dragstart', blockDrag, true);
+  document.removeEventListener('selectstart', blockSelect, true);
+});
 import PortraitPane from '../PortraitPane.vue';
 import type { Translate } from '../i18n';
 import Re4Side from './Re4Side.vue';
@@ -72,8 +83,7 @@ watch(() => snapshot.value?.notice, value => { if (value) notice.value = value; 
 
 <template>
   <ElConfigProvider :locale="REFF_ELEMENT_LOCALES[english ? 'en-US' : 'zh-CN']">
-    <main class="avm re4" :class="{ 'preview-open': previewOpen && !!snapshot?.preview }" data-theme="reff" :aria-busy="busy || loading"
-      @dragstart.capture.prevent @selectstart.capture="blockSelect">
+    <main class="avm re4" :class="{ 'preview-open': previewOpen && !!snapshot?.preview }" data-theme="reff" :aria-busy="busy || loading">
       <header class="avm-header re4-header">
         <div class="identity"><h1>{{ t('title') }}</h1></div>
         <div v-if="snapshot && snapshot.characters.length > 0" class="re4-character">
@@ -110,7 +120,8 @@ watch(() => snapshot.value?.notice, value => { if (value) notice.value = value; 
               <Re4Side v-if="hasCharacter && v3 && previewWide" :snapshot="snapshot" :t="t" :show-look="false" inline />
               <div v-if="notice" class="re4-banner ok" role="status">
                 <span v-if="notice.kind === 'migrated'">{{ t('migrated') }}<template v-if="notice.presets"> {{ t('migratedPresets', notice.presets) }}</template></span>
-                <span v-else>{{ t('paletteExported', notice.path) }}</span>
+                <span v-else-if="notice.kind === 'mdf-replaced'">{{ t('paletteReplaced', notice.path) }}</span>
+                <span v-else>{{ t('paletteExported', notice.path) }}<template v-if="notice.exact === false"> {{ t('paletteExportedApprox', notice.reason ?? '') }}</template></span>
                 <button class="dismiss-error" :aria-label="t('dismiss')" @click="notice = null">×</button>
               </div>
               <div v-if="!hasCharacter && tab !== 'misc'" class="state-banner" role="status">{{ t('noCharacter') }}</div>

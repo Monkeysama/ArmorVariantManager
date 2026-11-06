@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onActivated, onBeforeUnmount, onDeactivated, onMounted, reactive, shallowRef, watch } from 'vue';
-import { ElButton, ElColorPicker, ElOption, ElSelect, ElSlider, ElSwitch, ElTooltip } from '@reff/ui';
+import { ElButton, ElColorPicker, ElDialog, ElInput, ElOption, ElSelect, ElSlider, ElSwitch, ElTooltip } from '@reff/ui';
 import Re4Num from './Re4Num.vue';
 import type { Re4Translate } from './i18n';
 import type {
@@ -23,7 +23,7 @@ const CI: Record<Re4Comp, number> = { x: 0, y: 1, z: 2, w: 3 };
 const selection = shallowRef<string[]>([]);
 function view(open: boolean) { return props.perform({ kind: 'palette-view', ...c(), open, keys: open ? selection.value : [] }); }
 // 页签由 KeepAlive 缓存:切走是 deactivated 而不是卸载。关掉后 Lua 不再在快照里带调色数据
-const close = () => { void props.perform({ kind: 'palette-view', ...c(), open: false, keys: [] }); };
+const close = () => { void cancelBatch(); void props.perform({ kind: 'palette-view', ...c(), open: false, keys: [] }); };
 onMounted(() => { void view(true); });
 onActivated(() => { void view(true); });
 onDeactivated(close);
@@ -168,6 +168,30 @@ function modified(e: Re4PaletteEntry) {
   });
 }
 const anyOverride = computed(() => chosen.value.some(m => m.overridden > 0));
+// ---------------------------------------------------------------- 定位 / 导出 mdf2 材质预设(只选了一个材质时)
+// 定位:同整套造型页,临时只显示这一个材质(Lua 端几秒后自动恢复)
+const locate = () => { const m = chosen.value[0]; if (m) void props.perform({ kind: 'locate', ...c(), slot: m.slot, material: m.material }); };
+// 导出:先填预设名(RE Mesh Editor 用它当文件名,只允许英文;同 Lua 的 Mdf2.valid_name)
+const exporting = shallowRef(false);
+const presetName = shallowRef('');
+const nameOk = computed(() => /^[A-Za-z0-9_-][A-Za-z0-9 _-]{0,63}$/.test(presetName.value) && !/\s$/.test(presetName.value));
+function startExport() { exporting.value = true; presetName.value = presetName.value || (chosen.value[0]?.material ?? '').replace(/[^A-Za-z0-9 _-]/g, '_'); }
+async function doExport() {
+  const m = chosen.value[0];
+  if (!m || !nameOk.value) return;
+  if (await props.perform({ kind: 'palette-export', ...c(), slot: m.slot, material: m.material, name: presetName.value })) exporting.value = false;
+}
+watch(selection, () => { exporting.value = false; });
+// 替换 mdf:把这个材质所在 mdf2 涉及的调色值写进原文件并当场换上,随后清空这些调色配置。危险操作,单独弹窗确认
+const replaceState = computed(() => chosen.value[0]?.replace);
+const replaceTip = computed(() => replaceState.value === 'packed' ? props.t('paletteReplacePacked')
+  : replaceState.value === 'plugin' ? props.t('paletteReplacePlugin') : '');
+const confirmReplace = shallowRef(false);
+async function doReplace() {
+  confirmReplace.value = false;
+  const m = chosen.value[0];
+  if (m) await props.perform({ kind: 'palette-replace', ...c(), slot: m.slot });
+}
 
 // ---------------------------------------------------------------- 写入
 const targets = () => chosen.value.map(m => ({ slot: m.slot, material: m.material }));
@@ -196,7 +220,7 @@ function write(list: Omit<Re4PaletteWrite, 'slot' | 'material'>[], live = false)
 // 松手后清掉,回到快照里的实际值
 const local = reactive(new Map<string, number | string>());
 const localKey = (e: Re4PaletteEntry) => e.param + '|' + (e.component ?? '');
-watch(selection, () => local.clear());
+watch(selection, () => { local.clear(); void cancelBatch(); });
 function reset(e: Re4PaletteEntry) {
   const comps: (Re4Comp | undefined)[] = e.kind === 'color' ? (e.channels === 'rgba' ? COMP : ['x', 'y', 'z']) : e.kind === 'vec' ? [undefined] : [e.component];
   void (async () => {
@@ -217,6 +241,9 @@ const to255 = (v: number) => Math.round(Math.max(0, Math.min(1, v)) * 255);
 const hex = (c3?: [number, number, number]) => c3 ? '#' + c3.map(v => to255(v).toString(16).padStart(2, '0')).join('') : '';
 // live = 取色面板里拖动中(active-change):实时写并记住本地颜色;确定(change)时写最终值并清掉本地
 function setColor(e: Re4PaletteEntry, value: string | null, live = false) {
+  // 换材质时新值还没到,取色器的值会先变成空、再变成新颜色,Element Plus 会把这一下也当成 active-change 发出来。
+  // 和当前显示的一样就不是用户在拖,不写;否则会把新材质取整后的颜色写成覆盖
+  if (live && (value ?? '').toLowerCase() === colorShown(e).toLowerCase()) return;
   const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})/i.exec(value ?? '') ?? /rgba?\((\d+),\s*(\d+),\s*(\d+)/i.exec(value ?? '');
   if (!m) return;
   const hexInput = m[0].startsWith('#') || /^[0-9a-f]{6}/i.test(m[0]);
@@ -250,20 +277,89 @@ function fromHsv(h: number, s: number, v: number): [number, number, number] {
 }
 // 整体调色作用于「基本」里的颜色项(颜色层、阴影、边缘光、自发光……),进阶里的不动
 const colorRows = computed(() => groups.value.filter(g => g.tier === 'basic').flatMap(g => g.rows).filter(r => r.tier === 'basic' && r.entry.kind === 'color'));
-function applyBatch() {
-  const writes: Re4PaletteWrite[] = [];
-  for (const m of chosen.value) {
-    for (const r of colorRows.value) {
-      const cur = rgb(m.key, r.entry.param);
-      if (!cur) continue;
-      const [h, s, v] = hsv(cur);
-      const out = fromHsv((h + batch.hue + 360) % 360, Math.max(0, Math.min(1, s * batch.sat / 100)), v * batch.val / 100);
-      // 没变化的颜色(比如白色转色相)不写,免得平白多出一条覆盖
-      if (out.every((x, i) => near(x, cur[i]))) continue;
-      COMP.slice(0, 3).forEach((k, i) => writes.push({ slot: m.slot, material: m.material, param: r.entry.param, component: k, value: out[i] }));
-    }
+// 实时预览:滑条一离开初始位置就记下当时的颜色(base),之后每次都从 base 算,写入走 live(只改内存、不存盘)。
+// 「应用」写最终值并存盘;「取消」/ 换材质 / 切走页签 把颜色还原成 base。
+// 原本没改过的颜色,还原时取消覆盖而不是写回原值,免得平白多出「已改」。
+interface BatchBase { slot: string; material: string; key: string; param: string; rgb: [number, number, number]; had: boolean }
+let base: BatchBase[] | null = null;
+const touched = new Set<string>();
+const batchNeutral = () => batch.hue === 0 && batch.sat === 100 && batch.val === 100;
+const previewing = shallowRef(false);
+const baseId = (b: BatchBase) => b.key + '|' + b.param;
+function hadOverride(key: string, param: string) {
+  const o = overrideOf(key, param);
+  return o !== undefined && (typeof o === 'number' || (['x', 'y', 'z'] as Re4Comp[]).some(k => o[k] !== undefined));
+}
+function captureBase() {
+  base = [];
+  for (const m of chosen.value) for (const r of colorRows.value) {
+    const cur = rgb(m.key, r.entry.param);
+    if (cur) base.push({ slot: m.slot, material: m.material, key: m.key, param: r.entry.param, rgb: [...cur], had: hadOverride(m.key, r.entry.param) });
   }
-  if (writes.length) void props.perform({ kind: 'palette-set', ...c(), writes }).then(ok => { if (ok) Object.assign(batch, { hue: 0, sat: 100, val: 100 }); });
+  touched.clear();
+  previewing.value = true;
+}
+const batchOut = (b: BatchBase) => {
+  const [h, s, v] = hsv(b.rgb);
+  return fromHsv((h + batch.hue + 360) % 360, Math.max(0, Math.min(1, s * batch.sat / 100)), v * batch.val / 100);
+};
+const rgbWrites = (b: BatchBase, c3: [number, number, number]): Re4PaletteWrite[] =>
+  COMP.slice(0, 3).map((k, i) => ({ slot: b.slot, material: b.material, param: b.param, component: k, value: c3[i] }));
+function enqueue(writes: Re4PaletteWrite[], live: boolean) {
+  if (!writes.length) return;
+  pending = { writes, live };
+  pump();
+}
+const idle = () => new Promise<void>(res => { const tick = () => (inflight || pending ? window.setTimeout(tick, 30) : res()); tick(); });
+// 页面正忙时 perform 会返回 false,稍后重试几次
+async function must(action: Parameters<typeof props.perform>[0]) {
+  for (let i = 0; i < 20; i++) { if (await props.perform(action)) return true; await new Promise(r => window.setTimeout(r, 60)); }
+  return false;
+}
+watch(() => [batch.hue, batch.sat, batch.val], () => {
+  if (!base) { if (batchNeutral() || !chosen.value.length) return; captureBase(); }
+  const writes: Re4PaletteWrite[] = [];
+  for (const b of base!) {
+    const out = batchOut(b);
+    // 没变化的颜色(比如白色转色相)不写;之前写过的要写回 base
+    if (out.every((x, i) => near(x, b.rgb[i]))) { if (touched.has(baseId(b))) writes.push(...rgbWrites(b, b.rgb)); continue; }
+    touched.add(baseId(b));
+    writes.push(...rgbWrites(b, out));
+  }
+  enqueue(writes, true);
+});
+function endBatch() {
+  base = null; touched.clear(); previewing.value = false;
+  Object.assign(batch, { hue: 0, sat: 100, val: 100 });
+}
+// 把 list 里的颜色还原:原本改过的写回 base,原本没改过的取消覆盖
+async function restore(list: BatchBase[]) {
+  const writes = list.filter(b => b.had).flatMap(b => rgbWrites(b, b.rgb));
+  if (writes.length) await must({ kind: 'palette-set', ...c(), writes });
+  for (const b of list.filter(b => !b.had))
+    await must({ kind: 'palette-reset', ...c(), targets: [{ slot: b.slot, material: b.material }], param: b.param });
+}
+async function applyBatch() {
+  if (!base) return;
+  const writes: Re4PaletteWrite[] = [], back: BatchBase[] = [];
+  for (const b of base) {
+    if (!touched.has(baseId(b))) continue;
+    const out = batchOut(b);
+    if (out.every((x, i) => near(x, b.rgb[i]))) back.push(b); else writes.push(...rgbWrites(b, out));
+  }
+  endBatch();
+  // 不带 live 的最后一次:Lua 存盘。排在拖动中的写入之后
+  enqueue(writes, false);
+  await idle();
+  if (back.length) await restore(back);
+}
+async function cancelBatch() {
+  if (!base) return;
+  const list = base.filter(b => touched.has(baseId(b)));
+  endBatch();
+  pending = null;
+  await idle();
+  if (list.length) await restore(list);
 }
 
 const labels = (e: Re4PaletteEntry) => (en.value ? e.labels?.en : e.labels?.zh) ?? COMP.map(k => k.toUpperCase());
@@ -304,11 +400,31 @@ const clampSlider = (e: Re4PaletteEntry, v?: number) => Math.max(sliderMin(e), M
         <div class="re4-panel-head">
           <span class="re4-panel-title">{{ chosen.length ? t('paletteSelected', chosen.length) : t('paletteNothing') }}</span>
           <span class="re4-spacer"></span>
-          <ElButton v-if="chosen.length === 1" size="small" :disabled="busy"
-            @click="perform({ kind: 'palette-export', ...c(), slot: chosen[0].slot, material: chosen[0].material })">{{ t('paletteExport') }}</ElButton>
+          <template v-if="chosen.length === 1">
+            <ElButton size="small" :disabled="busy" @click="locate">{{ t('locate') }}</ElButton>
+            <ElButton size="small" :disabled="busy" @click="startExport">{{ t('paletteExport') }}</ElButton>
+            <!-- 灰掉时只在悬停时说明原因(禁用的按钮收不到悬停,包一层 span) -->
+            <ElTooltip :content="replaceTip" :disabled="!replaceTip" placement="bottom">
+              <span><ElButton size="small" type="danger" plain :disabled="busy || replaceState !== 'ok' || pal?.replacing"
+                @click="confirmReplace = true">{{ t('paletteReplace') }}</ElButton></span>
+            </ElTooltip>
+          </template>
           <ElButton size="small" :disabled="busy" @click="perform({ kind: 'palette-reload', ...c() })">{{ t('paletteReload') }}</ElButton>
           <ElButton v-if="anyOverride" size="small" type="danger" plain :disabled="busy" @click="resetAll">{{ t('paletteResetAll') }}</ElButton>
         </div>
+        <div v-if="exporting && chosen.length === 1" class="re4-panel-body re4-row">
+          <ElInput v-model="presetName" size="small" style="width:16em" :placeholder="t('palettePresetName')" @keyup.enter="doExport" />
+          <ElButton size="small" type="primary" :disabled="busy || !nameOk" @click="doExport">{{ t('paletteExportConfirm') }}</ElButton>
+          <ElButton size="small" @click="exporting = false">{{ t('cancel') }}</ElButton>
+          <span class="re4-small" :class="nameOk || !presetName ? 're4-muted' : 're4-bad-text'">{{ t('palettePresetNameHint') }}</span>
+        </div>
+        <ElDialog v-model="confirmReplace" :title="t('paletteReplace')" width="420px" append-to-body>
+          <span>{{ t('paletteReplaceConfirm') }}</span>
+          <template #footer>
+            <ElButton size="small" @click="confirmReplace = false">{{ t('cancel') }}</ElButton>
+            <ElButton size="small" type="danger" @click="doReplace">{{ t('confirm') }}</ElButton>
+          </template>
+        </ElDialog>
         <div v-if="!chosen.length" class="re4-panel-body re4-muted re4-small">{{ t('paletteHint') }}</div>
         <template v-else>
           <div v-if="chosen.length > 1" class="re4-panel-body re4-muted re4-small">{{ t('paletteCommon') }}</div>
@@ -317,7 +433,11 @@ const clampSlider = (e: Re4PaletteEntry, v?: number) => Math.max(sliderMin(e), M
             <label>{{ t('paletteHue') }}<ElSlider v-model="batch.hue" :min="-180" :max="180" :step="1" size="small" /></label>
             <label>{{ t('paletteSat') }}<ElSlider v-model="batch.sat" :min="0" :max="200" :step="1" size="small" /></label>
             <label>{{ t('paletteVal') }}<ElSlider v-model="batch.val" :min="0" :max="200" :step="1" size="small" /></label>
-            <ElButton size="small" type="primary" :disabled="busy || (batch.hue === 0 && batch.sat === 100 && batch.val === 100)" @click="applyBatch">{{ t('paletteApply') }}</ElButton>
+            <span class="re4-pal-batchbtns">
+              <ElButton size="small" type="primary" :disabled="!previewing" @click="applyBatch">{{ t('paletteApply') }}</ElButton>
+              <ElButton size="small" :disabled="!previewing" @click="cancelBatch">{{ t('paletteBatchCancel') }}</ElButton>
+            </span>
+            <span v-if="previewing" class="re4-muted re4-small">{{ t('paletteBatchLive') }}</span>
           </div>
           <div v-for="area in areas" :key="area.tier" class="re4-pal-area">
             <div class="re4-pal-areahead">{{ area.tier === 'basic' ? t('paletteBasic') : area.tier === 'more' ? t('paletteAdvanced') : t('paletteOther') }}
@@ -429,5 +549,7 @@ const clampSlider = (e: Re4PaletteEntry, v?: number) => Math.max(sliderMin(e), M
 .re4-pal-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--avm-accent); flex: none; }
 .re4-pal-batch { display: grid; grid-template-columns: repeat(auto-fill, minmax(12em, 1fr)); gap: 4px 16px; align-items: center; background: var(--re4-soft); }
 .re4-pal-batch .re4-pal-glabel { grid-column: 1 / -1; margin: 0; }
+.re4-pal-batchbtns { display: flex; gap: 6px; }
+.re4-pal-batchbtns .el-button + .el-button { margin-left: 0; }
 .re4-pal-batch label { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px; align-items: center; font-size: 12.5px; color: var(--avm-muted); }
 </style>

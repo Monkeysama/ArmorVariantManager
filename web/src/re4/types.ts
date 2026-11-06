@@ -50,7 +50,9 @@ export interface Re4Presets {
   current?: Re4Fit; source?: { id: string; name: string; own: boolean }; dismissed: boolean;
   list: Re4PresetEntry[]; better: { id: string; name: string }[]; autosaves: { name: string; time: number }[];
 }
-export type Re4Notice = { kind: 'migrated'; presets: number } | { kind: 'palette-exported'; path: string };
+// palette-exported:exact = 取自 mod 的 mdf2;否则 reason 写明为什么读不到、只用了运行时数据
+export type Re4Notice = { kind: 'migrated'; presets: number } | { kind: 'palette-exported'; path: string; exact?: boolean; reason?: string }
+  | { kind: 'mdf-replaced'; path: string };
 
 // 调色盘（Lua 的 Palette.lua / tools/re4/material_profiles）
 export type Re4Text = { zh?: string; en?: string };
@@ -70,6 +72,8 @@ export interface Re4PaletteMaterial {
   missing: string[]; generic?: string[]; overridden: number;
   // 贴图槽绑了默认(null)贴图而改了不生效的参数:comps = 失效的分量,why = 哪个槽绑了哪张 null 贴图
   ineffective?: Record<string, { comps: string; why: { texture: string; null: string }[] }>;
+  // 「替换 mdf」能不能用:ok / packed(不是松散文件)/ plugin(原生插件太旧);没有 = 读不到 mdf2 路径
+  replace?: 'ok' | 'packed' | 'plugin';
 }
 // 当前值：float 是数字，float4 是 [x, y, z, w]；覆盖值：float 是数字，float4 只有改过的分量
 export type Re4PaletteValue = number | [number, number, number, number];
@@ -79,6 +83,7 @@ export interface Re4Palette {
   values: Record<string, Record<string, Re4PaletteValue>>;
   overrides: Record<string, Record<string, Re4PaletteOverride> | false>;
   selected: string[]; errors: string[]; error?: string;
+  replacing?: boolean;   // 替换 mdf 正在等新 mdf2 加载
 }
 export interface Re4PaletteWrite { slot: string; material: string; param: string; component?: Re4Comp; value: number }
 
@@ -124,7 +129,8 @@ export type Re4Action =
   | C & { kind: 'palette-set'; writes: Re4PaletteWrite[]; live?: boolean }
   | C & { kind: 'palette-reset'; targets: { slot: string; material: string }[]; param?: string; component?: Re4Comp }
   | C & { kind: 'palette-reload' }
-  | C & { kind: 'palette-export'; slot: string; material: string }
+  | C & { kind: 'palette-export'; slot: string; material: string; name: string }
+  | C & { kind: 'palette-replace'; slot: string }
   | C & { kind: 'group-new'; name: string }
   | C & { kind: 'group-rename'; group: string; name: string }
   | C & { kind: 'group-move'; group: string; offset: number }
