@@ -98,4 +98,44 @@ do
     assert(Palette.fade_begin(mesh, nil, state, discrete) == nil, "nothing to fade")
 end
 
+-- 混合模式要变的层:强度先降到 0、中点切模式和颜色、再升到目标(不跨模式插值,否则旧模式下会整片变色)
+do
+    local vals = {[0] = {x = 0.2, y = 0.2, z = 0.2, w = 0.28}, [1] = {x = 2, y = 1, z = 0, w = 0}}
+    local names = {[0] = "L2Color", [1] = "L2Param"}
+    local mesh = {call = function(_, m, j, k, v)
+        if m == "get_MaterialNum" then return 1
+        elseif m == "getMaterialName" then return "Hair"
+        elseif m == "getMaterialVariableNum" then return 2
+        elseif m == "getMaterialVariableName" then return names[k]
+        elseif m == "getMaterialVariableType" then return Palette.TYPE_FLOAT4
+        elseif m == "getMaterialFloat4" then local t = vals[k]; return {x = t.x, y = t.y, z = t.z, w = t.w}
+        elseif m == "setMaterialFloat4" then vals[k] = {x = v.x, y = v.y, z = v.z, w = v.w} end
+    end}
+    local discrete = Palette.discrete_params({{groups = {{params = {
+        {param = "L2Color", kind = "color"}, {param = "L2Color", component = "w", kind = "float"},
+        {param = "L2Param", component = "x", kind = "enum"}, {param = "L2Param", component = "y", kind = "float"}}}}}})
+    assert(discrete.couples["L2Param|x"] == "L2Color", "blend mode paired with the layer colour")
+    local state = {}
+    local plan = Palette.fade_begin(mesh, {Hair = {L2Color = {x = 1, y = 0, z = 0, w = 1}, L2Param = {x = 0}}}, state, discrete)
+    Palette.fade_step(mesh, plan, 0.25)
+    assert(near(vals[0].w, 0.14), "strength heads to 0 first")
+    assert(vals[0].x == 0.2 and vals[1].x == 2, "old colour and mode kept in the first half")
+    Palette.fade_step(mesh, plan, 0.5)
+    assert(vals[0].w == 0 and vals[1].x == 0 and vals[0].x == 1, "switch at the midpoint while the layer is off")
+    Palette.fade_step(mesh, plan, 0.75)
+    assert(near(vals[0].w, 0.5), "then up to the target strength")
+    -- 模式不变:照常线性插值
+    local plan2 = Palette.fade_begin(mesh, {Hair = {L2Color = {x = 0, y = 0, z = 0, w = 0.5}, L2Param = {x = 0}}}, state, discrete)
+    Palette.fade_step(mesh, plan2, 0.5)
+    assert(near(vals[0].w, 0.5 * (0.5 + 0.5)) or near(vals[0].w, 0.5), "no dip when the mode stays")
+    -- 只换模式、颜色没写:强度也要降下去再升回来
+    vals = {[0] = {x = 0.2, y = 0.2, z = 0.2, w = 0.6}, [1] = {x = 3, y = 1, z = 0, w = 0}}
+    local state3 = {}
+    local plan3 = Palette.fade_begin(mesh, {Hair = {L2Param = {x = 0}}}, state3, discrete)
+    Palette.fade_step(mesh, plan3, 0.5)
+    assert(vals[0].w == 0 and vals[1].x == 0)
+    Palette.fade_step(mesh, plan3, 1)
+    assert(near(vals[0].w, 0.6), "back to its own strength")
+end
+
 print("PASS: RE4 palette fades: sources, fade-in / fade-out / manual durations, interpolation from what is on screen, enums switch at halfway, retargeting mid-fade, restore at the end")

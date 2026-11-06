@@ -54,28 +54,90 @@ do
     press(ALT); h.tick(); press(K1); assert(not h.should_block(1)); h.tick(); S.equal(fired, {1, 2})
 end
 
--- ============================================================ 绑定:清洗与增删改
+-- ============================================================ 绑定:清洗、迁移、互斥、轮换、改名删除
 local function snap(slot, mats) return {[slot] = {materials = mats}} end
+local function cfg_with(hotkeys, legacy)
+    return M3.normalize({version = 3,
+        base = {presets = {A = snap("body", {a = true}), B = snap("body", {a = false}), C = {}}, order = {"A", "B", "C"}, active = "A",
+            hotkeys = legacy},
+        groups = {{name = "Face", scope = {}, options = {Clean = {}, Hurt = {}}, order = {"Clean", "Hurt"}, active = ""}},
+        palettes = {Warm = {}, Night = {}}, palette_order = {"Warm", "Night"},
+        hotkeys = hotkeys})
+end
 do
-    local cfg = M3.normalize({version = 3, base = {
-        presets = {A = snap("body", {a = true}), B = snap("body", {a = false}), C = snap("body", {a = true})},
-        order = {"A", "B", "C"}, hotkeys = {A = 1, B = 1, C = 12, Gone = 3}}})
-    S.equal(cfg.base.hotkeys, {A = 1}, "duplicate digit: the earlier preset keeps it; out of range / missing dropped")
-    assert(M3.normalize({version = 3}).base.hotkeys == nil)
-
-    assert(OpsV3.set_base_hotkey(cfg, "B", 2))
-    assert(not OpsV3.set_base_hotkey(cfg, "B", 2), "no change")
-    assert(OpsV3.set_base_hotkey(cfg, "C", 1))
-    S.equal(cfg.base.hotkeys, {B = 2, C = 1}, "taking a digit moves it")
-    assert(not OpsV3.set_base_hotkey(cfg, "C", 10) and not OpsV3.set_base_hotkey(cfg, "Nope", 3))
-    assert(OpsV3.set_base_hotkey(cfg, "C", 0) and cfg.base.hotkeys.C == 0, "0 is a digit")
-
-    local _, _, dup = Ops.duplicate_preset(cfg.base, "C")
-    assert(cfg.base.hotkeys[dup] == nil, "a copy does not take the digit")
-    assert(OpsV3.rename_base(cfg, "C", "Main") and cfg.base.hotkeys.Main == 0 and cfg.base.hotkeys.C == nil)
-    assert(OpsV3.delete_base(cfg, "Main") and cfg.base.hotkeys.Main == nil)
-    assert(OpsV3.set_base_hotkey(cfg, "B", nil))
-    assert(cfg.base.hotkeys == nil, "last binding removed -> nil")
+    -- 迁移旧的 base.hotkeys;非法 / 指不到的去掉;同一设定只留数字小的;轮换压过同结构的单项
+    local cfg = cfg_with({
+        ["1"] = {kind = "base"},
+        ["2"] = {kind = "base", option = "B"},            -- 结构有轮换 → 单项作废
+        ["3"] = {kind = "group", group = "Face", option = "Hurt"},
+        ["4"] = {kind = "group", group = "Face", option = "Hurt"},   -- 重复 → 只留 3
+        ["5"] = {kind = "palette", scheme = "Nope"},       -- 指不到
+        ["6"] = {kind = "group", group = "Gone"},
+        ["7"] = {kind = "palette", skip = {"", "Bad", "Night"}},
+        ["x"] = {kind = "base"},
+    }, {C = 8, A = 9})
+    assert(cfg.base.hotkeys == nil, "legacy field removed")
+    S.equal(cfg.hotkeys["1"], {kind = "base"})
+    assert(cfg.hotkeys["2"] == nil and cfg.hotkeys["4"] == nil and cfg.hotkeys["5"] == nil and cfg.hotkeys["6"] == nil)
+    S.equal(cfg.hotkeys["3"], {kind = "group", group = "Face", option = "Hurt"})
+    S.equal(cfg.hotkeys["7"], {kind = "palette", skip = {"", "Night"}}, "skip keeps existing items only")
+    assert(cfg.hotkeys["8"] == nil and cfg.hotkeys["9"] == nil, "migrated base items lose to the base cycle key")
+    local plain = cfg_with(nil, {C = 8, A = 1})
+    S.equal(plain.hotkeys, {["1"] = {kind = "base", option = "A"}, ["8"] = {kind = "base", option = "C"}}, "legacy migration")
+end
+do
+    local cfg = cfg_with(nil)
+    -- 单项
+    assert(OpsV3.set_hotkey(cfg, 1, {kind = "base", option = "B"}))
+    assert(not OpsV3.set_hotkey(cfg, 1, {kind = "base", option = "B"}), "no change")
+    assert(OpsV3.set_hotkey(cfg, 2, {kind = "base", option = "B"}) and cfg.hotkeys["1"] == nil, "a setting moves to the new key")
+    assert(not OpsV3.set_hotkey(cfg, 3, {kind = "base", option = ""}), "base has no (none)")
+    assert(OpsV3.set_hotkey(cfg, 3, {kind = "group", group = "Face", option = ""}), "group (none) is an item")
+    assert(OpsV3.set_hotkey(cfg, 4, {kind = "palette", scheme = "Night"}))
+    assert(not OpsV3.set_hotkey(cfg, 10, {kind = "base"}) and not OpsV3.set_hotkey(cfg, 5, {kind = "group", group = "Gone"}))
+    -- 同一个键换成别的设定:原来的设定被顶掉
+    assert(OpsV3.set_hotkey(cfg, 4, {kind = "palette", scheme = "Warm"}))
+    S.equal(cfg.hotkeys["4"], {kind = "palette", scheme = "Warm"})
+    -- 轮换:清掉同结构的单项;之后单项不能绑
+    assert(OpsV3.set_hotkey(cfg, 5, {kind = "base"}))
+    assert(cfg.hotkeys["2"] == nil, "cycle key clears the items of its structure")
+    assert(not OpsV3.set_hotkey(cfg, 6, {kind = "base", option = "C"}), "no item keys while the structure cycles")
+    -- 轮换顺序与跳过
+    assert(M3.hotkey_next(cfg, cfg.hotkeys["5"]) == "B", "A -> B")
+    cfg.base.active = "C"; assert(M3.hotkey_next(cfg, cfg.hotkeys["5"]) == "A", "wraps")
+    assert(OpsV3.set_hotkey_skip(cfg, {kind = "base"}, "A", false))
+    assert(not OpsV3.set_hotkey_skip(cfg, {kind = "base"}, "A", false), "already skipped")
+    assert(M3.hotkey_next(cfg, cfg.hotkeys["5"]) == "B", "skips A")
+    cfg.base.active = ""; assert(M3.hotkey_next(cfg, cfg.hotkeys["5"]) == "B", "not in the list -> first")
+    -- 轮换键换数字:跳过的项保留
+    assert(OpsV3.set_hotkey(cfg, 6, {kind = "base"}) and cfg.hotkeys["5"] == nil)
+    S.equal(cfg.hotkeys["6"].skip, {"A"})
+    assert(OpsV3.set_hotkey_skip(cfg, {kind = "base"}, "A", true) and cfg.hotkeys["6"].skip == nil)
+    -- 状态组轮换含「（无）」,调色轮换含「初始」
+    assert(OpsV3.set_hotkey(cfg, 7, {kind = "group", group = "Face"}) and cfg.hotkeys["3"] == nil)
+    assert(M3.hotkey_next(cfg, cfg.hotkeys["7"]) == "Clean", "(none) -> Clean")
+    assert(OpsV3.set_hotkey_skip(cfg, {kind = "group", group = "Face"}, "", false))
+    cfg.groups[1].active = "Hurt"; assert(M3.hotkey_next(cfg, cfg.hotkeys["7"]) == "Clean", "skips (none) on wrap")
+    assert(OpsV3.set_hotkey(cfg, 8, {kind = "palette"}) and cfg.hotkeys["4"] == nil)
+    cfg.palette_active = "Night"; assert(M3.hotkey_next(cfg, cfg.hotkeys["8"]) == "", "Night -> original")
+    for _, n in ipairs({"", "Warm", "Night"}) do OpsV3.set_hotkey_skip(cfg, {kind = "palette"}, n, false) end
+    assert(M3.hotkey_next(cfg, cfg.hotkeys["8"]) == nil, "everything skipped")
+    -- 改名跟着走,删除后作废
+    assert(OpsV3.rename_group(cfg, "Face", "Look") and cfg.hotkeys["7"].group == "Look")
+    assert(OpsV3.rename_palette(cfg, "Night", "Dark"))
+    S.equal(cfg.hotkeys["8"].skip, {"", "Warm", "Dark"})
+    assert(OpsV3.set_hotkey(cfg, 9, {kind = "group", group = "Look", option = "Hurt"}) == false, "group cycles")
+    assert(OpsV3.set_hotkey(cfg, 7, nil) and cfg.hotkeys["7"] == nil, "clear")
+    assert(OpsV3.set_hotkey(cfg, 9, {kind = "group", group = "Look", option = "Hurt"}))
+    assert(OpsV3.rename_option(cfg, "Look", "Hurt", "Pain") and cfg.hotkeys["9"].option == "Pain")
+    assert(OpsV3.delete_option(cfg, "Look", "Pain") and cfg.hotkeys["9"] == nil)
+    assert(OpsV3.rename_base(cfg, "A", "Main"))
+    S.equal(cfg.hotkeys["6"].skip or {}, {})
+    assert(OpsV3.set_hotkey_skip(cfg, {kind = "base"}, "Main", false))
+    assert(OpsV3.delete_base(cfg, "Main"))
+    assert(cfg.hotkeys["6"].skip == nil, "deleted item leaves the skip list")
+    assert(OpsV3.delete_group(cfg, "Look"))
+    assert(OpsV3.delete_palette(cfg, "Dark") and cfg.hotkeys["8"].skip[3] == nil)
 end
 
-print("PASS: RE4 hotkeys: Alt + digit fires once and blocks the digit until released, digit-before-Alt and unbound digits pass through, bindings clean / move / follow rename / drop on delete")
+print("PASS: RE4 hotkeys: Alt + digit fires once and blocks the digit until released, digit-before-Alt and unbound digits pass through; bindings: legacy migration, one key per setting, cycle vs item exclusivity, cycle order / wrap / skip ((none) and original included), follow renames, drop on delete")

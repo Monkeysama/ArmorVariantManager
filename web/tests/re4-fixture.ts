@@ -3,7 +3,7 @@
 //   &re4-v2    先给一份旧配置（configVersion = 2），点「迁移旧配置」后变成 v3
 //   &re4-empty 没有角色
 //   &re4-null  空表按 REFramework 的习惯序列化成 null
-import type { Re4Action, Re4ConditionDef, Re4Palette, Re4PaletteMaterial, Re4PaletteOverride, Re4PaletteProfile, Re4PaletteValue, Re4Result, Re4Snapshot, Re4State, Re4StateKind } from '../src/re4/types';
+import type { Re4Action, Re4ConditionDef, Re4Hotkey, Re4Palette, Re4PaletteMaterial, Re4PaletteOverride, Re4PaletteProfile, Re4PaletteValue, Re4Result, Re4Snapshot, Re4State, Re4StateKind } from '../src/re4/types';
 
 type Win = Window & { reffNativeCall?: (method: string, params: Record<string, unknown>) => Promise<unknown>; re4Calls?: unknown[] };
 type Values = Record<string, boolean>;
@@ -112,7 +112,12 @@ export function installRe4Fixture() {
   // 模型高度(夹具简化:不跟改名 / 删除走)。键:'base|预设' / 'g:组|选项'
   const heights: Record<string, number> = {};
   const heightOverride = { enabled: false, cm: 0 };
-  const hotkeys: Record<string, number> = {};   // 整套造型快捷键(夹具简化:不跟改名 / 删除走)
+  // 快捷键(Alt + 数字),规则同 Lua 的 OpsV3.set_hotkey(夹具简化:不跟改名 / 删除走)
+  const hotkeys: Record<number, Re4Hotkey> = {};
+  const hkStructure = (t: { kind: string; group?: string }) => t.kind === 'group' ? 'group:' + t.group : t.kind;
+  const hkCycle = (t: { option?: string; scheme?: string }) => t.option === undefined && t.scheme === undefined;
+  const hkSame = (a: Re4Hotkey, b: Re4Hotkey) => hkStructure(a) === hkStructure(b) && hkCycle(a) === hkCycle(b)
+    && (a.kind === 'palette' ? a.scheme : a.option) === (b.kind === 'palette' ? b.scheme : b.option);
   let paletteOpen = false, paletteSel: string[] = [];
   // 调色方案(夹具简化:不跟整套造型 / 选项改名走)。'' = 初始(只读,在它上面改会自动新建方案);引用键同 heights
   type Ov = Record<string, Record<string, Re4PaletteOverride>>;
@@ -257,12 +262,13 @@ export function installRe4Fixture() {
       slots: Object.entries(catalog).map(([id, mats]) => ({ id, label: labels[id], mirrored: false, materials: mats.map(name => ({ name, note: config.notes[`${id}/${name}`] })) })),
       look: allKeys.map(k => { const [slot, material] = k.split('/'); return { slot, material, on: look[k] !== false }; }),
       base: { active: config.base.active, effective: effBase, fromState: r.claims.base?.i,
-        presets: config.base.order.map(name => ({ name, values: config.base.presets[name], match: { status: 'ok', skipped: [] }, height: heights['base|' + name], palette: palRefs['base|' + name], hotkey: hotkeys[name] })) },
+        presets: config.base.order.map(name => ({ name, values: config.base.presets[name], match: { status: 'ok', skipped: [] }, height: heights['base|' + name], palette: palRefs['base|' + name] })) },
       groups: config.groups.map(g => ({ name: g.name, scope: g.scope, active: g.active, effective: pick('g:' + g.name, g.active),
         fromState: r.claims['g:' + g.name]?.i, options: g.order.map(name => ({ name, values: g.options[name], height: heights[`g:${g.name}|${name}`], palette: palRefs[`g:${g.name}|${name}`] })) })),
       states, locating, height, heightSource, heightOverride: { ...heightOverride },
       palette: paletteOpen ? paletteSnapshot() : undefined,
-      palettes: { list: schemeOrder.map(name => ({ name, used: used(name), materials: Object.keys(schemeOv[name]).length })), active: activePal },
+      hotkeys: Object.values(hotkeys).sort((x, y) => x.digit - y.digit).map(h => ({ ...h, skip: [...h.skip] })),
+      palettes: { list: schemeOrder.map(name => ({ name, used: used(name), materials: Object.keys(schemeOv[name]).length })), active: activePal, selected: editing },
       presets: { current: config.source === 'p0002' ? 'partial' : 'full', dismissed,
         source: source ? { id: source.id, name: source.name, own: source.source === 'user' } : undefined,
         list: presets.map(p => ({ id: p.id, name: p.name, source: p.source, match: p.match })),
@@ -316,10 +322,23 @@ export function installRe4Fixture() {
         config.base.order.splice(config.base.order.indexOf(a.preset), 1); if (config.base.active === a.preset) config.base.active = ''; break;
       case 'base-recapture': if (!config.base.presets[a.preset]) fail(); backup = clone(config); config.base.presets[a.preset] = full(); break;
       case 'base-material': (config.base.presets[a.preset] ?? fail())[`${a.slot}/${a.material}`] = a.value; break;
-      case 'base-hotkey': { if (!config.base.presets[a.preset]) fail(); if (a.digit !== undefined && (a.digit < 0 || a.digit > 9)) fail();
-        if (hotkeys[a.preset] === a.digit) fail();
-        for (const n of Object.keys(hotkeys)) if (hotkeys[n] === a.digit) delete hotkeys[n];
-        if (a.digit === undefined) delete hotkeys[a.preset]; else hotkeys[a.preset] = a.digit; break; }
+      case 'hotkey-set': {
+        if (a.digit < 0 || a.digit > 9) fail();
+        const b: Re4Hotkey = { ...a.target, digit: a.digit, cycle: hkCycle(a.target), skip: [] };
+        if (hotkeys[a.digit] && hkSame(hotkeys[a.digit], b)) fail();
+        for (const [k, x] of Object.entries(hotkeys)) {
+          if (hkStructure(x) !== hkStructure(b)) continue;
+          if (hkSame(x, b)) { if (b.cycle) b.skip = x.skip; delete hotkeys[Number(k)]; }
+          else if (b.cycle) delete hotkeys[Number(k)];
+          else if (x.cycle) fail('这个结构已经绑了轮换键');
+        }
+        hotkeys[a.digit] = b; break; }
+      case 'hotkey-clear': if (!hotkeys[a.digit]) fail(); delete hotkeys[a.digit]; break;
+      case 'hotkey-skip': {
+        const b = Object.values(hotkeys).find(x => x.cycle && hkStructure(x) === hkStructure(a.structure)) ?? fail();
+        const at = b.skip.indexOf(a.item);
+        if (a.included) { if (at < 0) fail(); b.skip.splice(at, 1); } else { if (at >= 0) fail(); b.skip.push(a.item); }
+        break; }
       case 'base-height': if (!config.base.presets[a.preset]) fail();
         if (a.cm === undefined) delete heights['base|' + a.preset]; else heights['base|' + a.preset] = a.cm; break;
       case 'palette-view': paletteOpen = a.open; paletteSel = [...a.keys]; break;

@@ -27,6 +27,85 @@ function OpsV3.set_manual(cfg, layer, option)
     return true, true
 end
 
+-- ============================================================ 快捷键(Alt + 数字,见 ModelV3 的 hotkeys)
+-- 改名:单项绑定里的名字、轮换的 skip 里的名字跟着改。kind = "base" / "group" / "palette";group 只在 kind = group 时
+local function hotkeys_rename_item(cfg, kind, group, old, new)
+    for _, b in pairs(type(cfg.hotkeys) == "table" and cfg.hotkeys or {}) do
+        if b.kind == kind and (kind ~= "group" or b.group == group) then
+            if kind == "palette" then
+                if b.scheme == old then b.scheme = new end
+            elseif b.option == old then b.option = new end
+            for i, n in ipairs(b.skip or {}) do if n == old then b.skip[i] = new end end
+        end
+    end
+end
+
+-- target = { kind, group?, option? / scheme? }(没有 option / scheme = 轮换整个结构);nil = 清掉这个键。
+-- 这个设定原来占着别的键就移过来;绑轮换时清掉同一结构下的单项键;结构已有轮换键时不能给单项绑键。
+-- 只是绑定,不用重写
+function OpsV3.set_hotkey(cfg, digit, target)
+    local d = math.tointeger(tonumber(digit))
+    if not d or d < 0 or d > 9 then return false end
+    local key = tostring(d)
+    local keys = type(cfg.hotkeys) == "table" and cfg.hotkeys or {}
+    if target == nil then
+        if keys[key] == nil then return false end
+        keys[key] = nil
+        cfg.hotkeys = next(keys) and keys or nil
+        return true, false
+    end
+    if type(target) ~= "table" then return false end
+    local b = { kind = target.kind }
+    if b.kind == "group" then b.group = target.group end
+    if b.kind == "palette" then b.scheme = target.scheme else b.option = target.option end
+    if (b.kind ~= "base" and b.kind ~= "group" and b.kind ~= "palette") or (b.kind == "group" and type(b.group) ~= "string") then return false end
+    if b.option ~= nil and type(b.option) ~= "string" or b.scheme ~= nil and type(b.scheme) ~= "string" then return false end
+    if not M3.hotkey_valid(cfg, b) then return false end
+    local structure, target_key, cycle = M3.hotkey_structure(b), M3.hotkey_target(b), M3.hotkey_is_cycle(b)
+    local cur = keys[key]
+    if cur and M3.hotkey_target(cur) == target_key then return false end
+    for k, x in pairs(keys) do
+        if M3.hotkey_structure(x) == structure then
+            if M3.hotkey_target(x) == target_key then
+                if cycle then b.skip = x.skip end   -- 轮换键换到别的数字:跳过的项保留
+                keys[k] = nil
+            elseif cycle then
+                keys[k] = nil                        -- 绑轮换:同一结构的单项键作废
+            elseif M3.hotkey_is_cycle(x) then
+                return false                         -- 结构已有轮换键:单项不能绑
+            end
+        end
+    end
+    keys[key] = b
+    cfg.hotkeys = keys
+    return true, false
+end
+
+-- 轮换里要不要包括 item("" = 状态组的「（无）」/ 调色的「初始」)。structure = { kind, group? }
+function OpsV3.set_hotkey_skip(cfg, structure, item, included)
+    if type(structure) ~= "table" or type(item) ~= "string" then return false end
+    local want = M3.hotkey_structure(structure)
+    for _, b in pairs(type(cfg.hotkeys) == "table" and cfg.hotkeys or {}) do
+        if M3.hotkey_is_cycle(b) and M3.hotkey_structure(b) == want then
+            local ok = false
+            for _, n in ipairs(M3.hotkey_items(cfg, b) or {}) do if n == item then ok = true end end
+            if not ok then return false end
+            local skip, at = b.skip or {}, nil
+            for i, n in ipairs(skip) do if n == item then at = i end end
+            if included == true then
+                if not at then return false end
+                table.remove(skip, at)
+            else
+                if at then return false end
+                skip[#skip + 1] = item
+            end
+            b.skip = next(skip) and skip or nil
+            return true, false
+        end
+    end
+    return false
+end
+
 -- ============================================================ 整套造型(只补牵动引用的)
 function OpsV3.rename_base(cfg, old, new)
     local ok = Ops.rename_preset(cfg.base, old, new)
@@ -34,11 +113,16 @@ function OpsV3.rename_base(cfg, old, new)
     for _, st in ipairs(cfg.conditions.states) do
         if st.base == old then st.base = new end
     end
+    hotkeys_rename_item(cfg, "base", nil, old, new)
     return true, false
 end
 
 -- 删除后指向它的条件状态保留引用,显示为"引用失效"
-function OpsV3.delete_base(cfg, name) return Ops.delete_preset(cfg.base, name) end
+function OpsV3.delete_base(cfg, name)
+    local ok, reapply = Ops.delete_preset(cfg.base, name)
+    if ok then M3.clean_hotkey_table(cfg) end   -- 指向它的快捷键作废
+    return ok, reapply
+end
 
 -- ============================================================ 状态组
 function OpsV3.new_group(cfg, name)
@@ -57,6 +141,9 @@ function OpsV3.rename_group(cfg, old, new)
             if t.group == old then t.group = new end
         end
     end
+    for _, b in pairs(type(cfg.hotkeys) == "table" and cfg.hotkeys or {}) do
+        if b.kind == "group" and b.group == old then b.group = new end
+    end
     return true, false
 end
 
@@ -64,6 +151,7 @@ function OpsV3.delete_group(cfg, name)
     local _, i = M3.find_group(cfg, name)
     if not i then return false end
     table.remove(cfg.groups, i)
+    M3.clean_hotkey_table(cfg)
     return true, true
 end
 
@@ -163,13 +251,16 @@ function OpsV3.rename_option(cfg, group, old, new)
             if t.group == group and t.option == old then t.option = new end
         end
     end
+    hotkeys_rename_item(cfg, "group", group, old, new)
     return true, false
 end
 
 function OpsV3.delete_option(cfg, group, name)
     local _, layer = group_layer(cfg, group)
     if not layer then return false end
-    return Ops.delete_preset(layer, name)
+    local ok, reapply = Ops.delete_preset(layer, name)
+    if ok then M3.clean_hotkey_table(cfg) end
+    return ok, reapply
 end
 
 function OpsV3.move_option(cfg, group, name, offset)
@@ -216,26 +307,6 @@ function OpsV3.set_height(cfg, layer, option, cm)
     if holder.heights[option] == v then return false end
     holder.heights[option] = v
     return true, true
-end
-
--- 整套造型的快捷键(Alt + 数字):digit = 0~9,nil 取消。这个数字原来绑在别的预设上就移过来。
--- 只是绑定,不用重写
-function OpsV3.set_base_hotkey(cfg, preset, digit)
-    local base = cfg.base
-    if type(preset) ~= "string" or not base.presets[preset] then return false end
-    local d = nil
-    if digit ~= nil then
-        d = math.tointeger(tonumber(digit))
-        if not d or d < 0 or d > 9 then return false end
-    end
-    local keys = type(base.hotkeys) == "table" and base.hotkeys or {}
-    if keys[preset] == d then return false end
-    if d ~= nil then
-        for n, v in pairs(keys) do if v == d then keys[n] = nil end end
-    end
-    keys[preset] = d
-    base.hotkeys = next(keys) and keys or nil
-    return true, false
 end
 
 -- 全局覆盖(快速切换页):enabled / cm 给哪个改哪个,另一个保持。关掉时保留数值,下次打开接着用
@@ -317,6 +388,7 @@ function OpsV3.rename_palette(cfg, old, new)
     fix(cfg.base.palettes)
     for _, g in ipairs(cfg.groups) do fix(g.palettes) end
     for _, st in ipairs(cfg.conditions.states) do if st.palette == old then st.palette = new end end
+    hotkeys_rename_item(cfg, "palette", nil, old, new)
     return true, false
 end
 
@@ -330,6 +402,7 @@ function OpsV3.delete_palette(cfg, name)
         if n == name then table.remove(cfg.palette_order, i); break end
     end
     if next(schemes) == nil then cfg.palettes, cfg.palette_order = nil, nil end
+    M3.clean_hotkey_table(cfg)
     return true, true
 end
 

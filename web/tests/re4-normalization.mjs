@@ -83,10 +83,20 @@ test('colour schemes survive empty-table shapes; the edited scheme defaults to a
   for (const empty of [null, {}]) {
     const result = normalizeSnapshot({ game: 'RE4', version: '1', language: 'zh', settings, character: 'Leon', configVersion: 3, characters: [],
       palettes: { list: empty, active: empty }, palette: { materials: null, profiles: null, values: null, overrides: null, selected: null, errors: null } });
-    assert.deepEqual(result.palettes, { list: [], active: [] });
+    assert.deepEqual(result.palettes, { list: [], active: [], selected: '' });
     assert.equal(result.palette.scheme, '');
   }
   const one = normalizeSnapshot({ game: 'RE4', version: '1', language: 'zh', settings, character: 'Leon', configVersion: 3, characters: [],
     palettes: { list: [{ name: 'Pale', used: 2, materials: 1 }], active: ['Pale'] } });
   assert.deepEqual(one.palettes.list, [{ name: 'Pale', used: 2, materials: 1 }]);
+});
+
+test('hotkeys survive empty-table shapes (null skip lists, null list)', () => {
+  for (const empty of [null, {}]) {
+    const r = normalizeSnapshot({ game: 'RE4', version: '1', language: 'zh', settings, character: 'Leon', configVersion: 3, characters: [],
+      hotkeys: [{ digit: 2, kind: 'group', group: 'Face', cycle: true, skip: empty }, { digit: 1, kind: 'base', option: 'A', cycle: false, skip: empty }] });
+    assert.deepEqual(r.hotkeys[0].skip, []);
+    assert.equal(r.hotkeys[1].cycle, false);
+    assert.deepEqual(normalizeSnapshot({ game: 'RE4', version: '1', language: 'zh', settings, character: 'Leon', configVersion: 3, characters: [], hotkeys: empty }).hotkeys, []);
+  }
 });

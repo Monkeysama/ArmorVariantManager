@@ -12,8 +12,12 @@
 --     conditions = { auto = true, states = { 条件状态, ... } },   -- 数组顺序就是优先级
 --     material_notes = { [slot] = { [材质] = "备注" } }, armor_mirrors_body = true, source_preset = nil,
 --   }
---   快捷键(可选):base.hotkeys = { [预设名] = 数字 0~9 } —— Alt + 这个数字切到这套整套造型(手动选择),
---     一个数字只绑一套。按键处理见 Hotkeys.lua。
+--   快捷键(可选):hotkeys = { ["0".."9"] = 绑定 } —— Alt + 数字,按键处理见 Hotkeys.lua。所有设定共用这十个键。
+--     绑定 = { kind = "base" | "group" | "palette", group = 状态组名(kind = group 时),
+--              option = 预设 / 选项名 或 scheme = 方案名(单项;"" = 状态组的「（无）」/ 调色的「初始」),
+--              skip = { 名字, ... }(只有轮换:不参与轮换的项) }
+--     没有 option / scheme = 轮换整个结构(按一下切到下一项,到末尾回到开头)。一个键一个设定、一个设定一个键;
+--     结构绑了轮换键时,它下面的项不能再单独绑(清洗时去掉)。旧的 base.hotkeys(整套造型单项)读入时迁移过来。
 --   模型高度(可选):base.heights = { [预设名] = 厘米 },groups[i].heights = { [选项名] = 厘米 }。
 --     不放进快照(快照顶层键都是槛位,预设指纹按它算)。解算见 height_of:按叠加顺序,后写覆盖先写。
 --   height_override = { enabled, cm }:全局覆盖(快速切换页),打开时无视各层,统一用 cm。
@@ -136,17 +140,113 @@ local function clean_palette_refs(refs, names)
     return next(out) and out or nil
 end
 
--- 整套造型的快捷键:{ [预设名] = 数字 0~9 },只留指向现有预设的;一个数字只绑一套(按预设顺序,前面的留下)
-local function clean_hotkeys(h, names, order)
-    local out, used = {}, {}
-    local src = is_tbl(h) and h or {}
-    for _, n in ipairs(order) do
-        local d = math.tointeger(tonumber(src[n]))
-        if names[n] ~= nil and d and d >= 0 and d <= 9 and not used[d] then out[n], used[d] = d, true end
-    end
-    return next(out) and out or nil
+-- ============================================================ 快捷键绑定
+-- 结构键:同一个结构的轮换和单项共用(用来判断互斥);目标键:一个设定只占一个键
+function M.hotkey_structure(b) return b.kind == "group" and ("group:" .. tostring(b.group)) or b.kind end
+function M.hotkey_is_cycle(b) return b.option == nil and b.scheme == nil end
+function M.hotkey_target(b)
+    return M.hotkey_structure(b) .. "|" .. (M.hotkey_is_cycle(b) and "*" or ("=" .. tostring(b.option or b.scheme)))
 end
-M.clean_hotkeys = clean_hotkeys
+
+-- 结构里能轮换的项(按显示顺序):整套造型 = 各预设;状态组 = 「（无）」("")+ 各选项;调色 = 「初始」("")+ 各方案
+function M.hotkey_items(cfg, b)
+    if b.kind == "base" then
+        local out = {}
+        for _, n in ipairs((cfg.base or {}).order or {}) do out[#out + 1] = n end
+        return out
+    elseif b.kind == "group" then
+        local g = M.find_group(cfg, b.group)
+        if not g then return nil end
+        local out = { "" }
+        for _, n in ipairs(g.order or {}) do out[#out + 1] = n end
+        return out
+    elseif b.kind == "palette" then
+        local out = { "" }
+        for _, n in ipairs(cfg.palette_order or {}) do out[#out + 1] = n end
+        return out
+    end
+    return nil
+end
+
+-- 这个绑定还指得到东西吗
+function M.hotkey_valid(cfg, b)
+    local items = M.hotkey_items(cfg, b)
+    if not items then return false end
+    if M.hotkey_is_cycle(b) then return true end
+    local want = b.kind == "palette" and b.scheme or b.option
+    if b.kind == "base" and want == "" then return false end
+    for _, n in ipairs(items) do if n == want then return true end end
+    return false
+end
+
+-- 轮换:当前手动选择的下一项(跳过 skip 里的);当前不在列表里就从第一项开始。没有可轮换的返回 nil
+function M.hotkey_next(cfg, b)
+    local items = M.hotkey_items(cfg, b) or {}
+    local skip = {}
+    for _, n in ipairs(b.skip or {}) do skip[n] = true end
+    local list = {}
+    for _, n in ipairs(items) do if not skip[n] then list[#list + 1] = n end end
+    if #list == 0 then return nil end
+    local cur
+    if b.kind == "base" then cur = (cfg.base or {}).active
+    elseif b.kind == "group" then cur = (M.find_group(cfg, b.group) or {}).active
+    else cur = cfg.palette_active or "" end
+    for i, n in ipairs(list) do
+        if n == cur then return list[i % #list + 1] end
+    end
+    return list[1]
+end
+
+-- 清洗:键只认 0~9;目标要存在;skip 只留现有的项;一个设定只留一个键(数字小的留下);
+-- 结构有轮换键时去掉它下面的单项键;旧的 base.hotkeys 迁移过来(键没被占才迁)。空了返回 nil
+function M.clean_hotkey_table(cfg)
+    local src = is_tbl(cfg.hotkeys) and cfg.hotkeys or {}
+    local legacy = is_tbl(cfg.base) and cfg.base.hotkeys or nil
+    local raw = {}
+    for d = 0, 9 do
+        local b = src[tostring(d)] or src[d]
+        if is_tbl(b) then raw[d] = b end
+    end
+    if is_tbl(legacy) then
+        local names = {}
+        for n in pairs(legacy) do names[#names + 1] = n end
+        table.sort(names)
+        for _, n in ipairs(names) do
+            local d = math.tointeger(tonumber(legacy[n]))
+            if type(n) == "string" and d and d >= 0 and d <= 9 and not raw[d] then raw[d] = { kind = "base", option = n } end
+        end
+    end
+    if is_tbl(cfg.base) then cfg.base.hotkeys = nil end
+    local list = {}
+    for d = 0, 9 do
+        local b = raw[d]
+        if b and (b.kind == "base" or b.kind == "group" or b.kind == "palette") then
+            local c = { kind = b.kind }
+            if b.kind == "group" then c.group = type(b.group) == "string" and b.group or nil end
+            if b.kind == "palette" then c.scheme = type(b.scheme) == "string" and b.scheme or nil
+            else c.option = type(b.option) == "string" and b.option or nil end
+            if (b.kind ~= "group" or c.group) and M.hotkey_valid(cfg, c) then
+                if M.hotkey_is_cycle(c) then
+                    local items, skip = {}, {}
+                    for _, n in ipairs(M.hotkey_items(cfg, c) or {}) do items[n] = true end
+                    for _, n in ipairs(is_tbl(b.skip) and b.skip or {}) do
+                        if type(n) == "string" and items[n] and not skip[n] then skip[n] = true; c.skip = c.skip or {}; c.skip[#c.skip + 1] = n end
+                    end
+                end
+                list[#list + 1] = { d = d, b = c }
+            end
+        end
+    end
+    local cycles, seen, out = {}, {}, {}
+    for _, e in ipairs(list) do if M.hotkey_is_cycle(e.b) then cycles[M.hotkey_structure(e.b)] = true end end
+    for _, e in ipairs(list) do
+        local t = M.hotkey_target(e.b)
+        local blocked = not M.hotkey_is_cycle(e.b) and cycles[M.hotkey_structure(e.b)]
+        if not blocked and not seen[t] then seen[t] = true; out[tostring(e.d)] = e.b end
+    end
+    cfg.hotkeys = next(out) and out or nil
+    return cfg.hotkeys
+end
 
 M.PALETTE_NAME_MAX = 64
 M.LEGACY_PALETTE = "常驻"   -- 旧的常驻调色迁移成的方案名
@@ -222,7 +322,6 @@ function M.normalize(cfg)
     base.rules, base.auto = nil, nil
     base.heights = clean_heights(base.heights, presets)
     base.palettes = clean_palette_refs(base.palettes, presets)
-    base.hotkeys = clean_hotkeys(base.hotkeys, presets, base.order)
     cfg.base = base
 
     local groups, names = {}, {}
@@ -295,6 +394,8 @@ function M.normalize(cfg)
         cfg.palettes, cfg.palette_order = nil, nil
     end
     if type(cfg.palette_active) ~= "string" or not schemes[cfg.palette_active] then cfg.palette_active = nil end
+    -- 快捷键要在整套造型、状态组、调色方案都清洗完之后
+    M.clean_hotkey_table(cfg)
     if type(cfg.source_preset) ~= "string" then cfg.source_preset = nil end
     return cfg
 end

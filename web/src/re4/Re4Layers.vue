@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import Re4Num from './Re4Num.vue';
+import Re4HotkeyPick from './Re4HotkeyPick.vue';
+import { cycleOf, keyOf as hotkeyFor } from './hotkeys';
 import { computed, reactive, shallowRef } from 'vue';
 import { ElButton, ElInput, ElOption, ElSelect, ElSwitch } from '@reff/ui';
 import type { Re4Translate } from './i18n';
@@ -89,7 +91,7 @@ const stateName = (i?: number) => i ? props.snapshot.states?.[i - 1]?.name ?? ''
 
 interface Card {
   id: string; isBase: boolean; name: string; active: string; effective?: string; fromState?: number;
-  scope: string[]; options: { name: string; values: Re4Values; match?: { status: string; skipped: string[] }; height?: number; palette?: string; hotkey?: number }[];
+  scope: string[]; options: { name: string; values: Re4Values; match?: { status: string; skipped: string[] }; height?: number; palette?: string }[];
 }
 const cards = computed<Card[]>(() => {
   if (props.mode === 'base') {
@@ -146,15 +148,13 @@ const schemeNames = computed(() => (props.snapshot.palettes?.list ?? []).map(x =
 const schemeMissing = (name?: string) => !!name && !schemeNames.value.includes(name);
 const setPalette = (card: Card, option: string, scheme: string) =>
   props.perform({ kind: 'palette-ref', ...c(), layer: card.isBase ? 'base' : card.name, option, scheme });
-// 整套造型的快捷键:Alt + 数字(1~9、0)。选了别的整套造型占着的数字,就从那套移过来
-const DIGITS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 0];
-const hotkeyOwner = (d: number) => props.snapshot.base?.presets.find(p => p.hotkey === d)?.name;
-const hotkeyLabel = (d: number, self: string) => {
-  const owner = hotkeyOwner(d);
-  return owner && owner !== self ? props.t('hotkeyUsedBy', 'Alt+' + d, owner) : 'Alt+' + d;
-};
-const setHotkey = (preset: string, v: string | number) =>
-  props.perform({ kind: 'base-hotkey', ...c(), preset, digit: v === '' ? undefined : Number(v) });
+// 快捷键(Alt + 数字,见 hotkeys.ts):卡片标题上是整个结构的轮换键,每一项上是单项键或「参与轮换」开关
+const cycleTarget = (card: Card) => card.isBase ? { kind: 'base' as const } : { kind: 'group' as const, group: card.name };
+const itemTarget = (card: Card, option: string) =>
+  card.isBase ? { kind: 'base' as const, option } : { kind: 'group' as const, group: card.name, option };
+const itemKey = (card: Card, option: string) => hotkeyFor(props.snapshot, itemTarget(card, option))?.digit;
+// 结构绑了轮换键:每一行外面直接给「参与轮换」开关(不用展开);没绑时单项选键在展开的工具栏里
+const cycling = (card: Card) => !!cycleOf(props.snapshot, cycleTarget(card));
 // 卡片按名字做键，改名后展开状态要跟着搬到新名字上，否则改完就收起了
 async function renameGroup(card: Card, input: HTMLInputElement) {
   const name = input.value.trim();
@@ -239,6 +239,7 @@ function scopeBulk(card: Card, list: { id: string; materials: { name: string }[]
           </template>
         </span>
         <span class="re4-gacts">
+          <Re4HotkeyPick :snapshot="snapshot" :busy="busy" :perform="perform" :t="t" :target="cycleTarget(card)" :label="t('hotkeyCycleRef')" />
           <ElButton v-if="card.isBase" size="small" :disabled="busy" @click="perform({ kind: 'base-new', ...c() }).then(ok => ok && open.add(card.id))">{{ t('newBase') }}</ElButton>
           <template v-else>
             <ElButton size="small" :disabled="busy" @click="toggle(scopeOpen, card.id); open.add(card.id)">{{ t('editScope') }}</ElButton>
@@ -284,7 +285,8 @@ function scopeBulk(card: Card, list: { id: string; materials: { name: string }[]
           <div v-if="!card.isBase" class="re4-orow" :class="{ manual: card.active === '' }">
             <span class="re4-caret"></span>
             <label class="re4-oname"><input type="radio" :name="card.id" :checked="card.active === ''" :disabled="busy" @change="pick(card, '')">{{ t('none') }}</label>
-            <span></span><span></span>
+            <span class="re4-oinfo"><span v-if="itemKey(card, '') !== undefined" class="re4-tag" :title="t('hotkeyHint')">Alt+{{ itemKey(card, '') }}</span></span>
+            <span class="re4-oact"><Re4HotkeyPick :snapshot="snapshot" :busy="busy" :perform="perform" :t="t" :target="itemTarget(card, '')" /></span>
           </div>
           <template v-for="opt in card.options" :key="opt.name">
             <div class="re4-orow" :class="{ manual: card.active === opt.name, eff: card.fromState && card.effective === opt.name }">
@@ -302,11 +304,12 @@ function scopeBulk(card: Card, list: { id: string; materials: { name: string }[]
                 <span v-else-if="opt.match?.status === 'partial'" class="re4-res broken">{{ t('partialSlots', opt.match.skipped.join('、')) }}</span>
                 <span v-if="users(card, opt.name).length" class="re4-used">{{ t('usedBy', users(card, opt.name).map(s => s.name).join('」「')) }}</span>
                 <span v-if="opt.height !== undefined" class="re4-tag" :title="t('heightHint')">{{ t('heightTag', cmText(opt.height)) }}</span>
-                <span v-if="opt.hotkey !== undefined" class="re4-tag" :title="t('hotkeyHint')">Alt+{{ opt.hotkey }}</span>
+                <span v-if="itemKey(card, opt.name) !== undefined" class="re4-tag" :title="t('hotkeyHint')">Alt+{{ itemKey(card, opt.name) }}</span>
                 <span v-if="opt.palette" class="re4-tag" :class="{ 're4-res broken': schemeMissing(opt.palette) }"
                   :title="schemeMissing(opt.palette) ? t('paletteRefBroken') : t('paletteRef')">🎨 {{ opt.palette }}</span>
               </span>
               <span class="re4-oact">
+                <Re4HotkeyPick v-if="cycling(card)" :snapshot="snapshot" :busy="busy" :perform="perform" :t="t" :target="itemTarget(card, opt.name)" />
                 <template v-if="renaming?.id === card.id + '|' + opt.name">
                   <ElButton size="small" type="primary" @click="commitRename(card, opt.name)">{{ t('done') }}</ElButton>
                   <ElButton size="small" @click="renaming = null">{{ t('cancel') }}</ElButton>
@@ -346,13 +349,8 @@ function scopeBulk(card: Card, list: { id: string; materials: { name: string }[]
                     <ElOption v-for="n in schemeNames" :key="n" :value="n" :label="n" />
                     <ElOption v-if="schemeMissing(opt.palette)" :value="opt.palette!" :label="t('paletteRefBroken') + '：' + opt.palette" disabled />
                   </ElSelect></label>
-                <!-- 快捷键(只有整套造型):按住 Alt 再按数字切到这套 -->
-                <label v-if="card.isBase" class="re4-height" :title="t('hotkeyHint')">{{ t('hotkeyRef') }}
-                  <ElSelect :model-value="opt.hotkey ?? ''" :empty-values="[null, undefined]" size="small" style="width:13em" :disabled="busy"
-                    :aria-label="t('hotkeyRef')" @change="v => setHotkey(opt.name, v)">
-                    <ElOption value="" :label="t('hotkeyNone')" />
-                    <ElOption v-for="d in DIGITS" :key="d" :value="d" :label="hotkeyLabel(d, opt.name)" />
-                  </ElSelect></label>
+                <!-- 快捷键:单项键;所在结构绑了轮换键时是「参与轮换」开关 -->
+                <Re4HotkeyPick v-if="!cycling(card)" :snapshot="snapshot" :busy="busy" :perform="perform" :t="t" :target="itemTarget(card, opt.name)" />
               </div>
               <span v-if="!card.scope.length" class="re4-muted re4-small">{{ t('emptyScope') }}</span>
               <div class="re4-mlist" :class="{ notes }">
@@ -407,7 +405,8 @@ function scopeBulk(card: Card, list: { id: string; materials: { name: string }[]
 .re4-sum .on { color: var(--re4-ok); }
 .re4-used { color: var(--avm-accent); }
 .re4-used b { font-weight: 500; }
-.re4-oact { display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
+.re4-oact { display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; align-items: center; }
+.re4-oact .re4-hk-incl { margin-right: 6px; }
 .re4-oact .el-button + .el-button, .re4-mtools .el-button + .el-button { margin-left: 0; }
 .re4-height { display: inline-flex; align-items: center; gap: 4px; margin-left: 8px; font-size: 12.5px; color: var(--avm-muted); }
 .re4-mlist-wrap { padding: 6px 12px 8px 3.2em; background: var(--re4-soft); border-top: 1px dashed var(--avm-line); display: grid; gap: 6px; }

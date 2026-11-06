@@ -1,5 +1,5 @@
 import type {
-  Re4BasePreset, Re4Character, Re4ConditionDef, Re4Group, Re4Look, Re4Option, Re4Palette, Re4PaletteEntry, Re4PaletteGroup,
+  Re4BasePreset, Re4Character, Re4Hotkey, Re4ConditionDef, Re4Group, Re4Look, Re4Option, Re4Palette, Re4PaletteEntry, Re4PaletteGroup,
   Re4PaletteMaterial, Re4PaletteOption, Re4PaletteOverride, Re4PaletteProfile, Re4PaletteScheme, Re4PaletteSection, Re4PaletteValue, Re4PresetEntry, Re4Slot, Re4Snapshot, Re4State,
 } from './types';
 
@@ -74,10 +74,15 @@ export function normalizeRe4(value: Re4Snapshot): Re4Snapshot {
   }
   if (value.states !== undefined) out.states = list<Re4State>(value.states, 'states').map(state);
   if (value.palette) out.palette = palette(value.palette);
+  // 快捷键:没有绑定 / 没有跳过的项时 Lua 发来空表 → null
+  if (value.hotkeys !== undefined) {
+    out.hotkeys = list<Re4Hotkey>(value.hotkeys, 'hotkeys').map(h => ({ ...h, cycle: h.cycle === true, skip: list<string>(h.skip, 'hotkey.skip') }));
+  }
   // 调色方案:没有方案 / 没有生效的方案时 Lua 发来空表 → null
   if (value.palettes) {
     out.palettes = { list: list<Re4PaletteScheme>(value.palettes.list, 'palettes.list').map(x => ({ ...x, used: Number(x.used) || 0, materials: Number(x.materials) || 0 })),
-      active: list<string>(value.palettes.active, 'palettes.active') };
+      active: list<string>(value.palettes.active, 'palettes.active'),
+      selected: typeof value.palettes.selected === 'string' ? value.palettes.selected : '' };
   }
   if (value.presets) {
     out.presets = { ...value.presets, dismissed: value.presets.dismissed === true,

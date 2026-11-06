@@ -38,8 +38,7 @@ export type Re4Values = Record<string, boolean>;
 export interface Re4Match { status: 'ok' | 'partial' | 'mismatch'; skipped: string[] }
 // height:这个预设 / 选项设的模型高度（厘米）；没有 = 这一层不管高度
 // palette:选中这个预设 / 选项时叠加的调色方案（可能指向已删除的方案）
-// hotkey:快捷键数字 0~9（Alt + 这个数字切到这套整套造型）
-export interface Re4BasePreset { name: string; values: Re4Values; match: Re4Match; height?: number; palette?: string; hotkey?: number }
+export interface Re4BasePreset { name: string; values: Re4Values; match: Re4Match; height?: number; palette?: string }
 export interface Re4Base { active: string; effective?: string; fromState?: number; presets: Re4BasePreset[] }
 export interface Re4Option { name: string; values: Re4Values; height?: number; palette?: string }
 export interface Re4Group { name: string; scope: string[]; active: string; effective?: string; fromState?: number; options: Re4Option[] }
@@ -93,8 +92,14 @@ export interface Re4Palette {
 // 调色方案（子预设）：used = 被引用几次，materials = 改了几个材质
 export interface Re4PaletteScheme { name: string; used: number; materials: number }
 // active：这一帧生效的方案（从下到上叠加：选中的 → 被引用的；常驻垫在最下面，不在列表里）
-export interface Re4PaletteSchemes { list: Re4PaletteScheme[]; active: string[] }
+// selected：选中的方案（"" = 初始），和调色页打开时 palette.scheme 相同
+export interface Re4PaletteSchemes { list: Re4PaletteScheme[]; active: string[]; selected: string }
 export interface Re4PaletteWrite { slot: string; material: string; param: string; component?: Re4Comp; value: number }
+
+// 快捷键（Alt + 数字）：kind 是哪个结构；没有 option / scheme = 轮换整个结构，否则是单项
+// （option / scheme 为 "" = 状态组的「（无）」/ 调色的「初始」）。skip：轮换时跳过的项
+export interface Re4HotkeyTarget { kind: 'base' | 'group' | 'palette'; group?: string; option?: string; scheme?: string }
+export interface Re4Hotkey extends Re4HotkeyTarget { digit: number; cycle: boolean; skip: string[] }
 
 export interface Re4Snapshot {
   game: 'RE4'; version: string; language: 'zh' | 'en';
@@ -111,6 +116,7 @@ export interface Re4Snapshot {
   heightOverride?: { enabled: boolean; cm: number };   // 快速切换页的全局覆盖（存在当前配置里）
   palette?: Re4Palette;   // 只在调色页打开时出现
   palettes?: Re4PaletteSchemes;
+  hotkeys?: Re4Hotkey[];
   locating?: { slot: string; material: string };
   presets?: Re4Presets;
   backups?: { hasBackup: boolean; hasOnload: boolean };
@@ -133,7 +139,9 @@ export type Re4Action =
   | C & { kind: 'base-move'; preset: string; offset: number }
   | C & { kind: 'base-material'; preset: string; slot: string; material: string; value: boolean }
   | C & { kind: 'base-height'; preset: string; cm?: number }
-  | C & { kind: 'base-hotkey'; preset: string; digit?: number }
+  | C & { kind: 'hotkey-set'; digit: number; target: Re4HotkeyTarget }
+  | C & { kind: 'hotkey-clear'; digit: number }
+  | C & { kind: 'hotkey-skip'; structure: { kind: Re4HotkeyTarget['kind']; group?: string }; item: string; included: boolean }
   | C & { kind: 'option-height'; group: string; option: string; cm?: number }
   | C & { kind: 'height-override'; enabled?: boolean; cm?: number }
   | C & { kind: 'palette-view'; open: boolean; keys: string[]; scheme?: string }

@@ -316,7 +316,7 @@ function Reff.new(deps)
         for _, name in ipairs(base.order) do
             snapshot.base.presets[#snapshot.base.presets + 1] = { name = name, values = values_of(base.presets[name]),
                 match = base_match(source, base.presets[name]), height = (base.heights or {})[name],
-                palette = (base.palettes or {})[name], hotkey = (base.hotkeys or {})[name] }
+                palette = (base.palettes or {})[name] }
         end
 
         snapshot.groups = {}
@@ -346,11 +346,23 @@ function Reff.new(deps)
         for _, n in pairs(base.palettes or {}) do count(n) end
         for _, g in ipairs(config.groups) do for _, n in pairs(g.palettes or {}) do count(n) end end
         for _, st in ipairs(config.conditions.states) do count(st.palette) end
-        snapshot.palettes = { list = {}, active = M3.palette_layers(config, v3) }
+        snapshot.palettes = { list = {}, active = M3.palette_layers(config, v3), selected = config.palette_active or "" }
         for _, n in ipairs(config.palette_order or {}) do
             local mats = 0
             for _, ms in pairs(schemes[n] or {}) do for _ in pairs(ms) do mats = mats + 1 end end
             snapshot.palettes.list[#snapshot.palettes.list + 1] = { name = n, used = used[n] or 0, materials = mats }
+        end
+
+        -- 快捷键(Alt + 数字):全部绑定,按数字排;网页据此在各处显示 / 判断互斥
+        snapshot.hotkeys = {}
+        for d = 0, 9 do
+            local b = (config.hotkeys or {})[tostring(d)]
+            if b then
+                local row = { digit = d, kind = b.kind, group = b.group, option = b.option, scheme = b.scheme,
+                    cycle = M3.hotkey_is_cycle(b), skip = {} }
+                for k, n in ipairs(b.skip or {}) do row.skip[k] = n end
+                snapshot.hotkeys[#snapshot.hotkeys + 1] = row
+            end
         end
 
         if palette_open then
@@ -556,8 +568,18 @@ function Reff.new(deps)
         ["palette-ref"] = function(p, cfg) return OpsV3.set_palette_ref(cfg, str(p.layer), str(p.option), str(p.scheme) or "") end,
         ["state-palette"] = function(p, cfg) return OpsV3.set_state_palette(cfg, integer(p.index), str(p.scheme) or "") end,
         ["base-height"] = function(p, cfg) return OpsV3.set_height(cfg, "base", p.preset, p.cm) end,
-        -- 快捷键:Alt + digit(0~9)切到这套整套造型;digit = nil 取消。数字原来绑在别的预设上就移过来
-        ["base-hotkey"] = function(p, cfg) return OpsV3.set_base_hotkey(cfg, str(p.preset), p.digit) end,
+        -- 快捷键(Alt + 数字):target = { kind = "base" / "group" / "palette", group?, option? / scheme? },
+        -- 没有 option / scheme = 轮换整个结构;clear 清掉一个键;skip:轮换里包不包括某一项(item = "" 是「（无）」/「初始」)
+        ["hotkey-set"] = function(p, cfg)
+            local t = type(p.target) == "table" and p.target or nil
+            if not t then return false end
+            return OpsV3.set_hotkey(cfg, p.digit, { kind = str(t.kind), group = str(t.group), option = str(t.option), scheme = str(t.scheme) })
+        end,
+        ["hotkey-clear"] = function(p, cfg) return OpsV3.set_hotkey(cfg, p.digit, nil) end,
+        ["hotkey-skip"] = function(p, cfg)
+            local s = type(p.structure) == "table" and p.structure or {}
+            return OpsV3.set_hotkey_skip(cfg, { kind = str(s.kind), group = str(s.group) }, str(p.item), p.included == true)
+        end,
         ["option-height"] = function(p, cfg) return OpsV3.set_height(cfg, p.group, p.option, p.cm) end,
         ["height-override"] = function(p, cfg)
             local enabled = nil

@@ -2,6 +2,7 @@
 import { computed, onActivated, onBeforeUnmount, onDeactivated, onMounted, reactive, shallowRef, watch } from 'vue';
 import { ElButton, ElColorPicker, ElDialog, ElInput, ElOption, ElSelect, ElSlider, ElSwitch, ElTooltip } from '@reff/ui';
 import Re4Num from './Re4Num.vue';
+import Re4HotkeyPick from './Re4HotkeyPick.vue';
 import type { Re4Translate } from './i18n';
 import type {
   Re4Comp, Re4Palette, Re4PaletteEntry, Re4PaletteGroup, Re4PaletteMaterial, Re4PaletteOption, Re4PaletteOverride,
@@ -423,6 +424,10 @@ const clampSlider = (e: Re4PaletteEntry, v?: number) => Math.max(sliderMin(e), M
     <div v-if="pal?.errors?.length" class="re4-banner" role="status">{{ t('paletteBadFiles', pal.errors.join('、')) }}</div>
     <div v-if="!pal" class="re4-muted re4-small">{{ t('loading') }}</div>
     <section v-if="pal" class="re4-panel re4-pal-schemes" :aria-label="t('paletteScheme')">
+      <!-- 整个调色的轮换快捷键单独一行,在方案选择上面 -->
+      <div class="re4-panel-body re4-row re4-pal-cycle">
+        <Re4HotkeyPick :snapshot="snapshot" :busy="busy" :perform="perform" :t="t" :target="{ kind: 'palette' }" :label="t('hotkeyCycleRef')" />
+      </div>
       <div class="re4-panel-body re4-row">
         <ElSelect :model-value="scheme" :empty-values="[null, undefined]" size="small" style="width:16em" :aria-label="t('paletteScheme')" @change="v => pickScheme(String(v))">
           <ElOption value="" :label="t('paletteAlways')" />
@@ -436,6 +441,9 @@ const clampSlider = (e: Re4PaletteEntry, v?: number) => Math.max(sliderMin(e), M
           <ElButton size="small" :disabled="busy" @click="openRename">{{ t('rename') }}</ElButton>
           <ElButton size="small" type="danger" plain :disabled="busy" @click="confirmDelete = true">{{ t('delete') }}</ElButton>
         </template>
+        <span class="re4-spacer"></span>
+        <!-- 快捷键:选中的这一份(初始 / 方案)的单项键;调色绑了轮换键时是「参与轮换」开关 -->
+        <Re4HotkeyPick :snapshot="snapshot" :busy="busy" :perform="perform" :t="t" :target="{ kind: 'palette', scheme }" />
       </div>
       <ElDialog v-model="dialog.open" :title="dialog.mode === 'rename' ? t('paletteSchemeRename') : t('paletteSchemeNew')" width="420px" append-to-body>
         <div class="re4-pal-dialog">
@@ -635,6 +643,7 @@ const clampSlider = (e: Re4PaletteEntry, v?: number) => Math.max(sliderMin(e), M
 .re4-pal-batch .re4-pal-glabel { grid-column: 1 / -1; margin: 0; }
 .re4-pal-batchbtns { display: flex; gap: 6px; }
 .re4-pal-schemes { margin-bottom: 8px; }
+.re4-pal-cycle { padding-bottom: 0; }
 .re4-pal-schemes .re4-row { flex-wrap: wrap; gap: 6px; align-items: center; }
 .re4-pal-schemes .el-button + .el-button { margin-left: 0; }
 .re4-pal-opttag { margin-left: 8px; }

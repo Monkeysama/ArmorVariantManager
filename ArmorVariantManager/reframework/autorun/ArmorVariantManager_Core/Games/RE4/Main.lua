@@ -2889,10 +2889,13 @@ function Main.start(ctx)
             return ok and v == true
         end
         local function bound()
-            local keys = hotkey_ctx and hotkey_ctx.config.base.hotkeys
-            if type(keys) ~= "table" then return nil end
+            local keys = hotkey_ctx and hotkey_ctx.config.hotkeys
+            if type(keys) ~= "table" or next(keys) == nil then return nil end
             local out = {}
-            for _, d in pairs(keys) do out[d] = true end
+            for k in pairs(keys) do
+                local d = math.tointeger(tonumber(k))
+                if d then out[d] = true end
+            end
             return out
         end
         local zh = function() return global_config.language == "zh" end
@@ -2900,17 +2903,40 @@ function Main.start(ctx)
             key_down = key_down,
             alt_down = function() return key_down(Hotkeys.ALT_VK) end,
             bound = bound,
+            -- 绑定见 ModelV3 的 hotkeys:单项 = 切到那一项;轮换 = 切到当前手动选择的下一项(跳过关掉的)
             fire = function(digit)
                 local ctx = hotkey_ctx
-                if not ctx then return end
-                local preset
-                for n, d in pairs(ctx.config.base.hotkeys or {}) do if d == digit then preset = n end end
-                if not preset then return end
-                commit(ctx.kind_id, OpsV3.set_manual(ctx.config, "base", preset))
-                local lines = { (zh() and "整套造型：" or "Full outfit: ") .. preset .. "  (Alt+" .. digit .. ")" }
-                -- 条件状态正接管整套造型时,手动选择要等它结束才生效
-                local by = ctx.layers and ctx.layers.base and ctx.layers.base.prio
-                local st = by and ctx.config.conditions.states[by]
+                local cfg = ctx and ctx.config
+                local b = cfg and type(cfg.hotkeys) == "table" and cfg.hotkeys[tostring(digit)]
+                if not b then return end
+                local target
+                if ModelV3.hotkey_is_cycle(b) then target = ModelV3.hotkey_next(cfg, b)
+                elseif b.kind == "palette" then target = b.scheme
+                else target = b.option end
+                local where = b.kind == "base" and (zh() and "整套造型" or "Full outfit")
+                    or b.kind == "group" and ((zh() and "状态组「" or "State group \"") .. b.group .. (zh() and "」" or "\""))
+                    or (zh() and "调色" or "Colours")
+                local suffix = "  (Alt+" .. digit .. ")"
+                if target == nil then
+                    Hotkeys.toast({ where .. (zh() and "：没有可轮换的项" or ": nothing to cycle through") .. suffix })
+                    return
+                end
+                local layer_key
+                if b.kind == "base" then
+                    commit(ctx.kind_id, OpsV3.set_manual(cfg, "base", target)); layer_key = "base"
+                elseif b.kind == "group" then
+                    commit(ctx.kind_id, OpsV3.set_manual(cfg, b.group, target)); layer_key = ModelV3.layer_key(b.group)
+                else
+                    commit(ctx.kind_id, OpsV3.set_palette_active(cfg, target))
+                end
+                local label = target
+                if target == "" then
+                    label = b.kind == "palette" and (zh() and "初始" or "Original") or (zh() and "（无）" or "(none)")
+                end
+                local lines = { where .. (zh() and "：" or ": ") .. label .. suffix }
+                -- 条件状态正接管这一层时,手动选择要等它结束才生效(调色不会被接管:引用的方案是叠在上面的)
+                local by = layer_key and ctx.layers and ctx.layers[layer_key] and ctx.layers[layer_key].prio
+                local st = by and cfg.conditions.states[by]
                 if st then
                     lines[2] = zh() and ("条件「" .. st.name .. "」接管中，结束后生效")
                         or ("Condition \"" .. st.name .. "\" is in control; applies when it ends")

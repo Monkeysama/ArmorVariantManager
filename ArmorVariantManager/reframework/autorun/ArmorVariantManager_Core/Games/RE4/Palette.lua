@@ -422,10 +422,49 @@ function Palette.fade_begin(mesh, slot_overrides, state, discrete, original)
             end
         end
     end
+    -- 混合模式(或其他和颜色层配对的枚举)要变的层:强度先降到 0 再升到目标,颜色在中点切换
+    local couples = discrete.couples or {}
+    local by_param = {}
+    for _, e in ipairs(plan) do by_param[e.j .. "|" .. e.param] = e end
+    for _, e in ipairs(plan) do
+        local function changed_key(key)
+            local layer = couples[key]
+            if not layer then return end
+            local tk = e.j .. "|" .. layer
+            local le = by_param[tk]
+            if not le then
+                -- 这一层的颜色两边都没改:也要把强度降下去再升回来,不然中点切模式时会跳
+                local var = (st.vars[e.j] or {})[layer]
+                local cur = var and var.t ~= Palette.TYPE_FLOAT and Palette.read_value(mesh, e.j, var)
+                if not is_tbl(cur) or not finite(cur[4]) then return end
+                if st.orig[tk] == nil then st.orig[tk] = cur end
+                local t = is_tbl(st.touched[tk]) and st.touched[tk] or {}
+                t.w = true
+                st.touched[tk] = t
+                le = { j = e.j, var = var, param = layer, comps = { { i = 4, from = cur[4], to = cur[4] } } }
+                plan[#plan + 1] = le
+                by_param[tk] = le
+            end
+            if not le.comps then return end
+            for _, c in ipairs(le.comps) do
+                if c.i == 4 then c.dip = true else c.discrete = true end
+            end
+        end
+        if e.comps then
+            for _, c in ipairs(e.comps) do
+                if c.discrete and c.from ~= c.to then
+                    for k, i in pairs(COMP_INDEX) do if i == c.i then changed_key(e.param .. "|" .. k) end end
+                end
+            end
+        elseif e.discrete and e.from ~= e.to then
+            changed_key(e.param)
+        end
+    end
     return #plan > 0 and plan or nil
 end
 
-local function mix(a, b, p, discrete)
+local function mix(a, b, p, discrete, dip)
+    if dip then return p < 0.5 and a * (1 - 2 * p) or b * (2 * p - 1) end
     if discrete then return p < 0.5 and a or b end
     return a + (b - a) * p
 end
@@ -435,7 +474,7 @@ function Palette.fade_step(mesh, plan, p, on_write)
         if e.comps then
             local cur = Palette.read_value(mesh, e.j, e.var)
             if cur then
-                for _, c in ipairs(e.comps) do cur[c.i] = mix(c.from, c.to, p, c.discrete) end
+                for _, c in ipairs(e.comps) do cur[c.i] = mix(c.from, c.to, p, c.discrete, c.dip) end
                 try(function() write_value(mesh, e.j, e.var, cur) end)
                 if on_write then on_write(mesh, e.j, e.param, cur) end
             end
@@ -447,18 +486,32 @@ function Palette.fade_step(mesh, plan, p, on_write)
     end
 end
 
--- 映射里标成枚举 / 开关的参数(不插值)。profiles = load_profiles 的结果
+-- 映射里标成枚举 / 开关的参数(不插值)。profiles = load_profiles 的结果。
+-- out.couples:同一组里的枚举分量 → 这一层的颜色参数(它的 w 是强度,「0 = 关闭这一层」)。例如
+-- LIL_Main2ndParam|x(混合模式)→ LIL_Main2ndColor。混合模式要变时,颜色和强度不能跨模式插值
+-- (旧模式下把强度往上拉会整片变色),渐变改成:前半段强度降到 0,中点切模式和颜色,后半段强度升到目标
 function Palette.discrete_params(profiles)
-    local out = {}
+    local out, couples = {}, {}
     for _, prof in ipairs(is_tbl(profiles) and profiles or {}) do
         for _, g in ipairs(prof.groups or {}) do
+            local layer = nil
+            for _, e in ipairs(g.params or {}) do
+                if e.kind == "float" and e.component == "w" then
+                    for _, c in ipairs(g.params) do
+                        if c.kind == "color" and c.param == e.param then layer = e.param end
+                    end
+                end
+            end
             for _, e in ipairs(g.params or {}) do
                 if e.kind == "enum" or e.kind == "bool" then
-                    out[e.component and (e.param .. "|" .. e.component) or e.param] = true
+                    local key = e.component and (e.param .. "|" .. e.component) or e.param
+                    out[key] = true
+                    if layer and e.param ~= layer then couples[key] = layer end
                 end
             end
         end
     end
+    out.couples = couples
     return out
 end
 

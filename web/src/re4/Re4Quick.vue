@@ -5,6 +5,7 @@ import { ElSwitch } from '@reff/ui';
 import type { Re4Translate } from './i18n';
 import type { Re4Perform, Re4Snapshot } from './types';
 import { conditionSentence, kindText, targetSentence } from './util';
+import { cycleOf, keyOf as hotkeyFor } from './hotkeys';
 
 // 快速切换：一切从简。被条件状态接管的层锁定（只在这里锁，编辑页照常能改手动选择）。
 const props = defineProps<{ snapshot: Re4Snapshot; busy: boolean; perform: Re4Perform; t: Re4Translate }>();
@@ -31,24 +32,33 @@ const heightFrom = computed(() => {
   if (s.layer === 'base') return props.t('heightFromBase', s.option ?? '');
   return props.t('heightFromGroup', s.layer, s.option ?? '');
 });
+// 调色方案:点一下就选中(选中就生效,同调色页顶部的选择框);"" = 初始。不锁定 —— 调色是叠加的,条件引用的方案
+// 盖在选中的上面。被引用、这一帧正在叠加生效的方案用绿框标出(同上面「被条件接管」的样式)
+const schemes = computed(() => (props.snapshot.palettes?.list ?? []).map(x => x.name));
+const selectedScheme = computed(() => props.snapshot.palettes?.selected ?? '');
+const activeSchemes = computed(() => ({ referenced: new Set(props.snapshot.palettes?.active ?? []) }));
+const pickScheme = (scheme: string) => props.perform({ kind: 'palette-scheme-select', ...c(), scheme });
 const base = computed(() => {
   const b = props.snapshot.base!;
   return { layer: 'base', label: props.t('tabBase'), active: b.active, effective: b.effective, locked: b.fromState, none: false,
     options: b.presets.map(p => p.name) };
 });
 // 整套造型绑的快捷键(Alt + 数字),显示在按钮上
-const hotkeyOf = (name: string) => props.snapshot.base?.presets.find(p => p.name === name)?.hotkey;
+// 快捷键(Alt + 数字):按钮上标单项键,行标题旁标整个结构的轮换键
+const layerTarget = (layer: string) => layer === 'base' ? { kind: 'base' as const } : { kind: 'group' as const, group: layer };
+const hotkeyOf = (layer: string, option: string) => hotkeyFor(props.snapshot, { ...layerTarget(layer), option })?.digit;
+const cycleKey = (layer: string) => cycleOf(props.snapshot, layerTarget(layer))?.digit;
 </script>
 
 <template>
   <div class="re4-main">
     <section class="re4-panel re4-panel-body">
       <div class="re4-qrow" :class="{ locked: base.locked }">
-        <span class="re4-qname">{{ base.label }}</span>
+        <span class="re4-qname">{{ base.label }}<span v-if="cycleKey('base') !== undefined" class="re4-qkey" :title="t('hotkeyCycleHint')">Alt+{{ cycleKey('base') }} {{ t('hotkeyCycle') }}</span></span>
         <span class="re4-seg" role="group" :aria-label="base.label">
           <button v-for="name in base.options" :key="name" :disabled="busy || !!base.locked"
             :aria-pressed="base.active === name" :class="{ eff: base.locked && base.effective === name }"
-            :title="base.locked ? t('lockedBy', owner(base.locked)) : ''" @click="pick('base', name)">{{ name }}<span v-if="hotkeyOf(name) !== undefined" class="re4-qkey">Alt+{{ hotkeyOf(name) }}</span></button>
+            :title="base.locked ? t('lockedBy', owner(base.locked)) : ''" @click="pick('base', name)">{{ name }}<span v-if="hotkeyOf('base', name) !== undefined" class="re4-qkey">Alt+{{ hotkeyOf('base', name) }}</span></button>
         </span>
       </div>
     </section>
@@ -61,13 +71,13 @@ const hotkeyOf = (name: string) => props.snapshot.base?.presets.find(p => p.name
       <div v-if="groupsOpen" class="re4-panel-body">
         <span v-if="!rows.length" class="re4-muted re4-small">{{ t('noGroups') }}</span>
         <div v-for="row in rows" :key="row.layer" class="re4-qrow" :class="{ locked: row.locked }">
-          <span class="re4-qname">{{ row.label }}</span>
+          <span class="re4-qname">{{ row.label }}<span v-if="cycleKey(row.layer) !== undefined" class="re4-qkey" :title="t('hotkeyCycleHint')">Alt+{{ cycleKey(row.layer) }} {{ t('hotkeyCycle') }}</span></span>
           <span class="re4-seg" role="group" :aria-label="row.label">
             <button :disabled="busy || !!row.locked" :aria-pressed="row.active === ''" :title="row.locked ? t('lockedBy', owner(row.locked)) : ''"
-              @click="pick(row.layer, '')">{{ t('none') }}</button>
+              @click="pick(row.layer, '')">{{ t('none') }}<span v-if="hotkeyOf(row.layer, '') !== undefined" class="re4-qkey">Alt+{{ hotkeyOf(row.layer, '') }}</span></button>
             <button v-for="name in row.options" :key="name" :disabled="busy || !!row.locked"
               :aria-pressed="row.active === name" :class="{ eff: row.locked && row.effective === name }"
-              :title="row.locked ? t('lockedBy', owner(row.locked)) : ''" @click="pick(row.layer, name)">{{ name }}</button>
+              :title="row.locked ? t('lockedBy', owner(row.locked)) : ''" @click="pick(row.layer, name)">{{ name }}<span v-if="hotkeyOf(row.layer, name) !== undefined" class="re4-qkey">Alt+{{ hotkeyOf(row.layer, name) }}</span></button>
           </span>
         </div>
       </div>
@@ -88,6 +98,19 @@ const hotkeyOf = (name: string) => props.snapshot.base?.presets.find(p => p.name
           <span class="re4-sdot" :title="kindText(st, states, t)"></span>
           <span class="re4-sname">{{ st.name }}</span>
         </label>
+      </div>
+    </section>
+
+    <section class="re4-panel re4-panel-body">
+      <div class="re4-qrow">
+        <span class="re4-qname">{{ t('paletteScheme') }}</span>
+        <span class="re4-seg" role="group" :aria-label="t('paletteScheme')">
+          <button :disabled="busy" :aria-pressed="selectedScheme === ''" @click="selectedScheme !== '' && pickScheme('')">{{ t('paletteAlways') }}</button>
+          <button v-for="name in schemes" :key="name" :disabled="busy" :aria-pressed="selectedScheme === name"
+            :class="{ eff: selectedScheme !== name && activeSchemes.referenced.has(name) }"
+            :title="selectedScheme !== name && activeSchemes.referenced.has(name) ? t('paletteSchemeRefOn') : ''"
+            @click="selectedScheme !== name && pickScheme(name)">{{ name }}</button>
+        </span>
       </div>
     </section>
 
