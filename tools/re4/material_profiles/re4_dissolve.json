@@ -35,21 +35,21 @@
     },
     {
       "id": "dissolve_order", "section": "dissolve", "tier": "more", "label": { "zh": "溶解顺序", "en": "Dissolve order" },
-      "note": { "zh": "Dissolve_Map 的 R / G / B 分别是身体 / 手臂 / 腿的先后（值越高越先切换）；B > 0 的像素算腿，否则 G > 0 算手臂，其余算身体。各部分把自己的进度映射到下面的区间里", "en": "Dissolve_Map R / G / B order body / arms / legs (higher switches first); B > 0 is leg, else G > 0 arm, else body. Each part maps its progress into the ranges below" },
+      "note": { "zh": "Dissolve_Map 把像素分成三区：B > 0 算部位 2，否则 G > 0 算部位 1，其余算主体；各区的先后分别取 R / G / B 的值（越高越先切换）。各区把自己的进度映射到下面的区间里，反向起点 / 终点只有主体有", "en": "Dissolve_Map splits pixels into three zones: B > 0 is part 2, else G > 0 part 1, else main; each zone's order is its R / G / B value (higher switches first). Each zone maps its progress into the ranges below; only main has reverse start / end" },
       "params": [
-        { "param": "Dissolve_Body", "component": "x", "kind": "float", "min": 0, "max": 1, "label": { "zh": "身体 起点", "en": "Body start" } },
-        { "param": "Dissolve_Body", "component": "y", "kind": "float", "min": 0, "max": 1, "label": { "zh": "身体 终点", "en": "Body end" } },
-        { "param": "Dissolve_Body", "component": "z", "kind": "float", "min": 0, "max": 1, "label": { "zh": "身体 反向起点", "en": "Body reverse start" },
+        { "param": "Dissolve_Body", "component": "x", "kind": "float", "min": 0, "max": 1, "label": { "zh": "主体 起点", "en": "Main start" } },
+        { "param": "Dissolve_Body", "component": "y", "kind": "float", "min": 0, "max": 1, "label": { "zh": "主体 终点", "en": "Main end" } },
+        { "param": "Dissolve_Body", "component": "z", "kind": "float", "min": 0, "max": 1, "label": { "zh": "主体 反向起点", "en": "Main reverse start" },
           "note": { "zh": "反向溶解时代替起点 / 终点使用", "en": "Used instead of start / end when dissolving in reverse" } },
-        { "param": "Dissolve_Body", "component": "w", "kind": "float", "min": 0, "max": 1, "label": { "zh": "身体 反向终点", "en": "Body reverse end" } },
-        { "param": "Dissolve_Limb", "component": "x", "kind": "float", "min": 0, "max": 1, "label": { "zh": "手臂 起点", "en": "Arm start" } },
-        { "param": "Dissolve_Limb", "component": "y", "kind": "float", "min": 0, "max": 1, "label": { "zh": "手臂 终点", "en": "Arm end" } },
-        { "param": "Dissolve_Limb", "component": "z", "kind": "float", "min": 0, "max": 1, "label": { "zh": "腿 起点", "en": "Leg start" } },
-        { "param": "Dissolve_Limb", "component": "w", "kind": "float", "min": 0, "max": 1, "label": { "zh": "腿 终点", "en": "Leg end" } },
-        { "param": "Dissolve_Misc", "component": "x", "kind": "float", "min": 0, "max": 4, "label": { "zh": "手臂跟随速度", "en": "Arm speed" },
-          "note": { "zh": "手臂进度 = max(身体进度 × 这个值, 手臂自己的区间进度)。常见 1", "en": "Arm progress = max(body progress × this, the arm's own range progress). Usually 1" } },
-        { "param": "Dissolve_Misc", "component": "y", "kind": "float", "min": 0, "max": 4, "label": { "zh": "腿跟随速度", "en": "Leg speed" },
-          "note": { "zh": "同上，作用于腿", "en": "Same, for the legs" } }
+        { "param": "Dissolve_Body", "component": "w", "kind": "float", "min": 0, "max": 1, "label": { "zh": "主体 反向终点", "en": "Main reverse end" } },
+        { "param": "Dissolve_Limb", "component": "x", "kind": "float", "min": 0, "max": 1, "label": { "zh": "部位 1 起点", "en": "Part 1 start" } },
+        { "param": "Dissolve_Limb", "component": "y", "kind": "float", "min": 0, "max": 1, "label": { "zh": "部位 1 终点", "en": "Part 1 end" } },
+        { "param": "Dissolve_Limb", "component": "z", "kind": "float", "min": 0, "max": 1, "label": { "zh": "部位 2 起点", "en": "Part 2 start" } },
+        { "param": "Dissolve_Limb", "component": "w", "kind": "float", "min": 0, "max": 1, "label": { "zh": "部位 2 终点", "en": "Part 2 end" } },
+        { "param": "Dissolve_Misc", "component": "x", "kind": "float", "min": 0, "max": 4, "label": { "zh": "部位 1 跟随速度", "en": "Part 1 follow speed" },
+          "note": { "zh": "部位 1 进度 = max(主体进度 × 这个值, 部位 1 自己的区间进度)；设 0 = 只按自己的区间。常见 1", "en": "Part 1 progress = max(main progress × this, part 1's own range progress); 0 = its own range only. Usually 1" } },
+        { "param": "Dissolve_Misc", "component": "y", "kind": "float", "min": 0, "max": 4, "label": { "zh": "部位 2 跟随速度", "en": "Part 2 follow speed" },
+          "note": { "zh": "同上，作用于部位 2", "en": "Same, for part 2" } }
       ]
     }
   ],

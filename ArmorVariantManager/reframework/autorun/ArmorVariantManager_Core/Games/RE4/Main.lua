@@ -756,9 +756,11 @@ function Main.start(ctx)
 
     -- 「定位」预览:临时只显示某一个材质,用来认清它是哪块(给材质起备注名时用)。
     -- 纯预览,**不写进任何预设**;到时间自动恢复,所以不会留下脏状态。
-    local preview = nil            -- { slot=, mat=, until_clock=, target_id= }
+    -- mats = { [槛位] = { [材质] = true } } 要显示的材质;hold = 「仅显示选中部位」开着(不过期,until_clock = nil)
+    local preview = nil            -- { mats=, slot=, mat=, until_clock=, hold=, target_id=, saved = { [槛位] = { id=, states= } } }
     local PREVIEW_SECONDS = 3
     local preview_restoring = false -- 预览刚过期的那一帧:恢复时不用溶解过渡
+    local preview_ending = nil      -- 刚结束的预览(那一帧用它的 saved 把定位前的开关放回去)
 
     -- 面板当前编辑的目标(Targets.collect 给的 id)。nil = 还没选过,取第一个(本地玩家)。
     local selected_target_id = nil
@@ -792,24 +794,75 @@ function Main.start(ctx)
         Dissolve.use(nil)
     end
 
-    local function apply_resolved(source, resolved, active_preview, owner_of, trans, drive_map)
-        if not resolved then return end
-        local preview_slot = active_preview and active_preview.slot
-        for _, slot in ipairs(Utils.MESH_SLOTS) do
-            local slot_data = resolved[slot]
-            -- 预览中的槛位不走正常应用:正常应用会给被预览关掉 / 打开的材质起溶解过渡,
-            -- 和预览每帧互相拉扯(目标材质被溶掉、其余材质反复"出现"),定位就失效了
-            if slot_data and slot ~= preview_slot then
-                local mesh = Utils.get_mesh(source, slot)
-                if mesh then apply_slot(mesh, slot, slot_data, owner_of, trans, drive_map and drive_map[slot]) end
+    -- 一个 mesh 当前每个材质的开关(按下标),定位开始前存一份,结束时照原样放回
+    local function material_states(mesh)
+        local states = {}
+        local ok, count = pcall(function() return mesh:call("get_MaterialNum") end)
+        if not ok or not count then return states end
+        for i = 0, count - 1 do
+            local ok_c, cur = pcall(function() return mesh:call("getMaterialsEnable", i) end)
+            if ok_c then states[i] = cur end
+        end
+        return states
+    end
+
+    -- 定位结束:先把定位前存下的开关原样放回(mesh 已换实例的跳过),再由正常应用接管。
+    -- 不能只靠正常应用恢复 —— 它只写配置里点名过的材质,没点名的(或整个没配置的槛位)
+    -- 会一直停在定位时被关掉的状态。
+    local function restore_preview_snapshot(source, saved)
+        for slot, s in pairs(saved or {}) do
+            local mesh = Utils.get_mesh(source, slot)
+            if mesh and tostring(mesh) == s.id then
+                for i, on in pairs(s.states) do
+                    pcall(function() mesh:call("setMaterialsEnable", i, on) end)
+                end
             end
         end
-        -- 预览:瞬间只显示这一个材质,不用溶解(进行中的溶解先复位成 mdf2 的值)
-        if active_preview then
-            local mesh = Utils.get_mesh(source, active_preview.slot)
+    end
+
+    -- 定位显示的槛位:被定位的那个;开着「armor 照抄 body」时 body / armor 互相带上
+    -- (穿着护甲时游戏把 body 换成 armor,只隔离 body 看不到任何东西)
+    local function preview_shows(active_preview, slot, name, mirror)
+        local mats = active_preview.mats
+        if mats[slot] and mats[slot][name] then return true end
+        if not mirror then return false end
+        local other = (slot == "armor" and "body") or (slot == "body" and "armor") or nil
+        return other ~= nil and mats[other] ~= nil and mats[other][name] == true
+    end
+
+    local function apply_resolved(source, resolved, active_preview, owner_of, trans, drive_map, mirror)
+        if not resolved then return end
+        if not active_preview then
+            for _, slot in ipairs(Utils.MESH_SLOTS) do
+                local slot_data = resolved[slot]
+                if slot_data then
+                    local mesh = Utils.get_mesh(source, slot)
+                    if mesh then apply_slot(mesh, slot, slot_data, owner_of, trans, drive_map and drive_map[slot]) end
+                end
+            end
+            return
+        end
+        -- 定位中:所有槛位都不走正常应用(正常应用会给被定位关掉 / 打开的材质起溶解过渡,
+        -- 和定位每帧互相拉扯,定位就失效了)。被定位的槛位只显示这一个材质,
+        -- 其余槛位(头、头发……)整个隐藏,瞬间切换不用溶解(进行中的溶解先复位成 mdf2 的值)
+        local saved = active_preview.saved
+        for _, slot in ipairs(Utils.MESH_SLOTS) do
+            local mesh = Utils.get_mesh(source, slot)
             if mesh then
+                local id = tostring(mesh)
+                if saved and (not saved[slot] or saved[slot].id ~= id) then
+                    saved[slot] = { id = id, states = material_states(mesh) }
+                end
                 Dissolve.reset_mesh(mesh)
-                Utils.isolate_material(mesh, active_preview.mat)
+                local ok, count = pcall(function() return mesh:call("get_MaterialNum") end)
+                for i = 0, ((ok and count) or 0) - 1 do
+                    local ok_n, name = pcall(function() return mesh:call("getMaterialName", i) end)
+                    if ok_n and name then
+                        local want = preview_shows(active_preview, slot, name, mirror)
+                        local ok_c, cur = pcall(function() return mesh:call("getMaterialsEnable", i) end)
+                        if ok_c and cur ~= want then pcall(function() mesh:call("setMaterialsEnable", i, want) end) end
+                    end
+                end
             end
         end
     end
@@ -827,6 +880,15 @@ function Main.start(ctx)
 
     -- UI 改了配置之后置上,下一帧强制重写一次(比如把某个材质从轴里摘掉,要退回基线值)
     local force_reapply = false
+
+    -- 结束定位:下一帧瞬间恢复(先放回定位前的开关,再强制正常应用一次)
+    local function end_preview()
+        if not preview then return end
+        preview_ending = preview
+        preview = nil
+        force_reapply = true
+        preview_restoring = true
+    end
 
     -- 模型高度:应用循环每帧按解算结果收集 { source, cm },循环结束交给 HeightFix(下面安装)
     local height_fix = nil
@@ -1334,8 +1396,11 @@ function Main.start(ctx)
         -- 预览期间每帧都重写:否则任何一次 resolve 输出或游戏自己的重置都会把它盖掉。
         -- 预览只作用在面板当前选中的那个目标上,不能糊到同 kind 的其它目标身上。
         local use_preview = preview_active and (preview.target_id == target.id) and preview or nil
+        if preview_restoring and preview_ending and preview_ending.target_id == target.id then
+            restore_preview_snapshot(source, preview_ending.saved)
+        end
         if changed or mesh_swapped or drifted or force_reapply or use_preview or drive_map or drive_stopped then
-            apply_resolved(source, resolved, use_preview, owner_of, trans, drive_map)
+            apply_resolved(source, resolved, use_preview, owner_of, trans, drive_map, config.armor_mirrors_body == true)
             -- 记住这次谁写了哪个材质;没写到的沿用旧的,好让"放手"那一帧还找得到是哪一层
             for slot, mats in pairs(owner) do
                 prev_owner[slot] = prev_owner[slot] or {}
@@ -1396,12 +1461,10 @@ function Main.start(ctx)
         -- 定位预览:过期就清掉并强制恢复一次
         local preview_active = false
         if preview then
-            if os.clock() < preview.until_clock then
+            if preview.hold or os.clock() < preview.until_clock then
                 preview_active = true
             else
-                preview = nil
-                force_reapply = true
-                preview_restoring = true
+                end_preview()
             end
         end
 
@@ -1416,6 +1479,7 @@ function Main.start(ctx)
 
         force_reapply = false
         preview_restoring = false
+        preview_ending = nil
     end
 
     re.on_frame(function()
@@ -1551,9 +1615,36 @@ function Main.start(ctx)
     end
 
     -- 「定位」:临时只显示这一个材质 PREVIEW_SECONDS 秒,只作用在指定目标上。
+    -- 定位中再点别的材质:同一目标沿用最初存下的开关(这时 mesh 上已经是定位后的样子,不能重存);
+    -- 换了目标就先让旧目标按自己的存档恢复
+    local function begin_preview(target_id, mats, slot, mat, hold)
+        local saved = {}
+        if preview and preview.target_id == target_id then saved = preview.saved
+        elseif preview then end_preview() end
+        preview = { mats = mats, slot = slot, mat = mat, target_id = target_id, hold = hold or nil,
+            until_clock = (not hold) and (os.clock() + PREVIEW_SECONDS) or nil, saved = saved }
+    end
     local function start_preview(target_id, slot, mat)
-        preview = { slot = slot, mat = mat, target_id = target_id, until_clock = os.clock() + PREVIEW_SECONDS }
+        begin_preview(target_id, { [slot] = { [mat] = true } }, slot, mat, false)
         request_reapply()
+    end
+    -- 「仅显示选中部位」(调色页的开关):keys = { "槛位/材质", ... },一直生效到关掉 / 离开调色页 / 换角色。
+    -- 空 / nil = 关掉;只关常驻的这种,不打断整套造型页的定位
+    local function set_solo(target_id, keys)
+        local mats, slot0, mat0 = {}, nil, nil
+        for _, k in ipairs(type(keys) == "table" and keys or {}) do
+            local slot, mat = tostring(k):match("^([^/]+)/(.+)$")
+            if slot then
+                mats[slot] = mats[slot] or {}
+                mats[slot][mat] = true
+                slot0, mat0 = slot0 or slot, mat0 or mat
+            end
+        end
+        if not (target_id and slot0) then
+            if preview and preview.hold then end_preview() end
+            return
+        end
+        begin_preview(target_id, mats, slot0, mat0, true)
     end
 
     local function cond_to_string(c)
@@ -2473,7 +2564,7 @@ function Main.start(ctx)
             if ch and group_order[ni] then
                 selected_target_id = group_order[ni]
                 group = groups[selected_target_id]
-                preview = nil       -- 预览绑在具体目标上,换组就作废
+                end_preview()       -- 预览绑在具体目标上,换组就作废
                 ui_state = {}
             end
         end
@@ -3032,7 +3123,7 @@ function Main.start(ctx)
             save_slot = save_slot, load_slot = load_slot, delete_slot = delete_slot, all_slot_entries = all_slot_entries,
             auto_slot_name = auto_slot_name, has_backup = has_backup, has_onload_backup = has_onload_backup,
             restore_backup = restore_backup, restore_onload_backup = restore_onload_backup,
-            start_preview = start_preview, get_preview = function() return preview end,
+            start_preview = start_preview, set_solo = set_solo, get_preview = function() return preview end,
             documentation = require("ArmorVariantManager_Core.Games.RE4.Documentation"),
             -- v3:迁移与预设库
             migrate_to_v3 = migrate_to_v3, preset_view = preset_view, dismiss_preset_hint = dismiss_preset_hint,

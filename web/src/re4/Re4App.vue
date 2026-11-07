@@ -31,7 +31,7 @@ import Re4Presets from './Re4Presets.vue';
 import Re4Palette from './Re4Palette.vue';
 import Re4Misc from './Re4Misc.vue';
 import { useRe4Text, type Re4Key } from './i18n';
-import type { Re4Notice, Re4Perform, Re4Snapshot } from './types';
+import type { Re4LiveWrite, Re4Notice, Re4Perform, Re4Snapshot } from './types';
 
 // RE4 的 REFF 页面（v3）：按 RE4 的模型设计，不套用 MH 的分组页面。
 // 左侧常驻游戏状态（和编辑页的最终材质）；右侧六个页签。v2 配置只能先迁移。
@@ -44,6 +44,10 @@ watchEffect(() => { avm.helpOpen.value = tab.value === 'misc'; });
 const { busy, loading, error, connect, documentation, documentationLoading, documentationError, retryDocumentation } = avm;
 const snapshot = computed(() => avm.snapshot.value?.game === 'RE4' ? avm.snapshot.value as Re4Snapshot : null);
 const perform: Re4Perform = actions => avm.perform(actions);
+// 调色页拖动中的写入:Lua 只回一个小确认(见 Reff.lua 的 palette-set live),这里不接快照
+const liveWrite: Re4LiveWrite = async action => {
+  try { await avm.client.call('monkeysama.avm.action', action); return true; } catch { return false; }
+};
 // 某个页签渲染出错时不要整页变空:把错误显示在顶部横幅里,其余页面照常可用
 onErrorCaptured(err => {
   error.value = err instanceof Error ? `${err.message}` : String(err);
@@ -60,6 +64,8 @@ const presetDot = computed(() => {
   return !!p && p.current !== 'full' && p.better.length > 0 && !p.dismissed;
 });
 const showLook = computed(() => tab.value === 'base' || tab.value === 'groups' || tab.value === 'states');
+// 调色页左右两栏本身就宽,不放游戏状态,整页给调色
+const showSide = computed(() => hasCharacter.value && v3.value && tab.value !== 'palette');
 // 全身预览：开关在顶栏，打开后画在左栏最上面（和荒野共用网页预览组件，文案换成 RE4 的）
 const previewIntent = shallowRef<boolean | null>(null);
 const previewOpen = computed(() => snapshot.value?.preview?.enabled === true && hasCharacter.value);
@@ -112,12 +118,12 @@ watch(() => snapshot.value?.notice, value => { if (value) notice.value = value; 
             <button v-else class="dismiss-error" :aria-label="t('dismiss')" @click="error = ''">×</button>
           </div>
           <div v-if="!snapshot" class="connection-state"><span v-if="loading" class="connection-dot"></span>{{ loading ? t('loading') : t('wait') }}</div>
-          <div v-else class="re4-layout" :class="{ single: !(hasCharacter && v3) || previewWide }">
-            <div v-if="hasCharacter && v3 && !previewWide" class="re4-left">
+          <div v-else class="re4-layout" :class="{ single: !showSide || previewWide }">
+            <div v-if="showSide && !previewWide" class="re4-left">
               <Re4Side v-if="v3" :snapshot="snapshot" :t="t" :show-look="showLook" />
             </div>
             <div class="re4-main">
-              <Re4Side v-if="hasCharacter && v3 && previewWide" :snapshot="snapshot" :t="t" :show-look="false" inline />
+              <Re4Side v-if="showSide && previewWide" :snapshot="snapshot" :t="t" :show-look="false" inline />
               <div v-if="notice" class="re4-banner ok" role="status">
                 <span v-if="notice.kind === 'migrated'">{{ t('migrated') }}<template v-if="notice.presets"> {{ t('migratedPresets', notice.presets) }}</template></span>
                 <span v-else-if="notice.kind === 'mdf-replaced'">{{ t('paletteReplaced', notice.path) }}</span>
@@ -134,7 +140,7 @@ watch(() => snapshot.value?.notice, value => { if (value) notice.value = value; 
                 <Re4Layers v-else-if="tab === 'base'" :key="'base-' + snapshot.character" mode="base" :snapshot="snapshot" :busy="busy" :perform="perform" :t="t" />
                 <Re4Layers v-else-if="tab === 'groups'" :key="'groups-' + snapshot.character" mode="groups" :snapshot="snapshot" :busy="busy" :perform="perform" :t="t" />
                 <Re4States v-else-if="tab === 'states'" :key="'states-' + snapshot.character" :snapshot="snapshot" :busy="busy" :perform="perform" :t="t" />
-                <Re4Palette v-else-if="tab === 'palette'" :key="'palette-' + snapshot.character" :snapshot="snapshot" :busy="busy" :perform="perform" :t="t" />
+                <Re4Palette v-else-if="tab === 'palette'" :key="'palette-' + snapshot.character" :snapshot="snapshot" :busy="busy" :perform="perform" :live-write="liveWrite" :t="t" />
                 <Re4Presets v-else-if="tab === 'presets'" :key="'presets-' + snapshot.character" :snapshot="snapshot" :busy="busy" :perform="perform" :t="t" />
                 <Re4Misc v-else :snapshot="snapshot" :busy="busy" :perform="perform" :t="t" :documentation="documentation"
                   :documentation-loading="documentationLoading" :documentation-error="documentationError" @retry-documentation="retryDocumentation" />

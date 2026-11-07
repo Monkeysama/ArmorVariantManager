@@ -24,7 +24,7 @@ end
 local function contains(list, v) return U.contains(list, v) end
 
 local function view(ctx, st, open)
-    ctx.act({ kind = "palette-view", open = open, keys = open and st.sel or {} })
+    ctx.act({ kind = "palette-view", open = open, keys = open and st.sel or {}, solo = open and st.solo == true })
 end
 
 function Page.leave(ctx, st)
@@ -112,6 +112,13 @@ function Page.draw(ctx, x, y, w)
     local chosen = {}
     for _, k in ipairs(st.sel) do if by_key[k] then chosen[#chosen + 1] = by_key[k] end end
 
+    -- 「仅显示选中部位」:开着时人物身上只留选中的材质(其余部位整个隐藏),跟着选择走,离开调色页自动关
+    if st.solo == nil then st.solo = snap.solo == true end
+    local sw = W.toggle_w(t("paletteSolo"))
+    local ch_solo, v_solo = W.toggle(t("paletteSolo"), x + w - sw, cy, st.solo, { tip = t("paletteSoloHint") })
+    if ch_solo then st.solo = v_solo; view(ctx, st, true) end
+    cy = cy + T.m.row_h + 6
+
     -- ---------------------------------------------------- 左栏:材质
     local lw = min(260, floor(w * 0.32))
     local lx, top = x, cy
@@ -125,6 +132,37 @@ function Page.draw(ctx, x, y, w)
         if m.slot ~= last_slot then
             last_slot = m.slot
             D.text_mid(U.slot_label(snap, m.slot), lx, ly, 20, C.muted, W.small())
+            -- 按部位整组:全选 / 反选 / 清空(保留其它部位的选择,新加的接在后面)
+            local slot = m.slot
+            local keys, picked = {}, 0
+            for _, mm in ipairs(materials) do
+                if mm.slot == slot then keys[#keys + 1] = mm.key; if contains(st.sel, mm.key) then picked = picked + 1 end end
+            end
+            local in_slot = {}
+            for _, k in ipairs(keys) do in_slot[k] = true end
+            local bx = lx + lw
+            local function slot_btn(label, disabled)
+                local bw = W.tbutton_w(label)
+                bx = bx - bw
+                local hit = W.tbutton(label, bx, ly - 1, { disabled = disabled })
+                bx = bx - 6
+                return hit
+            end
+            if slot_btn(t("paletteSlotClear"), picked == 0) then
+                local out = {}
+                for _, k in ipairs(st.sel) do if not in_slot[k] then out[#out + 1] = k end end
+                select(out)
+            elseif slot_btn(t("paletteSlotInvert"), false) then
+                local out = {}
+                for _, k in ipairs(st.sel) do if not in_slot[k] then out[#out + 1] = k end end
+                for _, k in ipairs(keys) do if not contains(st.sel, k) then out[#out + 1] = k end end
+                select(out)
+            elseif slot_btn(t("paletteSlotAll"), picked == #keys) then
+                local out = {}
+                for _, k in ipairs(st.sel) do out[#out + 1] = k end
+                for _, k in ipairs(keys) do if not contains(st.sel, k) then out[#out + 1] = k end end
+                select(out)
+            end
             ly = ly + 22
         end
         if W.visible(ly, 24) then
@@ -155,9 +193,8 @@ function Page.draw(ctx, x, y, w)
     local title = #chosen > 0 and t("paletteSelected", #chosen) or t("paletteNothing")
     D.text_mid(title, ex, ey, 26, C.text, W.bold())
     local HF = W.flow(ex + D.measure(W.bold(), title) + 16, ey, ew - D.measure(W.bold(), title) - 16, 6, 26)
-    -- 只选了一个材质时:定位(同整套造型页,临时只显示它)、导出 mdf2 材质预设(先填英文预设名)
+    -- 只选了一个材质时:导出 mdf2 材质预设(先填英文预设名)
     if #chosen == 1 then
-        if HF:button(t("locate")) then ctx.act({ kind = "locate", slot = chosen[1].slot, material = chosen[1].material }) end
         if HF:button(t("paletteExport")) then
             st.exporting = chosen[1].key
             st.preset_name = st.preset_name or (chosen[1].material:gsub("[^%w _%-]", "_"))

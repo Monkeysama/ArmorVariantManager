@@ -156,6 +156,7 @@ export function installRe4Fixture() {
   let backup: Config | undefined;
   let notice: Re4Snapshot['notice'];
   let locating: { slot: string; material: string } | undefined;
+  let solo = false;
   let dismissed = false;
   let previewEnabled = false;
   let nextId = 4;
@@ -265,7 +266,7 @@ export function installRe4Fixture() {
         presets: config.base.order.map(name => ({ name, values: config.base.presets[name], match: { status: 'ok', skipped: [] }, height: heights['base|' + name], palette: palRefs['base|' + name] })) },
       groups: config.groups.map(g => ({ name: g.name, scope: g.scope, active: g.active, effective: pick('g:' + g.name, g.active),
         fromState: r.claims['g:' + g.name]?.i, options: g.order.map(name => ({ name, values: g.options[name], height: heights[`g:${g.name}|${name}`], palette: palRefs[`g:${g.name}|${name}`] })) })),
-      states, locating, height, heightSource, heightOverride: { ...heightOverride },
+      states, locating, ...(solo ? { solo: true } : {}), height, heightSource, heightOverride: { ...heightOverride },
       palette: paletteOpen ? paletteSnapshot() : undefined,
       hotkeys: Object.values(hotkeys).sort((x, y) => x.digit - y.digit).map(h => ({ ...h, skip: [...h.skip] })),
       palettes: { list: schemeOrder.map(name => ({ name, used: used(name), materials: Object.keys(schemeOv[name]).length })), active: activePal, selected: editing },
@@ -341,7 +342,7 @@ export function installRe4Fixture() {
         break; }
       case 'base-height': if (!config.base.presets[a.preset]) fail();
         if (a.cm === undefined) delete heights['base|' + a.preset]; else heights['base|' + a.preset] = a.cm; break;
-      case 'palette-view': paletteOpen = a.open; paletteSel = [...a.keys]; break;
+      case 'palette-view': paletteOpen = a.open; paletteSel = [...a.keys]; solo = a.open && a.solo === true && a.keys.length > 0; break;
       case 'palette-set': { if (!a.scheme && !editing) { let n = 1; while (schemeOv['方案 ' + n]) n++; editing = '方案 ' + n; schemeOv[editing] = {}; schemeOrder.push(editing); }
         const paletteOv = ovOf(a.scheme || editing); for (const w of a.writes) {
         const key = `${w.slot}/${w.material}`, ov = (paletteOv[key] ??= {});

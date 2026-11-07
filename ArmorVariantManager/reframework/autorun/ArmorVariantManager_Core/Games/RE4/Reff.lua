@@ -210,6 +210,36 @@ function Reff.new(deps)
         return c
     end
 
+    -- 读到的 float 是 float32 转来的,JSON 里会写成 0.20000000298023224 这种 17 位小数;
+    -- 留 3 位有效数字足够显示,快照能小一大截(REFF 单条消息上限 256KB,超了回包被丢,网页只报 TIMEOUT)
+    local function compact(x)
+        if type(x) ~= "number" or x ~= x then return x end
+        return tonumber(string.format("%.3g", x)) or x
+    end
+
+    -- 界面会列出的参数:主映射 + 附加映射里的项,没有主映射时是通用兜底的颜色。没列出的参数不用发值
+    local function mapped_params(c)
+        if c.mapped then return c.mapped end
+        local set = {}
+        local profiles = { c.main }
+        for _, a in ipairs(c.addon_list or {}) do profiles[#profiles + 1] = a end
+        for _, prof in ipairs(profiles) do
+            for _, g in ipairs(prof.groups or {}) do
+                for _, e in ipairs(g.params or {}) do set[e.param] = true end
+            end
+        end
+        for _, name in ipairs(c.generic or {}) do set[name] = true end
+        c.mapped = set
+        return set
+    end
+    -- 失效说明:判断灰不灰只要失效的分量;原因(贴图名 + null 贴图路径)只有悬停提示用,只给第一个选中的材质
+    local function comps_only(dead)
+        if not dead then return nil end
+        local out = {}
+        for param, d in pairs(dead) do out[param] = { comps = d.comps, why = {} } end
+        return out
+    end
+
     local function palette_snapshot(cur)
         local profiles = deps.palette_profiles()
         local source, config = cur.target.source, cur.config
@@ -219,6 +249,7 @@ function Reff.new(deps)
                       errors = deps.palette_profile_errors(), scheme = scheme }
         local used, live, sel, listed = {}, {}, {}, {}
         for _, k in ipairs(palette_sel) do sel[k] = true end
+        local first_key = palette_sel[1]
         local notes = config.material_notes or {}
         out.replacing = MdfReplace.busy()
         -- 护甲同步身体外观时护甲的调色照抄身体(按材质名),护甲的材质不列出来
@@ -238,25 +269,33 @@ function Reff.new(deps)
                         local ov = (pal[slot] or {})[c.name]
                         local n = 0
                         for _ in pairs(ov or {}) do n = n + 1 end
+                        -- 左栏列表只要名字、备注、改了几项;缺的参数、失效说明(按参数列贴图,很占地方)、
+                        -- 通用兜底、能否替换 mdf 只有右栏用,只给选中的材质带
+                        local chosen = sel[key] == true
                         out.materials[#out.materials + 1] = { key = key, slot = slot, material = c.name,
                             note = (notes[slot] or {})[c.name], main = c.main and c.main.id or nil, addons = c.addons,
-                            missing = c.missing, generic = c.generic, overridden = n, ineffective = c.ineffective, replace = replace }
-                        if c.main then used[c.main.id] = c.main end
-                        for _, a in ipairs(c.addon_list) do used[a.id] = a end
+                            missing = chosen and c.missing or nil, generic = chosen and c.generic or nil, overridden = n,
+                            ineffective = chosen and (key == first_key and c.ineffective or comps_only(c.ineffective)) or nil,
+                            replace = chosen and replace or nil }
                         out.overrides[key] = ov or false
                         if sel[key] then
+                            -- 映射只给选中的材质带(界面只按选中的材质列参数),省得每份快照都把所有映射发一遍
+                            if c.main then used[c.main.id] = c.main end
+                            for _, a in ipairs(c.addon_list) do used[a.id] = a end
                             out.selected[#out.selected + 1] = key
                             -- 当前值叠加上覆盖值:改完到下一帧才真正写进 mesh,直接读会读到旧值,界面就跳回去了
                             local values = {}
-                            for name, var in pairs(c.vars) do
+                            local mapped = mapped_params(c)
+                            for name, var in pairs(c.vars) do if mapped[name] then
                                 local v = Palette.read_value(mesh, j, var)
+                                if type(v) == "table" then for i = 1, 4 do v[i] = compact(v[i]) end else v = compact(v) end
                                 local o = ov and ov[name]
                                 if type(o) == "number" and var.t == Palette.TYPE_FLOAT then v = o
                                 elseif type(o) == "table" and type(v) == "table" then
                                     for k, i in pairs({ x = 1, y = 2, z = 3, w = 4 }) do if type(o[k]) == "number" then v[i] = o[k] end end
                                 end
                                 values[name] = v
-                            end
+                            end end
                             out.values[key] = values
                         end
                     end
@@ -375,7 +414,8 @@ function Reff.new(deps)
 
         local preview = deps.get_preview()
         if preview and preview.target_id == cur.target.id then
-            snapshot.locating = { slot = preview.slot, material = preview.mat }
+            if preview.hold then snapshot.solo = true
+            else snapshot.locating = { slot = preview.slot, material = preview.mat } end
         end
 
         local view = deps.preset_view(cur.kind_id, source)
@@ -389,6 +429,32 @@ function Reff.new(deps)
         snapshot.presets = p
         snapshot.backups = { hasBackup = deps.has_backup(cur.kind_id) == true,
             hasOnload = deps.has_onload_backup(cur.kind_id) == true }
+    end
+
+    -- REFF 单条消息上限 256KB:超了 Lua 的回包会被原生端直接丢掉,网页等不到回复只报 TIMEOUT。
+    -- 调色页选很多材质时数值最占地方,超了就先只留第一个材质的数值,还超就不带调色数据,并在调色页提示。
+    -- 只在装了 REFF 时检查(独立面板不走消息通道)
+    local MESSAGE_BUDGET = 240 * 1024
+    local function encoded_size(value)
+        local ok, s = pcall(json.dump_string, value)
+        return ok and type(s) == "string" and #s or 0
+    end
+    local function fit_message(snapshot)
+        local pal = snapshot.palette
+        if not pal or not rawget(_G, "reff_native") or type(json) ~= "table" or not json.dump_string then return end
+        -- 只选一个材质时远到不了上限;多选才检查,省得每份快照都多编码一次
+        if not pal.selected or #pal.selected < 2 then return end
+        if encoded_size(snapshot) <= MESSAGE_BUDGET then return end
+        local zh = language() == "zh"
+        local first = pal.selected and pal.selected[1]
+        local keep = {}
+        if first then keep[first] = pal.values[first] end
+        pal.values = keep
+        pal.error = zh and "选中的材质太多，数据超出了界面通信的上限：先只显示第一个材质的数值，批量修改照常生效。少选几个即可恢复"
+            or "Too many materials selected for the UI link: only the first one's values are shown; edits still apply to all. Select fewer to restore"
+        if encoded_size(snapshot) <= MESSAGE_BUDGET then return end
+        snapshot.palette = { error = zh and "调色数据超出了界面通信的上限，请少选几个材质" or "Palette data is too large for the UI link; select fewer materials",
+            materials = pal.materials, selected = pal.selected, scheme = pal.scheme, errors = pal.errors, profiles = {}, values = {}, overrides = pal.overrides }
     end
 
     function controller.snapshot()
@@ -414,6 +480,7 @@ function Reff.new(deps)
         snapshot.character = cur.group.gid
         snapshot.configVersion = M3.is_v3(cur.config) and 3 or 2
         if snapshot.configVersion == 3 then v3_snapshot(snapshot, cur) end
+        fit_message(snapshot)
         return snapshot
     end
 
@@ -452,7 +519,7 @@ function Reff.new(deps)
                 Utils.capture_preserving_unmatched(source, prev, TM.usable_slots(source, prev)))
         end,
         -- 调色盘。view:网页打开 / 关闭调色页、换选中的材质(不改配置)
-        ["palette-view"] = function(p, cfg)
+        ["palette-view"] = function(p, cfg, cur)
             palette_open = p.open == true
 
             local keys = {}
@@ -460,6 +527,7 @@ function Reff.new(deps)
                 if type(k) == "string" and #keys < 64 then keys[#keys + 1] = k end
             end
             palette_sel = keys
+            deps.set_solo(cur and cur.target and cur.target.id, (palette_open and p.solo == true) and keys or nil)
             -- 拖动后没点确定就关了面板 / 换了材质:实时改动已经生效,这里补存一次
             if palette_dirty then palette_dirty = false; return true, false end
             return "saved"
@@ -669,6 +737,7 @@ function Reff.new(deps)
         p = type(p) == "table" and p or {}
         if p.kind == "character" then
             selected = p.id
+            deps.set_solo(nil)
             palette_sel = {}    -- 选中的材质键是按角色的
             return controller.snapshot()
         end
@@ -693,6 +762,9 @@ function Reff.new(deps)
         if not handler then error(T("reff_action_rejected")) end
         local changed, reapply = handler(p, cur.config, cur)
         if not changed then error(T("reff_action_rejected")) end
+        -- 调色拖动中(live):只改了内存、不存盘,回一个小确认就够了 —— 每一步都重建、编码、发送整份快照,
+        -- 网页再整页重算,拖动就会一顿一顿的。松手那一次不带 live,照常返回完整快照
+        if p.kind == "palette-set" and p.live == true and changed == "saved" then return { live = true } end
         if changed ~= "saved" then deps.commit(cur.kind_id, changed, reapply) end
         -- 面板上正在填的表单按旧值缓存,改过之后让它重新读
         deps.reset_ui_state()

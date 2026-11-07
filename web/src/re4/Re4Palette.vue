@@ -6,7 +6,7 @@ import Re4HotkeyPick from './Re4HotkeyPick.vue';
 import type { Re4Translate } from './i18n';
 import type {
   Re4Comp, Re4Palette, Re4PaletteEntry, Re4PaletteGroup, Re4PaletteMaterial, Re4PaletteOption, Re4PaletteOverride,
-  Re4PaletteValue, Re4PaletteWrite, Re4Perform, Re4Snapshot, Re4Text,
+  Re4LiveWrite, Re4PaletteValue, Re4PaletteWrite, Re4Perform, Re4Snapshot, Re4Text,
 } from './types';
 
 // 调色页。左边选材质（可多选，跨部位），右边按材质映射列出参数：通用含义、拆开的分量、「i」里的注释。
@@ -15,7 +15,7 @@ import type {
 // 顶部选中哪一份就生效哪一份(存进配置):初始(mdf2 原值,只读)或某个调色方案(cfg.palettes[名],
 // 垫在被整套造型 / 状态组 / 条件状态引用的方案下面)。调色页编辑的就是选中的那一份;
 // 选着初始时一改,Lua 自动新建一个方案并选中,改动记在新方案里。
-const props = defineProps<{ snapshot: Re4Snapshot; busy: boolean; perform: Re4Perform; t: Re4Translate }>();
+const props = defineProps<{ snapshot: Re4Snapshot; busy: boolean; perform: Re4Perform; liveWrite?: Re4LiveWrite; t: Re4Translate }>();
 const c = () => ({ character: props.snapshot.character });
 const pal = computed<Re4Palette | undefined>(() => props.snapshot.palette);
 const en = computed(() => props.snapshot.language === 'en');
@@ -33,9 +33,12 @@ watch(() => pal.value?.scheme, v => {
   if (scheme.value === '' && v) { if (base) batchScheme = v; scheme.value = v; return; }
   void cancelBatch(); local.clear(); scheme.value = v;
 });
-function view(open: boolean) { return props.perform({ kind: 'palette-view', ...c(), open, keys: open ? selection.value : [] }); }
+// 「仅显示选中部位」:开着时人物身上只留选中的材质(其余部位整个隐藏),跟着选择走;离开调色页自动关
+const solo = shallowRef(props.snapshot.solo === true);
+function view(open: boolean) { return props.perform({ kind: 'palette-view', ...c(), open, keys: open ? selection.value : [], solo: open && solo.value }); }
+function setSolo(on: boolean) { solo.value = on; void view(true); }
 // 页签由 KeepAlive 缓存:切走是 deactivated 而不是卸载。关掉后 Lua 不再在快照里带调色数据
-const close = () => { void cancelBatch(); void props.perform({ kind: 'palette-view', ...c(), open: false, keys: [] }); };
+const close = () => { solo.value = false; void cancelBatch(); void props.perform({ kind: 'palette-view', ...c(), open: false, keys: [] }); };
 onMounted(() => { void view(true); });
 onActivated(() => { void view(true); });
 onDeactivated(close);
@@ -46,6 +49,15 @@ watch(() => pal.value?.selected, keys => { if (keys && !selection.value.length &
 function select(keys: string[]) { selection.value = keys; void view(true); }
 const toggle = (key: string) => select(selection.value.includes(key) ? selection.value.filter(k => k !== key) : [...selection.value, key]);
 const only = (key: string) => select([key]);
+// 按部位(身体 / 头部 / 头发……)整组操作;保留其它部位的选择,新加的接在后面(第一个选中的材质决定显示哪个的值)
+const slotKeys = (g: { rows: Re4PaletteMaterial[] }) => g.rows.map(m => m.key);
+const slotCount = (g: { rows: Re4PaletteMaterial[] }) => slotKeys(g).filter(k => selection.value.includes(k)).length;
+function slotAll(g: { rows: Re4PaletteMaterial[] }) { select([...selection.value, ...slotKeys(g).filter(k => !selection.value.includes(k))]); }
+function slotInvert(g: { rows: Re4PaletteMaterial[] }) {
+  const keys = slotKeys(g);
+  select([...selection.value.filter(k => !keys.includes(k)), ...keys.filter(k => !selection.value.includes(k))]);
+}
+function slotClear(g: { rows: Re4PaletteMaterial[] }) { const keys = slotKeys(g); select(selection.value.filter(k => !keys.includes(k))); }
 
 const materials = computed(() => pal.value?.materials ?? []);
 const bySlot = computed(() => {
@@ -180,9 +192,7 @@ function modified(e: Re4PaletteEntry) {
   });
 }
 const anyOverride = computed(() => chosen.value.some(m => m.overridden > 0));
-// ---------------------------------------------------------------- 定位 / 导出 mdf2 材质预设(只选了一个材质时)
-// 定位:同整套造型页,临时只显示这一个材质(Lua 端几秒后自动恢复)
-const locate = () => { const m = chosen.value[0]; if (m) void props.perform({ kind: 'locate', ...c(), slot: m.slot, material: m.material }); };
+// ---------------------------------------------------------------- 导出 mdf2 材质预设(只选了一个材质时)
 // 导出:先填预设名(RE Mesh Editor 用它当文件名,只允许英文;同 Lua 的 Mdf2.valid_name)
 const exporting = shallowRef(false);
 const presetName = shallowRef('');
@@ -217,7 +227,10 @@ function pump() {
   const job = pending;
   pending = null;
   inflight = true;
-  void props.perform({ kind: 'palette-set', ...c(), writes: job.writes, live: job.live || undefined, scheme: job.scheme }).then(ok => {
+  const action = { kind: 'palette-set' as const, ...c(), writes: job.writes, live: job.live || undefined, scheme: job.scheme };
+  // 拖动中走轻量写入(只等确认、不拿快照);选着初始时第一次写会新建方案,要拿快照才知道新方案,仍走 perform
+  const send = job.live && job.scheme && props.liveWrite ? props.liveWrite(action) : props.perform(action);
+  void send.then(ok => {
     if (!ok && !pending) { pending = job; window.setTimeout(pump, 60); }
   }).finally(() => { inflight = false; pump(); });
 }
@@ -427,6 +440,10 @@ const clampSlider = (e: Re4PaletteEntry, v?: number) => Math.max(sliderMin(e), M
       <!-- 整个调色的轮换快捷键单独一行,在方案选择上面 -->
       <div class="re4-panel-body re4-row re4-pal-cycle">
         <Re4HotkeyPick :snapshot="snapshot" :busy="busy" :perform="perform" :t="t" :target="{ kind: 'palette' }" :label="t('hotkeyCycleRef')" />
+        <span class="re4-spacer"></span>
+        <ElTooltip :content="t('paletteSoloHint')" placement="bottom">
+          <label class="re4-pal-solo"><ElSwitch :model-value="solo" size="small" :disabled="busy" @change="v => setSolo(v === true)" /><span>{{ t('paletteSolo') }}</span></label>
+        </ElTooltip>
       </div>
       <div class="re4-panel-body re4-row">
         <ElSelect :model-value="scheme" :empty-values="[null, undefined]" size="small" style="width:16em" :aria-label="t('paletteScheme')" @change="v => pickScheme(String(v))">
@@ -476,7 +493,13 @@ const clampSlider = (e: Re4PaletteEntry, v?: number) => Math.max(sliderMin(e), M
         </div>
         <div class="re4-panel-body">
           <div v-for="g in bySlot" :key="g.slot" class="re4-pal-slot">
-            <span class="re4-muted re4-small">{{ g.label }}</span>
+            <div class="re4-pal-slothead">
+              <span class="re4-muted re4-small">{{ g.label }}</span>
+              <span class="re4-spacer"></span>
+              <button class="re4-link re4-small" :disabled="slotCount(g) === g.rows.length" @click="slotAll(g)">{{ t('paletteSlotAll') }}</button>
+              <button class="re4-link re4-small" @click="slotInvert(g)">{{ t('paletteSlotInvert') }}</button>
+              <button class="re4-link re4-small" :disabled="!slotCount(g)" @click="slotClear(g)">{{ t('paletteSlotClear') }}</button>
+            </div>
             <div v-for="m in g.rows" :key="m.key" class="re4-pal-mat" :class="{ on: selection.includes(m.key) }">
               <input type="checkbox" :checked="selection.includes(m.key)" :aria-label="m.material" @change="toggle(m.key)">
               <button class="re4-pal-name" :title="t('paletteOnly')" @click="only(m.key)">
@@ -493,7 +516,6 @@ const clampSlider = (e: Re4PaletteEntry, v?: number) => Math.max(sliderMin(e), M
           <span class="re4-panel-title">{{ chosen.length ? t('paletteSelected', chosen.length) : t('paletteNothing') }}</span>
           <span class="re4-spacer"></span>
           <template v-if="chosen.length === 1">
-            <ElButton size="small" :disabled="busy" @click="locate">{{ t('locate') }}</ElButton>
             <ElButton size="small" :disabled="busy" @click="startExport">{{ t('paletteExport') }}</ElButton>
             <!-- 灰掉时只在悬停时说明原因(禁用的按钮收不到悬停,包一层 span) -->
             <ElTooltip v-if="scheme" :content="replaceTip" :disabled="!replaceTip" placement="bottom">
@@ -596,6 +618,7 @@ const clampSlider = (e: Re4PaletteEntry, v?: number) => Math.max(sliderMin(e), M
 @media (max-width: 760px) { .re4-pal-layout { grid-template-columns: minmax(0, 1fr); } }
 .re4-pal-list .re4-panel-body { gap: 8px; }
 .re4-pal-slot { display: grid; gap: 1px; }
+.re4-pal-slothead { display: flex; align-items: center; gap: 8px; }
 .re4-pal-mat { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 1px 4px; border-radius: 4px; }
 .re4-pal-mat.on { background: var(--re4-soft); }
 .re4-pal-mat input { margin: 0; flex: none; }
@@ -644,6 +667,7 @@ const clampSlider = (e: Re4PaletteEntry, v?: number) => Math.max(sliderMin(e), M
 .re4-pal-batchbtns { display: flex; gap: 6px; }
 .re4-pal-schemes { margin-bottom: 8px; }
 .re4-pal-cycle { padding-bottom: 0; }
+.re4-pal-solo { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
 .re4-pal-schemes .re4-row { flex-wrap: wrap; gap: 6px; align-items: center; }
 .re4-pal-schemes .el-button + .el-button { margin-left: 0; }
 .re4-pal-opttag { margin-left: 8px; }

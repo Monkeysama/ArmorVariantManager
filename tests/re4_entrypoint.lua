@@ -109,10 +109,11 @@ local function run(scenario)
         body = mesh("_Chainsaw/Character/ch/cha0/cha000/00/cha000_00.mesh", {"Skin", "Jacket"}),
         head = mesh("_Chainsaw/Character/ch/cha0/cha000/10/cha000_10.mesh", {"Face"}),
         hair = mesh("_Chainsaw/Character/ch/cha0/cha000/20/cha000_20.mesh", {"Hair", "Clip"}),
+        armor = scenario.armor and mesh("_Chainsaw/Character/ch/cha0/cha000/30/cha000_30.mesh", {"Skin", "Jacket", "Vest"}) or nil,
     }
     local body_updater = managed({
         get_BodyMesh = meshes.body, get_HeadMesh = meshes.head, get_HairMesh = meshes.hair,
-        get_HasArmorMesh = false,
+        get_ArmorMesh = meshes.armor, get_HasArmorMesh = meshes.armor ~= nil,
     })
     local hit_point = managed({get_HitPointRatio = 1.0, get_CurrentHitPoint = 100, get_DefaultHitPoint = 100})
     local context = managed({
@@ -389,6 +390,12 @@ snap = act({kind = "palette-view", character = "Leon", open = true, keys = {"bod
 assert(snap.palette and snap.palette.scheme == "Pale", "the palette page edits the selected scheme")
 snap = act({kind = "palette-set", character = "Leon", scheme = "Pale", writes = {{slot = "body", material = "Skin", param = "Base", component = "y", value = 0.2}}})
 assert(files[CONFIG_PATH].palettes.Pale.body.Skin.Base.y == 0.2, "writes go to the selected scheme")
+-- 拖动中(live):只回小确认、不存盘;松手那次存盘并返回完整快照
+local live = act({kind = "palette-set", character = "Leon", scheme = "Pale", live = true, writes = {{slot = "body", material = "Skin", param = "Base", component = "y", value = 0.3}}})
+S.equal(live, {live = true}, "a live drag write is acknowledged without a snapshot")
+assert(files[CONFIG_PATH].palettes.Pale.body.Skin.Base.y == 0.2, "live writes are not saved")
+snap = act({kind = "palette-set", character = "Leon", scheme = "Pale", writes = {{slot = "body", material = "Skin", param = "Base", component = "y", value = 0.3}}})
+assert(snap.game == "RE4" and files[CONFIG_PATH].palettes.Pale.body.Skin.Base.y == 0.3, "the release write saves and returns a snapshot")
 snap = act({kind = "palette-reset", character = "Leon", scheme = "Pale", targets = {{slot = "body", material = "Skin"}}, param = "Base", component = "x"})
 assert(files[CONFIG_PATH].palettes.Pale.body.Skin.Base.x == nil)
 assert(not pcall(act, {kind = "palette-set", character = "Leon", scheme = "Nope", writes = {{slot = "body", material = "Skin", param = "Base", value = 1}}}),
@@ -444,10 +451,30 @@ snap = act({kind = "armor-mirror", character = "Leon", enabled = true})
 assert(snap.armorMirror == true)
 snap = act({kind = "note", character = "Leon", slot = "body", material = "Skin", text = "Skin base"})
 assert(snap.slots[1].materials[1].note == "Skin base")
+run_frames()
 local before_locate = S.copy(files[CONFIG_PATH])
+local looks_before = {body = meshes.body.state(), head = meshes.head.state(), hair = meshes.hair.state()}
 snap = act({kind = "locate", character = "Leon", slot = "hair", material = "Clip"})
 assert(snap.locating.slot == "hair" and snap.locating.material == "Clip")
 S.equal(files[CONFIG_PATH], before_locate, "locating never writes the config")
+-- 定位中:被定位的槛位只剩这一个材质,其余槛位(身体、头)整个隐藏
+run_frames()
+S.equal(meshes.hair.state(), {Hair = false, Clip = true}, "only the located material shows")
+S.equal(meshes.body.state(), {Skin = false, Jacket = false}, "other slots are hidden while locating")
+S.equal(meshes.head.state(), {Face = false}, "other slots are hidden while locating")
+-- 定位中换一个材质:沿用最初存下的开关,过期后瞬间恢复成定位前的样子
+act({kind = "locate", character = "Leon", slot = "body", material = "Skin"})
+run_frames()
+S.equal(meshes.body.state(), {Skin = true, Jacket = false})
+S.equal(meshes.hair.state(), {Hair = false, Clip = false})
+do
+    local real_clock = os.clock
+    os.clock = function() return real_clock() + 3600 end
+    run_frames()
+    os.clock = real_clock
+end
+S.equal({body = meshes.body.state(), head = meshes.head.state(), hair = meshes.hair.state()}, looks_before,
+    "every slot is back to its pre-locate look")
 
 -- 预设库:存为新预设 → 存回 → 改名 → 套用(先进自动保存)→ 恢复自动保存 → 转预设 → 删除
 snap = act({kind = "preset-save", character = "Leon", name = "Mine"})
@@ -567,3 +594,76 @@ do
     _G.imgui = base_imgui
     print("PASS: RE4 standalone panel (no REFF) drives the real controller through every page without errors (" .. clicks .. " clicks)")
 end
+
+-- 穿着护甲 + armor 照抄 body:定位 body 的材质时 armor 上同名材质一起显示(游戏把 body 换成了 armor);
+-- 关掉照抄时 armor 和其它槛位一样整个隐藏
+do
+    local mirrored = S.copy(leon)
+    mirrored.armor_mirrors_body = true
+    local h, armor_tick
+    files, meshes, h, armor_tick = run({player = true, config = mirrored, reff = true, armor = true})
+    local a = h["monkeysama.avm.action"]
+    a({kind = "migrate", character = "Leon"})
+    for _ = 1, 2 do armor_tick() end
+    local armor_before = meshes.armor.state()
+    a({kind = "locate", character = "Leon", slot = "body", material = "Jacket"})
+    for _ = 1, 2 do armor_tick() end
+    S.equal(meshes.body.state(), {Skin = false, Jacket = true})
+    S.equal(meshes.armor.state(), {Skin = false, Jacket = true, Vest = false}, "mirrored armor shows the located body material")
+    S.equal(meshes.hair.state(), {Hair = false, Clip = false})
+    local real_clock = os.clock
+    os.clock = function() return real_clock() + 3600 end
+    for _ = 1, 2 do armor_tick() end
+    os.clock = real_clock
+    S.equal(meshes.armor.state(), armor_before, "armor restored, including materials the config never names")
+    a({kind = "armor-mirror", character = "Leon", enabled = false})
+    for _ = 1, 2 do armor_tick() end
+    a({kind = "locate", character = "Leon", slot = "body", material = "Jacket"})
+    for _ = 1, 2 do armor_tick() end
+    S.equal(meshes.armor.state(), {Skin = false, Jacket = false, Vest = false}, "without mirroring armor is just another hidden slot")
+    os.clock = function() return real_clock() + 7200 end
+    for _ = 1, 2 do armor_tick() end
+    os.clock = real_clock
+
+    -- 调色页「仅显示选中部位」:多选跨部位,跟着选择走,不过期;离开调色页恢复原样
+    local looks = function() return {body = meshes.body.state(), head = meshes.head.state(),
+        hair = meshes.hair.state(), armor = meshes.armor.state()} end
+    local before_solo = looks()
+    local snap_solo = a({kind = "palette-view", character = "Leon", open = true, keys = {"body/Jacket", "hair/Clip"}, solo = true})
+    assert(snap_solo.solo == true and snap_solo.locating == nil, "solo is reported apart from a timed locate")
+    os.clock = function() return real_clock() + 9000 end
+    for _ = 1, 2 do armor_tick() end
+    os.clock = real_clock
+    S.equal(looks(), {body = {Skin = false, Jacket = true}, head = {Face = false}, hair = {Hair = false, Clip = true},
+        armor = {Skin = false, Jacket = false, Vest = false}}, "only the selected materials show, and it does not expire")
+    a({kind = "palette-view", character = "Leon", open = true, keys = {"body/Skin"}, solo = true})
+    for _ = 1, 2 do armor_tick() end
+    S.equal(meshes.body.state(), {Skin = true, Jacket = false}, "solo follows the selection")
+    S.equal(meshes.hair.state(), {Hair = false, Clip = false})
+    a({kind = "palette-view", character = "Leon", open = true, keys = {"body/Skin"}, solo = false})
+    for _ = 1, 2 do armor_tick() end
+    S.equal(looks(), before_solo, "turning solo off restores the look")
+    a({kind = "palette-view", character = "Leon", open = true, keys = {"hair/Hair"}, solo = true})
+    for _ = 1, 2 do armor_tick() end
+    S.equal(meshes.body.state(), {Skin = false, Jacket = false})
+    a({kind = "palette-view", character = "Leon", open = false, keys = {}})
+    for _ = 1, 2 do armor_tick() end
+    S.equal(looks(), before_solo, "leaving the palette page restores the look")
+
+    -- 快照编码后超过 REFF 单条消息上限:先只留第一个材质的数值并提示,还超就只给提示 —— 总之有回包,不再 TIMEOUT
+    local big = false
+    _G.json.dump_string = function(v)
+        local pal = v.palette
+        if not pal then return "{}" end
+        if big or not pal.error then return string.rep("x", 300 * 1024) end
+        return "{}"
+    end
+    local s1 = a({kind = "palette-view", character = "Leon", open = true, keys = {"body/Skin", "body/Jacket"}})
+    assert(s1.palette and s1.palette.error and s1.palette.error:find("太多", 1, true), "oversized palette is trimmed with a notice")
+    big = true
+    local s2 = a({kind = "palette-view", character = "Leon", open = true, keys = {"body/Skin", "body/Jacket"}})
+    assert(s2.palette.error and next(s2.palette.profiles) == nil and next(s2.palette.values) == nil, "still too large: palette data dropped, notice kept")
+    _G.json.dump_string = nil
+    a({kind = "palette-view", character = "Leon", open = false, keys = {}})
+end
+print("PASS: RE4 locate hides every other slot, carries over to mirrored armor, restores the pre-locate look; palette solo shows only the selection until turned off; oversized palette snapshots are trimmed instead of dropped")

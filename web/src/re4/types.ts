@@ -118,6 +118,8 @@ export interface Re4Snapshot {
   palettes?: Re4PaletteSchemes;
   hotkeys?: Re4Hotkey[];
   locating?: { slot: string; material: string };
+  // 调色页的「仅显示选中部位」开着(只对当前角色)
+  solo?: boolean;
   presets?: Re4Presets;
   backups?: { hasBackup: boolean; hasOnload: boolean };
 }
@@ -144,7 +146,7 @@ export type Re4Action =
   | C & { kind: 'hotkey-skip'; structure: { kind: Re4HotkeyTarget['kind']; group?: string }; item: string; included: boolean }
   | C & { kind: 'option-height'; group: string; option: string; cm?: number }
   | C & { kind: 'height-override'; enabled?: boolean; cm?: number }
-  | C & { kind: 'palette-view'; open: boolean; keys: string[]; scheme?: string }
+  | C & { kind: 'palette-view'; open: boolean; keys: string[]; scheme?: string; solo?: boolean }
   | C & { kind: 'palette-set'; writes: Re4PaletteWrite[]; live?: boolean; scheme?: string }
   | C & { kind: 'palette-reset'; targets: { slot: string; material: string }[]; param?: string; component?: Re4Comp; scheme?: string }
   | C & { kind: 'palette-scheme-new'; name: string; from?: string }
@@ -192,3 +194,5 @@ export type Re4Action =
 
 // 子组件只拿到这个：一次一个或一串操作，结果是否成功
 export type Re4Perform = (actions: Re4Action | Re4Action[]) => Promise<boolean>;
+// 调色拖动中的实时写入:直接发给 Lua,只等一个小确认,不拿快照、不占通用操作的通道
+export type Re4LiveWrite = (action: Re4Action) => Promise<boolean>;

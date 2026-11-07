@@ -69,6 +69,8 @@ function Panel.new(deps)
         if type(a) ~= "table" then return false end
         if a.kind ~= "character" and a.kind ~= "setting" and a.character == nil and snap then a.character = snap.character end
         local ok, res = pcall(deps.controller.action, a)
+        -- 调色拖动中的写入只回 { live = true }(不是快照),保留当前快照
+        if ok and type(res) == "table" and res.live == true and res.game == nil then return true end
         if ok and type(res) == "table" then
             snap, snap_age = res, 0
             ctx.snap = res

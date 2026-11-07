@@ -205,7 +205,7 @@ return {
         cond_is_battle = "战斗中",
         cond_is_aiming = "瞄准中移动或转视角",
         cond_is_wheel = "站定瞄准/举刀",
-        cond_is_holding = "举枪/举刀中(完整)",
+        cond_is_holding = "持械中",
         cond_is_combating = "近战攻击中",
         cond_is_shooting = "开火中",
         cond_is_pull_trigger = "扣扳机",
