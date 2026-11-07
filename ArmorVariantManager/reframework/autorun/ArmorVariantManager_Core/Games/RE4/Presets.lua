@@ -11,7 +11,7 @@
 -- json 接口删不了文件,删除 = 把文件写成墓碑 { deleted = true },列表跳过,新建时复用。
 -- mod 作者随 mod 发布的预设也放在这个目录(source = "mod"),文件名随意。
 --
--- 匹配:预设的"指纹"是它记录的材质名(整套造型快照 + 状态组作用域),按槛位和当前模型比:
+-- 匹配:预设的"指纹"是它记录的材质名(整套造型快照 + 状态组选项写到的材质),按槛位和当前模型比:
 --   full    当前模型每个有材质的槛位,材质名集合都和指纹完全相同
 --   partial 至少一个槛位的重合度(交集 / 并集)达到 SLOT_MATCH_THRESHOLD
 --   none    其他
@@ -49,7 +49,15 @@ function Presets.fingerprint(cfg)
             end
         end
     end
+    -- 状态组:选项里写到的材质;旧文件里的 scope(作用域,2026-11-07 前)也算进来
     for _, g in ipairs(is_tbl(cfg) and is_tbl(cfg.groups) and cfg.groups or {}) do
+        for _, opt in pairs(is_tbl(g) and is_tbl(g.options) and g.options or {}) do
+            for slot, data in pairs(is_tbl(opt) and opt or {}) do
+                if type(slot) == "string" and is_tbl(data) and is_tbl(data.materials) then
+                    for m in pairs(data.materials) do if type(m) == "string" then add(slot, m) end end
+                end
+            end
+        end
         for _, key in ipairs(is_tbl(g.scope) and g.scope or {}) do
             local slot, mat = tostring(key):match("^([^/]+)/(.+)$")
             if slot then add(slot, mat) end

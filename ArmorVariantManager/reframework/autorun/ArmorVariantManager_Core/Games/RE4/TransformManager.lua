@@ -455,7 +455,7 @@ local function changed_since_last(char_addr, config, sig)
 end
 
 -- v3:各层的选择来自条件状态表(ModelV3.resolve),叠加和 v2 共用 make_build。
--- 状态组的叠加顺序就是 groups 的顺序:作用域可以重叠,靠后的组覆盖靠前的。
+-- 状态组的叠加顺序就是 groups 的顺序:几个组可以写同一个材质,靠后的组覆盖靠前的。
 local function resolve_v3(char_addr, config, context, body_updater)
     local sparse = {}
     for _, g in ipairs(config.groups or {}) do

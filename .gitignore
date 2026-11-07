@@ -28,6 +28,8 @@ sync_main_release.py
 !/tests/re4_palette.lua
 !/tests/re4_mdf2.lua
 !/tests/re4_targets.lua
+!/tests/re4_burning.lua
+!/tests/re4_conditions_merged.lua
 !/tests/re4_input_guard.lua
 !/tests/re4_panel.lua
 !/tests/re4_portrait_camera.lua

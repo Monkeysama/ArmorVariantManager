@@ -127,7 +127,7 @@ end
 -- ============================================================ 状态组
 function OpsV3.new_group(cfg, name)
     if not valid_name(name) or M3.find_group(cfg, name) then return false end
-    table.insert(cfg.groups, { name = name, scope = {}, options = {}, order = {}, active = "" })
+    table.insert(cfg.groups, { name = name, options = {}, order = {}, active = "" })
     return true, false
 end
 
@@ -161,53 +161,6 @@ function OpsV3.move_group(cfg, name, offset)
     if not from or to == from or to < 1 or to > #cfg.groups then return false end
     table.insert(cfg.groups, to, table.remove(cfg.groups, from))
     return true, false
-end
-
--- 作用域:一个材质可以属于几个状态组,重叠部分由靠后的组覆盖(见 TransformManager.resolve_v3)
-function OpsV3.scope_add(cfg, group, slot, mat)
-    local g = M3.find_group(cfg, group)
-    if not g or type(slot) ~= "string" or type(mat) ~= "string" then return false end
-    local key = M3.key_of(slot, mat)
-    for _, k in ipairs(g.scope) do if k == key then return false end end
-    table.insert(g.scope, key)
-    return true, false
-end
-
--- 移出作用域时,各选项里这个材质的设置一起删掉
-function OpsV3.scope_remove(cfg, group, slot, mat)
-    local g = M3.find_group(cfg, group)
-    if not g then return false end
-    local key = M3.key_of(slot, mat)
-    for i, k in ipairs(g.scope) do
-        if k == key then
-            table.remove(g.scope, i)
-            for _, opt in pairs(g.options) do
-                if type(opt[slot]) == "table" and type(opt[slot].materials) == "table" then
-                    opt[slot].materials[mat] = nil
-                    if next(opt[slot].materials) == nil then opt[slot] = nil end
-                end
-            end
-            return true, true
-        end
-    end
-    return false
-end
-
--- 批量改作用域(编辑范围的全选 / 清空):add / remove 是 { {slot=, material=}, ... }
-function OpsV3.scope_set(cfg, group, add, remove)
-    if not M3.find_group(cfg, group) then return false end
-    local changed, reapply = false, false
-    for _, m in ipairs(type(add) == "table" and add or {}) do
-        if type(m) == "table" and OpsV3.scope_add(cfg, group, m.slot, m.material) then changed = true end
-    end
-    for _, m in ipairs(type(remove) == "table" and remove or {}) do
-        if type(m) == "table" then
-            local c, r = OpsV3.scope_remove(cfg, group, m.slot, m.material)
-            if c then changed = true end
-            if r then reapply = true end
-        end
-    end
-    return changed, reapply
 end
 
 -- ============================================================ 状态组的选项
@@ -270,14 +223,11 @@ function OpsV3.move_option(cfg, group, name, offset)
     return ok, false
 end
 
--- 选项里的单个材质:value = "none"(不管)/ "off" / "on"。只能写作用域里的材质
+-- 选项里的单个材质:value = "none"(不管)/ "off" / "on"。任何材质都能写;
+-- 几个组写同一个材质时靠后的组说了算(见 TransformManager.resolve_v3)
 function OpsV3.set_option_material(cfg, group, option, slot, mat, value)
     local g = M3.find_group(cfg, group)
     if not g or not g.options[option] or type(slot) ~= "string" or type(mat) ~= "string" then return false end
-    local key = M3.key_of(slot, mat)
-    local inside = false
-    for _, k in ipairs(g.scope) do if k == key then inside = true; break end end
-    if not inside then return false end
     local ok = Ops.set_material(g.options[option], slot, mat, value, false)
     if not ok then return false end
     local data = g.options[option][slot]

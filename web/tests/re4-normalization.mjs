@@ -26,7 +26,7 @@ test('normalizes the REFramework empty-table shapes inside the v3 snapshot', () 
       status: { hp: 50, flags: empty }, conditions: [{ id: 'hp_ratio', kind: 'number', label: 'HP', category: 'hp', ops: empty }],
       slots: [{ id: 'body', label: 'Body', mirrored: false, materials: empty }], look: empty,
       base: { active: null, presets: [{ name: 'A', values: empty, match: { status: 'ok', skipped: empty } }] },
-      groups: [{ name: 'G', scope: empty, active: null, options: [{ name: 'o', values: empty }] }],
+      groups: [{ name: 'G', active: null, options: [{ name: 'o', values: empty }] }],
       states: [{ name: 's', enabled: true, exclusive: false, logic: 'AND', hold: 0, fadeIn: 0, fadeOut: 0, kind: 'idle', targets: empty, conditions: empty }],
       presets: { current: 'full', dismissed: false, list: empty, better: empty, autosaves: empty } });
     assert.deepEqual(result.characters[0].targets, []);
@@ -37,7 +37,6 @@ test('normalizes the REFramework empty-table shapes inside the v3 snapshot', () 
     assert.equal(result.base.active, '');
     assert.deepEqual(result.base.presets[0].values, {});
     assert.deepEqual(result.base.presets[0].match.skipped, []);
-    assert.deepEqual(result.groups[0].scope, []);
     assert.equal(result.groups[0].active, '');
     assert.deepEqual(result.groups[0].options[0].values, {});
     assert.deepEqual(result.states[0].targets, []);

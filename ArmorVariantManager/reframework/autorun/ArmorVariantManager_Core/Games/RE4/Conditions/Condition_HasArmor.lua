@@ -22,13 +22,27 @@ local M = {
     label_key = "cond_has_armor_mesh",
 }
 
+-- 2026-11-07 起和 PlayerBaseContext.get_IsArmorCostume() 取「或」:两者任一为真就算有护甲
+-- (用户要求;IsArmorCostume 是游戏对"当前服装带护甲"的判定,两边各自可能漏)。
+-- 两个都读不到才返回 nil。
+local function armor_costume(context)
+    local ok, v = pcall(function() return context:call("get_IsArmorCostume") end)
+    if ok and type(v) == "boolean" then return v end
+    return nil
+end
+
 function M.get(context)
     if not context then return nil end
+    local has = nil
     local ok, bu = pcall(function() return context:call("get_BodyUpdater") end)
-    if not ok or not bu or not sdk.is_managed_object(bu) then return nil end
-    local ok_h, has = pcall(function() return bu:call("get_HasArmorMesh") end)
-    if ok_h and type(has) == "boolean" then return has end
-    return nil
+    if ok and bu and sdk.is_managed_object(bu) then
+        local ok_h, v = pcall(function() return bu:call("get_HasArmorMesh") end)
+        if ok_h and type(v) == "boolean" then has = v end
+    end
+    if has == true then return true end
+    local costume = armor_costume(context)
+    if costume ~= nil then return costume end
+    return has
 end
 
 return M

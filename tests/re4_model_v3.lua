@@ -39,11 +39,13 @@ do
     assert(cfg.base.active == "", "unknown base active falls back to none")
     S.equal(cfg.base.presets.A, {body = {materials = {a = true}}})
     assert(#cfg.groups == 2, "duplicate group names dropped")
-    S.equal(cfg.groups[1].scope, {"head/x", "head/y"})
-    S.equal(cfg.groups[1].options.o, {head = {materials = {x = true}}})
-    S.equal(cfg.groups[2].scope, {"head/y", "head/w"}, "overlapping scopes are kept")
+    -- 旧配置的 scope 读入时丢掉,也不再过滤选项里的材质(z 原本在作用域外,现在保留)
+    assert(cfg.groups[1].scope == nil and cfg.groups[2].scope == nil, "scope is dropped")
+    S.equal(cfg.groups[1].options.o, {head = {materials = {x = true, z = false}}})
     S.equal(cfg.groups[2].options.p, {head = {materials = {y = true, w = false}}})
-    S.equal(M3.groups_of(cfg)["head/y"], {"G1", "G2"})
+    S.equal(M3.groups_of(cfg)["head/z"], {"G1"})
+    S.equal(M3.groups_of(cfg)["head/w"], {"G2"})
+    assert(M3.groups_of(cfg)["head/y"][1] == "G2", "groups_of follows the materials the options write")
     assert(cfg.conditions.auto == true)
     local st = cfg.conditions.states[1]
     assert(#st.targets == 1 and st.fade_in == 30 and st.enabled and not st.exclusive and st.logic == "AND")
@@ -259,28 +261,17 @@ do
     assert(cfg.conditions.states[1].base == "T" and cfg.base.presets.T)
     assert(not OpsV3.rename_group(cfg, "Jacket", "Face"), "name collision rejected")
 
-    -- 作用域
-    assert(OpsV3.scope_add(cfg, "Jacket", "head", "b1"), "a material may belong to several groups")
-    assert(not OpsV3.scope_add(cfg, "Jacket", "head", "b1"), "already in scope")
-    assert(OpsV3.scope_remove(cfg, "Jacket", "head", "b1"))
-    assert(OpsV3.scope_add(cfg, "Jacket", "body", "sleeve"))
+    -- 选项可以写任何材质(没有作用域限制),包括别的组也在写的
     assert(OpsV3.set_option_material(cfg, "Jacket", "On", "body", "sleeve", "on"))
     assert(g.options.On.body.materials.sleeve == true)
-    assert(not OpsV3.set_option_material(cfg, "Jacket", "On", "hair", "x", "on"), "outside scope rejected")
-    assert(OpsV3.scope_remove(cfg, "Jacket", "body", "sleeve"))
-    assert(g.options.On.body.materials.sleeve == nil, "removing from scope clears option values")
+    assert(OpsV3.set_option_material(cfg, "Jacket", "On", "head", "b1", "off"), "a material may be written by several groups")
+    assert(g.options.On.head.materials.b1 == false)
+    assert(OpsV3.set_option_material(cfg, "Jacket", "On", "head", "b1", "none"))
+    assert(g.options.On.head == nil, "clearing the last material drops the slot")
     assert(OpsV3.set_option_material(cfg, "Jacket", "Torn", "body", "j", "none"))
     assert(g.options.Torn.body == nil, "empty slot table dropped")
-    -- 批量改作用域
-    local n0 = #g.scope
-    assert(OpsV3.scope_set(cfg, "Jacket", { { slot = "head", material = "b1" }, { slot = "head", material = "b2" } }, {}))
-    assert(#g.scope == n0 + 2)
-    assert(not OpsV3.scope_set(cfg, "Jacket", { { slot = "head", material = "b1" } }, {}), "nothing new to add")
-    assert(OpsV3.set_option_material(cfg, "Jacket", "On", "head", "b2", "on"))
-    local changed, reapply = OpsV3.scope_set(cfg, "Jacket", {}, { { slot = "head", material = "b1" }, { slot = "head", material = "b2" } })
-    assert(changed and reapply and #g.scope == n0)
-    assert(g.options.On.head == nil, "bulk removal clears option values")
-    assert(not OpsV3.scope_set(cfg, "Nope", {}, {}), "unknown group")
+    assert(not OpsV3.set_option_material(cfg, "Nope", "On", "body", "j", "on"), "unknown group")
+    assert(OpsV3.scope_add == nil and OpsV3.scope_set == nil, "scope editing is gone")
 
     -- 选项增删
     local _, _, name = OpsV3.new_option(cfg, "Face")

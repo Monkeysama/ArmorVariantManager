@@ -50,9 +50,24 @@ function Page.draw(ctx, x, y, w)
     if clicked and ctx.act({ kind = "preset-save", name = name }) then st.new_name = "" end
     bx = bx + bw + 8
     if p.source and p.source.own then
-        if W.button(t("saveBack", p.source.name), bx, cy, nil, 26, { font = W.small() }) then ctx.act({ kind = "preset-update" }) end
+        local c2, bw2 = W.button(t("saveBack", p.source.name), bx, cy, nil, 26, { font = W.small() })
+        if c2 then ctx.act({ kind = "preset-update" }) end
+        bx = bx + bw2 + 8
     end
-    cy = cy + 40
+    -- 新建空白配置:二次确认,默认同时抓取当前外观作为整套造型
+    if W.button(t("newBlank"), bx, cy, nil, 26, { font = W.small() }) then st.blanking = not st.blanking end
+    cy = cy + 34
+    if st.blanking then
+        if st.blank_capture == nil then st.blank_capture = true end
+        local changed, v = W.checkbox(t("blankCapture"), x + 16, cy, st.blank_capture)
+        if changed then st.blank_capture = v end
+        cy = cy + 30
+        local r, ch = W.confirm(x + 16, cy, w - 20, t("blankWarn"), t("confirmBlank"), t("cancel"), "primary")
+        if r then st.blanking = nil end
+        if r == "yes" then ctx.act({ kind = "preset-blank", capture = st.blank_capture }) end
+        cy = cy + ch
+    end
+    cy = cy + 6
 
     -- 预设库
     W.h2(t("library"), x, cy)

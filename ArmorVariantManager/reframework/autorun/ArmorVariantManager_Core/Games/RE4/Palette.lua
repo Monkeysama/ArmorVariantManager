@@ -249,6 +249,66 @@ function Palette.merge(list)
     return out
 end
 
+-- 按权重叠加(血量驱动的调色方案用):weights[i] = 第 i 份的权重,缺省 1。权重 1 同 merge(直接覆盖);
+-- 0 ~ 1 之间按权重从下面已叠好的值(没有就是原值)插值到这份的值;<= 0 跳过。
+-- original(slot, 材质, 参数) 返回原值(float 为数值,float4 为 { x, y, z, w } 数组),读不到返回 nil ——
+-- 那时权重过半才取这份的值。discrete 同 fade_begin:枚举 / 开关类不插值,权重过半时切换。不改输入
+function Palette.blend(list, weights, original, discrete)
+    discrete = discrete or {}
+    local out = {}
+    for idx, pal in ipairs(list) do
+        local w = tonumber(weights and weights[idx]) or 1
+        for slot, mats in pairs((w > 0 and is_tbl(pal)) and pal or {}) do
+            if is_tbl(mats) then
+                local os = out[slot] or {}
+                out[slot] = os
+                for mat, params in pairs(mats) do
+                    if is_tbl(params) then
+                        local om = os[mat] or {}
+                        os[mat] = om
+                        for name, v in pairs(params) do
+                            if is_tbl(v) then
+                                local c = is_tbl(om[name]) and om[name] or {}
+                                local orig = nil
+                                for k, x in pairs(v) do
+                                    local i = COMP_INDEX[k]
+                                    if i and finite(x) then
+                                        if w >= 1 then c[k] = x else
+                                            local b = c[k]
+                                            if not finite(b) then
+                                                if orig == nil then orig = (original and original(slot, mat, name)) or false end
+                                                b = is_tbl(orig) and orig[i] or nil
+                                            end
+                                            if finite(b) then
+                                                local d = discrete[name] or discrete[name .. "|" .. k]
+                                                c[k] = d and (w < 0.5 and b or x) or (b + (x - b) * w)
+                                            elseif w >= 0.5 then c[k] = x end
+                                        end
+                                    end
+                                end
+                                if next(c) then om[name] = c end
+                            elseif finite(v) then
+                                if w >= 1 then om[name] = v else
+                                    local b = om[name]
+                                    if not finite(b) then
+                                        local o = original and original(slot, mat, name)
+                                        b = finite(o) and o or nil
+                                    end
+                                    if finite(b) then om[name] = discrete[name] and (w < 0.5 and b or v) or (b + (v - b) * w)
+                                    elseif w >= 0.5 then om[name] = v end
+                                end
+                            end
+                        end
+                        if next(om) == nil then os[mat] = nil end
+                    end
+                end
+                if next(os) == nil then out[slot] = nil end
+            end
+        end
+    end
+    return out
+end
+
 -- ============================================================ 引擎读写
 -- 参数表:{ [参数名] = { k = 序号, t = 类型 } },按 mesh_材质序号 缓存(mesh 换实例就是新键)
 local function try(f) local ok, r = pcall(f); if ok then return r end; return nil end

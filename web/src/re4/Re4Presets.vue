@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, reactive, shallowRef } from 'vue';
+import { computed, reactive, ref, shallowRef } from 'vue';
 import { ElButton, ElInput } from '@reff/ui';
 import type { Re4Translate } from './i18n';
 import type { Re4Fit, Re4Perform, Re4PresetEntry, Re4Snapshot } from './types';
@@ -15,8 +15,12 @@ const folds = reactive(new Set<string>());
 const toggle = (k: string) => { if (folds.has(k)) folds.delete(k); else folds.add(k); };
 const applying = shallowRef('');
 const confirmingDelete = shallowRef('');
-const renaming = shallowRef<{ id: string; value: string } | null>(null);
+// 必须是 ref:v-model 改的是对象里的 value,shallowRef 不会因此重绘(打字看不到变化)
+const renaming = ref<{ id: string; value: string } | null>(null);
 const newName = shallowRef('');
+// 新建空白配置:二次确认,默认同时抓取当前外观作为整套造型
+const blanking = shallowRef(false);
+const blankCapture = shallowRef(true);
 const FIT: Record<Re4Fit, 'fitFull' | 'fitPartial' | 'fitNone'> = { full: 'fitFull', partial: 'fitPartial', none: 'fitNone' };
 const fitClass = (m: Re4Fit) => m === 'full' ? 'ok' : m === 'partial' ? 'partial' : '';
 const showBetter = computed(() => p.value.current !== 'full' && p.value.better.length > 0 && !p.value.dismissed);
@@ -54,6 +58,13 @@ const time = (s: number) => s > 0 ? new Date(s * 1000).toLocaleString() : '';
         <ElInput v-model="newName" size="small" style="width:12em" :placeholder="t('newPresetName')" @keyup.enter="save" />
         <ElButton size="small" type="primary" :disabled="busy || !newName.trim()" @click="save">{{ t('saveAsPreset') }}</ElButton>
         <ElButton v-if="p.source?.own" size="small" :disabled="busy" @click="perform({ kind: 'preset-update', ...c() })">{{ t('saveBack', p.source.name) }}</ElButton>
+        <ElButton size="small" :disabled="busy" @click="blanking = !blanking">{{ t('newBlank') }}</ElButton>
+      </div>
+      <div v-if="blanking" class="re4-pconfirm">
+        <span>{{ t('blankWarn') }}</span>
+        <label class="re4-row re4-small"><input v-model="blankCapture" type="checkbox">{{ t('blankCapture') }}</label>
+        <ElButton size="small" type="primary" :disabled="busy" @click="blanking = false; perform({ kind: 'preset-blank', ...c(), capture: blankCapture })">{{ t('confirmBlank') }}</ElButton>
+        <ElButton size="small" @click="blanking = false">{{ t('cancel') }}</ElButton>
       </div>
     </section>
 

@@ -135,6 +135,62 @@ do
     S.equal(M3.palette_layers(cfg, M3.resolve(cfg, {hp = 10})), {"Warm"}, "inverted: low HP = off")
 end
 
+-- 随血量变色:血量状态带来的方案按血量进度加权(进度 0 也列出,权重 0,好让平滑退场)
+do
+    local cfg = config({
+        state("Yellow", nil, {palette = "Pale", hp = {upper = 100, lower = 50}}),
+        state("Red", nil, {palette = "Dark", hp = {upper = 50, lower = 0}}),
+    })
+    local function sources(hp)
+        local names, src, w = M3.palette_sources(cfg, M3.resolve(cfg, {hp = hp}))
+        return names, src, w
+    end
+    local names, src, w = sources(100)
+    S.equal(names, {"Warm", "Pale", "Dark"}, "both HP schemes listed; the deeper range (red) on top whatever the state order")
+    assert(src[2] == 1 and src[3] == 2, "sources follow the reorder")
+    assert(w[1] == nil and w[2] == 0 and w[3] == 0, "full HP: both weights 0")
+    S.equal(M3.palette_layers(cfg, M3.resolve(cfg, {hp = 100})), {"Warm"}, "weight 0 is not shown as active")
+    names, src, w = sources(75)
+    assert(math.abs(w[2] - 0.5) < 1e-9 and w[3] == 0, "75%: yellow halfway, red not yet")
+    names, src, w = sources(25)
+    assert(w[2] == 1 and math.abs(w[3] - 0.5) < 1e-9, "25%: yellow full, red halfway on top")
+    S.equal(M3.palette_layers(cfg, M3.resolve(cfg, {hp = 25})), {"Warm", "Pale", "Dark"})
+    -- 状态顺序反过来,叠加顺序不变
+    cfg = config({
+        state("Red", nil, {palette = "Dark", hp = {upper = 50, lower = 0}}),
+        state("Yellow", nil, {palette = "Pale", hp = {upper = 100, lower = 50}}),
+    })
+    S.equal((sources(25)), {"Warm", "Pale", "Dark"}, "independent of state order")
+end
+
+-- Palette.blend:权重 1 = merge;0~1 从下面已叠好的值(没有就是原值)插值;枚举过半切换;0 跳过
+do
+    local orig = {
+        ["body|Skin|Base"] = {0.0, 0.0, 0.0, 1.0}, ["body|Skin|Rough"] = 0.2, ["body|Skin|Mode"] = 0,
+    }
+    local function original(slot, mat, param) return orig[slot .. "|" .. mat .. "|" .. param] end
+    local green = {body = {Skin = {Base = col(0, 1, 0)}}}
+    local yellow = {body = {Skin = {Base = col(1, 1, 0), Rough = 0.6, Mode = 2}}}
+    local red = {body = {Skin = {Base = col(1, 0, 0)}}}
+    local function near(a, b) return math.abs(a - b) < 1e-9 end
+    S.equal(Palette.blend({green, yellow}, {1, 1}, original), Palette.merge({green, yellow}), "weight 1 = merge")
+    local out = Palette.blend({green, yellow}, {1, 0.5}, original, {Mode = true})
+    local b = out.body.Skin
+    assert(near(b.Base.x, 0.5) and near(b.Base.y, 1) and near(b.Base.z, 0), "colour: halfway from green to yellow")
+    assert(near(b.Rough, 0.4), "untouched below: from the original 0.2 to 0.6")
+    assert(b.Mode == 2, "enum switches at half")
+    out = Palette.blend({green, yellow}, {1, 0.4}, original, {Mode = true})
+    assert(out.body.Skin.Mode == 0, "enum below half keeps the original")
+    out = Palette.blend({green, yellow, red}, {1, 1, 0.25}, original)
+    assert(near(out.body.Skin.Base.x, 1) and near(out.body.Skin.Base.y, 0.75), "red a quarter over yellow")
+    out = Palette.blend({green, red}, {1, 0}, original)
+    S.equal(out, Palette.merge({green}), "weight 0 skipped")
+    out = Palette.blend({{body = {Hair = {Tint = 0.8}}}}, {0.3}, function() return nil end)
+    assert(out.body == nil, "no original and under half: nothing written")
+    out = Palette.blend({{body = {Hair = {Tint = 0.8}}}}, {0.6}, function() return nil end)
+    assert(out.body.Hair.Tint == 0.8, "no original and over half: take the value")
+end
+
 -- ============================================================ OpsV3
 do
     local cfg = config({state("A", "x", {palette = "Pale"})})

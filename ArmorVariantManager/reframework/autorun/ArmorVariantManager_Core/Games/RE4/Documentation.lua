@@ -11,7 +11,8 @@ return {
                 } },
                 { title = "整套造型与状态组", paragraphs = {
                     "整套造型是一份完整快照:每个材质都有开 / 关,同一时间只生效一套。",
-                    "状态组只管自己范围里的几个材质,例如「面部:干净 / 受伤 / 血迹重」。一个材质只能属于一个状态组;选「(无)」时,这部分显示整套造型的样子。",
+                    "状态组的每个选项只改它写了的材质,例如「面部:干净 / 受伤 / 血迹重」;每个材质可以设「- / 关 / 开」,「-」表示不管,交给整套造型或别的组。选「(无)」时,这个组什么都不改。",
+                    "几个状态组写了同一个材质时,靠下的组覆盖靠上的(拖动调整顺序);取值不同的重叠会在组标题上提示。",
                     "「快速切换」页用来手动选择。正被条件状态接管的整套造型或状态组会锁定,条件结束后回到手动选择。",
                 } },
                 { title = "左侧的游戏状态", paragraphs = {
@@ -79,7 +80,8 @@ return {
                 } },
                 { title = "Full outfits and state groups", paragraphs = {
                     "A full outfit is a complete snapshot: every material is on or off, and one outfit is in effect at a time.",
-                    "A state group covers only its own materials, e.g. \"Face: clean / hurt / bloody\". A material belongs to one group only; when a group is set to (none), that part shows the full outfit.",
+                    "Each option of a state group changes only the materials it sets, e.g. \"Face: clean / hurt / bloody\"; every material can be set to - / Off / On, where - leaves it to the full outfit or other groups. With (none) selected the group changes nothing.",
+                    "When several groups set the same material, lower groups override upper ones (drag to reorder); overlaps with different values are flagged on the group title.",
                     "Use Quick switch to choose by hand. An outfit or group taken over by a condition state is locked until the condition ends.",
                 } },
                 { title = "Game state on the left", paragraphs = {

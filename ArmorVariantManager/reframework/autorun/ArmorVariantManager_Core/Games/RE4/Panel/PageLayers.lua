@@ -1,7 +1,8 @@
 -- 整套造型 / 状态组的编辑页(两个页签共用,对应 web/src/re4/Re4Layers.vue)。可折叠的栏默认收起。
---   整套造型:完整快照,材质只有开 / 关;新建时抓当前外观。
---   状态组:先用「编辑范围」划定管哪些材质,选项在范围里设「- / 关 / 开」。几个组可以管同一个材质,
+--   整套造型:完整快照,材质只有开 / 关;新建时抓取当前外观。
+--   状态组:选项列出当前模型的全部材质,每个设「- / 关 / 开」(没有范围限制)。几个组可以写同一个材质,
 --   靠下的组覆盖靠上的(顺序就是叠加顺序,用 ▲▼ 调整);只提示取值不同的重叠。
+--   材质按部位分段,每段三列排列(宽度不够时减列)。状态组的选项名点上就能改。
 local T = require("ArmorVariantManager_Core.Games.RE4.Panel.Theme")
 local D = require("ArmorVariantManager_Core.Games.RE4.Panel.Draw")
 local W = require("ArmorVariantManager_Core.Games.RE4.Panel.Widgets")
@@ -20,7 +21,7 @@ local function cm_text(v) return (v > 0 and "+" or "") .. U.num_text(v) end
 
 -- 每帧算一次的派生数据(和 Vue 的 computed 对应)
 local function derive(snap)
-    local d = { notes = {}, owners = {}, writes = {}, index = {}, slots = {}, all_keys = {} }
+    local d = { notes = {}, owners = {}, writes = {}, index = {}, slots = {}, all_keys = {}, set_count = {} }
     for _, s in ipairs(snap.slots or {}) do
         for _, m in ipairs(s.materials) do
             if m.note then d.notes[U.key_of(s.id, m.name)] = m.note end
@@ -32,10 +33,6 @@ local function derive(snap)
     end
     for i, g in ipairs(snap.groups or {}) do
         d.index[g.name] = i
-        for _, k in ipairs(g.scope) do
-            d.owners[k] = d.owners[k] or {}
-            table.insert(d.owners[k], g.name)
-        end
         local wr = {}
         for _, o in ipairs(g.options) do
             for k, v in pairs(o.values or {}) do
@@ -46,7 +43,18 @@ local function derive(snap)
             end
         end
         d.writes[g.name] = wr
+        -- 材质 -> 写它的组(按叠加顺序)
+        local ks = {}
+        for k in pairs(wr) do ks[#ks + 1] = k end
+        table.sort(ks)
+        d.set_count[g.name] = #ks
+        for _, k in ipairs(ks) do
+            d.owners[k] = d.owners[k] or {}
+            table.insert(d.owners[k], g.name)
+        end
     end
+    d.known = {}
+    for _, k in ipairs(d.all_keys) do d.known[k] = true end
     -- 组与组之间取值不同的重叠:below = 被下面的组覆盖,above = 覆盖上面的组
     d.overlaps = {}
     local gs = snap.groups or {}
@@ -56,12 +64,10 @@ local function derive(snap)
     end
     for i, g in ipairs(gs) do
         local below, above = {}, {}
-        local in_scope = {}
-        for _, k in ipairs(g.scope) do in_scope[k] = true end
         for j, h in ipairs(gs) do
             if i ~= j then
                 local n = 0
-                for _, k in ipairs(h.scope) do if in_scope[k] and clash(g.name, h.name, k) then n = n + 1 end end
+                for k in pairs(d.writes[g.name]) do if clash(g.name, h.name, k) then n = n + 1 end end
                 if n > 0 then table.insert(j > i and below or above, { name = h.name, n = n }) end
             end
         end
@@ -89,12 +95,35 @@ local function overriders(d, card, values, key)
     return out
 end
 
-local function counts(card, values)
+-- 整套造型只数当前模型上的材质;状态组数选项写了的材质
+local function counts(d, card, values)
     local on, off = 0, 0
-    for _, k in ipairs(card.scope) do
-        if values[k] == true then on = on + 1 elseif values[k] == false then off = off + 1 end
+    local function add(v) if v == true then on = on + 1 elseif v == false then off = off + 1 end end
+    if card.is_base then
+        for _, k in ipairs(d.all_keys) do add(values[k]) end
+    else
+        for _, v in pairs(values) do add(v) end
     end
-    return on, off, #card.scope - on - off
+    return on, off
+end
+
+-- 选项展开后的材质:按部位分段;状态组写了、但当前模型上没有的材质另列一段(可以改成「-」清掉)
+local function sections(d, t, card, values)
+    local out = {}
+    for _, s in ipairs(d.slots) do
+        if #s.materials > 0 then
+            local keys = {}
+            for _, m in ipairs(s.materials) do keys[#keys + 1] = U.key_of(s.id, m.name) end
+            out[#out + 1] = { id = s.id, label = U.short_slot(s.label), keys = keys }
+        end
+    end
+    if not card.is_base then
+        local extra = {}
+        for k in pairs(values) do if not d.known[k] then extra[#extra + 1] = k end end
+        table.sort(extra)
+        if #extra > 0 then out[#out + 1] = { id = "", label = t("notOnModel"), keys = extra } end
+    end
+    return out
 end
 
 local function value_of(values, key)
@@ -106,12 +135,12 @@ local function cards_of(snap, t, mode, d)
     if mode == "base" then
         local b = snap.base
         return { { id = "base", is_base = true, name = t("tabBase"), active = b.active, effective = b.effective,
-            from_state = b.fromState, scope = d.all_keys, options = b.presets } }
+            from_state = b.fromState, options = b.presets } }
     end
     local out = {}
     for _, g in ipairs(snap.groups or {}) do
         out[#out + 1] = { id = "g:" .. g.name, is_base = false, name = g.name, active = g.active, effective = g.effective,
-            from_state = g.fromState, scope = g.scope, options = g.options }
+            from_state = g.fromState, options = g.options }
     end
     return out
 end
@@ -130,9 +159,8 @@ end
 function Page.draw(ctx, x, y, w)
     local snap, t, st, mode = ctx.snap, ctx.t, ctx.state, ctx.mode
     st.open = st.open or {}
-    st.scope_open = st.scope_open or {}
     st.drafts = st.drafts or {}
-    local open, scope_open = st.open, st.scope_open
+    local open = st.open
     local d = derive(snap)
     local cards = cards_of(snap, t, mode, d)
     local function state_name(i) return i and (snap.states[i] or {}).name or "" end
@@ -158,7 +186,7 @@ function Page.draw(ctx, x, y, w)
         -- ---------------------------------------------------- 标题行
         local acts = {}
         if card.is_base then acts = { { t("newBase"), "new" } }
-        else acts = { { t("editScope"), "scope" }, { t("delete"), "delete", kind = "danger" } } end
+        else acts = { { t("delete"), "delete", kind = "danger" } } end
         local aw = 0
         for _, a in ipairs(acts) do aw = aw + W.tbutton_w(a[1]) + 6 end
         local ax = x + w - aw - 8
@@ -181,21 +209,19 @@ function Page.draw(ctx, x, y, w)
                 if ctx.act({ kind = "group-rename", group = card.name, name = name }) then
                     -- 展开状态按名字记,改名后跟着搬
                     local from, to = card.id, "g:" .. name
-                    for _, set in ipairs({ open, scope_open }) do
-                        local moved = {}
-                        for k, val in pairs(set) do
-                            if k == from then moved[to] = val; set[k] = nil
-                            elseif k:sub(1, #from + 1) == from .. "|" then moved[to .. k:sub(#from + 1)] = val; set[k] = nil end
-                        end
-                        for k, val in pairs(moved) do set[k] = val end
+                    local moved = {}
+                    for k, val in pairs(open) do
+                        if k == from then moved[to] = val; open[k] = nil
+                        elseif k:sub(1, #from + 1) == from .. "|" then moved[to .. k:sub(#from + 1)] = val; open[k] = nil end
                     end
+                    for k, val in pairs(moved) do open[k] = val end
                 end
             end)
         else
             F:text(card.name, C.text, W.bold())
         end
         F:text(card.is_base and t("baseCount", #card.options)
-            or (t("optionsCount", #card.options) .. " · " .. t("materialsCount", #card.scope)))
+            or (t("optionsCount", #card.options) .. " · " .. t("materialsCount", d.set_count[card.name] or 0)))
         if card.from_state then F:tag(t("takenOverBy", state_name(card.from_state)), C.ok) end
         if not card.is_base then
             local ov = d.overlaps[card.name] or { below = {}, above = {} }
@@ -208,9 +234,6 @@ function Page.draw(ctx, x, y, w)
             if clicked then
                 if a[2] == "new" then
                     if ctx.act({ kind = "base-new" }) then open[card.id] = true end
-                elseif a[2] == "scope" then
-                    scope_open[card.id] = not scope_open[card.id] or nil
-                    open[card.id] = true
                 elseif a[2] == "delete" then st.confirming = card.id end
             end
             bx = bx + bw + 6
@@ -227,83 +250,6 @@ function Page.draw(ctx, x, y, w)
         end
 
         if is_open then
-            -- ---------------------------------------------------- 编辑范围
-            if scope_open[card.id] then
-                local sx, sw = x + 10, w - 20
-                local SF = W.flow(sx, cy, sw, 8, ROW)
-                local fx, fy = SF:place(180, ROW)
-                W.text_box("scope_filter", fx, fy + 1, 180, 24, st.scope_filter or "", t("scopeSearch"), function(v2) st.scope_filter = v2 end)
-                local c2, v2 = SF:checkbox(t("scopeOnlyIn"), st.scope_only_in == true, { font = W.small() })
-                if c2 then st.scope_only_in = v2 end
-                SF:text(t("scopeCount", #card.scope, #d.all_keys))
-                local q = trim(st.scope_filter):lower()
-                local in_scope = {}
-                for _, k in ipairs(card.scope) do in_scope[k] = true end
-                local shown = {}
-                for _, s in ipairs(d.slots) do
-                    local mats = {}
-                    for _, m in ipairs(s.materials) do
-                        local key = U.key_of(s.id, m.name)
-                        local ok = not (st.scope_only_in and not in_scope[key])
-                        if ok and q ~= "" then
-                            ok = m.name:lower():find(q, 1, true) ~= nil or (d.notes[key] or ""):lower():find(q, 1, true) ~= nil
-                        end
-                        if ok then mats[#mats + 1] = m end
-                    end
-                    if #mats > 0 then shown[#shown + 1] = { slot = s, materials = mats } end
-                end
-                local function bulk(list, add)
-                    local picked = {}
-                    for _, e in ipairs(list) do
-                        for _, m in ipairs(e.materials) do
-                            if (in_scope[U.key_of(e.slot.id, m.name)] == true) ~= add then
-                                picked[#picked + 1] = { slot = e.slot.id, material = m.name }
-                            end
-                        end
-                    end
-                    if #picked == 0 then return end
-                    ctx.act({ kind = "scope-set", group = card.name, add = add and picked or {}, remove = add and {} or picked })
-                end
-                if SF:button(q ~= "" and t("scopeAddShown") or t("scopeAddAll")) then bulk(shown, true) end
-                if SF:button(q ~= "" and t("scopeClearShown") or t("scopeClearAll"), { tip = t("scopeHint") }) then bulk(shown, false) end
-                if SF:button(t("done"), { kind = "primary" }) then scope_open[card.id] = nil end
-                cy = cy + SF:height() + 6
-                if #shown == 0 then
-                    D.text_mid(t("scopeNoMatch"), sx, cy, 22, C.muted, W.small())
-                    cy = cy + 24
-                end
-                for _, e in ipairs(shown) do
-                    local n_in = 0
-                    for _, k in ipairs(card.scope) do if U.split_key(k) == e.slot.id then n_in = n_in + 1 end end
-                    local PF = W.flow(sx, cy, sw, 8, 24)
-                    PF:text(U.short_slot(e.slot.label), C.text, W.bold())
-                    PF:text(n_in .. " / " .. #e.slot.materials)
-                    if PF:button(t("scopeAddPart")) then bulk({ e }, true) end
-                    if PF:button(t("scopeClearPart"), { tip = t("scopeHint") }) then bulk({ e }, false) end
-                    cy = cy + PF:height() + 2
-                    local GF = W.flow(sx + 8, cy, sw - 8, 14, 24)
-                    for _, m in ipairs(e.materials) do
-                        local key = U.key_of(e.slot.id, m.name)
-                        local label = m.name .. (d.notes[key] and ("  " .. d.notes[key]) or "")
-                        local cw = min(W.checkbox_w(label, W.small()), sw - 8)
-                        local mx, my = GF:place(cw, 24)
-                        if W.visible(my, 24) then
-                            local others = others_of(d, key, card.name)
-                            local c3 = W.checkbox(label, mx, my, in_scope[key] == true, { font = W.small(), h = 24,
-                                color = in_scope[key] and C.text or C.muted,
-                                tip = #others > 0 and t("alsoIn", table.concat(others, "、")) or nil })
-                            if c3 then
-                                ctx.act({ kind = in_scope[key] and "scope-remove" or "scope-add", group = card.name,
-                                    slot = e.slot.id, material = m.name })
-                            end
-                        end
-                    end
-                    cy = cy + GF:height() + 6
-                end
-                W.separator(sx, cy, sw)
-                cy = cy + 8
-            end
-
             -- ---------------------------------------------------- 选项列表
             local ox, ow = x + 10, w - 20
             if not card.is_base then
@@ -316,14 +262,29 @@ function Page.draw(ctx, x, y, w)
                 local eff = card.from_state and card.effective == opt.name
                 if W.caret(ox, cy, open[oid], ROW) then open[oid] = not open[oid] or nil end
                 -- 右侧操作
-                local renaming = st.renaming and st.renaming.id == oid
+                -- 状态组的选项名点上就能改(没有单独的重命名按钮);整套造型的预设仍用「重命名」
+                local renaming = card.is_base and st.renaming and st.renaming.id == oid
                 local oacts = renaming and { { t("done"), "done", kind = "primary" }, { t("cancel"), "cancel" } }
-                    or { { t("rename"), "rename" }, { t("delete"), "delete", kind = "danger" } }
+                    or (card.is_base and { { t("rename"), "rename" }, { t("delete"), "delete", kind = "danger" } }
+                        or { { t("delete"), "delete", kind = "danger" } })
                 local oaw = 0
                 for _, a in ipairs(oacts) do oaw = oaw + W.tbutton_w(a[1]) + 6 end
                 local oax = ox + ow - oaw
                 local OF = W.flow(ox + 22, cy, oax - ox - 30, 10, ROW)
-                if renaming then
+                if not card.is_base then
+                    local rx, ry = OF:place(18 + 160, ROW)
+                    if radio("", rx, ry, card.active == opt.name, false) then
+                        ctx.act({ kind = "manual", layer = card.name, option = opt.name })
+                    end
+                    W.commit_box(st.drafts, "oname:" .. oid, rx + 18, ry + 1, 160, 24, opt.name, t("rename"), function(name)
+                        name = trim(name)
+                        if name == "" or name == opt.name then return end
+                        if ctx.act({ kind = "option-rename", group = card.name, option = opt.name, name = name }) and open[oid] then
+                            open[oid] = nil
+                            open[card.id .. "|" .. name] = true
+                        end
+                    end)
+                elseif renaming then
                     local rx, ry = OF:place(180, ROW)
                     W.text_box("opt_rename", rx, ry + 1, 180, 24, st.renaming.text, "", function(v2) st.renaming.text = v2 end)
                 else
@@ -333,10 +294,9 @@ function Page.draw(ctx, x, y, w)
                     local clicked = radio(label, rx, ry, card.active == opt.name, false, eff and C.ok or nil)
                     if clicked then ctx.act({ kind = "manual", layer = card.is_base and "base" or card.name, option = opt.name }) end
                 end
-                local on, off, ignore = counts(card, opt.values or {})
+                local on, off = counts(d, card, opt.values or {})
                 OF:text(t("countOn", on), C.ok)
                 OF:text(t("countOff", off), C.error)
-                if not card.is_base and ignore > 0 then OF:text(t("countIgnore", ignore)) end
                 if opt.match and opt.match.status == "mismatch" then OF:tag(t("mismatch"), C.error)
                 elseif opt.match and opt.match.status == "partial" then OF:tag(t("partialSlots", table.concat(opt.match.skipped, "、")), C.warn) end
                 local u = users(card, opt.name)
@@ -407,47 +367,69 @@ function Page.draw(ctx, x, y, w)
                         else ctx.act({ kind = "option-height", group = card.name, option = opt.name }) end
                     end
                     cy = cy + TF:height() + 6
-                    if #card.scope == 0 then
-                        D.text_mid(t("emptyScope"), mx0, cy, 22, C.muted, W.small(), mw)
+                    local secs = sections(d, t, card, opt.values or {})
+                    if #secs == 0 then
+                        D.text_mid(t("noMaterials"), mx0, cy, 22, C.muted, W.small(), mw)
                         cy = cy + 26
                     end
                     local labels = { on = t("on"), off = t("off") }
                     local tri_w = card.is_base and 70 or 100
-                    for _, key in ipairs(card.scope) do
-                        if W.visible(cy, ROW) then
-                            local slot, mat = U.split_key(key)
-                            local val = value_of(opt.values or {}, key)
-                            local nv = W.tri(mx0, cy + 2, val, labels, card.is_base, false)
-                            if nv and nv ~= val then
-                                if card.is_base then
-                                    ctx.act({ kind = "base-material", preset = opt.name, slot = slot, material = mat, value = nv == "on" })
-                                else
-                                    ctx.act({ kind = "option-material", group = card.name, option = opt.name, slot = slot, material = mat, value = nv })
+                    -- 三列排列(备注模式一行要放输入框和定位按钮,只排一列);列宽放不下就减列
+                    local gap = 16
+                    local cols = st.notes and 1 or 3
+                    while cols > 1 and (mw - gap * (cols - 1)) / cols < tri_w + 90 do cols = cols - 1 end
+                    local col_w = (mw - gap * (cols - 1)) / cols
+                    for _, sec in ipairs(secs) do
+                        D.text_mid(sec.label, mx0, cy, 22, sec.id == "" and C.error or C.muted, W.bold())
+                        cy = cy + 22
+                        for i, key in ipairs(sec.keys) do
+                            local col = (i - 1) % cols
+                            local rx = mx0 + col * (col_w + gap)
+                            if W.visible(cy, ROW) then
+                                local slot, mat = U.split_key(key)
+                                local val = value_of(opt.values or {}, key)
+                                local nv = W.tri(rx, cy + 2, val, labels, card.is_base, false)
+                                if nv and nv ~= val then
+                                    if card.is_base then
+                                        ctx.act({ kind = "base-material", preset = opt.name, slot = slot, material = mat, value = nv == "on" })
+                                    else
+                                        ctx.act({ kind = "option-material", group = card.name, option = opt.name, slot = slot, material = mat, value = nv })
+                                    end
+                                end
+                                local nx = rx + tri_w + 8
+                                local right = rx + col_w
+                                local ovr = overriders(d, card, opt.values or {}, key)
+                                local warn_w = #ovr > 0 and 16 or 0
+                                local name_col = val == "on" and C.text or (val == "off" and C.muted or C.faint)
+                                local name_w = st.notes and 200 or max(20, right - nx - warn_w)
+                                local nw = D.text_mid(sec.id == "" and key or mat, nx, cy, ROW, name_col, W.small(), name_w)
+                                -- 提示:全名 + 备注 + 也写了它的其他组
+                                local tip = { mat }
+                                if d.notes[key] then tip[#tip + 1] = d.notes[key] end
+                                local others = card.is_base and {} or others_of(d, key, card.name)
+                                if #others > 0 then tip[#tip + 1] = t("alsoIn", table.concat(others, "、")) end
+                                W.tooltip(table.concat(tip, "\n"), nx, cy, nw, ROW)
+                                nx = nx + (st.notes and max(nw, 120) or nw) + 8
+                                if st.notes then
+                                    W.commit_box(st.drafts, "note:" .. key, nx, cy + 2, 160, 22, d.notes[key] or "", t("notePlaceholder"), function(text)
+                                        ctx.act({ kind = "note", slot = slot, material = mat, text = text })
+                                    end)
+                                    nx = nx + 168
+                                    local c4, lw = W.tbutton(t("locate"), nx, cy + 2)
+                                    if c4 then ctx.act({ kind = "locate", slot = slot, material = mat }) end
+                                    nx = nx + lw + 8
+                                elseif d.notes[key] and right - warn_w - nx > 24 then
+                                    nx = nx + D.text_mid(d.notes[key], nx, cy, ROW, C.muted, W.small(), right - warn_w - nx) + 6
+                                end
+                                if #ovr > 0 then
+                                    local wx = st.notes and nx or (right - warn_w)
+                                    D.text_mid("!", wx + 4, cy, ROW, C.error, W.bold())
+                                    W.tooltip(t("mayBeOverridden", table.concat(ovr, "、")) .. "\n" .. t("overlapHint"), wx, cy, 16, ROW)
                                 end
                             end
-                            local nx = mx0 + tri_w + 8
-                            local name_col = val == "on" and C.text or (val == "off" and C.muted or C.faint)
-                            local nw = D.text_mid(mat, nx, cy, ROW, name_col, W.small(), 200)
-                            W.tooltip(U.slot_label(snap, slot), nx, cy, nw, ROW)
-                            nx = nx + max(nw, 120) + 10
-                            if st.notes then
-                                W.commit_box(st.drafts, "note:" .. key, nx, cy + 2, 160, 22, d.notes[key] or "", t("notePlaceholder"), function(text)
-                                    ctx.act({ kind = "note", slot = slot, material = mat, text = text })
-                                end)
-                                nx = nx + 168
-                                local c4, lw = W.tbutton(t("locate"), nx, cy + 2)
-                                if c4 then ctx.act({ kind = "locate", slot = slot, material = mat }) end
-                                nx = nx + lw + 8
-                            elseif d.notes[key] then
-                                nx = nx + D.text_mid(d.notes[key], nx, cy, ROW, C.muted, W.small(), 200) + 10
-                            end
-                            local ovr = overriders(d, card, opt.values or {}, key)
-                            if #ovr > 0 then
-                                local ow2 = D.text_mid(t("mayBeOverridden", table.concat(ovr, "、")), nx, cy, ROW, C.error, W.small(), max(40, mx0 + mw - nx))
-                                W.tooltip(t("overlapHint"), nx, cy, ow2, ROW)
-                            end
+                            if col == cols - 1 or i == #sec.keys then cy = cy + ROW end
                         end
-                        cy = cy + ROW
+                        cy = cy + 4
                     end
                     cy = cy + 6
                 end
@@ -473,7 +455,7 @@ function Page.draw(ctx, x, y, w)
         local clicked = W.button(t("newGroup"), x + 208, cy, nil, 26, { font = W.small(), disabled = name == "" })
         if clicked and ctx.act({ kind = "group-new", name = name }) then
             st.new_group = ""
-            open["g:" .. name], scope_open["g:" .. name] = true, true
+            open["g:" .. name] = true
         end
         cy = cy + 36
     end

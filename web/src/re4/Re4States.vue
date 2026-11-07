@@ -22,6 +22,11 @@ const confirming = shallowRef(0);
 const CATS: Re4Category[] = ['hp', 'combat', 'move', 'damage', 'other'];
 const CAT_KEY: Record<Re4Category, Re4Key> = { hp: 'catHp', combat: 'catCombat', move: 'catMove', damage: 'catDamage', other: 'catOther' };
 const byCategory = computed(() => CATS.map(cat => ({ cat, defs: defs.value.filter(d => d.category === cat) })).filter(x => x.defs.length));
+// 最下面的状态总览:每个条件此刻的取值(legacy 旧布尔不列,合成条件已经包含它们)
+const onlyTrue = shallowRef(false);
+const isOn = (d: Re4ConditionDef) => d.kind === 'bool' && d.value === true;
+const overview = computed(() => CATS.map(cat => ({ cat, defs: defs.value.filter(d => d.category === cat && !d.legacy && d.value !== undefined && (!onlyTrue.value || isOn(d))) }))
+  .filter(x => x.defs.length));
 const LEGEND = ['active', 'partial', 'outranked', 'idle', 'off'] as const;
 const LEGEND_KEY = { active: 'kindActive', partial: 'kindPartial', outranked: 'kindOutranked', idle: 'kindIdle', off: 'kindOff' } as const;
 
@@ -145,7 +150,9 @@ const { from: dragFrom, drop: dropAt, start: startDrag } = usePointerReorder('.r
                   <ElOption v-if="!cond.known" :value="cond.type" :label="t('unknownCondition') + ' ' + cond.type" />
                   <template v-for="group in byCategory" :key="group.cat">
                     <ElOption class="re4-opt-head" :value="'__cat_' + group.cat" :label="t(CAT_KEY[group.cat])" disabled />
-                    <ElOption v-for="d in group.defs" :key="d.id" :value="d.id" :label="d.label" />
+                    <template v-for="d in group.defs" :key="d.id">
+                      <ElOption v-if="!d.legacy || d.id === cond.type" :value="d.id" :label="d.label" />
+                    </template>
                   </template>
                 </ElSelect>
                 <template v-if="defOf(cond.type)?.kind === 'number'">
@@ -194,6 +201,7 @@ const { from: dragFrom, drop: dropAt, start: startDrag } = usePointerReorder('.r
               <ElOption v-for="name in schemeNames" :key="name" :value="name" :label="name" />
             </ElSelect>
             <span v-if="st.palette" class="re4-res" :class="st.paletteResult?.kind">{{ resultText(st.paletteResult, states, t) }}</span>
+            <span v-if="st.palette && st.hp" class="re4-muted re4-small">{{ t('paletteByHp') }}</span>
           </div>
           <div v-for="(tg, ti) in st.targets" :key="tg.group" class="re4-target">
             <ElSelect class="re4-sel-target" :model-value="tg.group" :disabled="busy" size="small" @change="v => perform({ kind: 'state-target-group', ...c(), index: k + 1, target: ti + 1, group: String(v) })">
@@ -212,6 +220,22 @@ const { from: dragFrom, drop: dropAt, start: startDrag } = usePointerReorder('.r
         </div>
       </div>
     </article>
+
+    <section class="re4-panel re4-panel-body re4-overview" :aria-label="t('overview')">
+      <div class="re4-overview-head">
+        <p class="re4-eyebrow" :title="t('overviewHint')">{{ t('overview') }}</p>
+        <label class="re4-small re4-muted"><input type="checkbox" :checked="onlyTrue" @change="e => onlyTrue = (e.target as HTMLInputElement).checked">{{ t('overviewOnlyTrue') }}</label>
+      </div>
+      <span v-if="!overview.length" class="re4-muted re4-small">{{ onlyTrue ? t('noTrue') : t('overviewEmpty') }}</span>
+      <div v-for="g in overview" :key="g.cat" class="re4-ov-group">
+        <span class="re4-ov-cat">{{ t(CAT_KEY[g.cat]) }}</span>
+        <div class="re4-ov-items">
+          <span v-for="d in g.defs" :key="d.id" class="re4-ov-item" :class="{ on: isOn(d), off: d.kind === 'bool' && !isOn(d) }">
+            <span class="re4-ov-label">{{ d.label }}</span><span class="re4-ov-val">{{ currentValueText(d, t) }}</span>
+          </span>
+        </div>
+      </div>
+    </section>
   </div>
 </template>
 
@@ -263,4 +287,19 @@ body.re4-reordering, body.re4-reordering * { cursor: grabbing !important; user-s
 .re4-x { border: 0; background: none; color: var(--avm-muted); padding: 0 4px; font-size: 16px; line-height: 1; cursor: pointer; }
 .re4-x:hover:not(:disabled) { color: var(--re4-bad); }
 .re4-target { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+.re4-overview { display: grid; gap: 6px; }
+.re4-overview-head { display: flex; align-items: center; gap: 12px; }
+.re4-overview-head .re4-eyebrow { margin: 0; }
+.re4-overview-head label { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
+.re4-ov-group { display: grid; grid-template-columns: 6.5em minmax(0, 1fr); gap: 8px; align-items: start; }
+@media (max-width: 560px) { .re4-ov-group { grid-template-columns: minmax(0, 1fr); gap: 2px; } }
+.re4-ov-cat { font-size: 12px; font-weight: 600; color: var(--avm-muted); padding-top: 2px; }
+.re4-ov-items { display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; }
+.re4-ov-item { display: inline-flex; gap: 5px; align-items: baseline; font-size: 12px; padding: 0 7px; border-radius: 10px; border: 1px solid var(--avm-line); }
+.re4-ov-item .re4-ov-val { color: var(--avm-ink); font-variant-numeric: tabular-nums; }
+.re4-ov-item .re4-ov-label { color: var(--avm-muted); }
+.re4-ov-item.off { opacity: .55; }
+.re4-ov-item.off .re4-ov-val { color: var(--avm-muted); }
+.re4-ov-item.on { border-color: var(--re4-ok); background: var(--re4-ok-soft); }
+.re4-ov-item.on .re4-ov-label, .re4-ov-item.on .re4-ov-val { color: var(--re4-ok); }
 </style>

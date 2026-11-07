@@ -31,6 +31,13 @@ function Registry.get(id) return defs[id] end
 -- 按注册顺序返回,UI 里的下拉框顺序就是这个顺序(稳定,不受 pairs 随机化影响)
 function Registry.all() return order end
 
+-- 下拉框里列的:去掉被合成条件取代的旧布尔(legacy;它们照常能求值,见 Merged.lua)
+function Registry.visible()
+    local out = {}
+    for _, def in ipairs(order) do if not def.legacy then out[#out + 1] = def end end
+    return out
+end
+
 local NUM_OPS = { "<=", "<", ">=", ">", "==" }
 Registry.NUM_OPS = NUM_OPS
 
@@ -110,8 +117,17 @@ Registry.register(require("ArmorVariantManager_Core.Games.RE4.Conditions.Conditi
 for _, def in ipairs(require("ArmorVariantManager_Core.Games.RE4.Conditions.Condition_HPChange")) do
     Registry.register(def)
 end
+for _, def in ipairs(require("ArmorVariantManager_Core.Games.RE4.Conditions.Condition_Enums")) do
+    Registry.register(def)
+end
 for _, def in ipairs(require("ArmorVariantManager_Core.Games.RE4.Conditions.PlayerBools")) do
     Registry.register(def)
 end
+
+-- 合成条件(按功能合并的枚举),取值来自上面的布尔条件;被合并的布尔标成 legacy
+local Merged = require("ArmorVariantManager_Core.Games.RE4.Conditions.Merged")
+for _, def in ipairs(Merged.defs(Registry.get)) do Registry.register(def) end
+for id in pairs(Merged.LEGACY) do if defs[id] then defs[id].legacy = true end end
+Registry.LEGACY = Merged.LEGACY
 
 return Registry

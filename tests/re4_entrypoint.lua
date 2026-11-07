@@ -285,7 +285,7 @@ S.equal(slot_ids, {"body", "head", "hair"})
 assert(snap.base.active == "Default" and snap.base.effective == "Default" and snap.base.presets[1].match.status == "ok")
 assert(snap.base.presets[1].values["body/Jacket"] == false)
 assert(#snap.groups == 1 and snap.groups[1].name == "Hide Hair" and snap.groups[1].effective == "On")
-S.equal(snap.groups[1].scope, {"hair/Hair"})
+assert(snap.groups[1].scope == nil, "no scope in the snapshot")
 assert(snap.groups[1].options[1].values["hair/Hair"] == false)
 assert(snap.auto == true and #snap.states == 0 and snap.status.hp == 100)
 assert(snap.presets.current == "full" and #snap.presets.list == 1 and snap.presets.list[1].match == "full")
@@ -344,20 +344,18 @@ snap = act({kind = "base-delete", character = "Leon", preset = "Battle"})
 assert(#snap.base.presets == 1 and snap.backups.hasBackup == true)
 assert(snap.states[1].baseResult.kind == "broken", "deleted target shows as broken")
 
--- 状态组:新建、作用域(可以和别的组重叠)、选项、材质三态、改名牵动引用、删除
+-- 状态组:新建、选项、材质三态(任何材质都能写,可以和别的组重叠)、改名牵动引用、删除
 snap = act({kind = "group-new", character = "Leon", name = "Face"})
-snap = act({kind = "scope-add", character = "Leon", group = "Face", slot = "head", material = "Face"})
-S.equal(snap.groups[2].scope, {"head/Face"})
-snap = act({kind = "scope-add", character = "Leon", group = "Face", slot = "hair", material = "Hair"})
-S.equal(snap.groups[2].scope, {"head/Face", "hair/Hair"}, "a material may belong to several groups")
-snap = act({kind = "scope-remove", character = "Leon", group = "Face", slot = "hair", material = "Hair"})
+assert(not pcall(act, {kind = "scope-add", character = "Leon", group = "Face", slot = "head", material = "Face"}), "scope actions are gone")
 snap = act({kind = "option-new", character = "Leon", group = "Face"})
 assert(snap.groups[2].active == "1")
 snap = act({kind = "option-material", character = "Leon", group = "Face", option = "1", slot = "head", material = "Face", value = "off"})
 run_frames()
 assert(meshes.head.state().Face == false)
-assert(not pcall(act, {kind = "option-material", character = "Leon", group = "Face", option = "1", slot = "body", material = "Skin", value = "off"}),
-    "outside the scope")
+snap = act({kind = "option-material", character = "Leon", group = "Face", option = "1", slot = "hair", material = "Hair", value = "on"})
+assert(snap.groups[2].options[1].values["hair/Hair"] == true, "a material another group writes can be set too")
+snap = act({kind = "option-material", character = "Leon", group = "Face", option = "1", slot = "hair", material = "Hair", value = "none"})
+assert(snap.groups[2].options[1].values["hair/Hair"] == nil)
 snap = act({kind = "state-target", character = "Leon", index = 1, group = "Face", option = "1"})
 snap = act({kind = "group-rename", character = "Leon", group = "Face", name = "Expression"})
 assert(snap.groups[2].name == "Expression" and snap.states[1].targets[2].group == "Expression")
@@ -365,8 +363,6 @@ snap = act({kind = "option-rename", character = "Leon", group = "Expression", op
 assert(snap.states[1].targets[2].option == "Pale")
 snap = act({kind = "state-target-remove", character = "Leon", index = 1, target = 2})
 assert(#snap.states[1].targets == 1)
-snap = act({kind = "scope-remove", character = "Leon", group = "Expression", slot = "head", material = "Face"})
-assert(#snap.groups[2].scope == 0)
 snap = act({kind = "group-delete", character = "Leon", group = "Expression"})
 assert(#snap.groups == 1)
 
@@ -502,6 +498,30 @@ assert(files["ArmorVariantManager/presets/" .. promoted.id .. ".json"].deleted =
 snap = act({kind = "preset-dismiss", character = "Leon"})
 assert(snap.presets.dismissed == true)
 
+-- 新建空白配置:整套造型 / 状态组 / 条件状态 / 调色 / 快捷键清空,备注与设定保留,清空前先进自动保存
+do
+    local before_blank = S.copy(files[CONFIG_PATH])
+    assert(next(before_blank.base.presets) and #before_blank.conditions.states > 0, "there is something to clear")
+    local n_auto = #snap.presets.autosaves
+    snap = act({kind = "preset-blank", character = "Leon", capture = false})
+    local c = files[CONFIG_PATH]
+    assert(next(c.base.presets) == nil and c.base.active == "" and #c.groups == 0 and #c.conditions.states == 0, "everything is cleared")
+    assert(c.palettes == nil and c.palette_active == nil and c.hotkeys == nil and c.source_preset == nil)
+    S.equal(c.material_notes, before_blank.material_notes, "material notes are kept")
+    assert(c.armor_mirrors_body == before_blank.armor_mirrors_body)
+    assert(#snap.base.presets == 0 and #snap.groups == 0 and #snap.states == 0 and snap.presets.source == nil)
+    assert(#snap.presets.autosaves == n_auto + 1, "the replaced config goes to the auto-saves")
+
+    snap = act({kind = "preset-blank", character = "Leon", capture = true})
+    c = files[CONFIG_PATH]
+    assert(c.base.active == "1" and c.base.order[1] == "1" and next(c.base.presets["1"]), "the current look becomes full outfit 1")
+    assert(#snap.base.presets == 1 and snap.base.presets[1].match.status == "ok")
+
+    snap = act({kind = "autosave-restore", character = "Leon", index = 2})
+    S.equal(files[CONFIG_PATH].conditions, before_blank.conditions, "the auto-save brings the old config back")
+    S.equal(files[CONFIG_PATH].base, before_blank.base)
+end
+
 -- 还原点与全局设置
 snap = act({kind = "restore", character = "Leon", which = "backup"})
 assert(not pcall(act, {kind = "restore", character = "Leon", which = "nothing"}))
@@ -524,7 +544,7 @@ S.equal(files[CONFIG_PATH], before)
 local docs = handlers["monkeysama.avm.documentation"]()
 plain(docs, "documentation")
 assert(#docs.sections >= 1, "help is served")
-print("PASS: RE4 REFF v2 -> v3 migration (restore point, old saves become presets), v3 snapshot, manual / condition states / full outfit / state groups / scope / notes / locate, preset library with auto-saves, rejections")
+print("PASS: RE4 REFF v2 -> v3 migration (restore point, old saves become presets), v3 snapshot, manual / condition states / full outfit / state groups / notes / locate, preset library with auto-saves, rejections")
 
 -- 没装 REFF 时的独立面板(Games/RE4/Panel)接在同一个控制器上:换上能画图的 ImGui 桩,
 -- 逐页把每个可点的地方点一遍,操作走真实控制器(会改配置;被拒绝的只提示)。页面不能报错。

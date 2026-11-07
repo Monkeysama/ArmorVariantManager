@@ -13,7 +13,7 @@ interface State {
   hp?: { upper: number; lower: number; invert: boolean }; base?: string; targets: { group: string; option: string }[]; conditions: Cond[];
   palette?: string;
 }
-interface Group { name: string; scope: string[]; options: Record<string, Values>; order: string[]; active: string }
+interface Group { name: string; options: Record<string, Values>; order: string[]; active: string }
 interface Config {
   base: { presets: Record<string, Values>; order: string[]; active: string };
   groups: Group[]; auto: boolean; states: State[]; notes: Record<string, string>; armorMirror: boolean; source?: string;
@@ -59,6 +59,7 @@ const clone = <T>(v: T): T => structuredClone(v);
 
 const live: Record<string, number | boolean | string> = {
   hp_ratio: 76, hp_vital: 0, hp_decreased: false, is_battle: true, is_wheel: false, is_crouch: false, has_armor_mesh: false,
+  is_grappled: false, is_paused: false, last_hit_part: 1, stage_id: 47410,
 };
 const defs: Re4ConditionDef[] = [
   { id: 'hp_ratio', kind: 'number', label: 'HP%', category: 'hp', ops: ['<=', '<', '>=', '>', '=='] },
@@ -67,7 +68,11 @@ const defs: Re4ConditionDef[] = [
   { id: 'is_battle', kind: 'bool', label: '战斗中', category: 'combat' },
   { id: 'is_wheel', kind: 'bool', label: '站定瞄准/举刀', category: 'combat' },
   { id: 'is_crouch', kind: 'bool', label: '蹲下', category: 'move' },
-  { id: 'has_armor_mesh', kind: 'bool', label: '护甲槛位已加载', category: 'other' },
+  { id: 'is_grappled', kind: 'bool', label: '被束缚', category: 'damage' },
+  { id: 'is_paused', kind: 'bool', label: '游戏暂停', category: 'other' },
+  { id: 'last_hit_part', kind: 'enum', label: '上次受击部位', category: 'damage', ops: ['==', '~='], options: [{ value: 0, label: '头 (Head)' }, { value: 1, label: '躯干 (Body)' }] },
+  { id: 'has_armor_mesh', kind: 'bool', label: '有护甲', category: 'other' },
+  { id: 'stage_id', kind: 'number', label: '所在区域 ID', category: 'other', ops: ['<=', '<', '>=', '>', '=='] },
 ];
 
 function initial(): Config {
@@ -75,9 +80,9 @@ function initial(): Config {
     base: { presets: { '原版': full(['body/Jacket_Torn', 'head/Blood_Light', 'head/Blood_Heavy']), '只穿衬衫': full(['body/Jacket', 'body/Jacket_Torn', 'head/Blood_Light', 'head/Blood_Heavy']) },
       order: ['原版', '只穿衬衫'], active: '原版' },
     groups: [
-      { name: '面部', scope: ['head/Blood_Light', 'head/Blood_Heavy'], active: '', order: ['干净', '受伤', '血迹重'],
+      { name: '面部', active: '', order: ['干净', '受伤', '血迹重'],
         options: { '干净': { 'head/Blood_Light': false, 'head/Blood_Heavy': false }, '受伤': { 'head/Blood_Light': true }, '血迹重': { 'head/Blood_Light': true, 'head/Blood_Heavy': true } } },
-      { name: '外套', scope: ['body/Jacket', 'body/Jacket_Torn'], active: '穿着', order: ['穿着', '破损', '脱下'],
+      { name: '外套', active: '穿着', order: ['穿着', '破损', '脱下'],
         options: { '穿着': { 'body/Jacket': true, 'body/Jacket_Torn': false }, '破损': { 'body/Jacket': false, 'body/Jacket_Torn': true }, '脱下': { 'body/Jacket': false, 'body/Jacket_Torn': false } } },
     ],
     auto: true,
@@ -264,7 +269,7 @@ export function installRe4Fixture() {
       look: allKeys.map(k => { const [slot, material] = k.split('/'); return { slot, material, on: look[k] !== false }; }),
       base: { active: config.base.active, effective: effBase, fromState: r.claims.base?.i,
         presets: config.base.order.map(name => ({ name, values: config.base.presets[name], match: { status: 'ok', skipped: [] }, height: heights['base|' + name], palette: palRefs['base|' + name] })) },
-      groups: config.groups.map(g => ({ name: g.name, scope: g.scope, active: g.active, effective: pick('g:' + g.name, g.active),
+      groups: config.groups.map(g => ({ name: g.name, active: g.active, effective: pick('g:' + g.name, g.active),
         fromState: r.claims['g:' + g.name]?.i, options: g.order.map(name => ({ name, values: g.options[name], height: heights[`g:${g.name}|${name}`], palette: palRefs[`g:${g.name}|${name}`] })) })),
       states, locating, ...(solo ? { solo: true } : {}), height, heightSource, heightOverride: { ...heightOverride },
       palette: paletteOpen ? paletteSnapshot() : undefined,
@@ -314,6 +319,14 @@ export function installRe4Fixture() {
       case 'armor-mirror': config.armorMirror = a.enabled; break;
       case 'note': if (a.text) config.notes[`${a.slot}/${a.material}`] = a.text; else delete config.notes[`${a.slot}/${a.material}`]; break;
       case 'locate': locating = { slot: a.slot, material: a.material }; window.setTimeout(() => { locating = undefined; }, 3000); break;
+      case 'preset-blank': {
+        config.base = { presets: {}, order: [], active: '' }; config.groups = []; config.states = []; config.source = undefined;
+        for (const k of Object.keys(hotkeys)) delete hotkeys[Number(k)];
+        for (const k of Object.keys(schemeOv)) if (k !== '') delete schemeOv[k];
+        schemeOrder = []; editing = '';
+        if (a.capture) { config.base.presets['1'] = full(); config.base.order.push('1'); config.base.active = '1'; }
+        break;
+      }
       case 'base-new': { let n = 1; while (config.base.presets[String(n)]) n++; config.base.presets[String(n)] = full(); config.base.order.push(String(n)); config.base.active = String(n); break; }
       case 'base-duplicate': { const src = config.base.presets[a.preset] ?? fail(); const name = `${a.preset}_1`; config.base.presets[name] = clone(src); config.base.order.push(name); config.base.active = name; break; }
       case 'base-rename': rename(config.base.presets, config.base.order, a.preset, a.name); if (config.base.active === a.preset) config.base.active = a.name;
@@ -386,14 +399,10 @@ export function installRe4Fixture() {
       case 'height-override': if (a.enabled !== undefined) heightOverride.enabled = a.enabled; if (a.cm !== undefined) heightOverride.cm = a.cm; break;
       case 'option-height': { const g = groupOf(a.group) ?? fail(); if (!g.options[a.option]) fail();
         if (a.cm === undefined) delete heights[`g:${a.group}|${a.option}`]; else heights[`g:${a.group}|${a.option}`] = a.cm; break; }
-      case 'group-new': if (!a.name || groupOf(a.name)) fail(); config.groups.push({ name: a.name, scope: [], options: {}, order: [], active: '' }); break;
+      case 'group-new': if (!a.name || groupOf(a.name)) fail(); config.groups.push({ name: a.name, options: {}, order: [], active: '' }); break;
       case 'group-rename': { const g = groupOf(a.group) ?? fail(); if (!a.name || groupOf(a.name)) fail(); config.states.forEach(s => s.targets.forEach(t => { if (t.group === a.group) t.group = a.name; })); g.name = a.name; break; }
       case 'group-move': { const i = config.groups.findIndex(g => g.name === a.group), j = i + a.offset; if (i < 0 || j < 0 || j >= config.groups.length) fail(); config.groups.splice(j, 0, config.groups.splice(i, 1)[0]); break; }
       case 'group-delete': { const i = config.groups.findIndex(g => g.name === a.group); if (i < 0) fail(); backup = clone(config); config.groups.splice(i, 1); break; }
-      case 'scope-add': { const g = groupOf(a.group) ?? fail(); const key = `${a.slot}/${a.material}`;
-        if (g.scope.includes(key)) fail(); g.scope.push(key); break; }
-      case 'scope-remove': { const g = groupOf(a.group) ?? fail(); const key = `${a.slot}/${a.material}`; if (!g.scope.includes(key)) fail();
-        g.scope = g.scope.filter(k => k !== key); Object.values(g.options).forEach(o => { delete o[key]; }); break; }
       case 'option-new': { const g = groupOf(a.group) ?? fail(); let n = 1; while (g.options[String(n)]) n++; const name = a.name ?? String(n);
         g.options[name] = {}; g.order.push(name); g.active = name; break; }
       case 'option-duplicate': { const g = groupOf(a.group) ?? fail(); const src = g.options[a.option] ?? fail(); const name = `${a.option}_1`;
@@ -404,7 +413,7 @@ export function installRe4Fixture() {
       case 'option-delete': { const g = groupOf(a.group) ?? fail(); if (!g.options[a.option]) fail(); backup = clone(config);
         delete g.options[a.option]; g.order.splice(g.order.indexOf(a.option), 1); if (g.active === a.option) g.active = ''; break; }
       case 'option-material': { const g = groupOf(a.group) ?? fail(); const o = g.options[a.option] ?? fail(); const key = `${a.slot}/${a.material}`;
-        if (!g.scope.includes(key)) fail(); if (a.value === 'none') delete o[key]; else o[key] = a.value === 'on'; break; }
+        if (a.value === 'none') delete o[key]; else o[key] = a.value === 'on'; break; }
       case 'state-new': config.states.push({ name: a.name, enabled: true, exclusive: false, logic: 'AND', hold: 0, fade_in: 0, fade_out: 0, targets: [], conditions: [] }); break;
       case 'state-delete': stateAt(a.index); config.states.splice(a.index - 1, 1); break;
       case 'state-move': { stateAt(a.from); if (a.to < 1 || a.to > config.states.length) fail(); config.states.splice(a.to - 1, 0, config.states.splice(a.from - 1, 1)[0]); break; }

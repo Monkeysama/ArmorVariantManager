@@ -956,6 +956,8 @@ function Main.start(ctx)
     -- 调色渐变:palette_fade[target.id] = { plans = { [mesh 键] = { mesh, plan } }, pal = 终点, dur, elapsed, last };
     -- palette_prev[target.id] = 上一帧的方案组合 { names, src, states }(算渐变时长用)
     local palette_fade, palette_prev = {}, {}
+    -- 血量驱动的调色方案:palette_wsig[target.id] = 上次的权重签名;palette_drive_keys[target.id] = 用着的平滑键
+    local palette_wsig, palette_drive_keys = {}, {}
     local palette_discrete, palette_discrete_for = nil, nil
     local function discrete_params()
         local profiles = load_palette_profiles()
@@ -1069,6 +1071,27 @@ function Main.start(ctx)
         new.version = ModelV3.VERSION
         replace_config(cfg, new)
         cfg.source_preset = id
+        commit(kind_id, true, true)
+        return true
+    end
+
+    -- 新建空白配置:整套造型、状态组、条件状态、调色方案、快捷键全部清空,
+    -- 材质备注、护甲同步、高度覆盖这几项设定保留(它们不是"造型内容")。
+    -- 给常用场景用:换了整个 mod,旧配置和预设库都对不上,想从头配。
+    -- capture = true 时先抓取当前外观,作为整套造型「1」并选中 —— 在清空**之前**抓取,
+    -- 抓到的是用户此刻眼前的样子。清空前的配置进自动保存,和套用预设一样可以恢复。
+    local function new_blank_config(kind_id, source, capture)
+        local key = cfg_key(kind_id)
+        local cfg = loaded_configs[key]
+        if not cfg or not ModelV3.is_v3(cfg) then return false end
+        local look = (capture and source) and Utils.capture_current_as_preset(source) or nil
+        preset_lib.autosave_push(key, T("autosave_before_blank"), cfg)
+        local new = ModelV3.new_config()
+        new.material_notes = deep_copy(cfg.material_notes)
+        new.armor_mirrors_body = cfg.armor_mirrors_body
+        new.height_override = deep_copy(cfg.height_override)
+        if look then Ops.new_preset(new.base, look) end
+        replace_config(cfg, new)
         commit(kind_id, true, true)
         return true
     end
@@ -1412,17 +1435,69 @@ function Main.start(ctx)
         -- (条件状态只带调色方案时,材质开关的 changed 不会变)
         -- 组合变了就渐变:进来的方案用带来它的条件状态的渐入时间,离开的用渐出,手动选择用界面溶解时间。
         -- 渐变中途再变就从当前显示的值接着走;首次 / 换实例 / 组合没变时的重写(调色页里直接改值)都是瞬间的
-        local names, src = nil, nil
-        if info.v3 then names, src = ModelV3.palette_sources(config, info.v3) end
-        local sig = names and table.concat(names, "\0") or ""
+        local names, src, hpw = nil, nil, nil
+        if info.v3 then names, src, hpw = ModelV3.palette_sources(config, info.v3) end
+        -- 血量状态带来的方案:按血量进度加权叠加,权重平滑追向目标(同血量溶解,掉血时颜色渐变过去)。
+        -- 这些方案不参与「组合变了就按时间渐变」:签名和渐变时长只看完全生效的方案;权重一变就直接重写
+        local fixed, fixed_src, weights, wsig = names, src, nil, ""
+        if names and next(hpw) then
+            fixed, fixed_src, weights = {}, {}, {}
+            local keys, parts = {}, {}
+            for k, n in ipairs(names) do
+                if hpw[k] ~= nil then
+                    local dkey = target.id .. "|pal|" .. tostring(src[k]) .. "|" .. n
+                    keys[dkey] = true
+                    local w = Dissolve.drive_progress(dkey, hpw[k])
+                    weights[k] = w
+                    parts[#parts + 1] = string.format("%s=%.3f", n, w)
+                else
+                    weights[k] = 1
+                    fixed[#fixed + 1] = n; fixed_src[#fixed_src + 1] = src[k]
+                end
+            end
+            for dkey in pairs(palette_drive_keys[target.id] or {}) do if not keys[dkey] then Dissolve.drive_end(dkey) end end
+            palette_drive_keys[target.id] = keys
+            wsig = table.concat(parts, ",")
+        elseif palette_drive_keys[target.id] then
+            for dkey in pairs(palette_drive_keys[target.id]) do Dissolve.drive_end(dkey) end
+            palette_drive_keys[target.id] = nil
+        end
+        local weights_changed = palette_wsig[target.id] ~= wsig
+        palette_wsig[target.id] = wsig
+        local sig = fixed and table.concat(fixed, "\0") or ""
         local scheme_changed = palette_sig[target.id] ~= sig
         palette_sig[target.id] = sig
-        local cur = names and { names = names, src = src, states = config.conditions.states } or nil
+        local cur = fixed and { names = fixed, src = fixed_src, states = config.conditions.states } or nil
         local prev = palette_prev[target.id]
         palette_prev[target.id] = cur
         local fade = palette_fade[target.id]
-        if mesh_swapped or force_reapply or scheme_changed or (not fade and (changed or drifted)) then
-            local pal = names and ModelV3.palette_of(config, names) or config.palette
+        if mesh_swapped or force_reapply or scheme_changed or (not fade and (changed or drifted or weights_changed)) then
+            local pal
+            if weights then
+                -- 权重不到 1 的方案:没被下面的方案改过的参数从原值(mdf2 文件里的值)插值过去
+                local index = {}
+                local function original(slot, mat, param)
+                    local mesh = Utils.get_mesh(source, slot)
+                    if not mesh then return nil end
+                    local mk = tostring(mesh)
+                    if not index[mk] then
+                        index[mk] = {}
+                        local ok, count = pcall(function() return mesh:call("get_MaterialNum") end)
+                        for j = 0, (ok and count or 0) - 1 do
+                            local ok_n, n = pcall(function() return mesh:call("getMaterialName", j) end)
+                            if ok_n and n and index[mk][n] == nil then index[mk][n] = j end
+                        end
+                    end
+                    local j = index[mk][mat]
+                    if j == nil then return nil end
+                    local o = file_original(mesh, j, mat, param)
+                    if o == nil then o = Palette.original(palette_state[target.id], mesh, j, param) end
+                    return o
+                end
+                pal = ModelV3.palette_blend_of(config, names, weights, original, discrete_params())
+            else
+                pal = names and ModelV3.palette_of(config, names) or config.palette
+            end
             pal = ModelV3.mirror_palette(pal, config.armor_mirrors_body == true)
             local manual = (global_config.ui_dissolve_enabled ~= false)
                 and math.max(0, math.min(30, tonumber(global_config.ui_dissolve_time) or 1.0)) or 0
@@ -1435,6 +1510,8 @@ function Main.start(ctx)
         elseif fade and step_palette_fade(fade) then
             palette_fade[target.id] = nil
             apply_palette(target, source, fade.pal)
+            -- 渐变的终点是开始时按当时权重叠的;渐变期间血量变了的话,下一帧按现在的权重重写
+            if weights then palette_wsig[target.id] = nil end
         end
     end
 
@@ -2103,7 +2180,7 @@ function Main.start(ctx)
             if ch_lg then rb.logic_idx = lg end
         end
 
-        local cond_defs = Registry.all()
+        local cond_defs = Registry.visible()
         local cond_labels = {}
         for _, def in ipairs(cond_defs) do table.insert(cond_labels, T(def.label_key)) end
         if #cond_labels == 0 then return end
@@ -2597,9 +2674,14 @@ function Main.start(ctx)
         local hp = context and TransformManager.get_character_hp_percent(context)
         local status = target_display_name(target)
         if hp then status = status .. string.format("  |  HP %.1f%%", hp) end
-        for _, def in ipairs(Registry.all()) do
+        for _, def in ipairs(Registry.visible()) do
             if context and def.kind == "bool" and def.get(context) == true then
                 status = status .. "  |  " .. T(def.label_key)
+            elseif context and def.merged then
+                local v = def.get(context)
+                if type(v) == "number" and v ~= 0 then
+                    status = status .. "  |  " .. T(def.label_key) .. ": " .. def.value_label(v, global_config.language)
+                end
             end
         end
         imgui.text(status)
@@ -3129,7 +3211,7 @@ function Main.start(ctx)
             migrate_to_v3 = migrate_to_v3, preset_view = preset_view, dismiss_preset_hint = dismiss_preset_hint,
             apply_preset = apply_preset, save_current_as_preset = save_current_as_preset,
             update_source_preset = update_source_preset, restore_autosave = restore_autosave,
-            promote_autosave = promote_autosave, preset_lib = preset_lib,
+            promote_autosave = promote_autosave, preset_lib = preset_lib, new_blank_config = new_blank_config,
             preview = portrait_web,
             -- 调色盘:映射(reload = true 重读 data 目录)、读不了的映射文件名、草稿写盘
             palette_profiles = load_palette_profiles, palette_profile_errors = function() return palette_profile_errors end,

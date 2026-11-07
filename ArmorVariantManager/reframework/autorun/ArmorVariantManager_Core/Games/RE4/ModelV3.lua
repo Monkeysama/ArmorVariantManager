@@ -7,8 +7,9 @@
 --   cfg = {
 --     version = 3,
 --     base   = { presets = {名 -> 快照}, order = {...}, active = "名" | "" },
---     groups = { { name, scope = {"slot/材质", ...}, options = {名 -> 稀疏快照}, order, active }, ... },
---              -- 数组顺序就是叠加顺序:靠后的组覆盖靠前的。作用域可以重叠
+--     groups = { { name, options = {名 -> 稀疏快照}, order, active }, ... },
+--              -- 数组顺序就是叠加顺序:靠后的组覆盖靠前的。选项可以写任何材质,几个组写同一个材质时靠后的说了算
+--              -- (2026-11-07 前还有 scope 作用域限制能写哪些材质,读入时丢掉)
 --     conditions = { auto = true, states = { 条件状态, ... } },   -- 数组顺序就是优先级
 --     material_notes = { [slot] = { [材质] = "备注" } }, armor_mirrors_body = true, source_preset = nil,
 --   }
@@ -58,11 +59,26 @@ function M.find_group(cfg, name)
     return nil
 end
 
--- 材质 -> 管它的状态组名列表(按叠加顺序,最后一个说了算)
+-- 一个状态组的选项里写到过的材质键(任一选项写了开或关就算)
+function M.group_keys(g)
+    local set = {}
+    for _, opt in pairs(is_tbl(g) and is_tbl(g.options) and g.options or {}) do
+        for slot, data in pairs(is_tbl(opt) and opt or {}) do
+            if type(slot) == "string" and is_tbl(data) and is_tbl(data.materials) then
+                for m in pairs(data.materials) do
+                    if type(m) == "string" then set[M.key_of(slot, m)] = true end
+                end
+            end
+        end
+    end
+    return set
+end
+
+-- 材质 -> 写它的状态组名列表(按叠加顺序,最后一个说了算)
 function M.groups_of(cfg)
     local map = {}
     for _, g in ipairs(cfg.groups or {}) do
-        for _, k in ipairs(g.scope or {}) do
+        for k in pairs(M.group_keys(g)) do
             map[k] = map[k] or {}
             table.insert(map[k], g.name)
         end
@@ -85,8 +101,9 @@ function M.reconcile_order(order, map)
     return out
 end
 
--- 快照清洗:只留 { slot = { materials = { 名 = bool } } };allowed 给了就只留作用域里的材质
-local function clean_snapshot(snap, allowed)
+-- 快照清洗:只留 { slot = { materials = { 名 = bool } } };allowed 给了就只留这些材质;
+-- sparse = 稀疏快照(状态组选项),空槛位不留
+local function clean_snapshot(snap, allowed, sparse)
     local out = {}
     if not is_tbl(snap) then return out end
     for slot, data in pairs(snap) do
@@ -97,7 +114,7 @@ local function clean_snapshot(snap, allowed)
                     mats[m] = v
                 end
             end
-            if next(mats) or not allowed then out[slot] = { materials = mats } end
+            if next(mats) or not (allowed or sparse) then out[slot] = { materials = mats } end
         end
     end
     return out
@@ -274,6 +291,19 @@ function M.height_of(cfg, picks)
     return cm, src
 end
 
+-- 旧布尔条件 → 合成条件(Conditions/Merged.lua)。只迁移语义完全等价的(Merged.LEGACY[id].exact):
+-- 每组优先级最高的一档、「持械中」(= 持械 ~= 无)、血量变化;其余照旧用旧 id(它们一直能求值)。
+-- 确定性:迁移过的不会再变,同一份配置迁移两次结果一样。返回新表或原表
+function M.migrate_condition(c)
+    local m = (Registry.LEGACY or {})[c.type]
+    if not m or not m.exact or type(c.value) ~= "boolean" then return c end
+    local on = c.value
+    if m.superset then
+        return { type = m.group, op = on and "~=" or "==", value = 0 }
+    end
+    return { type = m.group, op = on and "==" or "~=", value = m.value }
+end
+
 function M.normalize_state(st)
     st.name = (type(st.name) == "string" and st.name ~= "") and st.name or "?"
     st.enabled = st.enabled ~= false
@@ -281,7 +311,7 @@ function M.normalize_state(st)
     st.logic = st.logic == "OR" and "OR" or "AND"
     local conds = {}
     for _, c in ipairs(is_tbl(st.conditions) and st.conditions or {}) do
-        if is_tbl(c) and type(c.type) == "string" then conds[#conds + 1] = c end
+        if is_tbl(c) and type(c.type) == "string" then conds[#conds + 1] = M.migrate_condition(c) end
     end
     st.conditions = conds
     st.hold = num(st.hold, 0, 0, 3600)
@@ -328,16 +358,13 @@ function M.normalize(cfg)
     for _, g in ipairs(is_tbl(cfg.groups) and cfg.groups or {}) do
         if is_tbl(g) and type(g.name) == "string" and g.name ~= "" and not names[g.name] then
             names[g.name] = true
-            local scope, set = {}, {}
-            for _, k in ipairs(is_tbl(g.scope) and g.scope or {}) do
-                if M.split_key(k) and not set[k] then set[k] = true; scope[#scope + 1] = k end
-            end
+            -- 旧配置里的 scope(作用域)在这里丢掉:状态组不再限制能写哪些材质(2026-11-07)
             local options = {}
             for n, p in pairs(is_tbl(g.options) and g.options or {}) do
-                if type(n) == "string" then options[n] = clean_snapshot(p, set) end
+                if type(n) == "string" then options[n] = clean_snapshot(p, nil, true) end
             end
             groups[#groups + 1] = {
-                name = g.name, scope = scope, options = options,
+                name = g.name, options = options,
                 order = M.reconcile_order(g.order, options),
                 active = (type(g.active) == "string" and options[g.active]) and g.active or "",
                 heights = clean_heights(g.heights, options),
@@ -427,33 +454,12 @@ function M.migrate_from_v2(v2, axis_priority, base_label)
     }
     local report = {}
 
-    local scopes = {}
-    for _, name in ipairs(axis_priority) do
-        local axis = axes[name]
-        if is_tbl(axis) then
-            local kset = {}
-            for _, p in pairs(is_tbl(axis.presets) and axis.presets or {}) do
-                for slot, data in pairs(is_tbl(p) and p or {}) do
-                    if type(slot) == "string" and is_tbl(data) and is_tbl(data.materials) then
-                        for m in pairs(data.materials) do
-                            if type(m) == "string" then kset[M.key_of(slot, m)] = true end
-                        end
-                    end
-                end
-            end
-            local keys = {}
-            for k in pairs(kset) do keys[#keys + 1] = k end
-            table.sort(keys)
-            scopes[name] = keys
-        end
-    end
-
     out.groups = {}
     for i = #axis_priority, 1, -1 do
         local name = axis_priority[i]
         local axis = axes[name]
         if is_tbl(axis) then
-            out.groups[#out.groups + 1] = { name = name, scope = scopes[name], options = axis.presets,
+            out.groups[#out.groups + 1] = { name = name, options = axis.presets,
                 order = axis.order, active = axis.active }
         end
     end
@@ -607,6 +613,7 @@ function M.resolve(cfg, context)
     local stop = nil
     local schemes = cfg.palettes or {}
     local hp, touched = nil, {}
+    local palette_hp = {}
     local function get_hp()
         if hp == nil then hp = M.hp_of(context) or false end
         return hp
@@ -636,10 +643,12 @@ function M.resolve(cfg, context)
                 for j, x in ipairs(list) do
                     if x.is_palette then
                         if not ts[j] then
+                            -- 血量状态的调色方案按血量进度加权叠加(进度 0 不生效,1 完全生效),见 palette_sources
                             local v = get_hp()
-                            local on = type(v) == "number" and hp_progress(st.hp, v) > 0
-                            ts[j] = on and { kind = "win" } or false
-                            if on then touched[i] = true end
+                            local p = type(v) == "number" and hp_progress(st.hp, v) or 0
+                            palette_hp[i] = p
+                            ts[j] = p > 0 and { kind = "win" } or false
+                            if p > 0 then touched[i] = true end
                         end
                     elseif not ts[j] then
                         hp_items[x.key] = hp_items[x.key] or {}
@@ -735,7 +744,7 @@ function M.resolve(cfg, context)
         if st.hp and status[i].kind == "idle" and touched[i] then status[i] = { kind = "active" } end
     end
 
-    return { picks = picks, layers = layers, drives = drives, status = status, targets = targets }
+    return { picks = picks, layers = layers, drives = drives, status = status, targets = targets, palette_hp = palette_hp }
 end
 
 -- ============================================================
@@ -746,15 +755,25 @@ end
 -- 选中的方案和状态组的手动选择一样,会被引用(按条件切换的)盖住。返回方案名列表;不存在的方案跳过。
 -- ============================================================
 function M.palette_layers(cfg, r)
-    return (M.palette_sources(cfg, r))
+    -- 血量进度为 0 的(还没进区间)不算生效
+    local names, _, hp = M.palette_sources(cfg, r)
+    local out = {}
+    for i, n in ipairs(names) do if hp[i] == nil or hp[i] > 0 then out[#out + 1] = n end end
+    return out
 end
 
 -- 同 palette_layers,另外返回每个方案的来源(渐变用):src[i] = 条件状态序号(由条件状态带来:它自己引用的,
--- 或者它认领的整套造型 / 状态组选项引用的)| false(手动选择带来的)
+-- 或者它认领的整套造型 / 状态组选项引用的)| false(手动选择带来的);
+-- hp[i] = 血量进度(0~1,这个方案由带血量区间的条件状态带来,按进度加权叠加)| nil(完全生效)。
+-- 血量状态进度为 0 时也列出来(权重 0),好让平滑后的权重能渐渐退到 0
 function M.palette_sources(cfg, r)
-    local names, src = {}, {}
+    local names, src, hp = {}, {}, {}
     local schemes = cfg.palettes or {}
-    local function add(n, by) if type(n) == "string" and schemes[n] then names[#names + 1] = n; src[#src + 1] = by or false end end
+    local function add(n, by, w)
+        if type(n) == "string" and schemes[n] then
+            names[#names + 1] = n; src[#src + 1] = by or false; hp[#names] = w
+        end
+    end
     add(cfg.palette_active, false)
     local picks = r and r.picks or {}
     local layers = r and r.layers or {}
@@ -768,9 +787,29 @@ function M.palette_sources(cfg, r)
     local states = (cfg.conditions or {}).states or {}
     for i = #states, 1, -1 do
         local t = r and r.targets and r.targets[i]
-        if t and t.palette and t.palette.kind == "win" then add(states[i].palette, i) end
+        local w = r and r.palette_hp and r.palette_hp[i]
+        if w ~= nil then add(states[i].palette, i, w)
+        elseif t and t.palette and t.palette.kind == "win" then add(states[i].palette, i) end
     end
-    return names, src
+    -- 血量方案之间按区间深浅叠:越深的区间(普通 = 上限越低,反向 = 下限越高)盖在越上面,
+    -- 这样绿 → 黄 → 红不依赖条件状态的先后。它们仍占原来的叠加位置,和其它方案的相对顺序不变
+    local slots, items = {}, {}
+    for k = 1, #names do
+        local st = src[k] and states[src[k]]
+        if hp[k] ~= nil and st and st.hp then
+            local depth = st.hp.invert and st.hp.lower or (100 - st.hp.upper)
+            slots[#slots + 1] = k
+            items[#items + 1] = { n = names[k], s = src[k], w = hp[k], depth = depth, k = k }
+        end
+    end
+    if #items > 1 then
+        table.sort(items, function(a, b) if a.depth ~= b.depth then return a.depth < b.depth end return a.k < b.k end)
+        for idx, k in ipairs(slots) do
+            local it = items[idx]
+            names[k], src[k], hp[k] = it.n, it.s, it.w
+        end
+    end
+    return names, src, hp
 end
 
 -- 调色方案组合从 prev 变成 cur 时渐变多久(秒)。prev / cur = { names, src, states }(states = 当时的条件状态表)。
@@ -808,6 +847,13 @@ function M.mirror_palette(pal, on)
     for slot, mats in pairs(pal) do copy[slot] = mats end
     copy.armor = copy.body
     return copy
+end
+
+-- 带权重叠加(血量驱动的方案):weights[i] 缺省 1;original / discrete 见 Palette.blend
+function M.palette_blend_of(cfg, names, weights, original, discrete)
+    local list = {}
+    for _, n in ipairs(names or {}) do list[#list + 1] = (cfg.palettes or {})[n] end
+    return Palette.blend(list, weights, original, discrete)
 end
 
 -- 叠好的覆盖表(交给 Palette.apply_mesh)

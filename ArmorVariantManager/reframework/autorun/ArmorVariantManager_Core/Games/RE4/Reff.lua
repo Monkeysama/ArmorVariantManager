@@ -25,7 +25,13 @@ local CATEGORY = {
     hp_ratio = "hp", hp_vital = "hp", hp_decreased = "hp", hp_increased = "hp",
     is_crouch = "move", is_walk = "move", is_run = "move", is_quick_turn = "move", is_jumping = "move",
     is_falling = "move", is_landing = "move", is_ladder = "move", is_hook_shot = "move", is_boat = "move",
-    is_damaging = "damage", is_upper_body_damage = "damage", is_burning = "damage", is_invincible = "damage",
+    is_damaging = "damage", is_upper_body_damage = "damage", is_burning = "damage", is_grappled = "damage", is_jacked = "damage", is_invincible = "damage",
+    is_slip_through = "move", is_parent_gimmick = "move", is_crouch_switching = "move",
+    last_hit_part = "damage", last_hit_side = "damage",
+    is_talk_acting = "other", is_wireless_call = "other", is_event_locked = "other", is_restriction_all = "other",
+    is_body_draw_off = "other", chapter = "other", stage_id = "other",
+    is_run_start = "move", is_run_loop = "move", is_run_turn = "move", is_idle = "move",
+    is_wounded = "damage", dead_type = "damage", is_paused = "other",
     has_armor_mesh = "other",
 }
 
@@ -42,7 +48,7 @@ local CATEGORY = {
 --   start_preview, get_preview
 --   preview(可选):Portrait.connect 的网页接口 { snapshot(), action(request) }
 --   v3:migrate_to_v3, preset_view, dismiss_preset_hint, apply_preset, save_current_as_preset,
---      update_source_preset, restore_autosave, promote_autosave, preset_lib
+--      update_source_preset, restore_autosave, promote_autosave, preset_lib, new_blank_config
 --   调色:palette_profiles, palette_profile_errors, palette_dump, all_meshes, forget_palette
 function Reff.new(deps)
     local controller = {}
@@ -96,7 +102,9 @@ function Reff.new(deps)
     local function condition_defs(context)
         local out = {}
         for _, def in ipairs(Registry.all()) do
-            local row = { id = def.id, kind = def.kind, label = T(def.label_key), category = CATEGORY[def.id] or "combat" }
+            -- legacy = 被合成条件取代的旧布尔:界面不在下拉框里列(已经在用它的条件照常显示)
+            local row = { id = def.id, kind = def.kind, label = T(def.label_key),
+                category = def.category or CATEGORY[def.id] or "combat", legacy = def.legacy or nil }
             if def.kind == "number" then row.ops = Registry.NUM_OPS
             elseif def.kind == "enum" then
                 row.ops = Registry.ENUM_OPS
@@ -314,10 +322,12 @@ function Reff.new(deps)
         snapshot.status = { flags = {} }
         if context then
             snapshot.status.hp = TM.get_character_hp_percent(context)
-            for _, def in ipairs(Registry.all()) do
+            for _, def in ipairs(Registry.visible()) do
+                local ok, value = pcall(def.get, context)
                 if def.kind == "bool" then
-                    local ok, value = pcall(def.get, context)
                     if ok and value == true then snapshot.status.flags[#snapshot.status.flags + 1] = T(def.label_key) end
+                elseif def.merged and ok and type(value) == "number" and value ~= 0 then
+                    snapshot.status.flags[#snapshot.status.flags + 1] = T(def.label_key) .. "：" .. def.value_label(value, language())
                 end
             end
         end
@@ -361,9 +371,8 @@ function Reff.new(deps)
         snapshot.groups = {}
         for _, g in ipairs(config.groups) do
             local key = M3.layer_key(g.name)
-            local row = { name = g.name, scope = {}, active = g.active, effective = v3.picks[key],
+            local row = { name = g.name, active = g.active, effective = v3.picks[key],
                 fromState = (info.layers[key] or {}).prio, options = {} }
-            for k, s in ipairs(g.scope) do row.scope[k] = s end
             for _, name in ipairs(g.order) do
                 row.options[#row.options + 1] = { name = name, values = values_of(g.options[name]), height = (g.heights or {})[name],
                     palette = (g.palettes or {})[name] }
@@ -667,13 +676,6 @@ function Reff.new(deps)
             deps.snapshot_before_destructive(cur.kind_id)
             return OpsV3.delete_group(cfg, p.group)
         end,
-        ["scope-add"] = function(p, cfg) return OpsV3.scope_add(cfg, p.group, p.slot, p.material) end,
-        ["scope-remove"] = function(p, cfg) return OpsV3.scope_remove(cfg, p.group, p.slot, p.material) end,
-        ["scope-set"] = function(p, cfg, cur)
-            if not M3.find_group(cfg, p.group) then return false end
-            if type(p.remove) == "table" and #p.remove > 0 then deps.snapshot_before_destructive(cur.kind_id) end
-            return OpsV3.scope_set(cfg, p.group, p.add, p.remove)
-        end,
         ["option-new"] = function(p, cfg) return OpsV3.new_option(cfg, p.group, str(p.name)) end,
         ["option-duplicate"] = function(p, cfg) return OpsV3.duplicate_option(cfg, p.group, p.option) end,
         ["option-rename"] = function(p, cfg) return OpsV3.rename_option(cfg, p.group, p.option, str(p.name)) end,
@@ -719,6 +721,8 @@ function Reff.new(deps)
         ["preset-apply"] = function(p, _, cur) return deps.apply_preset(cur.kind_id, str(p.id)) and "saved" end,
         ["preset-save"] = function(p, _, cur) return deps.save_current_as_preset(cur.kind_id, str(p.name)) and "saved" end,
         ["preset-update"] = function(_, _, cur) return deps.update_source_preset(cur.kind_id) and "saved" end,
+        -- 新建空白配置;capture = 同时抓取当前外观作为整套造型
+        ["preset-blank"] = function(p, _, cur) return deps.new_blank_config(cur.kind_id, cur.target.source, p.capture == true) and "saved" end,
         ["preset-rename"] = function(p) return deps.preset_lib.rename(str(p.id), str(p.name)) and "saved" end,
         ["preset-delete"] = function(p) return deps.preset_lib.delete(str(p.id)) and "saved" end,
         ["preset-dismiss"] = function(_, _, cur) return deps.dismiss_preset_hint(cur.kind_id, cur.target.source) and "saved" end,

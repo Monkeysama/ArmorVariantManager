@@ -8,6 +8,8 @@ export interface Re4ConditionOption { value: number | string; label: string }
 export interface Re4ConditionDef {
   id: string; kind: 'bool' | 'number' | 'enum'; label: string; category: Re4Category;
   ops?: Re4Op[]; options?: Re4ConditionOption[]; value?: number | boolean;
+  // 被合成条件取代的旧布尔:下拉框里不列(已经在用它的条件照常显示)
+  legacy?: boolean;
 }
 export interface Re4Character { id: string; label: string; configured: boolean; targets: string[] }
 export interface Re4Settings {
@@ -41,7 +43,7 @@ export interface Re4Match { status: 'ok' | 'partial' | 'mismatch'; skipped: stri
 export interface Re4BasePreset { name: string; values: Re4Values; match: Re4Match; height?: number; palette?: string }
 export interface Re4Base { active: string; effective?: string; fromState?: number; presets: Re4BasePreset[] }
 export interface Re4Option { name: string; values: Re4Values; height?: number; palette?: string }
-export interface Re4Group { name: string; scope: string[]; active: string; effective?: string; fromState?: number; options: Re4Option[] }
+export interface Re4Group { name: string; active: string; effective?: string; fromState?: number; options: Re4Option[] }
 
 export interface Re4Material { name: string; note?: string }
 export interface Re4Slot { id: string; label: string; mirrored: boolean; materials: Re4Material[] }
@@ -162,8 +164,6 @@ export type Re4Action =
   | C & { kind: 'group-rename'; group: string; name: string }
   | C & { kind: 'group-move'; group: string; offset: number }
   | C & { kind: 'group-delete'; group: string }
-  | C & { kind: 'scope-add' | 'scope-remove'; group: string; slot: string; material: string }
-  | C & { kind: 'scope-set'; group: string; add: { slot: string; material: string }[]; remove: { slot: string; material: string }[] }
   | C & { kind: 'option-new'; group: string; name?: string }
   | C & { kind: 'option-duplicate' | 'option-delete'; group: string; option: string }
   | C & { kind: 'option-rename'; group: string; option: string; name: string }
@@ -187,6 +187,7 @@ export type Re4Action =
   | C & { kind: 'preset-apply' | 'preset-delete'; id: string }
   | C & { kind: 'preset-rename'; id: string; name: string }
   | C & { kind: 'preset-save'; name: string }
+  | C & { kind: 'preset-blank'; capture: boolean }
   | C & { kind: 'preset-update' | 'preset-dismiss' }
   | C & { kind: 'autosave-restore'; index: number }
   | C & { kind: 'autosave-promote'; index: number; name: string }

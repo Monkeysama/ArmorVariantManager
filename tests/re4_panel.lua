@@ -74,11 +74,11 @@ local function fixture(character, version)
         { name = "旧的", values = {}, match = { status = "mismatch", skipped = {} } },
     } }
     snap.groups = {
-        { name = "外套", scope = { "body/Jacket", "body/Belt" }, active = "穿", options = {
+        { name = "外套", active = "穿", options = {
             { name = "穿", values = { ["body/Jacket"] = true } }, { name = "脱", values = { ["body/Jacket"] = false }, height = -2 } } },
-        { name = "破损", scope = { "body/Jacket" }, active = "", effective = "破", fromState = 1, options = {
+        { name = "破损", active = "", effective = "破", fromState = 1, options = {
             { name = "破", values = { ["body/Jacket"] = false } } } },
-        { name = "空组", scope = {}, active = "", options = {} },
+        { name = "空组", active = "", options = {} },
     }
     snap.states = {
         { name = "低血量", enabled = true, exclusive = true, logic = "AND", hold = 0, fadeIn = 0.5, fadeOut = 1, kind = "active", holding = true,
@@ -149,10 +149,10 @@ local KNOWN = {}
 for _, k in ipairs({ "character", "setting", "migrate", "manual", "auto", "armor-mirror", "note", "locate", "base-new", "base-duplicate",
     "base-rename", "base-move", "base-delete", "base-recapture", "palette-view", "palette-set", "palette-reset", "palette-reload",
     "palette-export", "palette-replace", "base-height", "option-height", "height-override", "base-material", "group-new", "group-rename", "group-move",
-    "group-delete", "scope-add", "scope-remove", "scope-set", "option-new", "option-duplicate", "option-rename", "option-move",
+    "group-delete", "option-new", "option-duplicate", "option-rename", "option-move",
     "option-delete", "option-material", "state-new", "state-delete", "state-move", "state-rename", "state-field", "state-hp",
     "state-base", "state-target", "state-target-group", "state-target-remove", "condition-add", "condition-set", "condition-delete",
-    "preset-apply", "preset-save", "preset-update", "preset-rename", "preset-delete", "preset-dismiss", "autosave-restore",
+    "preset-apply", "preset-save", "preset-update", "preset-blank", "preset-rename", "preset-delete", "preset-dismiss", "autosave-restore",
     "autosave-promote", "restore" }) do KNOWN[k] = true end
 
 local function fake_controller(start)
@@ -272,8 +272,8 @@ assert(total > 150, "clicked across the pages: " .. total)
 local seen = {}
 for _, a in ipairs(ctrl.actions) do seen[a.kind] = true end
 for _, k in ipairs({ "manual", "auto", "state-field", "base-new", "base-material", "option-material", "group-move", "group-delete",
-    "option-delete", "base-recapture", "scope-add", "scope-set", "option-new", "state-move", "state-delete", "state-hp", "condition-add",
-    "condition-delete", "state-target-remove", "preset-apply", "preset-delete", "preset-dismiss", "autosave-restore", "restore",
+    "option-delete", "base-recapture", "option-new", "state-move", "state-delete", "state-hp", "condition-add",
+    "condition-delete", "state-target-remove", "preset-apply", "preset-blank", "preset-delete", "preset-dismiss", "autosave-restore", "restore",
     "palette-view", "palette-reload", "palette-reset", "setting", "armor-mirror", "migrate" }) do
     if k ~= "migrate" then assert(seen[k], "never sent " .. k) end
 end

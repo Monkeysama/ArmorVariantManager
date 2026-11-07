@@ -69,7 +69,6 @@ export function normalizeRe4(value: Re4Snapshot): Re4Snapshot {
   }
   if (value.groups !== undefined) {
     out.groups = list<Re4Group>(value.groups, 'groups').map(g => ({ ...g, active: g.active ?? '',
-      scope: list<string>(g.scope, 'group.scope'),
       options: list<Re4Option>(g.options, 'group.options').map(o => ({ ...o, values: record(o.values) })) }));
   }
   if (value.states !== undefined) out.states = list<Re4State>(value.states, 'states').map(state);

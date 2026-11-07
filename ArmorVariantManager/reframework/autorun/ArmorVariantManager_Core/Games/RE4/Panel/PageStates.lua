@@ -37,7 +37,8 @@ local function type_choices(snap, t, cond)
     for _, cat in ipairs(CATS) do
         local first = true
         for _, d in ipairs(snap.conditions or {}) do
-            if d.category == cat then
+            -- 被合成条件取代的旧布尔不列,除非这一条正用着它
+            if d.category == cat and (not d.legacy or d.id == cond.type) then
                 if first then
                     labels[#labels + 1] = t(CAT_KEY[cat])
                     headers[#labels] = true
