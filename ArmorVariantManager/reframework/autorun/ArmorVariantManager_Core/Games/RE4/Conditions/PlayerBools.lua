@@ -148,9 +148,11 @@ local state_bits = {}
 local function state_bit(name)
     if state_bits[name] == nil then
         local bit = false
-        local td = sdk.find_type_definition("chainsaw.PlayerDefine.State")
-        local f = td and td:get_field(name)
-        local ok, v = pcall(function() return f and f:get_data(nil) end)
+        local ok, v = pcall(function()
+            local td = sdk.find_type_definition("chainsaw.PlayerDefine.State")
+            local f = td and td:get_field(name)
+            return f and f:get_data(nil)
+        end)
         if ok and type(v) == "number" then bit = math.tointeger(v) or false end
         state_bits[name] = bit
     end
