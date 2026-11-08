@@ -52,6 +52,7 @@ export function targetSentence(state: Re4State, t: Re4Translate) {
   if (state.base) parts.push(t('targetPair', t('baseTarget'), state.base));
   for (const target of state.targets) parts.push(t('targetPair', target.group, target.option));
   if (state.palette) parts.push(t('targetPair', t('paletteRef'), state.palette));
+  if (state.weapons) parts.push(t('targetPair', t('weaponsTarget'), t(state.weapons === 'all' ? 'weaponsAll' : 'weaponsStowed')));
   return parts.join(t('targetSep')) || t('noTargets');
 }
 

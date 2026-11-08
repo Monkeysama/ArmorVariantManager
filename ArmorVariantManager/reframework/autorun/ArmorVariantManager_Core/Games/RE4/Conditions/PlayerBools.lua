@@ -110,10 +110,14 @@ local BOOL_CONDITIONS = {
     -- 挣脱后都变假;同一时刻 State 里没有 Jacked 位(只在 StateOld 里)、IsJacked 为假,所以不用那两个。
     -- 2026-08-23 那次探针在"擒抱/特写类攻击"里没见它亮 —— 可能是不同的抓取类型,未逐类验证
     { id = "is_grappled",         method = "get_IsInGrappleDamage" },
-    -- 被抓 / 刚挣脱:State 或 StateOld 里有 Jacked 位。2026-11-07 实测:被抓期间和挣脱反击期间
-    -- State 里都没有 Jacked、IsJacked 为假,只有 StateOld 留着这一位(反击时无敌为真、闪避为假,
-    -- 用户的"闪避类无敌隐身"规则靠它排除这一段)。StateOld 在反击结束后残留多久还没测。
-    { id = "is_jacked",           state = "Jacked", with_old = true },
+    -- 敌人联动动作(QTE):身体 MotionFsm2 第 1 层当前节点名以 "Jacked" 开头。jack = 由敌人一方驱动、双方同步播放的动作,
+    -- 不只是被抓:2026-11-07 实测敌人横扫 → 后空翻闪避也在这里(动作名 cha0_enemy_0002_escape_B_VerC、
+    -- chc0_jack_pl_0th_com_0070_hold_escape),挣脱反击同样在。要区分是哪一种得看动作名。
+    -- 2026-11-07 实测:最早用 State|StateOld 的 Jacked 位,结果 StateOld 会一直残留到下一次 State 变化,
+    -- 和当前动作无关(一次主动闪避也读到它),作废。State 本身在抓取期间也不带 Jacked 位、IsJacked 为假。
+    -- 已被「联动动作类型」(jack_kind,Condition_Enums.lua)取代:它 ~= 0 就等于这个为真,所以这里隐藏。
+    -- 挣脱反击时第 1 层 = "Jacked"、第 0 层 = "Jacked.None",动作名 chc0_jack_pl_0th_com_0070_hold_escape。
+    { id = "is_jacked",           fsm_layer = 1, fsm_prefix = "Jacked", hidden = true },
     -- 捂伤口:PlayerBodyUpdater.get_NextAddArmIndex() 为 4 或 5(叠加手臂动作层的编号,-1 = 没有叠加)。
     -- 这一层不是捂伤口专用:2026-11-07 第二轮探针(满血切武器 + 实战)看到 0 = 切武器起手那一帧、
     -- 2 = 某些武器的单手待机姿势(满血拿着能保持几分钟),所以早先的 ">= 0" 会把持枪误判成捂伤口。
@@ -173,6 +177,21 @@ local function read_state(context, name, with_old)
     return false
 end
 
+local fsm_cache = setmetatable({}, { __mode = "k" })
+local function read_fsm(context, layer, prefix)
+    local ok, name = pcall(function()
+        local go = context:call("get_BodyGameObject")
+        if not go then return nil end
+        local fsm = fsm_cache[go]
+        if fsm == nil then
+            fsm = go:call("getComponent(System.Type)", sdk.typeof("via.motion.MotionFsm2")) or false
+            fsm_cache[go] = fsm
+        end
+        return fsm and fsm:call("getCurrentNodeName(System.UInt32)", layer)
+    end)
+    if not ok or type(name) ~= "string" then return nil end
+    return name:sub(1, #prefix) == prefix
+end
 local defs = {}
 for _, entry in ipairs(BOOL_CONDITIONS) do
     table.insert(defs, {
@@ -183,6 +202,7 @@ for _, entry in ipairs(BOOL_CONDITIONS) do
         get = function(context)
             if not context then return nil end
             if entry.state then return read_state(context, entry.state, entry.with_old) end
+            if entry.fsm_layer then return read_fsm(context, entry.fsm_layer, entry.fsm_prefix) end
             if entry.body_call then
                 local ok_b, v = pcall(function()
                     local body = context:call("get_BodyUpdater")

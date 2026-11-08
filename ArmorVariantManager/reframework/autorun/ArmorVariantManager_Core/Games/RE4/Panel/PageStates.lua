@@ -179,6 +179,17 @@ local function draw_targets(ctx, k, st, x, y, w)
     local rt, rc = U.result_text(st.baseResult, states, t)
     if rt ~= "" then D.text_mid(rt, bx + sel_w + 8, cy, ROW, RES_COLOR[rc] or C.muted, W.small(), max(0, x + w - bx - sel_w - 8)) end
     cy = cy + ROW + 6
+    -- 武器显示
+    D.text_mid(t("weaponsTarget"), x, cy, ROW, C.muted, W.small(), sel_w)
+    select_values("sweap:" .. k, bx, cy + 1, sel_w, { t("weaponsKeep"), t("weaponsStowed"), t("weaponsAll") },
+        { "", "stowed", "all" }, st.weapons or "", nil, function(val)
+            ctx.act({ kind = "state-weapons", index = k, mode = val })
+        end)
+    if st.weapons then
+        local wt, wc = U.result_text(st.weaponsResult, states, t)
+        if wt ~= "" then D.text_mid(wt, bx + sel_w + 8, cy, ROW, RES_COLOR[wc] or C.muted, W.small(), max(0, x + w - bx - sel_w - 8)) end
+    end
+    cy = cy + ROW + 6
     -- 状态组
     local groups = snap.groups or {}
     for ti, tg in ipairs(st.targets) do

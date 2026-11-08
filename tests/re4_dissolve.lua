@@ -86,6 +86,11 @@ assert(Dissolve.transition_layer("base", "base", T) == "base")
 assert(Dissolve.transition_layer("base", "group:脱", nil) == "base", "no transitions (fresh apply): instant via owner")
 assert(Dissolve.transition_layer(nil, "group:脱", T) == "group:脱", "unowned material falls back to the previous writer")
 assert(Dissolve.transition_layer("base", "group:脱", { base = ON, ["group:脱"] = ON }) == "base", "owner's own transition first")
+-- 两层都有过渡时用最近换过的那层:整套造型的旧过渡(seq 1)不能盖过状态组刚放手的过渡(seq 2)
+assert(Dissolve.transition_layer("base", "group:脱", { base = { enabled = true, dur = 1, seq = 1 },
+    ["group:脱"] = { enabled = true, dur = 0, seq = 2 } }) == "group:脱", "most recent transition wins")
+assert(Dissolve.transition_layer("base", "group:脱", { base = { enabled = true, dur = 1, seq = 3 },
+    ["group:脱"] = { enabled = true, dur = 0, seq = 2 } }) == "base", "owner wins when it changed more recently")
 
 -- 定位预览:reset_mesh 停掉这个 mesh 上的定时过渡和血量驱动,变量恢复成 mdf2 的值
 local r = fake({ "Dissolve_Rate", "Dissolve_Flag" })

@@ -337,4 +337,42 @@ do
     Utils.all_enabled_preset, TM.usable_slots = saved_all, saved_usable
 end
 
+-- ============================================================ 武器显示
+do
+    local cfg = cfg3({
+        st("aim", "aim", {}, {weapons = "all"}),
+        st("walk", "walk", {{group = "Coat", option = "Torn"}}, {weapons = "stowed"}),
+        st("junk", "x", {}, {weapons = "bogus"}),
+    })
+    assert(cfg.conditions.states[3].weapons == nil, "unknown weapons mode dropped")
+    local r = M3.resolve(cfg, {})
+    assert(r.weapons == nil, "no state -> nil (global switch decides)")
+    r = M3.resolve(cfg, {walk = true})
+    assert(r.weapons == "stowed" and r.targets[2].weapons.kind == "win" and r.status[2].kind == "active")
+    r = M3.resolve(cfg, {aim = true, walk = true})
+    assert(r.weapons == "all", "higher state wins weapons")
+    assert(r.targets[2].weapons.kind == "lose" and r.targets[2].weapons.by == 1)
+    assert(r.status[2].kind == "partial", "coat still won, weapons lost")
+    -- 只有武器目标的状态输了 = 被覆盖
+    cfg.conditions.states[1], cfg.conditions.states[2] = cfg.conditions.states[2], cfg.conditions.states[1]
+    r = M3.resolve(cfg, {aim = true, walk = true})
+    assert(r.weapons == "stowed" and r.status[2].kind == "outranked")
+    -- 独占状态挡住后面的武器目标
+    cfg.conditions.states[1].exclusive = true
+    cfg.conditions.states[1].weapons = nil
+    r = M3.resolve(cfg, {aim = true, walk = true})
+    assert(r.weapons == nil and r.targets[2].weapons.kind == "lose")
+    -- 血量状态:进入区间才认领
+    local hcfg = cfg3({{name = "hurt", hp = {upper = 50, lower = 0}, targets = {}, weapons = "all"}})
+    assert(M3.resolve(hcfg, {hp = 80}).weapons == nil)
+    r = M3.resolve(hcfg, {hp = 30})
+    assert(r.weapons == "all" and r.status[1].kind == "active")
+    -- OpsV3
+    assert(OpsV3.set_state_weapons(hcfg, 1, "stowed") and hcfg.conditions.states[1].weapons == "stowed")
+    assert(not OpsV3.set_state_weapons(hcfg, 1, "stowed"), "unchanged")
+    assert(not OpsV3.set_state_weapons(hcfg, 1, "nope"), "bad mode rejected")
+    assert(OpsV3.set_state_weapons(hcfg, 1, "") and hcfg.conditions.states[1].weapons == nil)
+    assert(not OpsV3.set_state_weapons(hcfg, 9, "all"), "bad index")
+end
+
 print("PASS: v3 normalize, v2 migration equivalence (16 condition combinations, picks and final materials), overlapping groups, claims / partial / exclusive / broken / paused, hold, HP chains and OpsV3 edits")

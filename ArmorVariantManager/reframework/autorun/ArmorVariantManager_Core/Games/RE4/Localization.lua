@@ -90,7 +90,7 @@ return {
         recapture_btn = "用当前外观覆写这个预设",
         recapture_btn_g = "用当前外观覆写这个状态",
         close_edit_btn = "关闭编辑",
-        axis_editor_hint = "点按钮循环切换:—(这个状态不管它,听整套造型的) -> 关 -> 开。只有「开/关」才归这个状态管。「关」放在第一跳,因为隐藏部件是最常见的用法。",
+        axis_editor_hint = "点击按钮循环切换:—(此状态不设置该材质,沿用整套造型) -> 关 -> 开。只有「开 / 关」由此状态控制。「关」排在第一位,因为隐藏部件最常用。",
 
         -- 编辑器
         slot_body = "身体 (body / 00)",
@@ -109,7 +109,7 @@ return {
         all_off = "全关",
         invert = "反选",
         claim_all = "整块纳入(按当前显示状态)",
-        release_all = "全部释放(这个部位都不管)",
+        release_all = "全部释放(此部位的材质都不设置)",
 
         -- 条件规则
         rules = "条件规则(仅满足设定条件时,才启用)",
@@ -126,7 +126,7 @@ return {
         -- (同一个数据结构,但用户心里是两回事 —— 一整套造型 vs 某个部位的开关组合)
         rule_target = "目标预设(命中时切到)",
         rule_target_g = "目标状态(命中时切到)",
-        rule_need_preset = "这一层还没有可切换的目标,先在上面新建一个",
+        rule_need_preset = "这里还没有可切换的预设,请先在上方新建一个",
         cond_type = "条件",
         cond_op = "算子",
         cond_value = "值",
@@ -240,7 +240,10 @@ return {
         cond_is_upper_body_damage = "上半身受击",
         cond_is_burning = "烧伤中",
         cond_is_grappled = "被束缚",
-        cond_is_jacked = "被抓 / 刚挣脱",
+        cond_is_jacked = "敌人联动动作（QTE）",
+        cond_jack_kind = "联动动作类型",
+        cond_invincible_source = "无敌来源",
+        cond_is_dodge_motion = "闪避动作",
         cond_is_slip_through = "钻过缝隙",
         cond_is_parent_gimmick = "附着机关",
         cond_is_crouch_switching = "蹲起切换",
@@ -361,7 +364,7 @@ return {
         recapture_btn = "Overwrite this preset from current look",
         recapture_btn_g = "Overwrite this state from current look",
         close_edit_btn = "Close editor",
-        axis_editor_hint = "Click to cycle: - (this state ignores it, full outfit decides) -> off -> on. Only on/off puts a material under this state. Off comes first because hiding a part is the most common use.",
+        axis_editor_hint = "Click to cycle: - (this state does not set the material; the full outfit decides) -> off -> on. Only on / off are controlled by this state. Off comes first because hiding a part is the most common use.",
 
         slot_body = "Body (body / 00)",
         slot_head = "Head (head / 10)",
@@ -379,7 +382,7 @@ return {
         all_off = "All off",
         invert = "Invert",
         claim_all = "Claim whole part (current state)",
-        release_all = "Release all (ignore this part)",
+        release_all = "Release all (set none of this part's materials)",
 
         rules = "Condition rules (apply only while the conditions hold)",
         no_rules = "No rules yet",
@@ -393,7 +396,7 @@ return {
         move_down = "Down",
         rule_target = "Target preset (switch to on match)",
         rule_target_g = "Target state (switch to on match)",
-        rule_need_preset = "This layer has nothing to switch to yet - create one above first",
+        rule_need_preset = "Nothing to switch to here yet - create a preset above first",
         cond_type = "Condition",
         cond_op = "Operator",
         cond_value = "Value",
@@ -495,7 +498,10 @@ return {
         cond_is_upper_body_damage = "Upper body hit",
         cond_is_burning = "Burning",
         cond_is_grappled = "Grabbed",
-        cond_is_jacked = "Grabbed / just broke free",
+        cond_is_jacked = "Enemy-driven paired action (QTE)",
+        cond_jack_kind = "Paired action type",
+        cond_invincible_source = "Invincibility source",
+        cond_is_dodge_motion = "Dodge motion",
         cond_is_slip_through = "Slipping through",
         cond_is_parent_gimmick = "On gimmick",
         cond_is_crouch_switching = "Crouch toggling",

@@ -72,6 +72,9 @@ function M.target_sentence(st, t)
     local parts = {}
     if st.base then parts[#parts + 1] = t("targetPair", t("baseTarget"), st.base) end
     for _, tg in ipairs(st.targets) do parts[#parts + 1] = t("targetPair", tg.group, tg.option) end
+    if st.weapons then
+        parts[#parts + 1] = t("targetPair", t("weaponsTarget"), t(st.weapons == "all" and "weaponsAll" or "weaponsStowed"))
+    end
     if #parts == 0 then return t("noTargets") end
     return table.concat(parts, t("targetSep"))
 end

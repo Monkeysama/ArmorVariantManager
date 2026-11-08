@@ -11,7 +11,7 @@ return {
                 } },
                 { title = "整套造型与状态组", paragraphs = {
                     "整套造型是一份完整快照:每个材质都有开 / 关,同一时间只生效一套。",
-                    "状态组的每个选项只改它写了的材质,例如「面部:干净 / 受伤 / 血迹重」;每个材质可以设「- / 关 / 开」,「-」表示不管,交给整套造型或别的组。选「(无)」时,这个组什么都不改。",
+                    "状态组的每个选项只改它写了的材质,例如「面部:干净 / 受伤 / 血迹重」;每个材质可以设「- / 关 / 开」,「-」表示此选项不设置这个材质,沿用整套造型或其他状态组的值。选「(无)」时,这个组什么都不改。",
                     "几个状态组写了同一个材质时,靠下的组覆盖靠上的(拖动调整顺序);取值不同的重叠会在组标题上提示。",
                     "「快速切换」页用来手动选择。正被条件状态接管的整套造型或状态组会锁定,条件结束后回到手动选择。",
                 } },
@@ -20,7 +20,7 @@ return {
                 } },
                 { title = "模型高度", paragraphs = {
                     "展开整套造型的预设或状态组的选项,可以填「模型高度」(厘米,-10 到 50),选中它时整个模型抬高或降低,适合高跟鞋陷进地面的情况。只改画面,碰撞和移动不变;镜头会跟着抬高同样的距离。",
-                    "留空表示这一层不管高度。几层都填了时,状态组覆盖整套造型,靠下的状态组覆盖靠上的;填 0 也算设置(例如平底鞋取消整套造型的抬高)。",
+                    "留空表示此选项不设高度,沿用整套造型或其他状态组的高度。多处都填了时,状态组优先于整套造型,状态组之间靠下的优先;填 0 也算设置(例如平底鞋取消整套造型的抬高)。",
                     "「杂项」里的「模型高度」开关可以整体关闭,已填的高度会保留。",
                 } },
             },
@@ -80,7 +80,7 @@ return {
                 } },
                 { title = "Full outfits and state groups", paragraphs = {
                     "A full outfit is a complete snapshot: every material is on or off, and one outfit is in effect at a time.",
-                    "Each option of a state group changes only the materials it sets, e.g. \"Face: clean / hurt / bloody\"; every material can be set to - / Off / On, where - leaves it to the full outfit or other groups. With (none) selected the group changes nothing.",
+                    "Each option of a state group changes only the materials it sets, e.g. \"Face: clean / hurt / bloody\"; every material can be set to - / Off / On, where - means this option does not set the material and the full outfit or other groups decide. With (none) selected the group changes nothing.",
                     "When several groups set the same material, lower groups override upper ones (drag to reorder); overlaps with different values are flagged on the group title.",
                     "Use Quick switch to choose by hand. An outfit or group taken over by a condition state is locked until the condition ends.",
                 } },
@@ -89,7 +89,7 @@ return {
                 } },
                 { title = "Model height", paragraphs = {
                     "Expand a full outfit preset or a state group option to set its \"Model height\" (cm, -10 to 50). While it is selected the whole model is raised or lowered, e.g. for high heels sinking into the ground. Visual only: collision and movement are unchanged; the camera rises by the same amount.",
-                    "Leave it empty to let other layers decide. When several layers set it, state groups override the full outfit and lower groups override upper ones; 0 also counts (e.g. flat shoes cancel the outfit's lift).",
+                    "Leave it empty if this option should not set a height; the full outfit or other groups then decide. When several set it, state groups override the full outfit and lower groups override upper ones; 0 also counts (e.g. flat shoes cancel the outfit's lift).",
                     "The \"Model height\" switch under Misc turns it off everywhere; the heights you entered are kept.",
                 } },
             },
