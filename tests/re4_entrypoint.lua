@@ -77,7 +77,8 @@ local function mesh(path, materials)
 end
 
 -- clicks:按顺序要点的按钮(按标签结尾匹配,点到一个才轮到下一个);texts:收集画出来的文字
-local function imgui_stub(clicks, texts)
+-- no_draw_list:模拟旧版 REFramework(没有背景绘制列表,独立面板画不了)
+local function imgui_stub(clicks, texts, no_draw_list)
     local queue = clicks or {}
     local returns = {
         tree_node = function() return true end,
@@ -91,7 +92,10 @@ local function imgui_stub(clicks, texts)
         text = function(t) texts[#texts + 1] = tostring(t) end,
         text_colored = function(t) texts[#texts + 1] = tostring(t) end,
     }
-    return setmetatable({}, {__index = function(_, name) return returns[name] or function() end end})
+    return setmetatable({}, {__index = function(_, name)
+        if no_draw_list and name == "get_background_draw_list" then return nil end
+        return returns[name] or function() end
+    end})
 end
 
 local function run(scenario)
@@ -163,7 +167,7 @@ local function run(scenario)
         typeof = function(name) return {name = name} end,
     }
     local texts = {}
-    _G.imgui = imgui_stub(scenario.clicks, texts)
+    _G.imgui = imgui_stub(scenario.clicks, texts, scenario.no_draw_list)
 
     local native_require = ORIGINAL_REQUIRE
     _G.require = function(name)
@@ -229,9 +233,21 @@ do
     assert(files[CONFIG_PATH].version == 3, "migrated from the REF menu")
     assert(files["ArmorVariantManager/backup/Leon.json"].version == 2, "restore point written first")
     local joined = table.concat(texts, "\n")
-    assert(joined:find("REFF", 1, true), "v3 panel explains where full editing lives")
+    -- 提示只列真的有的编辑入口:这里没装 REFF,桩 imgui 能画独立面板 → 只提 F8
+    assert(joined:find("请用 imGUI（F8）。", 1, true) and not joined:find("REFF", 1, true),
+        "without REFF the hint points to the standalone panel only")
     assert(joined:find("Hide Hair", 1, true), "state groups are listed for manual switching")
     S.equal(meshes.hair.state(), {Hair = false, Clip = true}, "look unchanged after migrating from the menu")
+    -- 装了 REFF:F8 照样给(REFF.dll 加载了不等于网页打得开),两个入口都提
+    _, _, _, _, texts = run({player = true, config = leon, reff = true, clicks = {"###mig", "###mig_yes"}})
+    joined = table.concat(texts, "\n")
+    assert(joined:find("imGUI（F8）或 REFF 图形界面（Home）", 1, true),
+        "with REFF loaded the hint keeps F8 and adds Home")
+    -- 两个都没有(REFramework 太旧、没装 REFF):只说这里能做什么,不提版本
+    _, _, _, _, texts = run({player = true, config = leon, no_draw_list = true, clicks = {"###mig", "###mig_yes"}})
+    joined = table.concat(texts, "\n")
+    assert(joined:find("新版配置:这里只做日常切换和预设。", 1, true) and not joined:find("imGUI", 1, true)
+        and not joined:find("REFF", 1, true), "with no editor available the hint names none")
 end
 print("PASS: RE4 REF menu migrates a v2 config in two steps and draws the v3 daily-use panel")
 

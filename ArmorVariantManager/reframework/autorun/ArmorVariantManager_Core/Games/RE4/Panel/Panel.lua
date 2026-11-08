@@ -40,7 +40,7 @@ local SNAPSHOT_EVERY = 6     -- 帧;快照要解算一遍配置,不必每帧取
 --   set_language(lang)    改界面语言并存盘
 --   version
 --   hotkeys               可选的快捷键主键(Ops.PANEL_KEYS)
---   entry_enabled()       入口是否可用(没装 REFF,或 GlobalSettings 里 standalone_panel = true)
+--   entry_enabled()       可选,入口(按钮和快捷键)是否可用;不给时总是可用
 function Panel.new(deps)
     local self = { open = false }
     I.install()   -- 位移 / 滚轮在 UpdateMotionFrame 之前采样(见 Input.lua)

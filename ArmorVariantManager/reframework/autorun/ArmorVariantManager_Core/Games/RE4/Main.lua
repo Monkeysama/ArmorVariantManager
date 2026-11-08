@@ -51,8 +51,6 @@ function Main.start(ctx)
         if tonumber(loaded.portrait_height) then global_config.portrait_height = tonumber(loaded.portrait_height) end
         -- 独立面板(没有 REFF 时的兜底界面)的窗口位置与大小
         if type(loaded.panel_window) == "table" then global_config.panel_window = loaded.panel_window end
-        -- standalone_panel = true:装了 REFF 也显示独立面板的入口(测试用;REFF 坏掉时的退路)。界面上不提供这个开关
-        if type(loaded.standalone_panel) == "boolean" then global_config.standalone_panel = loaded.standalone_panel end
         if type(loaded.panel_hotkey) == "string" then global_config.panel_hotkey = loaded.panel_hotkey end
         if type(loaded.panel_hotkey_mod) == "string" then global_config.panel_hotkey_mod = loaded.panel_hotkey_mod end
         -- 独立面板调色页的颜色滑条:"rgb"(默认)/ "hsv"
@@ -2562,9 +2560,10 @@ function Main.start(ctx)
             save_global_settings()
         end
 
-        -- 没装 REFF 时,在最上面给独立面板的入口(另有快捷键,默认 F8)。GlobalSettings 里 standalone_panel = true 时总是给
+        -- 最上面给独立面板的入口(另有快捷键,默认 F8)。装了 REFF 也给:REFF.dll 加载了不等于网页
+        -- 打得开(缺 WebView2 Runtime、宿主被杀软拦掉等),只留 Home 的话用户会两头都打不开
         local panel = Main.panel
-        if panel and panel.entry_enabled() and panel.available() then
+        if panel and panel.available() then
             local label = (panel.is_open() and T("panel_close") or T("panel_open")) .. " (" .. panel.hotkey_text() .. ")"
             if imgui.button(label .. "###avm_panel_toggle") then panel.toggle() end
         end
@@ -2717,6 +2716,9 @@ function Main.start(ctx)
                 ui_tree = ui_tree, ui_tree_pop = ui_tree_pop, ui_w = ui_w,
                 preset_view = preset_view, apply_preset = apply_preset, save_current_as_preset = save_current_as_preset,
                 dismiss_preset_hint = dismiss_preset_hint, restore_autosave = restore_autosave,
+                -- 提示里只列真的有的编辑入口:独立面板画得出来才给它的快捷键,REFF 加载了才提 Home
+                panel_key = Main.panel and Main.panel.available() and Main.panel.hotkey_text() or nil,
+                reff = rawget(_G, "reff_native") ~= nil,
             })
             ui_tree_pop()
             return
@@ -3237,15 +3239,13 @@ function Main.start(ctx)
     end)
     if not reff_ok then note_error("reff", reff_err) end
 
-    -- 独立面板:没有 REFF 时的兜底图形界面(外观照 SKS)。数据走同一个 Reff 控制器,和网页语义一致。
-    -- 装了 REFF 也创建(不显示入口),便于以后放开;画不了(REFramework 太旧)时 available() 为 false
+    -- 独立面板:不依赖 REFF 的图形界面(外观照 SKS)。数据走同一个 Reff 控制器,和网页语义一致。
+    -- 装没装 REFF 都给入口;画不了(REFramework 太旧)时 available() 为 false,入口不显示
     if Main.reff then
         local ok_p, err_p = pcall(function()
             Main.panel = require("ArmorVariantManager_Core.Games.RE4.Panel.Panel").new({
                 controller = Main.reff, global_config = global_config, save_global_settings = save_global_settings,
                 version = version, hotkeys = Ops.PANEL_KEYS,
-                -- 入口(按钮和快捷键):没装 REFF 时;GlobalSettings 里 standalone_panel = true 时总是
-                entry_enabled = function() return not rawget(_G, "reff_native") or global_config.standalone_panel == true end,
                 set_language = function(lang)
                     if Ops.set_global(global_config, "language", lang) then save_global_settings() end
                 end,

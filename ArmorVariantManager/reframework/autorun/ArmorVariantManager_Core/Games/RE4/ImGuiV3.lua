@@ -23,13 +23,22 @@ end
 
 -- d = { T, config, kind_id, target, context, source, TM, commit(changed, reapply), ui(持久表),
 --       ui_tree(label), ui_tree_pop(), ui_w(), preset_view, apply_preset, save_current_as_preset,
---       dismiss_preset_hint, restore_autosave }
+--       dismiss_preset_hint, restore_autosave, panel_key(独立面板快捷键文字,不可用时 nil), reff(是否加载了 REFF) }
 function ImGuiV3.draw(d)
     local T, cfg, ui = d.T, d.config, d.ui
     local states = cfg.conditions.states
     local _, _, info = d.TM.resolve("imgui:" .. tostring(d.target.id), cfg, d.context, d.source)
     local v3 = info.v3
-    imgui.text(T("v3_imgui_hint"))
+    -- 两个入口都没有时(REFramework 太旧且没装 REFF)只说这里能做什么,不指向用不了的界面
+    if d.panel_key and d.reff then
+        imgui.text(string.format(T("v3_imgui_hint_both"), d.panel_key))
+    elseif d.panel_key then
+        imgui.text(string.format(T("v3_imgui_hint_panel"), d.panel_key))
+    elseif d.reff then
+        imgui.text(T("v3_imgui_hint_reff"))
+    else
+        imgui.text(T("v3_imgui_hint_none"))
+    end
 
     local function state_name(i) return (states[i] or {}).name or "?" end
     local function layer_combo(label, key, layer, options, active, with_none, claimed)
