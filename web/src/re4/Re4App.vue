@@ -30,14 +30,15 @@ import Re4States from './Re4States.vue';
 import Re4Presets from './Re4Presets.vue';
 import Re4Palette from './Re4Palette.vue';
 import Re4Misc from './Re4Misc.vue';
+import Re4Dissolve from './Re4Dissolve.vue';
 import { useRe4Text, type Re4Key } from './i18n';
 import type { Re4LiveWrite, Re4Notice, Re4Perform, Re4Snapshot } from './types';
 
 // RE4 的 REFF 页面（v3）：按 RE4 的模型设计，不套用 MH 的分组页面。
 // 左侧常驻游戏状态（和编辑页的最终材质）；右侧六个页签。v2 配置只能先迁移。
-type Tab = 'quick' | 'base' | 'groups' | 'states' | 'palette' | 'presets' | 'misc';
-const TABS: Tab[] = ['quick', 'base', 'groups', 'states', 'palette', 'presets', 'misc'];
-const TAB_LABEL: Record<Tab, Re4Key> = { quick: 'tabQuick', base: 'tabBase', groups: 'tabGroups', states: 'tabStates', palette: 'tabPalette', presets: 'tabPresets', misc: 'tabMisc' };
+type Tab = 'quick' | 'base' | 'groups' | 'states' | 'palette' | 'presets' | 'dissolve' | 'misc';
+const TABS: Tab[] = ['quick', 'base', 'groups', 'states', 'palette', 'presets', 'dissolve', 'misc'];
+const TAB_LABEL: Record<Tab, Re4Key> = { quick: 'tabQuick', base: 'tabBase', groups: 'tabGroups', states: 'tabStates', palette: 'tabPalette', presets: 'tabPresets', dissolve: 'tabDissolve', misc: 'tabMisc' };
 const tab = shallowRef<Tab>('quick');
 const avm = useAvmState();
 watchEffect(() => { avm.helpOpen.value = tab.value === 'misc'; });
@@ -130,8 +131,8 @@ watch(() => snapshot.value?.notice, value => { if (value) notice.value = value; 
                 <span v-else>{{ t('paletteExported', notice.path) }}<template v-if="notice.exact === false"> {{ t('paletteExportedApprox', notice.reason ?? '') }}</template></span>
                 <button class="dismiss-error" :aria-label="t('dismiss')" @click="notice = null">×</button>
               </div>
-              <div v-if="!hasCharacter && tab !== 'misc'" class="state-banner" role="status">{{ t('noCharacter') }}</div>
-              <div v-else-if="!v3 && tab !== 'misc'" class="re4-banner" role="status">
+              <div v-if="!hasCharacter && tab !== 'misc' && tab !== 'dissolve'" class="state-banner" role="status">{{ t('noCharacter') }}</div>
+              <div v-else-if="!v3 && tab !== 'misc' && tab !== 'dissolve'" class="re4-banner" role="status">
                 <span>{{ t('needMigration') }}</span><ElButton size="small" type="primary" @click="tab = 'misc'">{{ t('goMigrate') }}</ElButton>
               </div>
               <!-- 切页签不丢折叠 / 展开状态：页签组件用 KeepAlive 缓存（键里带角色，换角色才重置） -->
@@ -142,6 +143,7 @@ watch(() => snapshot.value?.notice, value => { if (value) notice.value = value; 
                 <Re4States v-else-if="tab === 'states'" :key="'states-' + snapshot.character" :snapshot="snapshot" :busy="busy" :perform="perform" :t="t" />
                 <Re4Palette v-else-if="tab === 'palette'" :key="'palette-' + snapshot.character" :snapshot="snapshot" :busy="busy" :perform="perform" :live-write="liveWrite" :t="t" />
                 <Re4Presets v-else-if="tab === 'presets'" :key="'presets-' + snapshot.character" :snapshot="snapshot" :busy="busy" :perform="perform" :t="t" />
+                <Re4Dissolve v-else-if="tab === 'dissolve'" :snapshot="snapshot" :busy="busy" :perform="perform" :t="t" />
                 <Re4Misc v-else :snapshot="snapshot" :busy="busy" :perform="perform" :t="t" :documentation="documentation"
                   :documentation-loading="documentationLoading" :documentation-error="documentationError" @retry-documentation="retryDocumentation" />
               </KeepAlive>

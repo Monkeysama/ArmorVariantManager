@@ -13,7 +13,20 @@
 --   * 血量驱动:drive_progress 给出平滑后的进度(缓入缓出地追向目标,约 DRIVE_SMOOTH 秒到位,
 --     每秒最多变化 DRIVE_MAX_SPEED;血量一截截掉时也连续溶解),drive_material 按进度直接写;
 --     进度在 (0,1) 内两方都开着,到 0 / 1 才关掉完全隐藏的一方。没有 Dissolve_Rate 的材质在进度过半时切换
+--
+-- 溶解效果提供者(EffectProviders.lua):别的 mod 可以注册,接管溶解的外观;材质开始溶解时绑定,
+-- 时机仍由这里决定。选择存在 ArmorVariantManager/DissolveEffects.json
 local Dissolve = {}
+local Effects = require("ArmorVariantManager_Core.Games.RE4.EffectProviders").new({
+    load = function() return json and json.load_file("ArmorVariantManager/DissolveEffects.json") end,
+    save = function(value) return json ~= nil and json.dump_file("ArmorVariantManager/DissolveEffects.json", value) end,
+})
+Dissolve.register_effect_provider = Effects.register
+Dissolve.set_effect_selection = Effects.select
+Dissolve.get_effect_selection = Effects.selection
+Dissolve.get_effect_providers = Effects.list
+Dissolve.effect_scope = Effects.scope
+Dissolve.reset_effects = Effects.reset
 local RATE, FLAG = "Dissolve_Rate", "Dissolve_Flag"
 local OFF = { enabled = false, dur = 0, forward = true }
 Dissolve.OFF = OFF
@@ -34,7 +47,9 @@ local function try(f) local ok, r = pcall(f); if ok then return r end; return ni
 -- settings = { enabled, dur, forward };nil / 未启用 = 瞬间开关
 function Dissolve.use(settings)
     if type(settings) ~= "table" or settings.enabled ~= true then current = OFF; return end
-    current = { enabled = true, forward = settings.forward ~= false, dur = math.max(0, tonumber(settings.dur) or 0.5) }
+    -- preset = 这次过渡用的溶解预设名(nil = 默认),交给内置样式
+    current = { enabled = true, forward = settings.forward ~= false, dur = math.max(0, tonumber(settings.dur) or 0.5),
+        preset = type(settings.preset) == "string" and settings.preset or nil }
 end
 
 local function find_var(mesh, j)
@@ -91,7 +106,12 @@ end
 -- 状态组放手时(选回"无"),材质交还给整套造型;整套造型自己没换选项、没有过渡,
 -- 只看 owner 的话出现那一下就是瞬间的(消失能溶解、显示不能)。所以 owner 没有过渡、
 -- 而刚放手的那一层有,就用放手那一层的。
+-- trans 里的过渡一直留着(每层记的是它**上一次**换选项时的过渡),所以两层都有时比 seq,用最近换过的那层:
+-- 否则状态组放手时会套用整套造型很久以前那次切换的时长,渐出时间怎么改都不生效(2026-11-07 用户报告)。
 function Dissolve.transition_layer(owner, prev, trans)
+    if owner and prev and owner ~= prev and trans and trans[owner] and trans[prev] then
+        return ((trans[prev].seq or 0) > (trans[owner].seq or 0)) and prev or owner
+    end
     if owner and trans and trans[owner] then return owner end
     if prev and prev ~= owner and trans and trans[prev] then return prev end
     return owner or prev
@@ -116,6 +136,7 @@ function Dissolve.set_material(mesh, j, want, cur)
         return
     end
     if cur == (phase == "show") and not a then return end
+    Effects.bind(mesh, j, { preset = current.preset })
     local n = { mesh = mesh, j = j, v = v, phase = phase, forward = current.forward, u = start_u(a), dur = current.dur }
     write(mesh, j, v, phase, n.forward, n.u)
     if phase == "show" and cur ~= true then mesh:call("setMaterialsEnable", j, true) end
@@ -133,6 +154,7 @@ end
 -- 停掉这个 mesh 上所有溶解(定时过渡和血量驱动),变量恢复成 mdf2 的值。
 -- 定位预览用:预览要的是"只显示这一个材质"的瞬间结果,不能被溶解动画拉扯。
 function Dissolve.reset_mesh(mesh)
+    Effects.reset_mesh(mesh)
     local prefix = tostring(mesh) .. "_"
     for key, a in pairs(mat_anims) do
         if key:sub(1, #prefix) == prefix then restore(a.mesh, a.j, a.v); mat_anims[key] = nil end
@@ -204,6 +226,8 @@ function Dissolve.drive_material(mesh, j, with_on, p, cur)
     mat_anims[key] = nil
     local v = find_var(mesh, j)
     if v and p > 0 and p < 1 then
+        -- 只在刚进入中间段时绑定一次;驱动期间每帧都会走到这里
+        if driven[key] == nil then Effects.bind(mesh, j) end
         if cur ~= true then mesh:call("setMaterialsEnable", j, true) end
         if driven[key] ~= p or a then
             write(mesh, j, v, with_on and "show" or "hide", true, p)
@@ -239,6 +263,7 @@ function Dissolve.update()
             end
         end
     end
+    Effects.update(Dissolve.is_animating)
 end
 
 return Dissolve

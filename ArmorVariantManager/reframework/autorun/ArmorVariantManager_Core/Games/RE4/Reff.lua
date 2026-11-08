@@ -13,6 +13,8 @@ local M3 = require("ArmorVariantManager_Core.Games.RE4.ModelV3")
 local Palette = require("ArmorVariantManager_Core.Games.RE4.Palette")
 local Mdf2 = require("ArmorVariantManager_Core.Games.RE4.Mdf2")
 local MdfReplace = require("ArmorVariantManager_Core.Games.RE4.MdfReplace")
+local Dissolve = require("ArmorVariantManager_Core.Games.RE4.Dissolve")
+local DissolveStyles = require("ArmorVariantManager_Core.Games.RE4.DissolveStyles")
 -- 默认贴图失效规则(离线材质库生成);加载失败就不做判断,不影响调色盘本身
 local ok_effects, MaterialEffects = pcall(require, "ArmorVariantManager_Core.Games.RE4.MaterialEffects")
 local effects_index = ok_effects and Palette.effects_index(MaterialEffects) or nil
@@ -25,7 +27,7 @@ local CATEGORY = {
     hp_ratio = "hp", hp_vital = "hp", hp_decreased = "hp", hp_increased = "hp",
     is_crouch = "move", is_walk = "move", is_run = "move", is_quick_turn = "move", is_jumping = "move",
     is_falling = "move", is_landing = "move", is_ladder = "move", is_hook_shot = "move", is_boat = "move",
-    is_damaging = "damage", is_upper_body_damage = "damage", is_burning = "damage", is_grappled = "damage", is_jacked = "damage", is_invincible = "damage",
+    is_damaging = "damage", is_upper_body_damage = "damage", is_burning = "damage", is_grappled = "damage", is_jacked = "damage", jack_kind = "damage", invincible_source = "damage", is_dodge_motion = "combat", is_invincible = "damage",
     is_slip_through = "move", is_parent_gimmick = "move", is_crouch_switching = "move",
     last_hit_part = "damage", last_hit_side = "damage",
     is_talk_acting = "other", is_wireless_call = "other", is_event_locked = "other", is_restriction_all = "other",
@@ -134,7 +136,9 @@ function Reff.new(deps)
             hold = st.hold, fadeIn = st.fade_in, fadeOut = st.fade_out, base = st.base,
             baseResult = result_of(t.base), kind = s.kind, by = s.by, holding = s.holding == true,
             hp = st.hp and { upper = st.hp.upper, lower = st.hp.lower, invert = st.hp.invert } or nil,
-            targets = {}, conditions = {}, palette = st.palette, paletteResult = result_of(t.palette) }
+            targets = {}, conditions = {}, palette = st.palette, paletteResult = result_of(t.palette),
+            dissolve = st.dissolve,
+            weapons = st.weapons, weaponsResult = result_of(t.weapons) }
         for j, tg in ipairs(st.targets) do
             row.targets[j] = { group = tg.group, option = tg.option, result = result_of(t[j]) }
         end
@@ -365,7 +369,7 @@ function Reff.new(deps)
         for _, name in ipairs(base.order) do
             snapshot.base.presets[#snapshot.base.presets + 1] = { name = name, values = values_of(base.presets[name]),
                 match = base_match(source, base.presets[name]), height = (base.heights or {})[name],
-                palette = (base.palettes or {})[name] }
+                palette = (base.palettes or {})[name], dissolve = (base.dissolves or {})[name] }
         end
 
         snapshot.groups = {}
@@ -375,7 +379,7 @@ function Reff.new(deps)
                 fromState = (info.layers[key] or {}).prio, options = {} }
             for _, name in ipairs(g.order) do
                 row.options[#row.options + 1] = { name = name, values = values_of(g.options[name]), height = (g.heights or {})[name],
-                    palette = (g.palettes or {})[name] }
+                    palette = (g.palettes or {})[name], dissolve = (g.dissolves or {})[name] }
             end
             snapshot.groups[#snapshot.groups + 1] = row
         end
@@ -473,7 +477,12 @@ function Reff.new(deps)
                 uiDissolveEnabled = g.ui_dissolve_enabled ~= false, blockGameMouse = g.block_game_mouse ~= false,
                 heightEnabled = g.height_enabled ~= false,
                 uiDissolveTime = tonumber(g.ui_dissolve_time) or 1.0,
+                -- 「溶解」页的溶解预设库(全局,见 DissolveStyles):{ default, list = { name, shape, edge }, shapes }
+                dissolvePresets = DissolveStyles.presets_view(type(g.dissolve_presets) == "table" and g.dissolve_presets
+                    or DissolveStyles.clean_presets({}, nil)),
                 previewDistance = tonumber(g.portrait_distance) or 3.0, previewHeight = tonumber(g.portrait_height) or 0.0 },
+            -- 别的 mod 注册的溶解效果提供者(EffectProviders.lua);没有就是空表,杂项页不显示这一行
+            effectProviders = Dissolve.get_effect_providers(),
             characters = {}, character = "", notice = notice,
             preview = deps.preview and deps.preview.snapshot() or nil }
         notice = nil
@@ -644,6 +653,10 @@ function Reff.new(deps)
         -- 引用:layer = "base" / 状态组名 + option;scheme = "" 取消
         ["palette-ref"] = function(p, cfg) return OpsV3.set_palette_ref(cfg, str(p.layer), str(p.option), str(p.scheme) or "") end,
         ["state-palette"] = function(p, cfg) return OpsV3.set_state_palette(cfg, integer(p.index), str(p.scheme) or "") end,
+        -- 溶解预设引用(预设在全局库):整套造型预设 / 状态组选项、条件状态
+        ["dissolve-ref"] = function(p, cfg) return OpsV3.set_dissolve_ref(cfg, str(p.layer), str(p.option), str(p.preset) or "") end,
+        ["state-dissolve"] = function(p, cfg) return OpsV3.set_state_dissolve(cfg, integer(p.index), str(p.preset) or "") end,
+        ["state-weapons"] = function(p, cfg) return OpsV3.set_state_weapons(cfg, integer(p.index), str(p.mode) or "") end,
         ["base-height"] = function(p, cfg) return OpsV3.set_height(cfg, "base", p.preset, p.cm) end,
         -- 快捷键(Alt + 数字):target = { kind = "base" / "group" / "palette", group?, option? / scheme? },
         -- 没有 option / scheme = 轮换整个结构;clear 清掉一个键;skip:轮换里包不包括某一项(item = "" 是「（无）」/「初始」)
@@ -748,6 +761,31 @@ function Reff.new(deps)
         if p.kind == "setting" then
             if not Ops.set_global(deps.global_config, p.id, p.value) then error(T("reff_action_rejected")) end
             deps.save_global_settings()
+            return controller.snapshot()
+        end
+        -- 溶解预设库(全局,不需要当前角色)
+        local dissolve_ops = {
+            ["dissolve-preset-new"] = function(lib) return DissolveStyles.preset_new(lib, p.name, type(p.from) == "string" and p.from or nil) end,
+            ["dissolve-preset-rename"] = function(lib)
+                if not DissolveStyles.preset_rename(lib, p.preset, p.name) then return false end
+                if deps.rename_dissolve then deps.rename_dissolve(p.preset, p.name) end
+                return true
+            end,
+            ["dissolve-preset-delete"] = function(lib) return DissolveStyles.preset_delete(lib, p.preset) end,
+            ["dissolve-preset-shape"] = function(lib) return DissolveStyles.preset_shape(lib, p.preset, p.shape) end,
+            ["dissolve-edge"] = function(lib) return DissolveStyles.preset_edge(lib, p.preset, p.key, p.on, p.value) end,
+            ["dissolve-default"] = function(lib) return DissolveStyles.preset_default(lib, p.preset) end,
+        }
+        if dissolve_ops[p.kind] then
+            local g = deps.global_config
+            if type(g.dissolve_presets) ~= "table" then g.dissolve_presets = DissolveStyles.clean_presets({}, nil) end
+            if not dissolve_ops[p.kind](g.dissolve_presets) then error(T("reff_action_rejected")) end
+            deps.save_global_settings()
+            return controller.snapshot()
+        end
+        if p.kind == "effect-select" then
+            local ok = Dissolve.set_effect_selection(p.provider, p.effect)
+            if not ok then error(T("reff_action_rejected")) end
             return controller.snapshot()
         end
         local cur = current()

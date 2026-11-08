@@ -50,6 +50,7 @@ def release_inputs(root):
         "REFF_PLUGIN": plugin,
         "PORTRAIT_DLL": root / "source/reframework/plugins/ArmorVariantManager_Portrait.dll",
         "PORTRAIT_ASSETS": root / "source/natives/STM/ArmorVariantManager/Portrait",
+        "DISSOLVE_ASSETS": root / "source/natives/STM/ArmorVariantManager/Dissolve",
         "LICENSE": root / "source/LICENSE",
         "CHANGELOG": root / "source/CHANGELOG.md",
         "NATIVE_LICENSES": root / "source/reframework/plugins/source/THIRD_PARTY_LICENSES.txt",
@@ -61,6 +62,9 @@ def release_inputs(root):
     paths["PORTRAIT_ASSETS"].mkdir(parents=True)
     for name in release.PORTRAIT_FILES:
         (paths["PORTRAIT_ASSETS"] / name).write_bytes(name.encode())
+    paths["DISSOLVE_ASSETS"].mkdir(parents=True)
+    for name in release.DISSOLVE_FILES:
+        (paths["DISSOLVE_ASSETS"] / name).write_bytes(name.encode())
     # 同一源目录中的真实开发/用户内容不能跟随打包。
     for name in ("source/reframework/data/player.json", "source/AvatarVariantManager.dev.txt",
                  "source/reframework/reff/node_modules/dependency.js"):
@@ -84,6 +88,8 @@ class ReleaseTests(unittest.TestCase):
         if game in ("universal", "wilds"):
             expected.add("reframework/plugins/" + release.PORTRAIT_DLL.name)
             expected.update("natives/STM/ArmorVariantManager/Portrait/" + name for name in release.PORTRAIT_FILES)
+        if game == "universal":
+            expected.update("natives/STM/ArmorVariantManager/Dissolve/" + name for name in release.DISSOLVE_FILES)
         actual = {path.relative_to(directory).as_posix() for path in directory.rglob("*") if path.is_file()}
         self.assertEqual(actual, expected)
         page = (directory / 'reframework/reff/plugins/monkeysama.avm/ui/dist/index.html').read_text(encoding='utf-8')

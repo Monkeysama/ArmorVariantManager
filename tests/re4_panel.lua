@@ -41,7 +41,17 @@ _G.reframework = { is_drawing_ui = function() return true end, is_key_down = fun
 local function fixture(character, version)
     local snap = {
         game = "RE4", version = "test", language = "zh", character = character or "leon",
-        settings = { weaponHideStorage = false, uiDissolveEnabled = true, uiDissolveTime = 1, blockGameMouse = true, heightEnabled = false },
+        settings = { weaponHideStorage = false, uiDissolveEnabled = true, uiDissolveTime = 1, blockGameMouse = true, heightEnabled = false,
+            dissolvePresets = { default = "默认", shapes = { { id = "original", label = { ["zh-CN"] = "模组原样" } }, { id = "hex", label = "六边形" } },
+                list = { { name = "默认", shape = "original", edge = { { key = "color", kind = "color", on = true, value = { 1, 0.38, 0.06 } },
+                    { key = "width", kind = "float", on = false, value = 0.25, min = 0, max = 1 },
+                    { key = "border", kind = "float", on = true, value = 1, min = 0, max = 1 } } },
+                    { name = "蓝光", shape = "random", edge = {} } } } },
+        effectProviders = {
+            { id = "avm.builtin", name = { ["zh-CN"] = "内置样式" }, mode = "hex", effects = { "original", "hex", "square" },
+                labels = { original = { ["zh-CN"] = "模组原样" }, hex = { ["zh-CN"] = "六边形" } } },
+            { id = "demo.fx", name = { ["zh-CN"] = "示例" }, mode = "random", effects = { "square", "x" }, labels = {} },
+        },
         characters = {
             { id = "leon", label = "里昂", configured = true, targets = { "玩家", "过场" } },
             { id = "ada", label = "艾达", configured = false, targets = {} },
@@ -153,7 +163,11 @@ for _, k in ipairs({ "character", "setting", "migrate", "manual", "auto", "armor
     "option-delete", "option-material", "state-new", "state-delete", "state-move", "state-rename", "state-field", "state-hp",
     "state-base", "state-target", "state-target-group", "state-target-remove", "condition-add", "condition-set", "condition-delete",
     "preset-apply", "preset-save", "preset-update", "preset-blank", "preset-rename", "preset-delete", "preset-dismiss", "autosave-restore",
-    "autosave-promote", "restore" }) do KNOWN[k] = true end
+    "autosave-promote", "restore", "effect-select", "dissolve-edge", "dissolve-default", "dissolve-preset-new", "dissolve-preset-rename",
+    "dissolve-preset-delete", "dissolve-preset-shape" }) do KNOWN[k] = true end
+-- 全局设置类的操作:不带当前角色
+local GLOBAL = { character = true, setting = true, ["effect-select"] = true, ["dissolve-edge"] = true, ["dissolve-default"] = true,
+    ["dissolve-preset-new"] = true, ["dissolve-preset-rename"] = true, ["dissolve-preset-delete"] = true, ["dissolve-preset-shape"] = true }
 
 local function fake_controller(start)
     local c = { actions = {}, character = start or "leon", palette_open = false, version = 3 }
@@ -164,7 +178,7 @@ local function fake_controller(start)
     end
     function c.action(a)
         assert(KNOWN[a.kind], "unknown action kind " .. tostring(a.kind))
-        if a.kind ~= "character" and a.kind ~= "setting" then
+        if not GLOBAL[a.kind] then
             assert(a.character == c.character, "action without the current character: " .. a.kind)
         end
         c.actions[#c.actions + 1] = a
@@ -226,7 +240,7 @@ frame(p)
 assert_clean("first frame")
 assert(draw_calls > 0, "the panel draws onto the background draw list")
 
-local PAGES = { "quick", "base", "groups", "states", "palette", "presets", "misc" }
+local PAGES = { "quick", "base", "groups", "states", "palette", "presets", "dissolve", "misc" }
 local total = 0
 for _, page in ipairs(PAGES) do
     p._ctx.goto_page(page)
@@ -274,7 +288,7 @@ for _, a in ipairs(ctrl.actions) do seen[a.kind] = true end
 for _, k in ipairs({ "manual", "auto", "state-field", "base-new", "base-material", "option-material", "group-move", "group-delete",
     "option-delete", "base-recapture", "option-new", "state-move", "state-delete", "state-hp", "condition-add",
     "condition-delete", "state-target-remove", "preset-apply", "preset-blank", "preset-delete", "preset-dismiss", "autosave-restore", "restore",
-    "palette-view", "palette-reload", "palette-reset", "setting", "armor-mirror", "migrate" }) do
+    "palette-view", "palette-reload", "palette-reset", "setting", "armor-mirror", "migrate", "dissolve-edge", "effect-select", "dissolve-default", "dissolve-preset-shape" }) do
     if k ~= "migrate" then assert(seen[k], "never sent " .. k) end
 end
 print("PASS: RE4 panel draws every page and every clickable control sends a known action for the current character")

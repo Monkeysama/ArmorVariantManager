@@ -304,6 +304,8 @@ function M.migrate_condition(c)
     return { type = m.group, op = on and "==" or "~=", value = m.value }
 end
 
+-- 武器显示:条件状态命中时隐藏玩家的武器。stowed = 身上挂着的(收纳武器);all = 身上 + 手上
+M.WEAPON_MODES = { stowed = true, all = true }
 function M.normalize_state(st)
     st.name = (type(st.name) == "string" and st.name ~= "") and st.name or "?"
     st.enabled = st.enabled ~= false
@@ -332,6 +334,9 @@ function M.normalize_state(st)
     end
     st.targets = targets
     if type(st.palette) ~= "string" or st.palette == "" then st.palette = nil end
+    -- 溶解预设(全局库里的名字,见 DissolveStyles):这个状态引起的切换用它
+    if type(st.dissolve) ~= "string" or st.dissolve == "" then st.dissolve = nil end
+    if not M.WEAPON_MODES[st.weapons] then st.weapons = nil end
     return st
 end
 
@@ -352,6 +357,8 @@ function M.normalize(cfg)
     base.rules, base.auto = nil, nil
     base.heights = clean_heights(base.heights, presets)
     base.palettes = clean_palette_refs(base.palettes, presets)
+    -- 溶解预设引用:{ [预设名] = 溶解预设名 },形态同调色方案引用(溶解预设是全局的,不存在时解算退回默认)
+    base.dissolves = clean_palette_refs(base.dissolves, presets)
     cfg.base = base
 
     local groups, names = {}, {}
@@ -369,6 +376,7 @@ function M.normalize(cfg)
                 active = (type(g.active) == "string" and options[g.active]) and g.active or "",
                 heights = clean_heights(g.heights, options),
                 palettes = clean_palette_refs(g.palettes, options),
+                dissolves = clean_palette_refs(g.dissolves, options),
             }
         end
     end
@@ -544,7 +552,7 @@ end
 -- Main 选溶解过渡时读的字段沿用 v2 规则的名字:进入状态用 hide_time,离开用 show_time
 local function transition_of(st)
     return { dissolve_enabled = st.fade_in > 0 or st.fade_out > 0,
-             dissolve_hide_time = st.fade_in, dissolve_show_time = st.fade_out }
+             dissolve_hide_time = st.fade_in, dissolve_show_time = st.fade_out, dissolve_preset = st.dissolve }
 end
 
 -- 血量驱动链:同 v2,上限从高到低(全部反向时按下限从低到高;方向混用时按条件状态顺序)
@@ -599,7 +607,8 @@ end
 --   layers  { [层键] = { name, rule = 过渡设置 | nil, prio = 条件状态序号 | nil } }
 --   drives  { [层键] = { chain, names } }   血量驱动(同 v2)
 --   status  { [i] = { kind = "active"|"partial"|"outranked"|"idle"|"off"|"paused", by = 序号, holding } }
---   targets { [i] = { base = 认领结果 | nil, palette = 认领结果 | nil, [j] = 认领结果 } }
+--   targets { [i] = { base = 认领结果 | nil, palette = 认领结果 | nil, weapons = 认领结果 | nil, [j] = 认领结果 } }
+--   weapons "stowed" | "all" | nil   胜出状态要求的武器显示
 --           认领结果 = false(没命中)| { kind = "win"|"lose"|"broken", by }
 --   调色方案不独占:命中的状态各自生效,按优先级叠加(见 palette_layers),只有独占状态能挡住后面的。
 --   血量状态的调色在血量进入它的区间(进度 > 0)时生效。
@@ -627,6 +636,8 @@ function M.resolve(cfg, context)
         end
         -- 调色方案放在最后,不影响状态组目标的序号(血量驱动那里按序号回填)
         if st.palette then list[#list + 1] = { key = "palette", option = st.palette, valid = schemes[st.palette] ~= nil, is_palette = true } end
+        -- 武器显示和状态组一样独占认领(键 "weapons"),排在最后
+        if st.weapons then list[#list + 1] = { key = "weapons", option = st.weapons, valid = true, is_weapons = true } end
         local ts = {}
         for j, x in ipairs(list) do ts[j] = (not x.valid) and { kind = "broken" } or false end
 
@@ -649,6 +660,22 @@ function M.resolve(cfg, context)
                             palette_hp[i] = p
                             ts[j] = p > 0 and { kind = "win" } or false
                             if p > 0 then touched[i] = true end
+                        end
+                    elseif x.is_weapons then
+                        -- 血量状态的武器显示:血量进入它的区间(进度 > 0)时认领,优先级照常按列表顺序
+                        if not ts[j] then
+                            local v = get_hp()
+                            local p = type(v) == "number" and hp_progress(st.hp, v) or 0
+                            if p > 0 then
+                                local c = claims.weapons
+                                if c == nil then
+                                    claims.weapons = { i = i, option = x.option }
+                                    ts[j] = { kind = "win" }
+                                    touched[i] = true
+                                else
+                                    ts[j] = { kind = "lose", by = c.i }
+                                end
+                            end
                         end
                     elseif not ts[j] then
                         hp_items[x.key] = hp_items[x.key] or {}
@@ -691,7 +718,8 @@ function M.resolve(cfg, context)
         end
         local out = {}
         for j, x in ipairs(list) do
-            if x.is_base then out.base = ts[j] elseif x.is_palette then out.palette = ts[j] else out[#out + 1] = ts[j] end
+            if x.is_base then out.base = ts[j] elseif x.is_palette then out.palette = ts[j]
+            elseif x.is_weapons then out.weapons = ts[j] else out[#out + 1] = ts[j] end
         end
         targets[i] = out
     end
@@ -744,7 +772,10 @@ function M.resolve(cfg, context)
         if st.hp and status[i].kind == "idle" and touched[i] then status[i] = { kind = "active" } end
     end
 
-    return { picks = picks, layers = layers, drives = drives, status = status, targets = targets, palette_hp = palette_hp }
+    -- weapons:胜出状态要求的武器显示("stowed" / "all"),没有状态认领时为 nil(交给全局开关)
+    local weapons = claims.weapons and claims.weapons.option or nil
+    return { picks = picks, layers = layers, drives = drives, status = status, targets = targets, palette_hp = palette_hp,
+        weapons = weapons }
 end
 
 -- ============================================================

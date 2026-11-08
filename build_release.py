@@ -25,6 +25,10 @@ PORTRAIT_DLL = SOURCE_REFRAMEWORK / "plugins" / "ArmorVariantManager_Portrait.dl
 PORTRAIT_ASSETS = PROJECT / "natives" / "STM" / "ArmorVariantManager" / "Portrait"
 # portrait.rtex.6 给荒野,portrait.rtex.5 给 RE4(同一路径,各游戏读自己的版本)
 PORTRAIT_FILES = ("portrait_camera.pfb.18", "portrait_resources.user.3", "portrait.rtex.6", "portrait.rtex.5")
+# RE4 内置溶解样式的噪声图(DissolveStyles.lua),只进通用包(RE4 用通用包)
+DISSOLVE_ASSETS = PROJECT / "natives" / "STM" / "ArmorVariantManager" / "Dissolve"
+DISSOLVE_FILES = ("Dissolve_Hex_NoiseMap.tex.143221013", "Dissolve_Square_NoiseMap.tex.143221013",
+                  "Dissolve_Rect_NoiseMap.tex.143221013")
 REFF_PLUGIN = SOURCE_REFRAMEWORK / "reff" / "plugins" / "monkeysama.avm"
 LICENSE = ROOT / "LICENSE"
 CHANGELOG = ROOT / "CHANGELOG.md"
@@ -185,6 +189,8 @@ def ensure_inputs(game: str = "universal") -> None:
     if game in ("universal", "wilds"):
         required.extend([PORTRAIT_DLL, NATIVE_LICENSES,
                          *(PORTRAIT_ASSETS / name for name in PORTRAIT_FILES)])
+    if game == "universal":
+        required.extend(DISSOLVE_ASSETS / name for name in DISSOLVE_FILES)
     missing = [str(path) for path in required if not path.exists()]
     if missing:
         raise RuntimeError("Missing release inputs:\n" + "\n".join(missing))
@@ -280,6 +286,11 @@ def verify_release(release_directory: Path, game: str = "universal") -> None:
             asset = release_directory / "natives" / "STM" / "ArmorVariantManager" / "Portrait" / name
             if not asset.is_file() or asset.read_bytes() != (PORTRAIT_ASSETS / name).read_bytes():
                 raise RuntimeError(f"Release verification failed: missing or changed portrait asset: {name}")
+    if game == "universal":
+        for name in DISSOLVE_FILES:
+            asset = release_directory / "natives" / "STM" / "ArmorVariantManager" / "Dissolve" / name
+            if not asset.is_file() or asset.read_bytes() != (DISSOLVE_ASSETS / name).read_bytes():
+                raise RuntimeError(f"Release verification failed: missing or changed dissolve asset: {name}")
     forbidden = [
         release_directory / "reframework" / "data",
         release_directory / "reframework" / "plugins" / "source",
@@ -301,6 +312,8 @@ def verify_release(release_directory: Path, game: str = "universal") -> None:
     if game in ("universal", "wilds"):
         expected.add("reframework/plugins/" + PORTRAIT_DLL.name)
         expected.update("natives/STM/ArmorVariantManager/Portrait/" + name for name in PORTRAIT_FILES)
+    if game == "universal":
+        expected.update("natives/STM/ArmorVariantManager/Dissolve/" + name for name in DISSOLVE_FILES)
     actual = {path.relative_to(release_directory).as_posix() for path in release_directory.rglob("*") if path.is_file()}
     if actual != expected:
         raise RuntimeError(f"Release verification failed: plugin inventory differs: missing={sorted(expected - actual)}, extra={sorted(actual - expected)}")
@@ -337,6 +350,11 @@ def _build_release(output_root: Path, version: str, game: str) -> None:
             asset_directory.mkdir(parents=True, exist_ok=True)
             for name in PORTRAIT_FILES:
                 shutil.copy2(PORTRAIT_ASSETS / name, asset_directory / name)
+        if game == "universal":
+            dissolve_directory = staging_directory / "natives" / "STM" / "ArmorVariantManager" / "Dissolve"
+            dissolve_directory.mkdir(parents=True, exist_ok=True)
+            for name in DISSOLVE_FILES:
+                shutil.copy2(DISSOLVE_ASSETS / name, dissolve_directory / name)
         copy_reff_plugin(staging_directory, game, version)
         verify_release(staging_directory, game)
         staging_archive = Path(temporary) / "package.zip"

@@ -92,7 +92,7 @@ const stateName = (i?: number) => i ? props.snapshot.states?.[i - 1]?.name ?? ''
 
 interface Card {
   id: string; isBase: boolean; name: string; active: string; effective?: string; fromState?: number;
-  options: { name: string; values: Re4Values; match?: { status: string; skipped: string[] }; height?: number; palette?: string }[];
+  options: { name: string; values: Re4Values; match?: { status: string; skipped: string[] }; height?: number; palette?: string; dissolve?: string }[];
 }
 const cards = computed<Card[]>(() => {
   if (props.mode === 'base') {
@@ -172,6 +172,11 @@ const schemeNames = computed(() => (props.snapshot.palettes?.list ?? []).map(x =
 const schemeMissing = (name?: string) => !!name && !schemeNames.value.includes(name);
 const setPalette = (card: Card, option: string, scheme: string) =>
   props.perform({ kind: 'palette-ref', ...c(), layer: card.isBase ? 'base' : card.name, option, scheme });
+// 溶解预设(全局库):切到这个预设 / 选项时的溶解用它;"" = 默认预设
+const dissolveNames = computed(() => (props.snapshot.settings.dissolvePresets?.list ?? []).map(x => x.name));
+const dissolveMissing = (name?: string) => !!name && !dissolveNames.value.includes(name);
+const setDissolve = (card: Card, option: string, preset: string) =>
+  props.perform({ kind: 'dissolve-ref', ...c(), layer: card.isBase ? 'base' : card.name, option, preset });
 // 快捷键(Alt + 数字,见 hotkeys.ts):卡片标题上是整个结构的轮换键,每一项上是单项键或「参与轮换」开关
 const cycleTarget = (card: Card) => card.isBase ? { kind: 'base' as const } : { kind: 'group' as const, group: card.name };
 const itemTarget = (card: Card, option: string) =>
@@ -289,6 +294,8 @@ function nameTitle(card: Card, key: string) {
                 <span v-if="itemKey(card, opt.name) !== undefined" class="re4-tag" :title="t('hotkeyHint')">Alt+{{ itemKey(card, opt.name) }}</span>
                 <span v-if="opt.palette" class="re4-tag" :class="{ 're4-res broken': schemeMissing(opt.palette) }"
                   :title="schemeMissing(opt.palette) ? t('paletteRefBroken') : t('paletteRef')">🎨 {{ opt.palette }}</span>
+                <span v-if="opt.dissolve" class="re4-tag" :class="{ 're4-res broken': dissolveMissing(opt.dissolve) }"
+                  :title="dissolveMissing(opt.dissolve) ? t('dissolveRefBroken') : t('dissolveRef')">✦ {{ opt.dissolve }}</span>
               </span>
               <span class="re4-oact">
                 <Re4HotkeyPick v-if="cycling(card)" :snapshot="snapshot" :busy="busy" :perform="perform" :t="t" :target="itemTarget(card, opt.name)" />
@@ -330,6 +337,14 @@ function nameTitle(card: Card, key: string) {
                     <ElOption value="" :label="t('paletteRefNone')" />
                     <ElOption v-for="n in schemeNames" :key="n" :value="n" :label="n" />
                     <ElOption v-if="schemeMissing(opt.palette)" :value="opt.palette!" :label="t('paletteRefBroken') + '：' + opt.palette" disabled />
+                  </ElSelect></label>
+                <!-- 溶解预设:切到这个预设 / 选项时的溶解用它(在溶解页新建和编辑预设) -->
+                <label class="re4-height">{{ t('dissolveRef') }}
+                  <ElSelect :model-value="opt.dissolve ?? ''" :empty-values="[null, undefined]" size="small" style="width:11em" :disabled="busy" :aria-label="t('dissolveRef')"
+                    @change="v => setDissolve(card, opt.name, String(v))">
+                    <ElOption value="" :label="t('dissolveRefNone')" />
+                    <ElOption v-for="n in dissolveNames" :key="n" :value="n" :label="n" />
+                    <ElOption v-if="dissolveMissing(opt.dissolve)" :value="opt.dissolve!" :label="t('dissolveRefBroken') + '：' + opt.dissolve" disabled />
                   </ElSelect></label>
                 <!-- 快捷键:单项键;所在结构绑了轮换键时是「参与轮换」开关 -->
                 <Re4HotkeyPick v-if="!cycling(card)" :snapshot="snapshot" :busy="busy" :perform="perform" :t="t" :target="itemTarget(card, opt.name)" />

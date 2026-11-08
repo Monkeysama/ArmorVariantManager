@@ -3,7 +3,7 @@
 //   &re4-v2    先给一份旧配置（configVersion = 2），点「迁移旧配置」后变成 v3
 //   &re4-empty 没有角色
 //   &re4-null  空表按 REFramework 的习惯序列化成 null
-import type { Re4Action, Re4ConditionDef, Re4Hotkey, Re4Palette, Re4PaletteMaterial, Re4PaletteOverride, Re4PaletteProfile, Re4PaletteValue, Re4Result, Re4Snapshot, Re4State, Re4StateKind } from '../src/re4/types';
+import type { Re4Action, Re4ConditionDef, Re4DissolveEdge, Re4DissolvePreset, Re4Hotkey, Re4Palette, Re4PaletteMaterial, Re4PaletteOverride, Re4PaletteProfile, Re4PaletteValue, Re4Result, Re4Snapshot, Re4State, Re4StateKind } from '../src/re4/types';
 
 type Win = Window & { reffNativeCall?: (method: string, params: Record<string, unknown>) => Promise<unknown>; re4Calls?: unknown[] };
 type Values = Record<string, boolean>;
@@ -12,6 +12,7 @@ interface State {
   name: string; enabled: boolean; exclusive: boolean; logic: 'AND' | 'OR'; hold: number; fade_in: number; fade_out: number;
   hp?: { upper: number; lower: number; invert: boolean }; base?: string; targets: { group: string; option: string }[]; conditions: Cond[];
   palette?: string;
+  dissolve?: string;
 }
 interface Group { name: string; options: Record<string, Values>; order: string[]; active: string }
 interface Config {
@@ -164,6 +165,26 @@ export function installRe4Fixture() {
   let solo = false;
   let dismissed = false;
   let previewEnabled = false;
+  // 溶解效果提供者:内置样式总在(同游戏里的 avm.builtin);?re4-effects 时再加一个示例的第三方提供者
+  let effectMode = 'random';
+  // 溶解预设库(全局,同 Lua DissolveStyles):每个预设 = 形状 + 光边覆盖
+  const newEdge = (): Re4DissolveEdge[] => [
+    { key: 'color', kind: 'color', on: false, value: [1, 0.38, 0.06] },
+    { key: 'width', kind: 'float', on: false, value: 0.25, min: 0, max: 1 },
+    { key: 'intensity', kind: 'float', on: false, value: 4, min: 0, max: 10 },
+    { key: 'border', kind: 'float', on: false, value: 0, min: 0, max: 1 },
+    { key: 'noise_weight', kind: 'float', on: false, value: 0.6, min: 0, max: 2 },
+    { key: 'cell_size', kind: 'float', on: false, value: 0.667, min: 0.1, max: 10 },
+    { key: 'flow', kind: 'float', on: false, value: 1, min: 0, max: 10 },
+  ];
+  const SHAPES = ['original', 'hex', 'square', 'rect'];
+  const SHAPE_LABELS: Record<string, string> = { original: '模组原样', hex: '六边形', square: '方块', rect: '矩形' };
+  let disList: Re4DissolvePreset[] = [{ name: '默认', shape: 'original', edge: newEdge() },
+    { name: '蓝光六边形', shape: 'hex', edge: newEdge().map(e => e.key === 'color' ? { ...e, on: true, value: [0.2, 0.5, 1] } : e) }];
+  let disDefault = '默认';
+  // 溶解预设引用:'base|预设' / 'g:组|选项' → 预设名
+  const disRefs: Record<string, string> = { 'base|原版': '蓝光六边形' };
+  const disPreset = (name: string) => disList.find(p => p.name === name) ?? fail('溶解预设不存在');
   let nextId = 4;
   const presets: Preset[] = [
     { id: 'p0001', name: '日常', source: 'user', match: 'full', config: initial() },
@@ -225,7 +246,15 @@ export function installRe4Fixture() {
       characters: params.has('re4-empty') ? [] : [{ id: 'Leon', label: '里昂', configured: true, targets: ['玩家', '过场傀儡'] }, { id: 'Ada', label: '艾达', configured: false, targets: ['过场傀儡'] }],
       character: params.has('re4-empty') ? '' : character, notice,
       preview: params.has('preview') ? { available: true, enabled: previewEnabled, status: 'preview_live' }
-        : { available: false, enabled: previewEnabled, status: 'preview_native_missing' } };
+        : { available: false, enabled: previewEnabled, status: 'preview_native_missing' },
+      effectProviders: [
+        { id: 'avm.builtin', name: { 'zh-CN': '内置样式', 'en-US': 'Built-in' }, mode: 'preset', effects: ['preset'] },
+        ...(params.has('re4-effects') ? [{ id: 'demo.fx', name: { 'zh-CN': '示例效果', 'en-US': 'Demo effects' }, mode: effectMode,
+          effects: ['original', 'square', 'hex', 'custom_one'], labels: { custom_one: { 'zh-CN': '自定义效果', 'en-US': 'Custom effect' } } }] : []),
+      ] };
+    base.settings.dissolvePresets = { default: disDefault,
+      list: disList.map(p => ({ name: p.name, shape: p.shape, edge: p.edge.map(e => ({ ...e, value: Array.isArray(e.value) ? [...e.value] : e.value })) })),
+      shapes: SHAPES.map(id => ({ id, label: { 'zh-CN': SHAPE_LABELS[id], 'en-US': id } })) };
     notice = undefined;
     if (params.has('re4-empty')) return base;
     base.configVersion = version;
@@ -251,7 +280,7 @@ export function installRe4Fixture() {
     for (let k = config.states.length - 1; k >= 0; k--) if (r.results[k].palette?.kind === 'win') addPal(config.states[k].palette);
     const used = (n: string) => Object.values(palRefs).filter(v => v === n).length + config.states.filter(st => st.palette === n).length;
     const states: Re4State[] = config.states.map((st, k) => ({
-      palette: st.palette, paletteResult: r.results[k].palette,
+      palette: st.palette, paletteResult: r.results[k].palette, dissolve: st.dissolve,
       name: st.name, enabled: st.enabled, exclusive: st.exclusive, logic: st.logic, hold: st.hold, fadeIn: st.fade_in, fadeOut: st.fade_out,
       hp: st.hp, base: st.base, baseResult: r.results[k].base, kind: r.status[k].kind, by: r.status[k].by, holding: false,
       targets: st.targets.map((t, j) => ({ ...t, result: r.results[k].targets[j] })),
@@ -268,9 +297,9 @@ export function installRe4Fixture() {
       slots: Object.entries(catalog).map(([id, mats]) => ({ id, label: labels[id], mirrored: false, materials: mats.map(name => ({ name, note: config.notes[`${id}/${name}`] })) })),
       look: allKeys.map(k => { const [slot, material] = k.split('/'); return { slot, material, on: look[k] !== false }; }),
       base: { active: config.base.active, effective: effBase, fromState: r.claims.base?.i,
-        presets: config.base.order.map(name => ({ name, values: config.base.presets[name], match: { status: 'ok', skipped: [] }, height: heights['base|' + name], palette: palRefs['base|' + name] })) },
+        presets: config.base.order.map(name => ({ name, values: config.base.presets[name], match: { status: 'ok', skipped: [] }, height: heights['base|' + name], palette: palRefs['base|' + name], dissolve: disRefs['base|' + name] })) },
       groups: config.groups.map(g => ({ name: g.name, active: g.active, effective: pick('g:' + g.name, g.active),
-        fromState: r.claims['g:' + g.name]?.i, options: g.order.map(name => ({ name, values: g.options[name], height: heights[`g:${g.name}|${name}`], palette: palRefs[`g:${g.name}|${name}`] })) })),
+        fromState: r.claims['g:' + g.name]?.i, options: g.order.map(name => ({ name, values: g.options[name], height: heights[`g:${g.name}|${name}`], palette: palRefs[`g:${g.name}|${name}`], dissolve: disRefs[`g:${g.name}|${name}`] })) })),
       states, locating, ...(solo ? { solo: true } : {}), height, heightSource, heightOverride: { ...heightOverride },
       palette: paletteOpen ? paletteSnapshot() : undefined,
       hotkeys: Object.values(hotkeys).sort((x, y) => x.digit - y.digit).map(h => ({ ...h, skip: [...h.skip] })),
@@ -297,6 +326,53 @@ export function installRe4Fixture() {
 
   function act(a: Re4Action) {
     if (a.kind === 'character') { character = a.id; return; }
+    if (a.kind === 'effect-select') {
+      if (!params.has('re4-effects') || a.provider !== 'demo.fx') fail();
+      effectMode = a.effect; return;
+    }
+    // 溶解预设库(全局,不需要当前角色)
+    if (a.kind === 'dissolve-preset-new') {
+      const name = a.name.trim();
+      if (!name || name === 'random' || disList.some(p => p.name === name)) fail('已有同名预设');
+      const src = a.from ? disPreset(a.from) : undefined;
+      disList.push({ name, shape: src?.shape ?? 'original', edge: src ? src.edge.map(e => ({ ...e, value: Array.isArray(e.value) ? [...e.value] : e.value })) : newEdge() });
+      return;
+    }
+    if (a.kind === 'dissolve-preset-rename') {
+      const p = disPreset(a.preset); const name = a.name.trim();
+      if (!name || name === 'random' || disList.some(x => x.name === name)) fail('已有同名预设');
+      p.name = name;
+      if (disDefault === a.preset) disDefault = name;
+      for (const k of Object.keys(disRefs)) if (disRefs[k] === a.preset) disRefs[k] = name;
+      config.states.forEach(st => { if (st.dissolve === a.preset) st.dissolve = name; });
+      return;
+    }
+    if (a.kind === 'dissolve-preset-delete') {
+      disPreset(a.preset); disList = disList.filter(p => p.name !== a.preset);
+      if (disDefault === a.preset) disDefault = disList[0]?.name ?? '';
+      return;
+    }
+    if (a.kind === 'dissolve-preset-shape') {
+      if (a.shape !== 'random' && !SHAPES.includes(a.shape)) fail();
+      disPreset(a.preset).shape = a.shape; return;
+    }
+    if (a.kind === 'dissolve-default') {
+      if (a.preset !== 'random') disPreset(a.preset);
+      disDefault = a.preset; return;
+    }
+    if (a.kind === 'dissolve-edge') {
+      const e = disPreset(a.preset).edge.find(x => x.key === a.key) ?? fail();
+      if (a.on !== undefined) e.on = a.on;
+      if (a.value !== undefined) {
+        const v = a.value;
+        if (e.kind === 'color') {
+          if (!Array.isArray(v) || v.length < 3) fail();
+          else e.value = v.slice(0, 3).map((c: number) => Math.min(1, Math.max(0, c)));
+        } else if (typeof v !== 'number') fail();
+        else e.value = Math.min(e.max ?? v, Math.max(e.min ?? v, v));
+      }
+      return;
+    }
     if (a.kind === 'setting') {
       if (a.id === 'weapon_hide_storage') settings.weaponHideStorage = a.value === true;
       else if (a.id === 'block_game_mouse') settings.blockGameMouse = a.value === true;
@@ -386,6 +462,9 @@ export function installRe4Fixture() {
         if ((palRefs[key] ?? '') === a.scheme) fail();
         if (a.scheme) palRefs[key] = a.scheme; else delete palRefs[key]; break; }
       case 'state-palette': { const s = stateAt(a.index); if (a.scheme && !schemeOv[a.scheme]) fail(); s.palette = a.scheme || undefined; break; }
+      case 'dissolve-ref': { const key = a.layer === 'base' ? 'base|' + a.option : `g:${a.layer}|${a.option}`;
+        if (a.preset) disRefs[key] = a.preset; else delete disRefs[key]; break; }
+      case 'state-dissolve': { const s = stateAt(a.index); s.dissolve = a.preset || undefined; break; }
       case 'palette-reload': break;
       // 替换 mdf:夹具里只给出完成提示(真实流程要等新 mdf2 加载、再清空涉及的调色配置)
       case 'palette-replace': notice = { kind: 'mdf-replaced', path: `natives/STM/_Chainsaw/Character/ch/${a.slot}.mdf2.32` }; break;

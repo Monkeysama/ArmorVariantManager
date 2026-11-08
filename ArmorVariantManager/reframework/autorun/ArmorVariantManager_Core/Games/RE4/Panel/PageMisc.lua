@@ -1,4 +1,4 @@
--- 杂项页(对应 web/src/re4/Re4Misc.vue):旧配置迁移(只有检测到旧配置时按钮才能点)、设置、帮助(默认收起)。
+-- 杂项页(对应 web/src/re4/Re4Misc.vue,溶解相关的在 PageDissolve):旧配置迁移(只有检测到旧配置时按钮才能点)、设置、帮助(默认收起)。
 -- 全身预览的镜头设置不放:独立面板没有预览。
 local T = require("ArmorVariantManager_Core.Games.RE4.Panel.Theme")
 local D = require("ArmorVariantManager_Core.Games.RE4.Panel.Draw")
@@ -54,16 +54,7 @@ function Page.draw(ctx, x, y, w)
         function(v) ctx.act({ kind = "setting", id = "height_enabled", value = v }) end)
     setting_row(t("weaponHide"), s.weaponHideStorage == true, nil,
         function(v) ctx.act({ kind = "setting", id = "weapon_hide_storage", value = v }) end)
-    local changed, v, tw = W.toggle(t("uiDissolve"), x, cy, s.uiDissolveEnabled ~= false)
-    if changed then ctx.act({ kind = "setting", id = "ui_dissolve_enabled", value = v }) end
-    local lx = x + tw + 16
-    lx = lx + D.text_mid(t("uiDissolveTime"), lx, cy, 28, C.muted, W.small()) + 8
-    W.num_box(st.drafts, "misc_dissolve", lx, cy + 2, 70, s.uiDissolveTime, { min = 0, max = 30 }, function(n)
-        ctx.act({ kind = "setting", id = "ui_dissolve_time", value = n })
-    end)
-    D.text_mid(t("seconds"), lx + 78, cy, 28, C.muted, W.small())
-    cy = cy + 36
-
+    -- 溶解相关的设置在「溶解」页(PageDissolve.lua)
     -- 打开 / 关闭独立面板的快捷键(主键 + 可选修饰键)
     local g = ctx.global_config or {}
     local hx = x + D.text_mid(t("hotkeyLabel"), x, cy, 28, C.text, W.body()) + 12

@@ -24,6 +24,7 @@ local PAGES = {
     { key = "states",  label = "tabStates",  mod = require("ArmorVariantManager_Core.Games.RE4.Panel.PageStates") },
     { key = "palette", label = "tabPalette", mod = require("ArmorVariantManager_Core.Games.RE4.Panel.PagePalette") },
     { key = "presets", label = "tabPresets", mod = require("ArmorVariantManager_Core.Games.RE4.Panel.PagePresets") },
+    { key = "dissolve", label = "tabDissolve", mod = require("ArmorVariantManager_Core.Games.RE4.Panel.PageDissolve") },
     { key = "misc",    label = "tabMisc",    mod = require("ArmorVariantManager_Core.Games.RE4.Panel.PageMisc") },
 }
 
@@ -264,7 +265,7 @@ function Panel.new(deps)
             D.text_mid(snap_err or t("wait"), x, y, 28, C.muted, W.body(), w)
             return 36, false
         end
-        if ui.page == "misc" then return 0, true end
+        if ui.page == "misc" or ui.page == "dissolve" then return 0, true end
         if snap.character == "" then
             W.panel_box(x, y, w, 40)
             D.text_mid(t("noCharacter"), x + 12, y, 40, C.muted, W.body(), w - 24)

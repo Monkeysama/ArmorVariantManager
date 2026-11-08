@@ -19,7 +19,9 @@ function Main.start(ctx)
     local CharacterId = require("ArmorVariantManager_Core.Games.RE4.CharacterId")
     local Localization = require("ArmorVariantManager_Core.Games.RE4.Localization")
     local Dissolve = require("ArmorVariantManager_Core.Games.RE4.Dissolve")
+    local DissolveStyles = require("ArmorVariantManager_Core.Games.RE4.DissolveStyles")
     local Ops = require("ArmorVariantManager_Core.Games.RE4.Ops")
+    local OpsDissolve = require("ArmorVariantManager_Core.Games.RE4.OpsV3")   -- 溶解预设改名时改各角色配置里的引用
     local ModelV3 = require("ArmorVariantManager_Core.Games.RE4.ModelV3")
     local Presets = require("ArmorVariantManager_Core.Games.RE4.Presets")
     local Hotkeys = require("ArmorVariantManager_Core.Games.RE4.Hotkeys")
@@ -29,8 +31,9 @@ function Main.start(ctx)
     -- ui_dissolve_*:在面板上手动切状态 / 预设时的溶解过渡(只作用于溶解模板的材质)
     -- block_game_mouse:REFF 面板显示时不让游戏读到鼠标按键(见 InputGuard.lua)
     -- height_enabled:模型高度总开关(高度本身按预设 / 选项存在角色配置里,见 HeightFix.lua)
+    -- dissolve_presets:溶解预设库(全局,「溶解」页;DissolveStyles.clean_presets)
     local global_config = { language = "en", ui_dissolve_enabled = true, ui_dissolve_time = 1.0, block_game_mouse = true,
-        height_enabled = true }
+        height_enabled = true, dissolve_presets = DissolveStyles.clean_presets(nil, nil) }
     local function load_global_settings()
         local loaded = json.load_file(global_config_path)
         if not loaded then return end
@@ -45,6 +48,15 @@ function Main.start(ctx)
         if type(loaded.block_game_mouse) == "boolean" then global_config.block_game_mouse = loaded.block_game_mouse end
         if type(loaded.height_enabled) == "boolean" then global_config.height_enabled = loaded.height_enabled end
         if tonumber(loaded.ui_dissolve_time) then global_config.ui_dissolve_time = tonumber(loaded.ui_dissolve_time) end
+        -- 溶解预设库;旧版只有一套全局设置(内置样式的形状存在 DissolveEffects.json,光边在 dissolve_edge),
+        -- 第一次读到时迁移成一个「默认」预设,外观不变
+        local legacy = nil
+        if loaded.dissolve_presets == nil then
+            local effects = json.load_file("ArmorVariantManager/DissolveEffects.json")
+            legacy = { shape = type(effects) == "table" and effects[DissolveStyles.PROVIDER_ID] or nil, edge = loaded.dissolve_edge }
+        end
+        global_config.dissolve_presets = DissolveStyles.clean_presets(loaded.dissolve_presets, legacy)
+        global_config.dissolve_edge = nil
         -- 全身预览(REFF 页面里显示)
         if type(loaded.portrait_enabled) == "boolean" then global_config.portrait_enabled = loaded.portrait_enabled end
         if tonumber(loaded.portrait_distance) then global_config.portrait_distance = tonumber(loaded.portrait_distance) end
@@ -499,6 +511,26 @@ function Main.start(ctx)
         invalidate_key_cache()
     end
 
+    -- 溶解预设改名(全局库):登记过的每份角色配置里的引用跟着改,有改动的存盘。共用同一份配置的只处理一次
+    local function rename_dissolve_everywhere(old, new)
+        local done = {}
+        for _, kind in ipairs(global_config.known or {}) do
+            local key = cfg_key(kind)
+            if not done[key] then
+                done[key] = true
+                local cfg = loaded_configs[key]
+                if not cfg then
+                    local raw = json.load_file(get_config_path(kind))
+                    if raw then
+                        cfg = normalize_config(raw)
+                        loaded_configs[key] = cfg
+                    end
+                end
+                if cfg and OpsDissolve.rename_dissolve_refs(cfg, old, new) then save_config(kind) end
+            end
+        end
+    end
+
     -- 建立共用(把 kind_id 指到 target 的配置上)。两处会用:第一次遇到这个角色时自动建立,
     -- 以及用户点「尝试匹配同族配置」时手动建立。
     local function establish_share(kind_id, target)
@@ -831,6 +863,8 @@ function Main.start(ctx)
     local function apply_resolved(source, resolved, active_preview, owner_of, trans, drive_map, mirror)
         if not resolved then return end
         if not active_preview then
+            -- 溶解效果提供者按这个角色开事务(见 EffectProviders.lua 的 scope)
+            Dissolve.effect_scope(source)
             for _, slot in ipairs(Utils.MESH_SLOTS) do
                 local slot_data = resolved[slot]
                 if slot_data then
@@ -838,6 +872,7 @@ function Main.start(ctx)
                     if mesh then apply_slot(mesh, slot, slot_data, owner_of, trans, drive_map and drive_map[slot]) end
                 end
             end
+            Dissolve.effect_scope(nil)
             return
         end
         -- 定位中:所有槛位都不走正常应用(正常应用会给被定位关掉 / 打开的材质起溶解过渡,
@@ -908,6 +943,8 @@ function Main.start(ctx)
     -- 整套造型快捷键(Hotkeys.lua):这一帧主控角色的配置和解算结果,没有主控 / 不是 v3 时为 nil
     local hotkey_ctx = nil
     local hotkey_logic = nil
+    -- 武器显示:这一帧主控角色胜出的条件状态要求的模式("stowed" / "all" / nil)
+    local frame_weapons = nil
     local function load_palette_profiles(reload)
         if palette_profiles and not reload then return palette_profiles, palette_by_id end
         local extras, errors = {}, {}
@@ -928,8 +965,29 @@ function Main.start(ctx)
         return palette_profiles, palette_by_id
     end
     -- 写调色时同步溶解的 Dissolve_Flag 底值
+    -- 内置溶解样式(DissolveStyles.lua):注册成效果提供者;噪声图在第一帧预加载
+    -- 自己加载的 resource 和 holder 都存进 style_textures 一直持有(实测不持有会闪退)
+    local style_textures = {}
+    local dissolve_styles = DissolveStyles.new({
+        load_texture = function(path)
+            local res = sdk.create_resource("via.render.TextureResource", path)
+            if not res then return nil end
+            res = res:add_ref()
+            local h = res:create_holder("via.render.TextureResourceHolder"):add_ref()
+            style_textures[#style_textures + 1] = res
+            style_textures[#style_textures + 1] = h
+            return h
+        end,
+        presets = function() return global_config.dissolve_presets end,
+        vec4 = function(x, y, z, w) return Vector4f.new(x, y, z, w) end,
+    })
+    local ok_styles, err_styles = pcall(Dissolve.register_effect_provider, dissolve_styles.provider)
+    if not ok_styles and log and log.error then log.error("[AVM] dissolve styles: " .. tostring(err_styles)) end
+    local styles_preloaded = false
+
     local function on_palette_write(m, j, param, value)
         if param == "Dissolve_Flag" then Dissolve.set_flag_base(m, j, value) end
+        dissolve_styles.on_param_write(m, j, param, value)
     end
     -- pal:叠好的覆盖表(v3 = 生效的方案,v2 = config.palette)。还原的目标优先取 mdf2 文件里的原值
     -- (mdf2_cache:{ [相对路径] = 解析结果 | false },换 mdf / 重读映射时清空)
@@ -1209,8 +1267,13 @@ function Main.start(ctx)
     -- **拿出来的武器也要救回来**:一把武器从"收纳"变成"拿在手上"之后就不在
     -- mount 列表里了,上面那段循环压根碰不到它——如果它之前被藏起来过,这里不
     -- 主动写回 Enabled=true 的话,它会一直卡在隐藏状态,永远显示不出来(实测踩过)。
-    local function apply_weapon_hide_storage(context)
-        local hide = global_config.weapon_hide_storage == true
+    --
+    -- mode 来自玩家配置里胜出的条件状态(ModelV3.resolve 的 weapons):
+    --   "stowed" = 隐藏收纳武器;"all" = 收纳武器和手上那把都隐藏;nil = 没有状态管,按全局开关。
+    -- 实测 MountWeaponIDs 里包括小刀(wp5000,chainsaw.Melee)和身上的雷,手上的雷也有自己的 Mesh。
+    local function apply_weapon_hide_storage(context, mode)
+        local hide = (mode == "stowed" or mode == "all") or (mode == nil and global_config.weapon_hide_storage == true)
+        local hide_held = mode == "all"
         local equip = get_equipment(context)
         if not equip then return end
 
@@ -1235,7 +1298,7 @@ function Main.start(ctx)
 
         local held_mesh = get_weapon_mesh(context)
         if held_mesh then
-            pcall(function() held_mesh:call("set_Enabled", true) end)
+            pcall(function() held_mesh:call("set_Enabled", not hide_held) end)
         end
     end
 
@@ -1255,6 +1318,7 @@ function Main.start(ctx)
     -- 其余材质照常。驱动期间每帧都重写。
     -- ============================================================
     local dissolve_state = {}   -- target.id -> { picks = { [层键] = { name, rule } }, trans = {}, owner = {}, drives = {} }
+    local trans_seq = 0         -- 过渡的先后序号(Dissolve.transition_layer 用它挑最近换过选项的层)
 
     local function layer_of(config, key)
         if key == "base" then return config.base end
@@ -1275,19 +1339,29 @@ function Main.start(ctx)
         return math.huge
     end
 
+    -- 溶解预设(全局库,DissolveStyles):按引起这次切换的来源选,
+    --   条件状态引用的 → 切到的整套造型预设 / 状态组选项引用的 → 都没有就是 nil(用库里的默认)
+    local function dissolve_ref(layer, name)
+        local refs = layer and layer.dissolves
+        return type(refs) == "table" and name and refs[name] or nil
+    end
+
     local function choose_transition(layer, old, new)
         if new.rule then
             if new.rule.dissolve_enabled ~= true then return nil end
             -- v3 的优先级是条件状态的顺序(prio),v2 是层内状态的顺序
             local forward = (not old.rule) or ((new.prio and old.prio) and new.prio < old.prio)
                 or (not (new.prio and old.prio) and layer_pos(layer, new.name) < layer_pos(layer, old.name))
-            return { enabled = true, dur = tonumber(new.rule.dissolve_hide_time) or 0.5, forward = forward }
+            return { enabled = true, dur = tonumber(new.rule.dissolve_hide_time) or 0.5, forward = forward,
+                     preset = new.rule.dissolve_preset or dissolve_ref(layer, new.name) }
         elseif old.rule then
             if old.rule.dissolve_enabled ~= true then return nil end
-            return { enabled = true, dur = tonumber(old.rule.dissolve_show_time) or 0.5, forward = false }
+            return { enabled = true, dur = tonumber(old.rule.dissolve_show_time) or 0.5, forward = false,
+                     preset = old.rule.dissolve_preset or dissolve_ref(layer, new.name) }
         end
         return { enabled = global_config.ui_dissolve_enabled ~= false,
-                 dur = math.max(0, math.min(30, tonumber(global_config.ui_dissolve_time) or 1.0)), forward = true }
+                 dur = math.max(0, math.min(30, tonumber(global_config.ui_dissolve_time) or 1.0)), forward = true,
+                 preset = dissolve_ref(layer, new.name) }
     end
 
     local function copy_picks(t)
@@ -1327,6 +1401,7 @@ function Main.start(ctx)
         local resolved, changed, info = TransformManager.resolve(target.id, config, target.context, source)
         if info.v3 and not target.borrowed and type(target.id) == "string" and target.id:sub(1, 7) == "player:" then
             hotkey_ctx = { kind_id = kind_id, config = config, v3 = info.v3, layers = info.layers }
+            frame_weapons = info.v3.weapons
         end
 
         -- 模型高度:整套造型 → 状态组按叠加顺序,最后设过的那一层说了算
@@ -1351,7 +1426,10 @@ function Main.start(ctx)
         for key, cur in pairs(info.layers) do
             local old = ds.picks[key]
             if not fresh and old and old.name ~= cur.name then
-                ds.trans[key] = choose_transition(layer_of(config, key), old, cur)
+                local tr = choose_transition(layer_of(config, key), old, cur) or { enabled = false }
+                trans_seq = trans_seq + 1
+                tr.seq = trans_seq
+                ds.trans[key] = tr
             end
             ds.picks[key] = cur
         end
@@ -1514,10 +1592,16 @@ function Main.start(ctx)
     end
 
     local function frame_logic()
+        if not styles_preloaded then
+            styles_preloaded = true
+            local ok, err = pcall(dissolve_styles.preload)
+            if not ok then note_error("dissolve styles preload", err) end
+        end
         -- 推进正在跑的溶解过渡(和有没有目标无关:目标消失时动画自己会清掉)
         Dissolve.update()
         frame_heights = {}
         hotkey_ctx = nil
+        frame_weapons = nil
         local targets = Targets.collect()
         if #targets == 0 then
             if height_fix then height_fix.set_targets(frame_heights) end
@@ -1529,9 +1613,6 @@ function Main.start(ctx)
         -- "上次掉血距今多久"这类量会按目标数成倍走快。
         local context = targets[1].context
         if context then Registry.tick(context) end
-
-        local ok_ws, err_ws = pcall(apply_weapon_hide_storage, context)
-        if not ok_ws then note_error("weapon_hide_storage", err_ws) end
 
         -- 定位预览:过期就清掉并强制恢复一次
         local preview_active = false
@@ -1547,10 +1628,15 @@ function Main.start(ctx)
 
         for _, target in ipairs(targets) do
             local ok, err = pcall(apply_target, target, preview_active)
+            Dissolve.effect_scope(nil)   -- apply_target 中途抛错时 apply_resolved 来不及清
             -- 一个目标炸掉(傀儡正好这一帧被销毁之类)不该让其它目标也停掉
             if not ok then note_error("apply_target " .. tostring(target.label), err) end
         end
         if height_fix then height_fix.set_targets(frame_heights) end
+
+        -- 武器显示放在目标循环之后:要用玩家配置这一帧解出来的 weapons(apply_target 里记下)
+        local ok_ws, err_ws = pcall(apply_weapon_hide_storage, context, frame_weapons)
+        if not ok_ws then note_error("weapon_hide_storage", err_ws) end
 
         force_reapply = false
         preview_restoring = false
@@ -3195,6 +3281,7 @@ function Main.start(ctx)
         Main.portrait = portrait
         Main.reff = require("ArmorVariantManager_Core.Games.RE4.Reff").connect({
             version = version, global_config = global_config, save_global_settings = save_global_settings, T = T,
+            rename_dissolve = rename_dissolve_everywhere,
             targets = Targets.collect, groups = collect_character_groups, pick_group = pick_character_group,
             resolve_key = resolve_config_key, cfg_key = cfg_key, register_kind = register_kind,
             load_config = load_config, commit = commit, reset_ui_state = function() ui_state = {} end,

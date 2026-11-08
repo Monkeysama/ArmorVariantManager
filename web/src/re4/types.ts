@@ -15,7 +15,13 @@ export interface Re4Character { id: string; label: string; configured: boolean; 
 export interface Re4Settings {
   weaponHideStorage: boolean; uiDissolveEnabled: boolean; uiDissolveTime: number;
   previewDistance?: number; previewHeight?: number; blockGameMouse?: boolean; heightEnabled?: boolean;
+  dissolvePresets?: Re4DissolvePresets;
 }
+// 溶解预设库(全局,Lua DissolveStyles.presets_view):default = 预设名 / "random" / "";shapes = 内置形状
+export interface Re4DissolvePreset { name: string; shape: string; edge: Re4DissolveEdge[] }
+export interface Re4DissolvePresets { default: string; list: Re4DissolvePreset[]; shapes: { id: string; label: Re4EffectLabel }[] }
+// 「溶解」页的光边覆盖一项(Lua DissolveStyles.EDGE):on = 是否覆盖模组自己的值;颜色的 value 是 [r, g, b](线性 0~1)
+export interface Re4DissolveEdge { key: string; kind: 'color' | 'float'; on: boolean; value: number | number[]; min?: number; max?: number }
 // 全身预览(和荒野同一个原生插件);只在装了预览插件和新版 REFF 时可用
 export interface Re4Preview { available: boolean; enabled: boolean; status: string; error?: string }
 
@@ -33,6 +39,9 @@ export interface Re4State {
   kind: Re4StateKind; by?: number; holding: boolean;
   // 命中时叠加的调色方案；paletteResult：win = 生效 / lose = 被独占状态挡住 / broken = 方案不存在
   palette?: string; paletteResult?: Re4Result;
+  dissolve?: string;   // 引用的溶解预设(全局库里的名字)
+  // 武器显示：命中时隐藏武器（stowed = 身上挂的；all = 身上 + 手上）；和状态组一样按优先级独占
+  weapons?: 'stowed' | 'all'; weaponsResult?: Re4Result;
 }
 
 // 材质值：键是 "slot/材质"。整套造型是整份（每个材质都有值）；状态组稀疏，没写 = 不管
@@ -40,9 +49,9 @@ export type Re4Values = Record<string, boolean>;
 export interface Re4Match { status: 'ok' | 'partial' | 'mismatch'; skipped: string[] }
 // height:这个预设 / 选项设的模型高度（厘米）；没有 = 这一层不管高度
 // palette:选中这个预设 / 选项时叠加的调色方案（可能指向已删除的方案）
-export interface Re4BasePreset { name: string; values: Re4Values; match: Re4Match; height?: number; palette?: string }
+export interface Re4BasePreset { name: string; values: Re4Values; match: Re4Match; height?: number; palette?: string; dissolve?: string }
 export interface Re4Base { active: string; effective?: string; fromState?: number; presets: Re4BasePreset[] }
-export interface Re4Option { name: string; values: Re4Values; height?: number; palette?: string }
+export interface Re4Option { name: string; values: Re4Values; height?: number; palette?: string; dissolve?: string }
 export interface Re4Group { name: string; active: string; effective?: string; fromState?: number; options: Re4Option[] }
 
 export interface Re4Material { name: string; note?: string }
@@ -103,9 +112,16 @@ export interface Re4PaletteWrite { slot: string; material: string; param: string
 export interface Re4HotkeyTarget { kind: 'base' | 'group' | 'palette'; group?: string; option?: string; scheme?: string }
 export interface Re4Hotkey extends Re4HotkeyTarget { digit: number; cycle: boolean; skip: string[] }
 
+// 别的 mod 注册的溶解效果提供者(Lua 的 EffectProviders.lua);显示名可以是字符串或按语言的表
+export type Re4EffectLabel = string | Record<string, string>;
+export interface Re4EffectProvider {
+  id: string; name?: Re4EffectLabel; mode: string; effects: string[];
+  labels?: Record<string, Re4EffectLabel> | unknown[];   // 空表从 Lua 来时可能是 []
+}
 export interface Re4Snapshot {
   game: 'RE4'; version: string; language: 'zh' | 'en';
   settings: Re4Settings; characters: Re4Character[]; character: string;
+  effectProviders?: Re4EffectProvider[] | Record<string, never>;   // 没有提供者时 Lua 空表可能编码成 {}
   configVersion?: 2 | 3; notice?: Re4Notice; preview?: Re4Preview;
   // 以下只在 v3 配置时出现
   status?: { hp?: number; flags: string[] };
@@ -130,6 +146,13 @@ export type Re4ConditionInput = { type: string; op?: Re4Op; value: number | stri
 type C = { character: string };
 export type Re4Action =
   | { kind: 'character'; id: string }
+  | { kind: 'effect-select'; provider: string; effect: string }
+  | { kind: 'dissolve-edge'; preset: string; key: string; on?: boolean; value?: number | number[] }
+  | { kind: 'dissolve-preset-new'; name: string; from?: string }
+  | { kind: 'dissolve-preset-rename'; preset: string; name: string }
+  | { kind: 'dissolve-preset-delete'; preset: string }
+  | { kind: 'dissolve-preset-shape'; preset: string; shape: string }
+  | { kind: 'dissolve-default'; preset: string }
   | { kind: 'setting'; id: 'weapon_hide_storage' | 'ui_dissolve_enabled' | 'ui_dissolve_time' | 'portrait_enabled' | 'portrait_distance' | 'portrait_height' | 'block_game_mouse' | 'height_enabled'; value: boolean | number }
   | C & { kind: 'migrate' }
   | C & { kind: 'manual'; layer: string; option: string }
@@ -157,6 +180,9 @@ export type Re4Action =
   | C & { kind: 'palette-scheme-delete'; scheme: string }
   | C & { kind: 'palette-ref'; layer: string; option: string; scheme: string }
   | C & { kind: 'state-palette'; index: number; scheme: string }
+  | C & { kind: 'dissolve-ref'; layer: string; option: string; preset: string }
+  | C & { kind: 'state-dissolve'; index: number; preset: string }
+  | C & { kind: 'state-weapons'; index: number; mode: string }
   | C & { kind: 'palette-reload' }
   | C & { kind: 'palette-export'; slot: string; material: string; name: string }
   | C & { kind: 'palette-replace'; slot: string }

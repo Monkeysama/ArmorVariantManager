@@ -388,6 +388,60 @@ function OpsV3.set_state_palette(cfg, i, scheme)
     return true, true
 end
 
+-- ============================================================ 溶解预设引用(预设在全局库,见 DissolveStyles)
+-- 整套造型的预设 / 状态组的选项引用一个溶解预设:切到它时这次溶解用这个预设。preset = "" 清除。
+-- 不检查名字是否存在(全局库可能在别处改过),解算时不存在就退回默认
+function OpsV3.set_dissolve_ref(cfg, layer, option, preset)
+    local holder, names
+    if layer == "base" then
+        holder, names = cfg.base, cfg.base.presets
+    else
+        local g = M3.find_group(cfg, layer)
+        if not g then return false end
+        holder, names = g, g.options
+    end
+    if type(option) ~= "string" or not names[option] or type(preset) ~= "string" then return false end
+    local v = preset ~= "" and preset or nil
+    local refs = type(holder.dissolves) == "table" and holder.dissolves or {}
+    if refs[option] == v then return false end
+    refs[option] = v
+    holder.dissolves = next(refs) and refs or nil
+    return true, false
+end
+
+function OpsV3.set_state_dissolve(cfg, i, preset)
+    local st = cfg.conditions.states[tonumber(i) or -1]
+    if not st or type(preset) ~= "string" then return false end
+    local v = preset ~= "" and preset or nil
+    if st.dissolve == v then return false end
+    st.dissolve = v
+    return true, false
+end
+
+-- 全局库里改名后,一份角色配置里的引用跟着改;返回有没有改动
+function OpsV3.rename_dissolve_refs(cfg, old, new)
+    local changed = false
+    local function fix(refs)
+        for k, v in pairs(type(refs) == "table" and refs or {}) do if v == old then refs[k] = new; changed = true end end
+    end
+    fix(type(cfg.base) == "table" and cfg.base.dissolves)
+    for _, g in ipairs(type(cfg.groups) == "table" and cfg.groups or {}) do fix(g.dissolves) end
+    local states = type(cfg.conditions) == "table" and cfg.conditions.states or {}
+    for _, st in ipairs(states) do if st.dissolve == old then st.dissolve = new; changed = true end end
+    return changed
+end
+
+-- 武器显示:mode = "stowed" / "all";nil / "" 表示不管(交给全局「隐藏收纳武器」)
+function OpsV3.set_state_weapons(cfg, i, mode)
+    local st = cfg.conditions.states[tonumber(i) or -1]
+    if not st then return false end
+    local v = (mode ~= nil and mode ~= "") and mode or nil
+    if v ~= nil and not M3.WEAPON_MODES[v] then return false end
+    if st.weapons == v then return false end
+    st.weapons = v
+    return true, false
+end
+
 -- ============================================================ 条件状态
 local function state_at(cfg, i)
     return cfg.conditions.states[tonumber(i) or -1]

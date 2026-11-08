@@ -7,7 +7,7 @@ import type { Re4Translate } from './i18n';
 import type { Re4Perform, Re4Snapshot } from './types';
 import { describe } from './hotkeys';
 
-// 杂项:旧配置迁移(只有检测到旧配置时按钮才能点)、设置、帮助(默认收起)。
+// 杂项:旧配置迁移(只有检测到旧配置时按钮才能点)、设置、帮助(默认收起)。溶解相关的设置在「溶解」页。
 const props = defineProps<{ snapshot: Re4Snapshot; busy: boolean; perform: Re4Perform; t: Re4Translate;
   documentation: Documentation | null; documentationLoading: boolean; documentationError: string }>();
 defineEmits<{ 'retry-documentation': [] }>();
@@ -16,7 +16,7 @@ const old = () => props.snapshot.configVersion === 2;
 // 快捷键总览:十个键各自绑的是什么(只在 v3 配置时有)
 const hotkeys = () => props.snapshot.hotkeys ?? [];
 const skipText = (skip: string[], kind: string) => skip.map(n => n === '' ? (kind === 'palette' ? props.t('paletteAlways') : props.t('none')) : n).join('、');
-const setting = (id: 'weapon_hide_storage' | 'ui_dissolve_enabled' | 'ui_dissolve_time' | 'portrait_distance' | 'portrait_height' | 'block_game_mouse' | 'height_enabled', value: boolean | number) =>
+const setting = (id:'weapon_hide_storage' | 'portrait_distance' | 'portrait_height' | 'block_game_mouse' | 'height_enabled', value: boolean | number) =>
   props.perform({ kind: 'setting', id, value });
 </script>
 
@@ -63,14 +63,6 @@ const setting = (id: 'weapon_hide_storage' | 'ui_dissolve_enabled' | 'ui_dissolv
       <div class="re4-row">
         <ElSwitch :model-value="snapshot.settings.weaponHideStorage" :disabled="busy" size="small" @change="v => setting('weapon_hide_storage', v === true)" />
         <span>{{ t('weaponHide') }}</span>
-      </div>
-      <div class="re4-row">
-        <ElSwitch :model-value="snapshot.settings.uiDissolveEnabled" :disabled="busy" size="small" @change="v => setting('ui_dissolve_enabled', v === true)" />
-        <span>{{ t('uiDissolve') }}</span>
-        <span class="re4-muted re4-small">{{ t('uiDissolveTime') }}</span>
-        <Re4Num :value="snapshot.settings.uiDissolveTime" :min="0" :max="30" :disabled="busy" :aria-label="t('uiDissolveTime')"
-          @change="v => v !== undefined && setting('ui_dissolve_time', v)" />
-        <span class="re4-muted re4-small">{{ t('seconds') }}</span>
       </div>
       <div v-if="snapshot.preview" class="re4-row">
         <span>{{ t('previewDistance') }}</span>

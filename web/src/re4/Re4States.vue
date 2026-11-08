@@ -16,6 +16,8 @@ const defs = computed(() => props.snapshot.conditions ?? []);
 const defOf = (id: string) => defs.value.find(d => d.id === id);
 const groups = computed(() => props.snapshot.groups ?? []);
 const schemeNames = computed(() => (props.snapshot.palettes?.list ?? []).map(x => x.name));
+// 溶解预设(全局库)的名字
+const dissolveNames = computed(() => (props.snapshot.settings.dissolvePresets?.list ?? []).map(x => x.name));
 const basePresets = computed(() => props.snapshot.base?.presets.map(p => p.name) ?? []);
 const open = reactive(new Set<number>());
 const confirming = shallowRef(0);
@@ -202,6 +204,27 @@ const { from: dragFrom, drop: dropAt, start: startDrag } = usePointerReorder('.r
             </ElSelect>
             <span v-if="st.palette" class="re4-res" :class="st.paletteResult?.kind">{{ resultText(st.paletteResult, states, t) }}</span>
             <span v-if="st.palette && st.hp" class="re4-muted re4-small">{{ t('paletteByHp') }}</span>
+          </div>
+          <!-- 溶解预设(全局库):这个状态引起的切换用它;「—」= 默认预设 -->
+          <div class="re4-target">
+            <span class="re4-muted re4-small">{{ t('dissolveRef') }}</span>
+            <ElSelect class="re4-sel-target" :model-value="st.dissolve ?? ''" :empty-values="[null, undefined]" :disabled="busy" size="small" :aria-label="t('dissolveRef')"
+              @change="v => perform({ kind: 'state-dissolve', ...c(), index: k + 1, preset: String(v ?? '') })">
+              <ElOption value="" :label="t('dissolveRefNone')" />
+              <ElOption v-if="st.dissolve && !dissolveNames.includes(st.dissolve)" :value="st.dissolve" :label="t('dissolveRefBroken') + '：' + st.dissolve" />
+              <ElOption v-for="name in dissolveNames" :key="name" :value="name" :label="name" />
+            </ElSelect>
+          </div>
+          <!-- 武器显示:命中时隐藏武器;和状态组一样按优先级独占 -->
+          <div class="re4-target">
+            <span class="re4-muted re4-small">{{ t('weaponsTarget') }}</span>
+            <ElSelect class="re4-sel-target" :model-value="st.weapons ?? ''" :empty-values="[null, undefined]" :disabled="busy" size="small" :aria-label="t('weaponsTarget')"
+              @change="v => perform({ kind: 'state-weapons', ...c(), index: k + 1, mode: String(v ?? '') })">
+              <ElOption value="" :label="t('weaponsKeep')" />
+              <ElOption value="stowed" :label="t('weaponsStowed')" />
+              <ElOption value="all" :label="t('weaponsAll')" />
+            </ElSelect>
+            <span v-if="st.weapons" class="re4-res" :class="st.weaponsResult?.kind">{{ resultText(st.weaponsResult, states, t) }}</span>
           </div>
           <div v-for="(tg, ti) in st.targets" :key="tg.group" class="re4-target">
             <ElSelect class="re4-sel-target" :model-value="tg.group" :disabled="busy" size="small" @change="v => perform({ kind: 'state-target-group', ...c(), index: k + 1, target: ti + 1, group: String(v) })">
