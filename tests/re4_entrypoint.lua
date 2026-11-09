@@ -56,15 +56,24 @@ local function managed(methods)
 end
 local function is_managed(value) return objects[value] ~= nil end
 
-local function mesh(path, materials)
-    local names, enabled = {}, {}
-    for index, name in ipairs(materials) do names[index - 1], enabled[index - 1] = name, true end
+-- dissolve = true:每个材质带溶解模板的两个变量(0 = Dissolve_Rate,1 = Dissolve_Flag,mdf2 默认 (1,0,0,0))
+local function mesh(path, materials, dissolve)
+    local names, enabled, vars = {}, {}, {}
+    for index, name in ipairs(materials) do
+        names[index - 1], enabled[index - 1] = name, true
+        vars[index - 1] = {[0] = {x = 0, y = 0, z = 0, w = 0}, [1] = {x = 1, y = 0, z = 0, w = 0}}
+    end
+    local var_names = {[0] = "Dissolve_Rate", [1] = "Dissolve_Flag"}
     local holder = managed({get_ResourcePath = path})
     local result, object = managed({
         get_MaterialNum = #materials,
         getMaterialName = function(index) return names[index] end,
         getMaterialsEnable = function(index) return enabled[index] end,
         setMaterialsEnable = function(index, value) enabled[index] = value end,
+        getMaterialVariableNum = function() return dissolve and 2 or 0 end,
+        getMaterialVariableName = function(_, k) return dissolve and var_names[k] or nil end,
+        getMaterialFloat4 = function(index, k) local v = vars[index][k]; return {x = v.x, y = v.y, z = v.z, w = v.w} end,
+        setMaterialFloat4 = function(index, k, v) vars[index][k] = {x = v.x, y = v.y, z = v.z, w = v.w} end,
         getMesh = holder,
         get_Material = managed({get_ResourcePath = path:gsub("%.mesh$", ".mdf2")}),
     })
@@ -72,6 +81,9 @@ local function mesh(path, materials)
         local state = {}
         for index, name in pairs(names) do state[name] = enabled[index] end
         return state
+    end
+    object.rate = function(name)
+        for index, n in pairs(names) do if n == name then return vars[index][0].x end end
     end
     return result
 end
@@ -104,13 +116,14 @@ local function run(scenario)
     end
     local files = {[GLOBAL_PATH] = {language = "zh", ui_dissolve_enabled = false, ui_dissolve_time = 2.5,
         extra = {keep = true}}}
+    for k, v in pairs(scenario.global or {}) do files[GLOBAL_PATH][k] = v end
     if scenario.config then files[CONFIG_PATH] = S.copy(scenario.config) end
     for path, value in pairs(scenario.files or {}) do files[path] = S.copy(value) end
     local frames, draws, errors, imports = {}, {}, {}, {}
     local app_entries = {}
 
     local meshes = {
-        body = mesh("_Chainsaw/Character/ch/cha0/cha000/00/cha000_00.mesh", {"Skin", "Jacket"}),
+        body = mesh("_Chainsaw/Character/ch/cha0/cha000/00/cha000_00.mesh", {"Skin", "Jacket"}, scenario.dissolve),
         head = mesh("_Chainsaw/Character/ch/cha0/cha000/10/cha000_10.mesh", {"Face"}),
         hair = mesh("_Chainsaw/Character/ch/cha0/cha000/20/cha000_20.mesh", {"Hair", "Clip"}),
         armor = scenario.armor and mesh("_Chainsaw/Character/ch/cha0/cha000/30/cha000_30.mesh", {"Skin", "Jacket", "Vest"}) or nil,
@@ -703,3 +716,43 @@ do
     a({kind = "palette-view", character = "Leon", open = false, keys = {}})
 end
 print("PASS: RE4 locate hides every other slot, carries over to mirrored armor, restores the pre-locate look; palette solo shows only the selection until turned off; oversized palette snapshots are trimmed instead of dropped")
+
+-- 面板改当前选项里的材质(选项没换:只有一个整套造型、模型鉴赏里新出现的人偶):
+-- 按界面溶解设置溶解,不直接开关。以前这种改动沿用这一层上次换选项留下的过渡,从没换过就没有过渡
+do
+    _G.Vector4f = _G.Vector4f or {new = function(x, y, z, w) return {x = x, y = y, z = z, w = w} end}
+    local h, t
+    files, meshes, h, t = run({player = true, config = leon, reff = true, dissolve = true,
+        global = {ui_dissolve_enabled = true, ui_dissolve_time = 2.0}})
+    local a = h["monkeysama.avm.action"]
+    a({kind = "migrate", character = "Leon"})
+    for _ = 1, 2 do t() end
+    S.equal(meshes.body.state(), {Skin = true, Jacket = false})
+    local real_clock, now = os.clock, 1000
+    os.clock = function() return now end
+    local function step(n) for _ = 1, n do now = now + 0.1; t() end end
+    step(1)
+
+    a({kind = "base-material", character = "Leon", preset = "Default", slot = "body", material = "Skin", value = false})
+    step(5)
+    local r = meshes.body.rate("Skin")
+    assert(meshes.body.state().Skin == true and r > 0 and r < 1, "editing the only outfit dissolves the material out: " .. tostring(r))
+    step(30)
+    assert(meshes.body.state().Skin == false and meshes.body.rate("Skin") == 0, "hidden at the end, rate back to the mdf2 value")
+
+    a({kind = "base-material", character = "Leon", preset = "Default", slot = "body", material = "Skin", value = true})
+    step(1)
+    r = meshes.body.rate("Skin")
+    assert(meshes.body.state().Skin == true and r > 0.5, "showing starts fully dissolved: " .. tostring(r))
+    step(30)
+    assert(meshes.body.rate("Skin") == 0)
+    assert(meshes.body.state().Jacket == false, "untouched materials stay as they were")
+
+    -- 界面溶解关掉:同样的改动瞬间开关
+    a({kind = "setting", id = "ui_dissolve_enabled", value = false})
+    a({kind = "base-material", character = "Leon", preset = "Default", slot = "body", material = "Skin", value = false})
+    step(1)
+    assert(meshes.body.state().Skin == false and meshes.body.rate("Skin") == 0, "with UI dissolve off the edit is instant")
+    os.clock = real_clock
+end
+print("PASS: RE4 editing a material of the current option uses the UI dissolve (single outfit, new target); instant when UI dissolve is off")

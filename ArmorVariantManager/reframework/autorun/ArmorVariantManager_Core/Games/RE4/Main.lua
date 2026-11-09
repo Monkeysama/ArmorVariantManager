@@ -1346,6 +1346,13 @@ function Main.start(ctx)
         return type(refs) == "table" and name and refs[name] or nil
     end
 
+    -- 面板上手动操作的过渡:界面溶解设置(开关、时长),溶解预设看这一层当前选项引用的
+    local function manual_transition(layer, name)
+        return { enabled = global_config.ui_dissolve_enabled ~= false,
+                 dur = math.max(0, math.min(30, tonumber(global_config.ui_dissolve_time) or 1.0)), forward = true,
+                 preset = dissolve_ref(layer, name) }
+    end
+
     local function choose_transition(layer, old, new)
         if new.rule then
             if new.rule.dissolve_enabled ~= true then return nil end
@@ -1359,9 +1366,7 @@ function Main.start(ctx)
             return { enabled = true, dur = tonumber(old.rule.dissolve_show_time) or 0.5, forward = false,
                      preset = old.rule.dissolve_preset or dissolve_ref(layer, new.name) }
         end
-        return { enabled = global_config.ui_dissolve_enabled ~= false,
-                 dur = math.max(0, math.min(30, tonumber(global_config.ui_dissolve_time) or 1.0)), forward = true,
-                 preset = dissolve_ref(layer, new.name) }
+        return manual_transition(layer, new.name)
     end
 
     local function copy_picks(t)
@@ -1423,6 +1428,7 @@ function Main.start(ctx)
             ds = { picks = {}, trans = {}, owner = {}, drives = {} }
             dissolve_state[target.id] = ds
         end
+        local switched = {}
         for key, cur in pairs(info.layers) do
             local old = ds.picks[key]
             if not fresh and old and old.name ~= cur.name then
@@ -1430,6 +1436,7 @@ function Main.start(ctx)
                 trans_seq = trans_seq + 1
                 tr.seq = trans_seq
                 ds.trans[key] = tr
+                switched[key] = true
             end
             ds.picks[key] = cur
         end
@@ -1473,6 +1480,22 @@ function Main.start(ctx)
         local owner, prev_owner = info.owner, ds.owner
         -- 预览刚结束的那一次恢复也是瞬间的:被预览关掉的材质不该一个个溶解着"出现"
         local trans = (not fresh) and (not preview_restoring) and ds.trans or nil
+        -- 面板改了某层当前选项里的材质(选项没换,例如勾掉整套造型里的一个材质):这一帧用界面溶解设置。
+        -- 以前这种改动沿用这一层上一次换选项时留下的过渡:这一层从没换过选项(只有一个预设、
+        -- 或模型鉴赏里新出现的人偶)就没有过渡,材质直接开关;换过的话用的是那次的时长和方向。
+        -- 只放在这一帧的副本里,不写回 ds.trans,不影响之后"放手"时按 seq 选层。
+        if trans and force_reapply then
+            local edit = nil
+            for key, cur in pairs(info.layers) do
+                if not switched[key] then
+                    edit = edit or copy_picks(trans)
+                    local tr = manual_transition(layer_of(config, key), cur.name)
+                    tr.seq = 0   -- 同一帧真换了选项的层优先
+                    edit[key] = tr
+                end
+            end
+            trans = edit or trans
+        end
         local function owner_of(slot, mat)
             return Dissolve.transition_layer(owner[slot] and owner[slot][mat],
                 prev_owner[slot] and prev_owner[slot][mat], trans)
