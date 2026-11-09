@@ -247,10 +247,13 @@ for _, page in ipairs(PAGES) do
     frame(p)
     assert_clean("open " .. page)
     -- 点遍:每次点之前重新布局一次取最新的矩形;一个位置只点一次(展开后会冒出新的位置)
-    -- 正序点一遍,再倒序点一遍(正序时「完成」这类按钮会先把刚展开的区域收起来)
+    -- 正序点一遍,再倒序点一遍(正序时「完成」这类按钮会先把刚展开的区域收起来);
+    -- 第三遍再正序点,跳过第一遍点过的位置:默认展开的折叠栏第一遍就被收起,里面的按钮靠这一遍点到
     local n = 0
-    for pass = 1, 2 do
+    local first_done
+    for pass = 1, 3 do
     local done = {}
+    if pass == 3 then for k in pairs(first_done) do done[k] = true end end
     local guard = 0
     while guard < 400 do
         guard = guard + 1
@@ -276,6 +279,7 @@ for _, page in ipairs(PAGES) do
         assert_clean(page .. " click #" .. n .. " at " .. math.floor(target[1]) .. "," .. math.floor(target[2]))
         n = n + 1
     end
+    if pass == 1 then first_done = done end
     end
     total = total + n
     print(string.format("  %-8s %3d clicks", page, n))
@@ -287,7 +291,7 @@ local seen = {}
 for _, a in ipairs(ctrl.actions) do seen[a.kind] = true end
 for _, k in ipairs({ "manual", "auto", "state-field", "base-new", "base-material", "option-material", "group-move", "group-delete",
     "option-delete", "base-recapture", "option-new", "state-move", "state-delete", "state-hp", "condition-add",
-    "condition-delete", "state-target-remove", "preset-apply", "preset-blank", "preset-delete", "preset-dismiss", "autosave-restore", "restore",
+    "condition-delete", "state-target-remove", "preset-apply", "preset-update", "preset-blank", "preset-delete", "preset-dismiss", "autosave-restore", "restore",
     "palette-view", "palette-reload", "palette-reset", "setting", "armor-mirror", "migrate", "dissolve-edge", "effect-select", "dissolve-default", "dissolve-preset-shape" }) do
     if k ~= "migrate" then assert(seen[k], "never sent " .. k) end
 end

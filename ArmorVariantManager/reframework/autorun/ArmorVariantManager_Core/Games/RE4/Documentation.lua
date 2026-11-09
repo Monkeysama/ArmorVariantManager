@@ -48,12 +48,13 @@ return {
             id = "presets", title = "预设",
             entries = {
                 { title = "当前配置与预设库", paragraphs = {
-                    "每个角色只有一份正在生效的当前配置。预设库里的预设只是套用的来源,套用是复制:当前配置会先存进「自动保存」(每个角色保留最近 5 份)。",
+                    "每个角色只有一份正在生效的当前配置。预设库里的预设只是加载的来源,加载是复制:当前配置会先存进「自动保存」(每个角色保留最近 5 份)。",
                     "预设记录了它适用的模型材质,按当前模型标出完全适用、部分适用或不适用。部分适用时,对不上的部位会跳过。",
+                    "「保存」把当前配置写回当前预设;「自定义」里的其他预设可以「覆盖至」。两者都是用当前配置完全替换预设内容,不做合并;被替换的旧内容先存进自动保存。目标预设不完全适用时会先确认。自定义预设点名字就能改名。",
                 } },
                 { title = "不会自动切换", paragraphs = {
                     "模型变了时,如果当前配置不再完全适用、而库里有完全适用的预设,只会在「预设」页提醒;换不换由你决定。",
-                    "mod 作者随 mod 发布的预设放进 reframework/data/ArmorVariantManager/presets/ 就会出现在库里,这类预设只能套用,不能修改。",
+                    "mod 作者随 mod 发布的预设放进 reframework/data/ArmorVariantManager/presets/ 就会出现在「模组自带」里,这类预设只能加载,不能修改。",
                 } },
             },
         },
@@ -117,12 +118,13 @@ return {
             id = "presets", title = "Presets",
             entries = {
                 { title = "Current config and the library", paragraphs = {
-                    "Each character has one current config in effect. Presets are only a source to apply from; applying copies the preset, and the current config is auto-saved first (the newest 5 per character are kept).",
+                    "Each character has one current config in effect. Presets are only a source to load from; loading copies the preset, and the current config is auto-saved first (the newest 5 per character are kept).",
                     "Presets remember the materials they were made for and show whether they fit the current model fully, partly or not at all. When a preset fits partly, slots that do not match are skipped.",
+                    "Save writes the current config back to the current preset; Overwrite does the same for any other preset under Custom. Both replace the whole preset with the current config, with no merging, and its old content is auto-saved first. A preset that does not fully fit asks for confirmation first. Click a custom preset's name to rename it.",
                 } },
                 { title = "Never switched automatically", paragraphs = {
                     "When the model changes and the current config no longer fits fully while a preset does, the Presets tab only reminds you; switching is up to you.",
-                    "Presets shipped with a mod go into reframework/data/ArmorVariantManager/presets/ and show up in the library; they can be applied but not changed.",
+                    "Presets shipped with a mod go into reframework/data/ArmorVariantManager/presets/ and show up under From mods; they can be loaded but not changed.",
                 } },
             },
         },

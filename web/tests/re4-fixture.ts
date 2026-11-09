@@ -305,6 +305,7 @@ export function installRe4Fixture() {
       hotkeys: Object.values(hotkeys).sort((x, y) => x.digit - y.digit).map(h => ({ ...h, skip: [...h.skip] })),
       palettes: { list: schemeOrder.map(name => ({ name, used: used(name), materials: Object.keys(schemeOv[name]).length })), active: activePal, selected: editing },
       presets: { current: config.source === 'p0002' ? 'partial' : 'full', dismissed,
+        dirty: !source || JSON.stringify({ ...config, source: undefined }) !== JSON.stringify({ ...(source.config ?? initial()), source: undefined }),
         source: source ? { id: source.id, name: source.name, own: source.source === 'user' } : undefined,
         list: presets.map(p => ({ id: p.id, name: p.name, source: p.source, match: p.match })),
         better: config.source === 'p0002' ? [{ id: 'p0001', name: '日常' }] : [],
@@ -513,11 +514,13 @@ export function installRe4Fixture() {
       case 'condition-set': { const s = stateAt(a.index); if (!s.conditions[a.condition_index - 1]) fail(); s.conditions[a.condition_index - 1] = { ...a.condition }; break; }
       case 'condition-delete': { const s = stateAt(a.index); if (!s.conditions[a.condition_index - 1]) fail(); s.conditions.splice(a.condition_index - 1, 1); break; }
       case 'preset-apply': { const p = presets.find(x => x.id === a.id) ?? fail(); if (p.match === 'none') fail();
-        autosaves.unshift({ name: `套用「${p.name}」前`, time: Date.now() / 1000, config: clone(config) }); autosaves.splice(5);
+        autosaves.unshift({ name: `加载「${p.name}」前`, time: Date.now() / 1000, config: clone(config) }); autosaves.splice(5);
         config = clone(p.config ?? initial()); config.source = p.id; dismissed = false; break; }
       case 'preset-save': { if (!a.name) fail(); const id = `p${String(nextId++).padStart(4, '0')}`;
         presets.push({ id, name: a.name, source: 'user', match: 'full', config: clone(config) }); config.source = id; break; }
-      case 'preset-update': { const p = presets.find(x => x.id === config.source && x.source === 'user') ?? fail(); p.config = clone(config); break; }
+      case 'preset-update': { const p = presets.find(x => x.id === (a.id ?? config.source) && x.source === 'user') ?? fail();
+        autosaves.unshift({ name: `「${p.name}」被覆盖前的内容`, time: Date.now() / 1000, config: clone(p.config ?? initial()) }); autosaves.splice(5);
+        p.config = clone(config); config.source = p.id; break; }
       case 'preset-rename': { const p = presets.find(x => x.id === a.id && x.source === 'user') ?? fail(); p.name = a.name; break; }
       case 'preset-delete': { const i = presets.findIndex(x => x.id === a.id && x.source === 'user'); if (i < 0) fail(); presets.splice(i, 1); break; }
       case 'preset-dismiss': dismissed = true; break;

@@ -62,6 +62,8 @@ export type Re4Fit = 'full' | 'partial' | 'none';
 export interface Re4PresetEntry { id: string; name: string; source: 'user' | 'mod'; match: Re4Fit }
 export interface Re4Presets {
   current?: Re4Fit; source?: { id: string; name: string; own: boolean }; dismissed: boolean;
+  /** 有改动未保存:没有来源预设,或者当前配置和来源预设内容不同 */
+  dirty?: boolean;
   list: Re4PresetEntry[]; better: { id: string; name: string }[]; autosaves: { name: string; time: number }[];
 }
 // palette-exported:exact = 取自 mod 的 mdf2;否则 reason 写明为什么读不到、只用了运行时数据
@@ -214,7 +216,8 @@ export type Re4Action =
   | C & { kind: 'preset-rename'; id: string; name: string }
   | C & { kind: 'preset-save'; name: string }
   | C & { kind: 'preset-blank'; capture: boolean }
-  | C & { kind: 'preset-update' | 'preset-dismiss' }
+  | C & { kind: 'preset-update'; id?: string }
+  | C & { kind: 'preset-dismiss' }
   | C & { kind: 'autosave-restore'; index: number }
   | C & { kind: 'autosave-promote'; index: number; name: string }
   | C & { kind: 'restore'; which: 'backup' | 'onload' };

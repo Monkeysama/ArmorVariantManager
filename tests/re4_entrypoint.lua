@@ -507,18 +507,47 @@ local mine
 for _, p in ipairs(snap.presets.list) do if p.name == "Mine" then mine = p end end
 assert(mine and mine.match == "full" and snap.presets.source.id == mine.id and snap.presets.source.own)
 assert(files[CONFIG_PATH].source_preset == mine.id)
+assert(snap.presets.dirty == false, "a freshly saved preset has no unsaved changes")
+-- 有改动未保存:改一处 → dirty;改回来 → 和预设内容相同,不算改动
+snap = act({kind = "state-rename", character = "Leon", index = 1, name = "Healthy 2"})
+assert(snap.presets.dirty == true, "an edit after saving counts as unsaved")
+snap = act({kind = "state-rename", character = "Leon", index = 1, name = "Healthy"})
+assert(snap.presets.dirty == false, "editing back to the saved content is not a change")
 snap = act({kind = "preset-update", character = "Leon"})
+assert(#snap.presets.autosaves == 1, "saving to a preset auto-saves its old content first")
 snap = act({kind = "preset-rename", character = "Leon", id = mine.id, name = "Mine 2"})
 assert(snap.presets.source.name == "Mine 2")
+-- 覆盖至另一个预设:完全替换它的内容(不合并),它成为当前预设,旧内容进自动保存
+do
+    local old_p1 = S.copy(files["ArmorVariantManager/presets/p0001.json"].config)
+    assert(#old_p1.conditions.states == 0, "p0001 has no condition states before")
+    snap = act({kind = "preset-update", character = "Leon", id = "p0001"})
+    local p1 = files["ArmorVariantManager/presets/p0001.json"]
+    assert(p1.name == "Leon · Old" and #p1.config.conditions.states == 1 and p1.config.conditions.states[1].name == "Healthy",
+        "the preset now holds the current config")
+    assert(p1.config.source_preset == nil)
+    S.equal(p1.config.base, files[CONFIG_PATH].base, "the whole content is replaced, not merged")
+    assert(files[CONFIG_PATH].source_preset == "p0001" and snap.presets.source.id == "p0001", "the overwritten preset becomes current")
+    assert(#snap.presets.autosaves == 2 and snap.presets.autosaves[1].name:find("Leon · Old", 1, true))
+    S.equal(files["ArmorVariantManager/autosave/Leon.json"].entries[1].config, old_p1, "its old content is auto-saved")
+end
+-- 把 p0001 还原成旧内容(恢复它的自动保存再覆盖回去),再恢复带 Healthy 的当前配置,后面的套用照原样测
+snap = act({kind = "autosave-restore", character = "Leon", index = 1})
+snap = act({kind = "preset-update", character = "Leon", id = "p0001"})
+snap = act({kind = "autosave-restore", character = "Leon", index = 2})
+assert(#snap.states == 1 and snap.states[1].name == "Healthy")
+local n_auto = #snap.presets.autosaves
 snap = act({kind = "preset-apply", character = "Leon", id = "p0001"})
 assert(files[CONFIG_PATH].source_preset == "p0001" and #snap.states == 0, "applying replaces the whole config")
-assert(#snap.presets.autosaves == 1)
+assert(snap.presets.dirty == false, "a just-loaded preset has no unsaved changes")
+assert(#snap.presets.autosaves == math.min(n_auto + 1, 5))
 assert(files["ArmorVariantManager/autosave/Leon.json"].entries[1].config.conditions.states[1].name == "Healthy")
 snap = act({kind = "autosave-restore", character = "Leon", index = 1})
 assert(#snap.states == 1 and snap.states[1].name == "Healthy", "auto-save brings the config back")
-assert(#snap.presets.autosaves == 1, "restoring pushes the replaced config first")
+assert(#snap.presets.autosaves == math.min(n_auto + 1, 5), "restoring pushes the replaced config first")
+n_auto = #snap.presets.autosaves
 snap = act({kind = "autosave-promote", character = "Leon", index = 1, name = "From autosave"})
-assert(#snap.presets.autosaves == 0)
+assert(#snap.presets.autosaves == n_auto - 1)
 local promoted
 for _, p in ipairs(snap.presets.list) do if p.name == "From autosave" then promoted = p end end
 assert(promoted)
@@ -565,6 +594,7 @@ for _, bad in ipairs({
     {kind = "state-field", character = "Leon", index = 99, field = "hold", value = 1},
     {kind = "condition-add", character = "Leon", index = 1, condition = {type = "hp_ratio", op = "<=", value = "x"}},
     {kind = "preset-apply", character = "Leon", id = "nope"},
+    {kind = "preset-update", character = "Leon", id = "nope"},
     {kind = "unknown", character = "Leon"},
 }) do
     assert(not pcall(act, bad), "rejected: " .. tostring(bad.kind))

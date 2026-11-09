@@ -432,7 +432,7 @@ function Reff.new(deps)
         end
 
         local view = deps.preset_view(cur.kind_id, source)
-        local p = { current = view.current, dismissed = view.dismissed == true, list = {}, better = {}, autosaves = {} }
+        local p = { current = view.current, dismissed = view.dismissed == true, dirty = view.dirty == true, list = {}, better = {}, autosaves = {} }
         if view.source then p.source = { id = view.source.id, name = view.source.name, own = view.source.source == "user" } end
         for _, r in ipairs(view.presets) do
             p.list[#p.list + 1] = { id = r.entry.id, name = r.entry.name, source = r.entry.source, match = r.match }
@@ -733,7 +733,7 @@ function Reff.new(deps)
         -- 预设库
         ["preset-apply"] = function(p, _, cur) return deps.apply_preset(cur.kind_id, str(p.id)) and "saved" end,
         ["preset-save"] = function(p, _, cur) return deps.save_current_as_preset(cur.kind_id, str(p.name)) and "saved" end,
-        ["preset-update"] = function(_, _, cur) return deps.update_source_preset(cur.kind_id) and "saved" end,
+        ["preset-update"] = function(p, _, cur) return deps.update_source_preset(cur.kind_id, str(p.id)) and "saved" end,
         -- 新建空白配置;capture = 同时抓取当前外观作为整套造型
         ["preset-blank"] = function(p, _, cur) return deps.new_blank_config(cur.kind_id, cur.target.source, p.capture == true) and "saved" end,
         ["preset-rename"] = function(p) return deps.preset_lib.rename(str(p.id), str(p.name)) and "saved" end,

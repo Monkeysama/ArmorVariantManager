@@ -1094,6 +1094,22 @@ function Main.start(ctx)
         return out
     end
 
+    -- 当前配置和来源预设的内容是否相同。版本号和来源标记不算;空表和缺省视为相同(json 读回来空数组会变成缺省)
+    local function same_content(a, b, top)
+        if type(a) ~= "table" or type(b) ~= "table" then
+            if a == nil and type(b) == "table" then return next(b) == nil end
+            if b == nil and type(a) == "table" then return next(a) == nil end
+            return a == b
+        end
+        for k, v in pairs(a) do
+            if not (top and (k == "source_preset" or k == "version")) and not same_content(v, b[k]) then return false end
+        end
+        for k, v in pairs(b) do
+            if not (top and (k == "source_preset" or k == "version")) and a[k] == nil and not same_content(nil, v) then return false end
+        end
+        return true
+    end
+
     local function preset_view(kind_id, source)
         local key = cfg_key(kind_id)
         local cfg = loaded_configs[key]
@@ -1104,9 +1120,12 @@ function Main.start(ctx)
         if current and current ~= "full" then
             for _, r in ipairs(ranked) do if r.match == "full" then better[#better + 1] = r.entry end end
         end
+        local src = cfg and cfg.source_preset and preset_lib.get(cfg.source_preset) or nil
         return {
             current = current,
-            source = cfg and cfg.source_preset and preset_lib.get(cfg.source_preset) or nil,
+            source = src,
+            -- 有改动未保存:没有来源预设,或者内容和来源预设不同。加载别的预设前据此提醒
+            dirty = cfg ~= nil and (not src or not same_content(cfg, src.config, true)),
             presets = ranked, better = better,
             dismissed = preset_dismissed[key] == live_signature(live),
             autosaves = preset_lib.autosaves(key),
@@ -1161,10 +1180,18 @@ function Main.start(ctx)
         return id
     end
 
-    local function update_source_preset(kind_id)
-        local cfg = loaded_configs[cfg_key(kind_id)]
-        if not cfg or not cfg.source_preset then return false end
-        return preset_lib.update(cfg.source_preset, cfg)
+    -- 保存至预设:用当前配置**完全替换**预设内容(不合并)。id 省略时存到当前预设。
+    -- 只能存到自己保存的预设;被替换掉的旧内容先进自动保存,存错了还能找回。
+    local function update_source_preset(kind_id, id)
+        local key = cfg_key(kind_id)
+        local cfg = loaded_configs[key]
+        id = id or (cfg and cfg.source_preset)
+        local e = id and preset_lib.get(id)
+        if not cfg or not e or e.source ~= "user" or not ModelV3.is_v3(cfg) then return false end
+        preset_lib.autosave_push(key, string.format(T("autosave_before_overwrite"), e.name), e.config)
+        if not preset_lib.update(id, cfg) then return false end
+        if cfg.source_preset ~= id then cfg.source_preset = id; commit(kind_id, true, false) end
+        return true
     end
 
     local function restore_autosave(kind_id, k)
