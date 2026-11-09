@@ -49,6 +49,7 @@ _G.sdk = {
     get_native_singleton = function() return {} end,
     call_native_func = function() return mode ~= "noscene" and scene or nil end,
     is_managed_object = function(v) return type(v) == "table" end,
+    get_managed_singleton = function() return nil end,   -- 先测没有鉴赏管理器时的场景搜索退路
 }
 
 local Targets = require("ArmorVariantManager_Core.Games.RE4.Targets")
@@ -74,4 +75,20 @@ mode = "ok"; assert(has_figure(frames(60)), "recovers on the next good scan")
 mode = "empty"
 assert(#frames(60) == 0, "a successful empty scan clears immediately")
 
-print("PASS: RE4 targets keep figures across failed rescans (error / nil / no scene), clear after the failure limit and on a real empty scan")
+-- 有鉴赏管理器:直接取 ModelController,不走 findComponents(2026-11-08 实测它约一半调用拿回非数组)
+function fig_go:call(method)
+    if method == "get_Name" then return "FigureModel_Figure00_010" elseif method == "get_Transform" then return body_tf
+    elseif method == "get_Valid" then return true end
+end
+local controller = comp
+local figure_manager = obj({ call = function(_, m) if m == "get_ModelController" then return controller end end })
+local bonus = obj({ call = function(_, m) if m == "get_FigureManager" then return figure_manager end end })
+_G.sdk.get_managed_singleton = function(name) return name == "chainsaw.BonusContentsGuiManager" and bonus or nil end
+mode = "error"
+assert(has_figure(frames(60 * 10)), "with the bonus manager the figure never depends on findComponents")
+controller = nil
+assert(#frames(60) == 0, "manager without a model controller means no figure")
+controller = comp
+assert(has_figure(frames(60)), "figure back when the viewer instantiates it again")
+
+print("PASS: RE4 targets read the figure from the bonus manager; keep figures across failed rescans (error / nil / no scene), clear after the failure limit and on a real empty scan")

@@ -3256,6 +3256,15 @@ function Main.start(ctx)
             local go = source:call("get_GameObject")
             root = go and go:call("get_Valid") and go:call("get_Transform") or nil
         end
+        -- 网格表来源先找身体网格所在骨架的拥有者(SameJointsConstraint 为假的那一层)。
+        -- 不能直接走到最顶层:模型鉴赏的人偶挂在 FigureWindow_RootObject → …_RootOperationMove →
+        -- …_RootOperationRotate 下面,顶层是不动的窗口根,浏览界面里旋转 / 平移 / 缩放的是中间层,
+        -- 拿顶层当根预览就跟不住人偶(2026-11-08 实测:顶层旋转恒为单位、人偶本体 Figure00_010_Body
+        -- 已转了约 25°;它有 103 个关节,子物体 Body / Head / Jacket 都是 SameJointsConstraint)。
+        if not root then
+            local skeleton = Utils.get_skeleton_transform(source)
+            root = skeleton and skeleton:call("get_GameObject"):call("get_Valid") and skeleton or nil
+        end
         if not root then
             local body = Utils.get_mesh(source, "body") or meshes[1]
             local go = body:call("get_GameObject")

@@ -278,14 +278,31 @@ local function rescan_figures()
     end
     if not figure_system_type then return out end
 
-    local scene = current_scene()
-    if not scene then return nil end
-
-    local ok, comps = pcall(function()
-        local arr = scene:call("findComponents(System.Type)", figure_system_type)
-        return arr and arr:get_elements() or nil
-    end)
-    if not ok or not comps then return nil end
+    -- 先直接问鉴赏界面要人偶(SKS 的 figure_head 也是这么找的),拿不到管理器才退回场景搜索。
+    -- 2026-11-08 实测:鉴赏界面里 findComponents 大约一半的调用拿回的不是数组(没有 get_elements),
+    -- 这一轮就算扫描失败;连续失败超过 SCAN_FAIL_LIMIT 次就清空缓存,面板随即显示「未找到当前控制角色」,
+    -- 下一轮扫成功又回来 —— 这就是浏览人偶时反复丢失目标的原因。
+    local comps
+    local manager = sdk.get_managed_singleton("chainsaw.BonusContentsGuiManager")
+    if manager then
+        local ok_m, controller = pcall(function()
+            local figures = manager:call("get_FigureManager")
+            local c = figures and figures:call("get_ModelController")
+            local go = c and c:call("get_GameObject")
+            return go and go:call("get_Valid") and c or nil
+        end)
+        if not ok_m then return nil end
+        comps = { controller }
+    else
+        local scene = current_scene()
+        if not scene then return nil end
+        local ok, found = pcall(function()
+            local arr = scene:call("findComponents(System.Type)", figure_system_type)
+            return arr and arr:get_elements() or nil
+        end)
+        if not ok or not found then return nil end
+        comps = found
+    end
 
     local all = {}
     for _, comp in ipairs(comps) do
