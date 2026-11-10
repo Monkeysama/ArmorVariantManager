@@ -757,7 +757,7 @@
           "param": "Wind_Intensity",
           "kind": "float",
           "min": 0.0,
-          "max": 1.0,
+          "max": 2,
           "label": {
             "zh": "风强度",
             "en": "Wind_Intensity"
@@ -768,7 +768,7 @@
           "param": "Wind_Scale",
           "kind": "float",
           "min": 0.0,
-          "max": 2,
+          "max": 4,
           "label": {
             "zh": "风尺度",
             "en": "Wind_Scale"
@@ -850,7 +850,7 @@
           "param": "DissolveRange",
           "kind": "float",
           "min": 0.0,
-          "max": 1.0,
+          "max": 2,
           "label": {
             "zh": "溶解范围（DissolveRange）",
             "en": "DissolveRange"

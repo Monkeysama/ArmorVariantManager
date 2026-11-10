@@ -42,6 +42,55 @@ assert(main == nil and #addons == 0, "vanilla material has no profile")
 local gen = Palette.generic(vanilla)
 assert(#gen == 2 and gen[1] == "BaseColor" and gen[2] == "RimColor", "generic lists *Color float4 only, sorted")
 
+-- 按参数名回退:原版母材质加了溶解参数,签名对不上 → 借最接近的原版映射的含义,溶解交给附加映射,其余原样列出
+do
+    local base = by_id.auto_character_default
+    local mod = { Dissolve_Rate = F4, Dissolve_Flag = F4, Dissolve_Edge = F4, My_Unknown = F, My_TintColor = F4, My_Vec = F4 }
+    local nbase = 0
+    for _, g in ipairs(base.groups) do
+        for _, e in ipairs(g.params) do
+            if not mod[e.param] then nbase = nbase + 1 end
+            mod[e.param] = (e.kind == "float" and not e.component) and F or F4
+        end
+    end
+    local m, ad = Palette.match(profiles, mod)          -- 不给 master:模拟认不出母材质
+    assert(m == nil and #ad == 1 and ad[1].id == "re4_dissolve", "modified vanilla material: no main, dissolve addon only")
+    local fb = Palette.fallback(profiles, mod, ad)
+    assert(fb and fb.fallback and fb.id:match("^avm%.fallback%."), "fallback profile built")
+    assert(fb.id == Palette.fallback(profiles, mod, ad).id, "same parameter table gives the same id")
+    local owners, unmapped, dissolve_listed = {}, nil, false
+    for _, g in ipairs(fb.groups) do
+        if g.id == "unmapped" then unmapped = g end
+        for _, e in ipairs(g.params) do
+            if e.param == "Dissolve_Flag" or e.param == "Dissolve_Edge" or e.param == "Dissolve_Rate" then dissolve_listed = g.id .. ":" .. e.param end
+            if g.id ~= "unmapped" then owners[g.id:match("^(.-)/")] = true end
+            if e.enum then assert(fb.enums[e.enum], "borrowed enum is carried over: " .. e.enum) end
+        end
+    end
+    assert(owners.auto_character_default, "closest vanilla profile lends its meanings")
+    assert(not dissolve_listed, "addon parameters are not repeated: " .. tostring(dissolve_listed))
+    assert(unmapped and unmapped.tier == "other", "unknown parameters go to the other tier")
+    local kinds = {}
+    for _, e in ipairs(unmapped.params) do kinds[e.param] = e.kind end
+    assert(kinds.My_Unknown == "float" and kinds.My_TintColor == "color" and kinds.My_Vec == "vec", "raw params typed by name and type")
+    for _, g in ipairs(fb.groups) do
+        if g.section then
+            local ok = false
+            for _, s in ipairs(fb.sections) do if s.id == g.section then ok = true end end
+            assert(ok, "fallback group section is declared: " .. g.section)
+        end
+    end
+    -- 被映射 ignore 的参数不进「未识别」
+    local ign
+    for _, p in ipairs(profiles) do if p.ignore[1] then ign = p.ignore[1]; break end end
+    if ign then
+        local only = { [ign] = F4, Other = F }
+        local fb2 = Palette.fallback(profiles, only, {})
+        for _, e in ipairs(fb2.groups[#fb2.groups].params) do assert(e.param ~= ign, "ignored parameter stays hidden") end
+    end
+    assert(Palette.fallback(profiles, {}, {}) == nil, "nothing to list → nil")
+end
+
 -- 能不能用:类型要对得上
 local e_color = { param = "BaseColor", kind = "color" }
 local e_comp = { param = "LIL_ShadowParam", kind = "float", component = "x" }
@@ -189,7 +238,8 @@ do
 end
 -- 内置映射里的自动原版映射:每份都按母材质匹配
 local autos = 0
-for _, p in ipairs(Builtin) do
+assert(type(Builtin.params) == "table" and next(Builtin.params), "built-in profiles ship a shared parameter dictionary")
+for _, p in ipairs(Builtin.profiles) do
     if p.id:find("^auto_") then autos = autos + 1; assert(p.match.master and #p.match.master > 0 and p.priority < 100, p.id) end
 end
 assert(autos >= 10, "auto vanilla profiles shipped: " .. autos)

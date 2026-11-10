@@ -1,15 +1,16 @@
 {
   "format": 1,
   "id": "auto_character_detail_leather",
-  "source": "自动生成：tools/re4/gen_auto_profiles.py ← 离线材质库 library.json（_chainsaw/mastermaterial/master/character_detail_leather.mmtr）",
+  "source": "自动生成：tools/re4/gen_auto_profiles.py ← 离线材质库 library.json（_chainsaw/mastermaterial/master/character_detail_leather.mmtr, _chainsaw/mastermaterial/master/character_detail_leather_8weight.mmtr）",
   "label": {
-    "zh": "原版：character_detail_leather",
-    "en": "Vanilla: character_detail_leather"
+    "zh": "原版：character_detail_leather / character_detail_leather_8weight",
+    "en": "Vanilla: character_detail_leather / character_detail_leather_8weight"
   },
   "priority": 10,
   "match": {
     "master": [
-      "_chainsaw/mastermaterial/master/character_detail_leather.mmtr"
+      "_chainsaw/mastermaterial/master/character_detail_leather.mmtr",
+      "_chainsaw/mastermaterial/master/character_detail_leather_8weight.mmtr"
     ]
   },
   "sections": [
@@ -118,7 +119,7 @@
           },
           "tier": "more",
           "min": 0.0,
-          "max": 78
+          "max": 240
         },
         {
           "param": "DetailMap_Tiling_Offset",
@@ -130,7 +131,7 @@
           },
           "tier": "more",
           "min": 0.0,
-          "max": 78
+          "max": 240
         },
         {
           "param": "DetailMap_Tiling_Offset",
@@ -142,7 +143,7 @@
           },
           "tier": "more",
           "min": 0.0,
-          "max": 78
+          "max": 240
         },
         {
           "param": "DetailMap_Tiling_Offset",
@@ -154,7 +155,7 @@
           },
           "tier": "more",
           "min": 0.0,
-          "max": 78
+          "max": 240
         },
         {
           "param": "MaskMap_UseSecondaryUV",
@@ -169,7 +170,7 @@
           "param": "DetailMap_Level",
           "kind": "float",
           "min": 0.0,
-          "max": 2,
+          "max": 6,
           "label": {
             "zh": "细节贴图层号（数组索引）",
             "en": "DetailMap_Level"
@@ -1060,7 +1061,7 @@
           },
           "tier": "more",
           "min": 0.0,
-          "max": 2
+          "max": 8
         },
         {
           "param": "WrinkleMap_Tiling_Offset",
@@ -1072,7 +1073,7 @@
           },
           "tier": "more",
           "min": 0.0,
-          "max": 2
+          "max": 8
         },
         {
           "param": "WrinkleMap_Tiling_Offset",
@@ -1084,7 +1085,7 @@
           },
           "tier": "more",
           "min": 0.0,
-          "max": 2
+          "max": 8
         },
         {
           "param": "WrinkleMap_Tiling_Offset",
@@ -1096,7 +1097,7 @@
           },
           "tier": "more",
           "min": 0.0,
-          "max": 2
+          "max": 8
         },
         {
           "param": "WrinkleMaskMap_Tiling_Offset",
@@ -1108,7 +1109,7 @@
           },
           "tier": "more",
           "min": 0.0,
-          "max": 2
+          "max": 7
         },
         {
           "param": "WrinkleMaskMap_Tiling_Offset",
@@ -1120,7 +1121,7 @@
           },
           "tier": "more",
           "min": 0.0,
-          "max": 2
+          "max": 7
         },
         {
           "param": "WrinkleMaskMap_Tiling_Offset",
@@ -1132,7 +1133,7 @@
           },
           "tier": "more",
           "min": 0.0,
-          "max": 2
+          "max": 7
         },
         {
           "param": "WrinkleMaskMap_Tiling_Offset",
@@ -1144,7 +1145,7 @@
           },
           "tier": "more",
           "min": 0.0,
-          "max": 2
+          "max": 7
         },
         {
           "param": "WrinkleIntensity",
@@ -1163,7 +1164,7 @@
           "param": "WrinkleMaskControl",
           "kind": "float",
           "min": 0.0,
-          "max": 1.0,
+          "max": 2,
           "label": {
             "zh": "皱纹遮罩控制",
             "en": "WrinkleMaskControl"
@@ -1185,7 +1186,7 @@
           "param": "WrinkleDetailMask",
           "kind": "float",
           "min": 0.0,
-          "max": 1.0,
+          "max": 2,
           "label": {
             "zh": "皱纹细节遮罩",
             "en": "WrinkleDetailMask"
@@ -1520,7 +1521,7 @@
           "param": "Wind_Intensity",
           "kind": "float",
           "min": 0.0,
-          "max": 1.0,
+          "max": 2,
           "label": {
             "zh": "风强度",
             "en": "Wind_Intensity"
@@ -1531,7 +1532,7 @@
           "param": "Wind_Scale",
           "kind": "float",
           "min": 0.0,
-          "max": 2,
+          "max": 4,
           "label": {
             "zh": "风尺度",
             "en": "Wind_Scale"

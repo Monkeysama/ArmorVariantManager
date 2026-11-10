@@ -1,0 +1,140 @@
+{
+  "format": 1,
+  "id": "auto_env_speedtree_billboard",
+  "source": "自动生成：tools/re4/gen_auto_profiles.py ← 离线材质库 library.json（_chainsaw/mastermaterial/master/env_speedtree_billboard.mmtr）",
+  "label": {
+    "zh": "原版：env_speedtree_billboard",
+    "en": "Vanilla: env_speedtree_billboard"
+  },
+  "priority": 10,
+  "match": {
+    "master": [
+      "_chainsaw/mastermaterial/master/env_speedtree_billboard.mmtr"
+    ]
+  },
+  "sections": [
+    {
+      "id": "color",
+      "label": {
+        "zh": "颜色层",
+        "en": "Colour layers"
+      }
+    },
+    {
+      "id": "light",
+      "label": {
+        "zh": "明暗",
+        "en": "Light and shade"
+      }
+    },
+    {
+      "id": "surface",
+      "label": {
+        "zh": "质感",
+        "en": "Surface"
+      }
+    },
+    {
+      "id": "emission",
+      "label": {
+        "zh": "发光",
+        "en": "Emission"
+      }
+    },
+    {
+      "id": "system",
+      "label": {
+        "zh": "系统",
+        "en": "System"
+      }
+    }
+  ],
+  "groups": [
+    {
+      "id": "rain",
+      "section": "surface",
+      "tier": "more",
+      "label": {
+        "zh": "雨水 / 湿润",
+        "en": "Rain / wetness"
+      },
+      "params": [
+        {
+          "param": "Wetness",
+          "kind": "float",
+          "min": 0.0,
+          "max": 2,
+          "label": {
+            "zh": "湿润",
+            "en": "Wetness"
+          },
+          "tier": "more"
+        }
+      ]
+    },
+    {
+      "id": "misc_other",
+      "section": "system",
+      "tier": "other",
+      "label": {
+        "zh": "其他",
+        "en": "Misc"
+      },
+      "params": [
+        {
+          "param": "Roughness_Multiply",
+          "kind": "float",
+          "min": 0.0,
+          "max": 2,
+          "label": {
+            "zh": "粗糙度乘（Roughness_Multiply）",
+            "en": "Roughness_Multiply"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "AlphaTest_Divide_Intensity",
+          "kind": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "label": {
+            "zh": "AlphaTestDivide 强度（AlphaTest_Divide_Intensity）",
+            "en": "AlphaTest_Divide_Intensity"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "TLS_Intensity",
+          "kind": "float",
+          "min": 0.0,
+          "max": 3,
+          "label": {
+            "zh": "TLS 强度（TLS_Intensity）",
+            "en": "TLS_Intensity"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "EnableSpecFix",
+          "kind": "bool",
+          "label": {
+            "zh": "开关高光 Fix（EnableSpecFix）",
+            "en": "EnableSpecFix"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "ReflectionVectorPower",
+          "kind": "float",
+          "min": 0.0,
+          "max": 2,
+          "label": {
+            "zh": "ReflectionVector 幂（ReflectionVectorPower）",
+            "en": "ReflectionVectorPower"
+          },
+          "tier": "other"
+        }
+      ]
+    }
+  ]
+}

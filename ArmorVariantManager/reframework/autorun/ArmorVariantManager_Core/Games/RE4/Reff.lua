@@ -198,6 +198,8 @@ function Reff.new(deps)
             if not ok_m then textures, master = nil, nil end
         end
         local main, addons = Palette.match(profiles, has, master and master.id or nil)
+        -- 母材质没认出来(改过的原版材质、别的作者的母材质):按参数名借用已有映射的含义
+        if not main then main = Palette.fallback(profiles, has, addons) end
         local missing, seen = {}, {}
         local all = {}
         if main then all[1] = main end

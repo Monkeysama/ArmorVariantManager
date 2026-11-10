@@ -1,0 +1,404 @@
+{
+  "format": 1,
+  "id": "auto_env_default",
+  "source": "自动生成：tools/re4/gen_auto_profiles.py ← 离线材质库 library.json（_chainsaw/mastermaterial/master/env_default.mmtr, _chainsaw/mastermaterial/master/env_default_alphatest.mmtr）",
+  "label": {
+    "zh": "原版：env_default / env_default_alphatest",
+    "en": "Vanilla: env_default / env_default_alphatest"
+  },
+  "priority": 10,
+  "match": {
+    "master": [
+      "_chainsaw/mastermaterial/master/env_default.mmtr",
+      "_chainsaw/mastermaterial/master/env_default_alphatest.mmtr"
+    ]
+  },
+  "sections": [
+    {
+      "id": "color",
+      "label": {
+        "zh": "颜色层",
+        "en": "Colour layers"
+      }
+    },
+    {
+      "id": "light",
+      "label": {
+        "zh": "明暗",
+        "en": "Light and shade"
+      }
+    },
+    {
+      "id": "surface",
+      "label": {
+        "zh": "质感",
+        "en": "Surface"
+      }
+    },
+    {
+      "id": "emission",
+      "label": {
+        "zh": "发光",
+        "en": "Emission"
+      }
+    },
+    {
+      "id": "system",
+      "label": {
+        "zh": "系统",
+        "en": "System"
+      }
+    }
+  ],
+  "groups": [
+    {
+      "id": "base",
+      "section": "color",
+      "tier": "basic",
+      "label": {
+        "zh": "基础色",
+        "en": "Base colour"
+      },
+      "params": [
+        {
+          "param": "BaseColor",
+          "kind": "color",
+          "channels": "rgb",
+          "label": {
+            "zh": "基础色（主色）",
+            "en": "base colour"
+          },
+          "tier": "basic",
+          "note": {
+            "zh": "乘在 BaseDielectricMap 上；lilToon 母材质里同样是主色（lilToon 在原版反照率之上运算）",
+            "en": "乘在 BaseDielectricMap 上；lilToon 母材质里同样是主色（lilToon 在原版反照率之上运算）"
+          }
+        },
+        {
+          "param": "BasicMap_UseSecondaryUV",
+          "kind": "bool",
+          "label": {
+            "zh": "基础贴图使用第二 UV",
+            "en": "BasicMap_UseSecondaryUV"
+          },
+          "tier": "basic"
+        }
+      ]
+    },
+    {
+      "id": "surface",
+      "section": "surface",
+      "tier": "more",
+      "label": {
+        "zh": "表面（粗糙度 / 金属 / 透光）",
+        "en": "Surface (roughness / metal / translucency)"
+      },
+      "params": [
+        {
+          "param": "OcclusionMap_UseSecondaryUV",
+          "kind": "bool",
+          "label": {
+            "zh": "AO 使用第二 UV",
+            "en": "occlusion uses UV2"
+          },
+          "tier": "basic"
+        },
+        {
+          "param": "Roughness",
+          "kind": "float",
+          "min": 0,
+          "max": 1,
+          "label": {
+            "zh": "粗糙度",
+            "en": "roughness"
+          },
+          "tier": "more"
+        },
+        {
+          "param": "Translucency",
+          "kind": "float",
+          "min": 0,
+          "max": 1,
+          "label": {
+            "zh": "透光度",
+            "en": "translucency"
+          },
+          "tier": "more"
+        }
+      ]
+    },
+    {
+      "id": "alpha",
+      "section": "surface",
+      "tier": "more",
+      "label": {
+        "zh": "透明 / Alpha 测试",
+        "en": "Alpha / alpha test"
+      },
+      "params": [
+        {
+          "param": "AlphaTestRef",
+          "kind": "float",
+          "min": 0,
+          "max": 1,
+          "label": {
+            "zh": "Alpha 测试阈值",
+            "en": "alpha test ref"
+          },
+          "tier": "more"
+        }
+      ]
+    },
+    {
+      "id": "surface_other",
+      "section": "surface",
+      "tier": "other",
+      "label": {
+        "zh": "表面（粗糙度 / 金属 / 透光）",
+        "en": "Surface (roughness / metal / translucency)"
+      },
+      "params": [
+        {
+          "param": "SSS_Channel",
+          "kind": "float",
+          "min": 0.0,
+          "max": 6,
+          "label": {
+            "zh": "SSS_Channel",
+            "en": "SSS_Channel"
+          },
+          "tier": "other"
+        }
+      ]
+    },
+    {
+      "id": "rain_other",
+      "section": "surface",
+      "tier": "other",
+      "label": {
+        "zh": "雨水 / 湿润",
+        "en": "Rain / wetness"
+      },
+      "params": [
+        {
+          "param": "Debug_Rain",
+          "kind": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "label": {
+            "zh": "Debug 雨（Debug_Rain）",
+            "en": "Debug_Rain"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "Use_OCCGreenChannel_For_RainMask",
+          "kind": "bool",
+          "label": {
+            "zh": "使用 OCCGreen 通道 For 雨遮罩（Use_OCCGreenChannel_For_RainMask）",
+            "en": "Use_OCCGreenChannel_For_RainMask"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "LocalUseRain",
+          "kind": "float",
+          "min": 0.0,
+          "max": 2,
+          "label": {
+            "zh": "局部使用雨（LocalUseRain）",
+            "en": "LocalUseRain"
+          },
+          "tier": "other"
+        }
+      ]
+    },
+    {
+      "id": "rain",
+      "section": "surface",
+      "tier": "more",
+      "label": {
+        "zh": "雨水 / 湿润",
+        "en": "Rain / wetness"
+      },
+      "params": [
+        {
+          "param": "Rain_Tiling",
+          "kind": "float",
+          "min": 0.0,
+          "max": 4,
+          "label": {
+            "zh": "雨水缩放",
+            "en": "Rain_Tiling"
+          },
+          "tier": "more"
+        },
+        {
+          "param": "Wetness",
+          "kind": "float",
+          "min": 0.0,
+          "max": 2,
+          "label": {
+            "zh": "湿润",
+            "en": "Wetness"
+          },
+          "tier": "more"
+        },
+        {
+          "param": "RainStreak_Intensity",
+          "kind": "float",
+          "min": 0.0,
+          "max": 2,
+          "label": {
+            "zh": "雨痕强度",
+            "en": "RainStreak_Intensity"
+          },
+          "tier": "more"
+        },
+        {
+          "param": "RainDrops_Intensity",
+          "kind": "float",
+          "min": 0.0,
+          "max": 2,
+          "label": {
+            "zh": "雨滴强度",
+            "en": "RainDrops_Intensity"
+          },
+          "tier": "more"
+        },
+        {
+          "param": "RainStreak_Speed",
+          "kind": "float",
+          "min": -2,
+          "max": 2,
+          "label": {
+            "zh": "雨痕速度",
+            "en": "RainStreak_Speed"
+          },
+          "tier": "more"
+        },
+        {
+          "param": "RainDrops_Speed",
+          "kind": "float",
+          "min": 0.0,
+          "max": 2,
+          "label": {
+            "zh": "雨滴速度",
+            "en": "RainDrops_Speed"
+          },
+          "tier": "more"
+        }
+      ]
+    },
+    {
+      "id": "misc_other",
+      "section": "system",
+      "tier": "other",
+      "label": {
+        "zh": "其他",
+        "en": "Misc"
+      },
+      "params": [
+        {
+          "param": "BasicMap_Tiling_Offset",
+          "component": "x",
+          "kind": "float",
+          "label": {
+            "zh": "基础贴图缩放偏移（BasicMap_Tiling_Offset） · U 缩放",
+            "en": "BasicMap_Tiling_Offset · tiling U"
+          },
+          "tier": "other",
+          "min": 0.0,
+          "max": 2
+        },
+        {
+          "param": "BasicMap_Tiling_Offset",
+          "component": "y",
+          "kind": "float",
+          "label": {
+            "zh": "基础贴图缩放偏移（BasicMap_Tiling_Offset） · V 缩放",
+            "en": "BasicMap_Tiling_Offset · tiling V"
+          },
+          "tier": "other",
+          "min": 0.0,
+          "max": 2
+        },
+        {
+          "param": "BasicMap_Tiling_Offset",
+          "component": "z",
+          "kind": "float",
+          "label": {
+            "zh": "基础贴图缩放偏移（BasicMap_Tiling_Offset） · U 偏移",
+            "en": "BasicMap_Tiling_Offset · offset U"
+          },
+          "tier": "other",
+          "min": 0.0,
+          "max": 2
+        },
+        {
+          "param": "BasicMap_Tiling_Offset",
+          "component": "w",
+          "kind": "float",
+          "label": {
+            "zh": "基础贴图缩放偏移（BasicMap_Tiling_Offset） · V 偏移",
+            "en": "BasicMap_Tiling_Offset · offset V"
+          },
+          "tier": "other",
+          "min": 0.0,
+          "max": 2
+        },
+        {
+          "param": "BasicMap_Tiling",
+          "kind": "float",
+          "min": 0.0,
+          "max": 2,
+          "label": {
+            "zh": "基础贴图缩放（BasicMap_Tiling）",
+            "en": "BasicMap_Tiling"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "Use_AdvancedUVSetting",
+          "kind": "bool",
+          "label": {
+            "zh": "使用高级 UV 设置（Use_AdvancedUVSetting）",
+            "en": "Use_AdvancedUVSetting"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "Use_ATOSMap",
+          "kind": "bool",
+          "label": {
+            "zh": "使用 ATOS 贴图（Use_ATOSMap）",
+            "en": "Use_ATOSMap"
+          },
+          "tier": "other"
+        }
+      ]
+    },
+    {
+      "id": "native_dissolve_other",
+      "section": "system",
+      "tier": "other",
+      "label": {
+        "zh": "原版溶解",
+        "en": "Native dissolve"
+      },
+      "params": [
+        {
+          "param": "DissolveRate",
+          "kind": "float",
+          "min": 0.0,
+          "max": 2,
+          "label": {
+            "zh": "溶解进度（DissolveRate）",
+            "en": "DissolveRate"
+          },
+          "tier": "other"
+        }
+      ]
+    }
+  ]
+}

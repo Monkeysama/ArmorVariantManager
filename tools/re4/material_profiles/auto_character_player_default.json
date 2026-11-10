@@ -623,7 +623,7 @@
           "param": "SSS_Channel",
           "kind": "float",
           "min": 0.0,
-          "max": 1.0,
+          "max": 6,
           "label": {
             "zh": "SSS_Channel",
             "en": "SSS_Channel"
@@ -704,7 +704,7 @@
           "param": "Rec_Rain_UseSecondaryUV",
           "kind": "float",
           "min": 0.0,
-          "max": 1.0,
+          "max": 2,
           "label": {
             "zh": "雨水使用第二 UV",
             "en": "Rec_Rain_UseSecondaryUV"
@@ -726,7 +726,7 @@
           "param": "DissolveRate",
           "kind": "float",
           "min": 0.0,
-          "max": 1.0,
+          "max": 2,
           "label": {
             "zh": "溶解进度（DissolveRate）",
             "en": "DissolveRate"

@@ -1,0 +1,325 @@
+{
+  "format": 1,
+  "id": "auto_env_speedtree_default",
+  "source": "自动生成：tools/re4/gen_auto_profiles.py ← 离线材质库 library.json（_chainsaw/mastermaterial/master/env_speedtree_default.mmtr, _chainsaw/mastermaterial/master/env_speedtree_default_lite.mmtr）",
+  "label": {
+    "zh": "原版：env_speedtree_default / env_speedtree_default_lite",
+    "en": "Vanilla: env_speedtree_default / env_speedtree_default_lite"
+  },
+  "priority": 10,
+  "match": {
+    "master": [
+      "_chainsaw/mastermaterial/master/env_speedtree_default.mmtr",
+      "_chainsaw/mastermaterial/master/env_speedtree_default_lite.mmtr"
+    ]
+  },
+  "sections": [
+    {
+      "id": "color",
+      "label": {
+        "zh": "颜色层",
+        "en": "Colour layers"
+      }
+    },
+    {
+      "id": "light",
+      "label": {
+        "zh": "明暗",
+        "en": "Light and shade"
+      }
+    },
+    {
+      "id": "surface",
+      "label": {
+        "zh": "质感",
+        "en": "Surface"
+      }
+    },
+    {
+      "id": "emission",
+      "label": {
+        "zh": "发光",
+        "en": "Emission"
+      }
+    },
+    {
+      "id": "system",
+      "label": {
+        "zh": "系统",
+        "en": "System"
+      }
+    }
+  ],
+  "groups": [
+    {
+      "id": "rain",
+      "section": "surface",
+      "tier": "more",
+      "label": {
+        "zh": "雨水 / 湿润",
+        "en": "Rain / wetness"
+      },
+      "params": [
+        {
+          "param": "Wetness",
+          "kind": "float",
+          "min": 0.0,
+          "max": 2,
+          "label": {
+            "zh": "湿润",
+            "en": "Wetness"
+          },
+          "tier": "more"
+        }
+      ]
+    },
+    {
+      "id": "misc_other",
+      "section": "system",
+      "tier": "other",
+      "label": {
+        "zh": "其他",
+        "en": "Misc"
+      },
+      "params": [
+        {
+          "param": "Basecolor_Multiply",
+          "kind": "vec",
+          "label": {
+            "zh": "Basecolor 乘（Basecolor_Multiply）",
+            "en": "Basecolor_Multiply"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "Roughness_Multiply",
+          "kind": "float",
+          "min": 0.0,
+          "max": 2,
+          "label": {
+            "zh": "粗糙度乘（Roughness_Multiply）",
+            "en": "Roughness_Multiply"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "Tiling",
+          "kind": "float",
+          "min": 0.0,
+          "max": 2,
+          "label": {
+            "zh": "缩放（Tiling）",
+            "en": "Tiling"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "UseVertexColorForMask",
+          "kind": "bool",
+          "label": {
+            "zh": "使用顶点颜色 For 遮罩（UseVertexColorForMask）",
+            "en": "UseVertexColorForMask"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "WearMap_Tiling",
+          "kind": "float",
+          "min": 0.0,
+          "max": 2,
+          "label": {
+            "zh": "Wear 贴图缩放（WearMap_Tiling）",
+            "en": "WearMap_Tiling"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "WearMask_Balance",
+          "kind": "float",
+          "min": 0.0,
+          "max": 2,
+          "label": {
+            "zh": "Wear 遮罩平衡（WearMask_Balance）",
+            "en": "WearMask_Balance"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "Gradation_Range",
+          "kind": "float",
+          "min": 0.0,
+          "max": 2,
+          "label": {
+            "zh": "渐变范围（Gradation_Range）",
+            "en": "Gradation_Range"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "Gradation_Contrast",
+          "kind": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "label": {
+            "zh": "渐变对比度（Gradation_Contrast）",
+            "en": "Gradation_Contrast"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "NormalBlend_Balance",
+          "kind": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "label": {
+            "zh": "法线混合平衡（NormalBlend_Balance）",
+            "en": "NormalBlend_Balance"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "Use_FuzzyShading",
+          "kind": "bool",
+          "label": {
+            "zh": "使用 FuzzyShading（Use_FuzzyShading）",
+            "en": "Use_FuzzyShading"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "CoreDarkness",
+          "kind": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "label": {
+            "zh": "CoreDarkness",
+            "en": "CoreDarkness"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "Edge_Brightness",
+          "kind": "float",
+          "min": 0.0,
+          "max": 2,
+          "label": {
+            "zh": "Edge 亮度（Edge_Brightness）",
+            "en": "Edge_Brightness"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "Edge_Power",
+          "kind": "float",
+          "min": 0.0,
+          "max": 2,
+          "label": {
+            "zh": "Edge 幂（Edge_Power）",
+            "en": "Edge_Power"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "Enable_GeoAO",
+          "kind": "bool",
+          "label": {
+            "zh": "开关 GeoAO（Enable_GeoAO）",
+            "en": "Enable_GeoAO"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "Enable_BakedAO",
+          "kind": "bool",
+          "label": {
+            "zh": "开关 BakedAO（Enable_BakedAO）",
+            "en": "Enable_BakedAO"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "AO_Intensity",
+          "kind": "float",
+          "min": 0.0,
+          "max": 7,
+          "label": {
+            "zh": "AO 强度（AO_Intensity）",
+            "en": "AO_Intensity"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "Enable_CustomAO",
+          "kind": "bool",
+          "label": {
+            "zh": "开关 CustomAO（Enable_CustomAO）",
+            "en": "Enable_CustomAO"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "VertexColorAO_Intensity",
+          "kind": "float",
+          "min": 0.0,
+          "max": 2,
+          "label": {
+            "zh": "顶点颜色 AO 强度（VertexColorAO_Intensity）",
+            "en": "VertexColorAO_Intensity"
+          },
+          "tier": "other"
+        }
+      ]
+    },
+    {
+      "id": "layers_other",
+      "section": "system",
+      "tier": "other",
+      "label": {
+        "zh": "多层混合",
+        "en": "Layer blend"
+      },
+      "params": [
+        {
+          "param": "Basecolor_Multiply_2ndLayer",
+          "kind": "vec",
+          "label": {
+            "zh": "Basecolor 乘 2nd 层（Basecolor_Multiply_2ndLayer）",
+            "en": "Basecolor_Multiply_2ndLayer"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "Use_2Layer",
+          "kind": "bool",
+          "label": {
+            "zh": "使用 2 层（Use_2Layer）",
+            "en": "Use_2Layer"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "Tiling_2ndLayer",
+          "kind": "float",
+          "min": 0.0,
+          "max": 2,
+          "label": {
+            "zh": "缩放 2nd 层（Tiling_2ndLayer）",
+            "en": "Tiling_2ndLayer"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "Roughness_Multiply_2ndLayer",
+          "kind": "float",
+          "min": 0.0,
+          "max": 2,
+          "label": {
+            "zh": "粗糙度乘 2nd 层（Roughness_Multiply_2ndLayer）",
+            "en": "Roughness_Multiply_2ndLayer"
+          },
+          "tier": "other"
+        }
+      ]
+    }
+  ]
+}

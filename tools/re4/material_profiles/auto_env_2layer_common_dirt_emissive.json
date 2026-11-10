@@ -1,0 +1,1225 @@
+{
+  "format": 1,
+  "id": "auto_env_2layer_common_dirt_emissive",
+  "source": "自动生成：tools/re4/gen_auto_profiles.py ← 离线材质库 library.json（_chainsaw/mastermaterial/master/env_2layer_common_dirt_emissive.mmtr）",
+  "label": {
+    "zh": "原版：env_2layer_common_dirt_emissive",
+    "en": "Vanilla: env_2layer_common_dirt_emissive"
+  },
+  "priority": 10,
+  "match": {
+    "master": [
+      "_chainsaw/mastermaterial/master/env_2layer_common_dirt_emissive.mmtr"
+    ]
+  },
+  "sections": [
+    {
+      "id": "color",
+      "label": {
+        "zh": "颜色层",
+        "en": "Colour layers"
+      }
+    },
+    {
+      "id": "light",
+      "label": {
+        "zh": "明暗",
+        "en": "Light and shade"
+      }
+    },
+    {
+      "id": "surface",
+      "label": {
+        "zh": "质感",
+        "en": "Surface"
+      }
+    },
+    {
+      "id": "emission",
+      "label": {
+        "zh": "发光",
+        "en": "Emission"
+      }
+    },
+    {
+      "id": "system",
+      "label": {
+        "zh": "系统",
+        "en": "System"
+      }
+    }
+  ],
+  "groups": [
+    {
+      "id": "base",
+      "section": "color",
+      "tier": "basic",
+      "label": {
+        "zh": "基础色",
+        "en": "Base colour"
+      },
+      "params": [
+        {
+          "param": "BaseColor",
+          "kind": "color",
+          "channels": "rgb",
+          "label": {
+            "zh": "基础色（主色）",
+            "en": "base colour"
+          },
+          "tier": "basic",
+          "note": {
+            "zh": "乘在 BaseDielectricMap 上；lilToon 母材质里同样是主色（lilToon 在原版反照率之上运算）",
+            "en": "乘在 BaseDielectricMap 上；lilToon 母材质里同样是主色（lilToon 在原版反照率之上运算）"
+          }
+        }
+      ]
+    },
+    {
+      "id": "occlusion_other",
+      "section": "light",
+      "tier": "other",
+      "label": {
+        "zh": "遮蔽",
+        "en": "Occlusion"
+      },
+      "params": [
+        {
+          "param": "Occlusion_Use_SecondaryUV",
+          "kind": "float",
+          "min": 0.0,
+          "max": 2,
+          "label": {
+            "zh": "遮蔽使用第二 UV（Occlusion_Use_SecondaryUV）",
+            "en": "Occlusion_Use_SecondaryUV"
+          },
+          "tier": "other"
+        }
+      ]
+    },
+    {
+      "id": "surface",
+      "section": "surface",
+      "tier": "more",
+      "label": {
+        "zh": "表面（粗糙度 / 金属 / 透光）",
+        "en": "Surface (roughness / metal / translucency)"
+      },
+      "params": [
+        {
+          "param": "Roughness",
+          "kind": "float",
+          "min": 0,
+          "max": 1,
+          "label": {
+            "zh": "粗糙度",
+            "en": "roughness"
+          },
+          "tier": "more"
+        }
+      ]
+    },
+    {
+      "id": "rain",
+      "section": "surface",
+      "tier": "more",
+      "label": {
+        "zh": "雨水 / 湿润",
+        "en": "Rain / wetness"
+      },
+      "params": [
+        {
+          "param": "Wetness",
+          "kind": "float",
+          "min": 0.0,
+          "max": 2,
+          "label": {
+            "zh": "湿润",
+            "en": "Wetness"
+          },
+          "tier": "more"
+        },
+        {
+          "param": "RainStreak_Intensity",
+          "kind": "float",
+          "min": 0.0,
+          "max": 2,
+          "label": {
+            "zh": "雨痕强度",
+            "en": "RainStreak_Intensity"
+          },
+          "tier": "more"
+        },
+        {
+          "param": "RainDrops_Intensity",
+          "kind": "float",
+          "min": 0.0,
+          "max": 2,
+          "label": {
+            "zh": "雨滴强度",
+            "en": "RainDrops_Intensity"
+          },
+          "tier": "more"
+        },
+        {
+          "param": "Rain_Tiling",
+          "kind": "float",
+          "min": 0.0,
+          "max": 4,
+          "label": {
+            "zh": "雨水缩放",
+            "en": "Rain_Tiling"
+          },
+          "tier": "more"
+        },
+        {
+          "param": "RainStreak_Speed",
+          "kind": "float",
+          "min": -2,
+          "max": 2,
+          "label": {
+            "zh": "雨痕速度",
+            "en": "RainStreak_Speed"
+          },
+          "tier": "more"
+        },
+        {
+          "param": "RainDrops_Speed",
+          "kind": "float",
+          "min": 0.0,
+          "max": 2,
+          "label": {
+            "zh": "雨滴速度",
+            "en": "RainDrops_Speed"
+          },
+          "tier": "more"
+        }
+      ]
+    },
+    {
+      "id": "rain_other",
+      "section": "surface",
+      "tier": "other",
+      "label": {
+        "zh": "雨水 / 湿润",
+        "en": "Rain / wetness"
+      },
+      "params": [
+        {
+          "param": "LocalUseRain",
+          "kind": "float",
+          "min": 0.0,
+          "max": 2,
+          "label": {
+            "zh": "局部使用雨（LocalUseRain）",
+            "en": "LocalUseRain"
+          },
+          "tier": "other"
+        }
+      ]
+    },
+    {
+      "id": "native_emission",
+      "section": "emission",
+      "tier": "basic",
+      "label": {
+        "zh": "原版自发光",
+        "en": "Native emission"
+      },
+      "params": [
+        {
+          "param": "EmissiveColor",
+          "kind": "color",
+          "channels": "rgb",
+          "label": {
+            "zh": "原版自发光颜色",
+            "en": "emissive colour"
+          },
+          "tier": "basic"
+        },
+        {
+          "param": "EmissiveIntensity",
+          "kind": "bool",
+          "label": {
+            "zh": "原版自发光强度（0 = 关）",
+            "en": "EmissiveIntensity"
+          },
+          "tier": "basic"
+        },
+        {
+          "param": "EmissiveRate",
+          "kind": "float",
+          "min": 0.0,
+          "max": 2,
+          "label": {
+            "zh": "原版自发光比例",
+            "en": "EmissiveRate"
+          },
+          "tier": "more"
+        },
+        {
+          "param": "EmissiveRateGamma",
+          "kind": "float",
+          "min": 0.0,
+          "max": 8,
+          "label": {
+            "zh": "原版自发光伽马",
+            "en": "EmissiveRateGamma"
+          },
+          "tier": "more"
+        }
+      ]
+    },
+    {
+      "id": "bulb",
+      "section": "emission",
+      "tier": "more",
+      "label": {
+        "zh": "灯泡",
+        "en": "Bulb"
+      },
+      "params": [
+        {
+          "param": "Bulb_Color",
+          "kind": "color",
+          "channels": "rgb",
+          "label": {
+            "zh": "灯泡颜色",
+            "en": "Bulb_Color"
+          },
+          "tier": "basic"
+        },
+        {
+          "param": "use_Bulb",
+          "kind": "bool",
+          "label": {
+            "zh": "灯泡开关",
+            "en": "use_Bulb"
+          },
+          "tier": "basic"
+        },
+        {
+          "param": "Bulb_Intensity",
+          "kind": "float",
+          "min": 0.0,
+          "max": 100,
+          "label": {
+            "zh": "灯泡强度",
+            "en": "Bulb_Intensity"
+          },
+          "tier": "more"
+        },
+        {
+          "param": "Bulb_Pow_Rate",
+          "kind": "float",
+          "min": 0.0,
+          "max": 40,
+          "label": {
+            "zh": "灯泡幂",
+            "en": "Bulb_Pow_Rate"
+          },
+          "tier": "more"
+        },
+        {
+          "param": "Bulb_Levels_min",
+          "kind": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "label": {
+            "zh": "灯泡色阶下限",
+            "en": "Bulb_Levels_min"
+          },
+          "tier": "more"
+        },
+        {
+          "param": "Bulb_Levels_max",
+          "kind": "float",
+          "min": 0.0,
+          "max": 2,
+          "label": {
+            "zh": "灯泡色阶上限",
+            "en": "Bulb_Levels_max"
+          },
+          "tier": "more"
+        }
+      ]
+    },
+    {
+      "id": "lampshade",
+      "section": "emission",
+      "tier": "more",
+      "label": {
+        "zh": "灯罩",
+        "en": "Lamp shade"
+      },
+      "params": [
+        {
+          "param": "LampShade_Color",
+          "kind": "color",
+          "channels": "rgb",
+          "label": {
+            "zh": "灯罩颜色",
+            "en": "LampShade_Color"
+          },
+          "tier": "basic"
+        },
+        {
+          "param": "use_LampShade",
+          "kind": "bool",
+          "label": {
+            "zh": "灯罩开关",
+            "en": "use_LampShade"
+          },
+          "tier": "basic"
+        },
+        {
+          "param": "LampShade_Intensity",
+          "kind": "float",
+          "min": 0.0,
+          "max": 100,
+          "label": {
+            "zh": "灯罩强度",
+            "en": "LampShade_Intensity"
+          },
+          "tier": "more"
+        },
+        {
+          "param": "LampShade_Scale",
+          "kind": "float",
+          "min": 0.0,
+          "max": 2,
+          "label": {
+            "zh": "灯罩缩放",
+            "en": "LampShade_Scale"
+          },
+          "tier": "more"
+        },
+        {
+          "param": "LampShade_Smoothness",
+          "kind": "float",
+          "min": 0.0,
+          "max": 2,
+          "label": {
+            "zh": "灯罩平滑",
+            "en": "LampShade_Smoothness"
+          },
+          "tier": "more"
+        },
+        {
+          "param": "LampShader_HightOffset",
+          "kind": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "label": {
+            "zh": "灯罩高度偏移",
+            "en": "LampShader_HightOffset"
+          },
+          "tier": "more"
+        }
+      ]
+    },
+    {
+      "id": "emission_fade",
+      "section": "emission",
+      "tier": "more",
+      "label": {
+        "zh": "自发光距离渐隐",
+        "en": "Emission fade"
+      },
+      "params": [
+        {
+          "param": "UseEmmisiveFade",
+          "kind": "bool",
+          "label": {
+            "zh": "自发光渐隐开关",
+            "en": "UseEmmisiveFade"
+          },
+          "tier": "basic"
+        },
+        {
+          "param": "EmmisiveFadeStart",
+          "kind": "float",
+          "min": 0.0,
+          "max": 2,
+          "label": {
+            "zh": "渐隐起点",
+            "en": "EmmisiveFadeStart"
+          },
+          "tier": "more"
+        },
+        {
+          "param": "EmmisiveFadeRamp",
+          "kind": "float",
+          "min": 0.0,
+          "max": 2,
+          "label": {
+            "zh": "渐隐过渡",
+            "en": "EmmisiveFadeRamp"
+          },
+          "tier": "more"
+        }
+      ]
+    },
+    {
+      "id": "misc_other",
+      "section": "system",
+      "tier": "other",
+      "label": {
+        "zh": "其他",
+        "en": "Misc"
+      },
+      "params": [
+        {
+          "param": "BaseAlphaMap_Tiling_Offset",
+          "component": "x",
+          "kind": "float",
+          "label": {
+            "zh": "基础 Alpha 贴图缩放偏移（BaseAlphaMap_Tiling_Offset） · U 缩放",
+            "en": "BaseAlphaMap_Tiling_Offset · tiling U"
+          },
+          "tier": "other",
+          "min": 0.0,
+          "max": 2
+        },
+        {
+          "param": "BaseAlphaMap_Tiling_Offset",
+          "component": "y",
+          "kind": "float",
+          "label": {
+            "zh": "基础 Alpha 贴图缩放偏移（BaseAlphaMap_Tiling_Offset） · V 缩放",
+            "en": "BaseAlphaMap_Tiling_Offset · tiling V"
+          },
+          "tier": "other",
+          "min": 0.0,
+          "max": 2
+        },
+        {
+          "param": "BaseAlphaMap_Tiling_Offset",
+          "component": "z",
+          "kind": "float",
+          "label": {
+            "zh": "基础 Alpha 贴图缩放偏移（BaseAlphaMap_Tiling_Offset） · U 偏移",
+            "en": "BaseAlphaMap_Tiling_Offset · offset U"
+          },
+          "tier": "other",
+          "min": 0.0,
+          "max": 2
+        },
+        {
+          "param": "BaseAlphaMap_Tiling_Offset",
+          "component": "w",
+          "kind": "float",
+          "label": {
+            "zh": "基础 Alpha 贴图缩放偏移（BaseAlphaMap_Tiling_Offset） · V 偏移",
+            "en": "BaseAlphaMap_Tiling_Offset · offset V"
+          },
+          "tier": "other",
+          "min": 0.0,
+          "max": 2
+        },
+        {
+          "param": "UV_Tiling_Offset",
+          "component": "x",
+          "kind": "float",
+          "label": {
+            "zh": "UV 缩放偏移（UV_Tiling_Offset） · U 缩放",
+            "en": "UV_Tiling_Offset · tiling U"
+          },
+          "tier": "other",
+          "min": 0.0,
+          "max": 2
+        },
+        {
+          "param": "UV_Tiling_Offset",
+          "component": "y",
+          "kind": "float",
+          "label": {
+            "zh": "UV 缩放偏移（UV_Tiling_Offset） · V 缩放",
+            "en": "UV_Tiling_Offset · tiling V"
+          },
+          "tier": "other",
+          "min": 0.0,
+          "max": 2
+        },
+        {
+          "param": "UV_Tiling_Offset",
+          "component": "z",
+          "kind": "float",
+          "label": {
+            "zh": "UV 缩放偏移（UV_Tiling_Offset） · U 偏移",
+            "en": "UV_Tiling_Offset · offset U"
+          },
+          "tier": "other",
+          "min": 0.0,
+          "max": 2
+        },
+        {
+          "param": "UV_Tiling_Offset",
+          "component": "w",
+          "kind": "float",
+          "label": {
+            "zh": "UV 缩放偏移（UV_Tiling_Offset） · V 偏移",
+            "en": "UV_Tiling_Offset · offset V"
+          },
+          "tier": "other",
+          "min": 0.0,
+          "max": 2
+        },
+        {
+          "param": "BaseColor1",
+          "kind": "vec",
+          "label": {
+            "zh": "基础颜色 1（BaseColor1）",
+            "en": "BaseColor1"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "UV_Tiling_Offset1",
+          "component": "x",
+          "kind": "float",
+          "label": {
+            "zh": "UV 缩放偏移 1（UV_Tiling_Offset1） · U 缩放",
+            "en": "UV_Tiling_Offset1 · tiling U"
+          },
+          "tier": "other",
+          "min": 0.0,
+          "max": 2
+        },
+        {
+          "param": "UV_Tiling_Offset1",
+          "component": "y",
+          "kind": "float",
+          "label": {
+            "zh": "UV 缩放偏移 1（UV_Tiling_Offset1） · V 缩放",
+            "en": "UV_Tiling_Offset1 · tiling V"
+          },
+          "tier": "other",
+          "min": 0.0,
+          "max": 2
+        },
+        {
+          "param": "UV_Tiling_Offset1",
+          "component": "z",
+          "kind": "float",
+          "label": {
+            "zh": "UV 缩放偏移 1（UV_Tiling_Offset1） · U 偏移",
+            "en": "UV_Tiling_Offset1 · offset U"
+          },
+          "tier": "other",
+          "min": 0.0,
+          "max": 2
+        },
+        {
+          "param": "UV_Tiling_Offset1",
+          "component": "w",
+          "kind": "float",
+          "label": {
+            "zh": "UV 缩放偏移 1（UV_Tiling_Offset1） · V 偏移",
+            "en": "UV_Tiling_Offset1 · offset V"
+          },
+          "tier": "other",
+          "min": 0.0,
+          "max": 2
+        },
+        {
+          "param": "WearMap_Tiling_Offset1",
+          "component": "x",
+          "kind": "float",
+          "label": {
+            "zh": "Wear 贴图缩放偏移 1（WearMap_Tiling_Offset1） · U 缩放",
+            "en": "WearMap_Tiling_Offset1 · tiling U"
+          },
+          "tier": "other",
+          "min": 0.0,
+          "max": 2
+        },
+        {
+          "param": "WearMap_Tiling_Offset1",
+          "component": "y",
+          "kind": "float",
+          "label": {
+            "zh": "Wear 贴图缩放偏移 1（WearMap_Tiling_Offset1） · V 缩放",
+            "en": "WearMap_Tiling_Offset1 · tiling V"
+          },
+          "tier": "other",
+          "min": 0.0,
+          "max": 2
+        },
+        {
+          "param": "WearMap_Tiling_Offset1",
+          "component": "z",
+          "kind": "float",
+          "label": {
+            "zh": "Wear 贴图缩放偏移 1（WearMap_Tiling_Offset1） · U 偏移",
+            "en": "WearMap_Tiling_Offset1 · offset U"
+          },
+          "tier": "other",
+          "min": 0.0,
+          "max": 2
+        },
+        {
+          "param": "WearMap_Tiling_Offset1",
+          "component": "w",
+          "kind": "float",
+          "label": {
+            "zh": "Wear 贴图缩放偏移 1（WearMap_Tiling_Offset1） · V 偏移",
+            "en": "WearMap_Tiling_Offset1 · offset V"
+          },
+          "tier": "other",
+          "min": 0.0,
+          "max": 2
+        },
+        {
+          "param": "MaterialColor_Use_SecondaryUV",
+          "kind": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "label": {
+            "zh": "Material 颜色使用第二 UV（MaterialColor_Use_SecondaryUV）",
+            "en": "MaterialColor_Use_SecondaryUV"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "UV_Switch",
+          "kind": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "label": {
+            "zh": "UV 开关（UV_Switch）",
+            "en": "UV_Switch"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "MaterialColor_AddBlend",
+          "kind": "float",
+          "min": 0.0,
+          "max": 2,
+          "label": {
+            "zh": "Material 颜色叠加混合（MaterialColor_AddBlend）",
+            "en": "MaterialColor_AddBlend"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "MaterialColor_Override",
+          "kind": "float",
+          "min": 0.0,
+          "max": 2,
+          "label": {
+            "zh": "Material 颜色覆盖（MaterialColor_Override）",
+            "en": "MaterialColor_Override"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "MaterialColor_Intensity",
+          "kind": "float",
+          "min": 0.0,
+          "max": 2,
+          "label": {
+            "zh": "Material 颜色强度（MaterialColor_Intensity）",
+            "en": "MaterialColor_Intensity"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "MaterialColor_AddBlend1",
+          "kind": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "label": {
+            "zh": "Material 颜色叠加混合 1（MaterialColor_AddBlend1）",
+            "en": "MaterialColor_AddBlend1"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "MaterialColor_Override1",
+          "kind": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "label": {
+            "zh": "Material 颜色覆盖 1（MaterialColor_Override1）",
+            "en": "MaterialColor_Override1"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "MaterialColor_Intensity1",
+          "kind": "float",
+          "min": 0.0,
+          "max": 2,
+          "label": {
+            "zh": "Material 颜色强度 1（MaterialColor_Intensity1）",
+            "en": "MaterialColor_Intensity1"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "UV_Tiling",
+          "kind": "float",
+          "min": 0.0,
+          "max": 16,
+          "label": {
+            "zh": "UV 缩放（UV_Tiling）",
+            "en": "UV_Tiling"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "Use_AdvancedUVSetting",
+          "kind": "bool",
+          "label": {
+            "zh": "使用高级 UV 设置（Use_AdvancedUVSetting）",
+            "en": "Use_AdvancedUVSetting"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "Roughness1",
+          "kind": "float",
+          "min": 0.0,
+          "max": 2,
+          "label": {
+            "zh": "粗糙度 1（Roughness1）",
+            "en": "Roughness1"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "UV_Tiling1",
+          "kind": "float",
+          "min": 0.0,
+          "max": 20,
+          "label": {
+            "zh": "UV 缩放 1（UV_Tiling1）",
+            "en": "UV_Tiling1"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "Use_AdvancedUVSetting1",
+          "kind": "bool",
+          "label": {
+            "zh": "使用高级 UV 设置 1（Use_AdvancedUVSetting1）",
+            "en": "Use_AdvancedUVSetting1"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "NormalBlend_Balance1",
+          "kind": "float",
+          "min": 0.0,
+          "max": 2,
+          "label": {
+            "zh": "法线混合平衡 1（NormalBlend_Balance1）",
+            "en": "NormalBlend_Balance1"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "WearMap_Tiling1",
+          "kind": "float",
+          "min": 0.0,
+          "max": 16,
+          "label": {
+            "zh": "Wear 贴图缩放 1（WearMap_Tiling1）",
+            "en": "WearMap_Tiling1"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "Use_AdvancedUVSetting_WearMap1",
+          "kind": "bool",
+          "label": {
+            "zh": "使用高级 UV 设置 Wear 贴图 1（Use_AdvancedUVSetting_WearMap1）",
+            "en": "Use_AdvancedUVSetting_WearMap1"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "WearMap_Inverse1",
+          "kind": "float",
+          "min": 0.0,
+          "max": 2,
+          "label": {
+            "zh": "Wear 贴图 Inverse1（WearMap_Inverse1）",
+            "en": "WearMap_Inverse1"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "WearMap_Blend1",
+          "kind": "float",
+          "min": 0.0,
+          "max": 2,
+          "label": {
+            "zh": "Wear 贴图混合 1（WearMap_Blend1）",
+            "en": "WearMap_Blend1"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "WearMap_Normal_BlendMode1",
+          "kind": "float",
+          "min": 0.0,
+          "max": 2,
+          "label": {
+            "zh": "Wear 贴图法线混合模式 1（WearMap_Normal_BlendMode1）",
+            "en": "WearMap_Normal_BlendMode1"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "WearMap_NormalIntensity1",
+          "kind": "float",
+          "min": 0.0,
+          "max": 2,
+          "label": {
+            "zh": "Wear 贴图法线强度 1（WearMap_NormalIntensity1）",
+            "en": "WearMap_NormalIntensity1"
+          },
+          "tier": "other"
+        }
+      ]
+    },
+    {
+      "id": "dirt_other",
+      "section": "system",
+      "tier": "other",
+      "label": {
+        "zh": "污垢 / 灰尘",
+        "en": "Dirt / dust"
+      },
+      "params": [
+        {
+          "param": "DirtColor1",
+          "kind": "vec",
+          "label": {
+            "zh": "污垢颜色 1（DirtColor1）",
+            "en": "DirtColor1"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "DirtColor2",
+          "kind": "vec",
+          "label": {
+            "zh": "污垢颜色 2（DirtColor2）",
+            "en": "DirtColor2"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "DirtColor3",
+          "kind": "vec",
+          "label": {
+            "zh": "污垢颜色 3（DirtColor3）",
+            "en": "DirtColor3"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "DirtWearMap_Tiling_Offset",
+          "component": "x",
+          "kind": "float",
+          "label": {
+            "zh": "污垢 Wear 贴图缩放偏移（DirtWearMap_Tiling_Offset） · U 缩放",
+            "en": "DirtWearMap_Tiling_Offset · tiling U"
+          },
+          "tier": "other",
+          "min": 0.0,
+          "max": 2
+        },
+        {
+          "param": "DirtWearMap_Tiling_Offset",
+          "component": "y",
+          "kind": "float",
+          "label": {
+            "zh": "污垢 Wear 贴图缩放偏移（DirtWearMap_Tiling_Offset） · V 缩放",
+            "en": "DirtWearMap_Tiling_Offset · tiling V"
+          },
+          "tier": "other",
+          "min": 0.0,
+          "max": 2
+        },
+        {
+          "param": "DirtWearMap_Tiling_Offset",
+          "component": "z",
+          "kind": "float",
+          "label": {
+            "zh": "污垢 Wear 贴图缩放偏移（DirtWearMap_Tiling_Offset） · U 偏移",
+            "en": "DirtWearMap_Tiling_Offset · offset U"
+          },
+          "tier": "other",
+          "min": 0.0,
+          "max": 2
+        },
+        {
+          "param": "DirtWearMap_Tiling_Offset",
+          "component": "w",
+          "kind": "float",
+          "label": {
+            "zh": "污垢 Wear 贴图缩放偏移（DirtWearMap_Tiling_Offset） · V 偏移",
+            "en": "DirtWearMap_Tiling_Offset · offset V"
+          },
+          "tier": "other",
+          "min": 0.0,
+          "max": 2
+        },
+        {
+          "param": "LayerColor_Dirt_Blue",
+          "kind": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "label": {
+            "zh": "层颜色污垢 Blue（LayerColor_Dirt_Blue）",
+            "en": "LayerColor_Dirt_Blue"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "DirtMap_Use_SecondaryUV",
+          "kind": "float",
+          "min": 0.0,
+          "max": 2,
+          "label": {
+            "zh": "污垢贴图使用第二 UV（DirtMap_Use_SecondaryUV）",
+            "en": "DirtMap_Use_SecondaryUV"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "Dirt_Enable",
+          "kind": "bool",
+          "label": {
+            "zh": "污垢开关（Dirt_Enable）",
+            "en": "Dirt_Enable"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "DirtWearMap_Inverse",
+          "kind": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "label": {
+            "zh": "污垢 Wear 贴图 Inverse（DirtWearMap_Inverse）",
+            "en": "DirtWearMap_Inverse"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "DirtMask_Brightness",
+          "kind": "float",
+          "min": 0.0,
+          "max": 2,
+          "label": {
+            "zh": "污垢遮罩亮度（DirtMask_Brightness）",
+            "en": "DirtMask_Brightness"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "DirtMask_Contrast",
+          "kind": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "label": {
+            "zh": "污垢遮罩对比度（DirtMask_Contrast）",
+            "en": "DirtMask_Contrast"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "DirtColor_AddBlend",
+          "kind": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "label": {
+            "zh": "污垢颜色叠加混合（DirtColor_AddBlend）",
+            "en": "DirtColor_AddBlend"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "DirtColor_Override",
+          "kind": "float",
+          "min": 0.0,
+          "max": 2,
+          "label": {
+            "zh": "污垢颜色覆盖（DirtColor_Override）",
+            "en": "DirtColor_Override"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "DirtColorControl",
+          "kind": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "label": {
+            "zh": "污垢颜色控制（DirtColorControl）",
+            "en": "DirtColorControl"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "Dirt_Metallic",
+          "kind": "float",
+          "min": 0.0,
+          "max": 2,
+          "label": {
+            "zh": "污垢金属度（Dirt_Metallic）",
+            "en": "Dirt_Metallic"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "Dirt_Roughness",
+          "kind": "float",
+          "min": 0.0,
+          "max": 4,
+          "label": {
+            "zh": "污垢粗糙度（Dirt_Roughness）",
+            "en": "Dirt_Roughness"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "DirtWearMap_Tiling",
+          "kind": "float",
+          "min": 0.0,
+          "max": 50,
+          "label": {
+            "zh": "污垢 Wear 贴图缩放（DirtWearMap_Tiling）",
+            "en": "DirtWearMap_Tiling"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "Use_AdvancedUVSetting_DirtWearMap",
+          "kind": "bool",
+          "label": {
+            "zh": "使用高级 UV 设置污垢 Wear 贴图（Use_AdvancedUVSetting_DirtWearMap）",
+            "en": "Use_AdvancedUVSetting_DirtWearMap"
+          },
+          "tier": "other"
+        }
+      ]
+    },
+    {
+      "id": "layers_other",
+      "section": "system",
+      "tier": "other",
+      "label": {
+        "zh": "多层混合",
+        "en": "Layer blend"
+      },
+      "params": [
+        {
+          "param": "LayerColor_Layer1_Red",
+          "kind": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "label": {
+            "zh": "层颜色层 1Red（LayerColor_Layer1_Red）",
+            "en": "LayerColor_Layer1_Red"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "LayerMask_Use_SecondaryUV",
+          "kind": "float",
+          "min": 0.0,
+          "max": 2,
+          "label": {
+            "zh": "层遮罩使用第二 UV（LayerMask_Use_SecondaryUV）",
+            "en": "LayerMask_Use_SecondaryUV"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "BaseLayer_Use_SecondaryUV",
+          "kind": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "label": {
+            "zh": "基础层使用第二 UV（BaseLayer_Use_SecondaryUV）",
+            "en": "BaseLayer_Use_SecondaryUV"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "ExtraLayer_Use_SecondaryUV",
+          "kind": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "label": {
+            "zh": "Extra 层使用第二 UV（ExtraLayer_Use_SecondaryUV）",
+            "en": "ExtraLayer_Use_SecondaryUV"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "LayerMask_BrightnessMasking1",
+          "kind": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "label": {
+            "zh": "层遮罩亮度 Masking1（LayerMask_BrightnessMasking1）",
+            "en": "LayerMask_BrightnessMasking1"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "LayerMask_Brightness1",
+          "kind": "float",
+          "min": 0.0,
+          "max": 2,
+          "label": {
+            "zh": "层遮罩亮度 1（LayerMask_Brightness1）",
+            "en": "LayerMask_Brightness1"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "LayerMask_Contrast1",
+          "kind": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "label": {
+            "zh": "层遮罩对比度 1（LayerMask_Contrast1）",
+            "en": "LayerMask_Contrast1"
+          },
+          "tier": "other"
+        }
+      ]
+    },
+    {
+      "id": "misc",
+      "section": "system",
+      "tier": "more",
+      "label": {
+        "zh": "其他",
+        "en": "Misc"
+      },
+      "params": [
+        {
+          "param": "UV_Select",
+          "kind": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "label": {
+            "zh": "UV 选择",
+            "en": "UV_Select"
+          },
+          "tier": "more"
+        }
+      ]
+    }
+  ]
+}

@@ -992,7 +992,7 @@ function Main.start(ctx)
             for _, raw in ipairs(found) do
                 local file = tostring(raw):match("([^/\\]+%.json)$")
                 local ok_l, data = pcall(json.load_file, PALETTE_DIR .. file)
-                if ok_l and type(data) == "table" and Palette.clean_profile(data) then extras[#extras + 1] = data
+                if ok_l and type(data) == "table" and Palette.clean_profile(data, PaletteProfiles.params) then extras[#extras + 1] = data
                 else errors[#errors + 1] = file end
             end
         end

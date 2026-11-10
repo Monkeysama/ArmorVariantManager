@@ -119,7 +119,7 @@
           },
           "tier": "more",
           "min": 0.0,
-          "max": 100
+          "max": 240
         },
         {
           "param": "DetailMap_Tiling_Offset",
@@ -131,7 +131,7 @@
           },
           "tier": "more",
           "min": 0.0,
-          "max": 100
+          "max": 240
         },
         {
           "param": "DetailMap_Tiling_Offset",
@@ -143,7 +143,7 @@
           },
           "tier": "more",
           "min": 0.0,
-          "max": 100
+          "max": 240
         },
         {
           "param": "DetailMap_Tiling_Offset",
@@ -155,7 +155,7 @@
           },
           "tier": "more",
           "min": 0.0,
-          "max": 100
+          "max": 240
         },
         {
           "param": "MaskMap_UseSecondaryUV",
@@ -170,7 +170,7 @@
           "param": "BaseDetail_TilingScale",
           "kind": "float",
           "min": 0.0,
-          "max": 2,
+          "max": 14,
           "label": {
             "zh": "基础细节缩放",
             "en": "BaseDetail_TilingScale"
@@ -181,7 +181,7 @@
           "param": "DetailMap_Level",
           "kind": "float",
           "min": 0.0,
-          "max": 2,
+          "max": 6,
           "label": {
             "zh": "细节贴图层号（数组索引）",
             "en": "DetailMap_Level"
@@ -192,7 +192,7 @@
           "param": "DetailColorIntensity",
           "kind": "float",
           "min": 0.0,
-          "max": 1.0,
+          "max": 2,
           "label": {
             "zh": "细节颜色强度",
             "en": "DetailColorIntensity"
@@ -203,7 +203,7 @@
           "param": "DetailColorBalance",
           "kind": "float",
           "min": 0.0,
-          "max": 1.0,
+          "max": 2,
           "label": {
             "zh": "细节颜色平衡",
             "en": "DetailColorBalance"
@@ -225,7 +225,7 @@
           "param": "DetailColorAddContrast",
           "kind": "float",
           "min": 0.0,
-          "max": 1.0,
+          "max": 2,
           "label": {
             "zh": "细节颜色对比度",
             "en": "DetailColorAddContrast"
@@ -247,7 +247,7 @@
           "param": "Detail_RoughnessBlend",
           "kind": "float",
           "min": 0.0,
-          "max": 1.0,
+          "max": 2,
           "label": {
             "zh": "细节粗糙度混合",
             "en": "Detail_RoughnessBlend"
@@ -258,7 +258,7 @@
           "param": "Detail_Cavity",
           "kind": "float",
           "min": 0.0,
-          "max": 1.0,
+          "max": 2,
           "label": {
             "zh": "细节腔隙",
             "en": "Detail_Cavity"
@@ -813,7 +813,7 @@
           "param": "Rim_Translucency",
           "kind": "float",
           "min": 0.0,
-          "max": 1.0,
+          "max": 2,
           "label": {
             "zh": "边缘透光（Rim_Translucency）",
             "en": "Rim_Translucency"
@@ -877,7 +877,7 @@
           "param": "Velvet_ShadingIntensity",
           "kind": "float",
           "min": 0.0,
-          "max": 1.0,
+          "max": 4,
           "label": {
             "zh": "天鹅绒明暗强度",
             "en": "Velvet_ShadingIntensity"
@@ -899,7 +899,7 @@
           "param": "Velvet_ShadingBiasPow",
           "kind": "float",
           "min": 0.0,
-          "max": 8,
+          "max": 36,
           "label": {
             "zh": "天鹅绒偏移幂",
             "en": "Velvet_ShadingBiasPow"
@@ -909,7 +909,7 @@
         {
           "param": "Velvet_RimColorIntensity",
           "kind": "float",
-          "min": 0.0,
+          "min": -1.0,
           "max": 1.0,
           "label": {
             "zh": "天鹅绒边缘强度",
@@ -921,7 +921,7 @@
           "param": "Velvet_RimColorPow",
           "kind": "float",
           "min": 0.0,
-          "max": 8,
+          "max": 14,
           "label": {
             "zh": "天鹅绒边缘幂",
             "en": "Velvet_RimColorPow"
@@ -932,7 +932,7 @@
           "param": "Velvet_DetailNormal",
           "kind": "float",
           "min": 0.0,
-          "max": 1.0,
+          "max": 2,
           "label": {
             "zh": "天鹅绒细节法线",
             "en": "Velvet_DetailNormal"
@@ -1186,7 +1186,7 @@
           "param": "Rec_Rain_UseSecondaryUV",
           "kind": "float",
           "min": 0.0,
-          "max": 1.0,
+          "max": 2,
           "label": {
             "zh": "雨水使用第二 UV",
             "en": "Rec_Rain_UseSecondaryUV"
@@ -1291,7 +1291,7 @@
           "param": "Wind_Intensity",
           "kind": "float",
           "min": 0.0,
-          "max": 1.0,
+          "max": 2,
           "label": {
             "zh": "风强度",
             "en": "Wind_Intensity"
@@ -1302,7 +1302,7 @@
           "param": "Wind_Scale",
           "kind": "float",
           "min": 0.0,
-          "max": 2,
+          "max": 4,
           "label": {
             "zh": "风尺度",
             "en": "Wind_Scale"

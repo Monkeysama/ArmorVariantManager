@@ -6,7 +6,8 @@
 --   所以改动或删除映射不会丢掉已调的值。
 --
 --   识别按参数名:一份主映射(match 命中、priority 最高)+ 所有命中的附加映射(addon)。
---   都不命中时用 generic:列出名字以 Color 结尾的 float4。
+--   都不命中时用 fallback:按参数名借用已有映射的含义,没写过的参数原样列出;
+--   连 fallback 都列不出东西时才用 generic(名字以 Color 结尾的 float4)。
 --
 --   写入:应用循环在材质开关重写的同一时机调用 apply。第一次写某个参数前记下它的原值
 --   (按 mesh 实例),取消覆盖时把原值写回。mesh 换实例(换装、读档)后原值重新记。
@@ -22,8 +23,38 @@ local function is_tbl(v) return type(v) == "table" end
 local function finite(v) return type(v) == "number" and v == v and v ~= math.huge and v ~= -math.huge end
 
 -- ============================================================ 映射
--- 只留格式对的部分;不合格的项丢掉而不是让整份映射失效
-local function clean_profile(p)
+-- 共享参数字典(PaletteProfiles.params):{ [参数名] = { 项, ... } }。映射里不带 kind 的项是对它的引用:
+--   "X" 或 { param = "X" }          字典里 X 的全部项
+--   { param = "X", refs = { 1, 3 } } 只取其中几项(生成器写的)
+--   { param = "X", component = "w" } 只取这个分量的项(手写映射用)
+-- 引用项上的其他字段(tier、label、note……)覆盖字典里的值。字典里没有的引用直接丢掉
+local function expand(e, dict)
+    if e.kind ~= nil or type(e.param) ~= "string" or not is_tbl(dict) then return { e } end
+    local list = dict[e.param]
+    if not is_tbl(list) then return {} end
+    local picks = {}
+    if is_tbl(e.refs) then
+        for _, i in ipairs(e.refs) do if is_tbl(list[i]) then picks[#picks + 1] = list[i] end end
+    else
+        for _, d in ipairs(list) do
+            if is_tbl(d) and (e.component == nil or d.component == e.component) then picks[#picks + 1] = d end
+        end
+    end
+    local extra = false
+    for k in pairs(e) do if k ~= "param" and k ~= "refs" and k ~= "component" then extra = true; break end end
+    if not extra then return picks end          -- 原样共用字典里的表(只读)
+    local out = {}
+    for _, d in ipairs(picks) do
+        local c = {}
+        for k, v in pairs(d) do c[k] = v end
+        for k, v in pairs(e) do if k ~= "refs" then c[k] = v end end
+        out[#out + 1] = c
+    end
+    return out
+end
+
+-- 只留格式对的部分;不合格的项丢掉而不是让整份映射失效。dict = 共享参数字典(可省)
+local function clean_profile(p, dict)
     if not is_tbl(p) or type(p.id) ~= "string" or p.id == "" or not is_tbl(p.groups) then return nil end
     local match = is_tbl(p.match) and p.match or {}
     local function names(list)
@@ -43,11 +74,14 @@ local function clean_profile(p)
     for _, g in ipairs(p.groups) do
         if is_tbl(g) and type(g.id) == "string" and is_tbl(g.params) then
             local params = {}
-            for _, e in ipairs(g.params) do
-                if is_tbl(e) and type(e.param) == "string" and KINDS[e.kind] then
-                    local comp = e.component
-                    local needs_comp = e.kind == "float" or e.kind == "enum" or e.kind == "bool"
-                    if not needs_comp or comp == nil or COMP_INDEX[comp] then params[#params + 1] = e end
+            for _, raw in ipairs(g.params) do
+                if type(raw) == "string" then raw = { param = raw } end
+                for _, e in ipairs(is_tbl(raw) and expand(raw, dict) or {}) do
+                    if is_tbl(e) and type(e.param) == "string" and KINDS[e.kind] then
+                        local comp = e.component
+                        local needs_comp = e.kind == "float" or e.kind == "enum" or e.kind == "bool"
+                        if not needs_comp or comp == nil or COMP_INDEX[comp] then params[#params + 1] = e end
+                    end
                 end
             end
             if #params > 0 then
@@ -67,11 +101,14 @@ local function clean_profile(p)
 end
 Palette.clean_profile = clean_profile
 
--- builtin:PaletteProfiles 的列表;extras:data 目录读到的表(同 id 覆盖内置)。返回按 priority 从高到低
+-- builtin:PaletteProfiles({ params = 共享字典, profiles = 列表 },旧格式直接是列表);
+-- extras:data 目录读到的表(同 id 覆盖内置,也可以引用共享字典)。返回按 priority 从高到低
 function Palette.load_profiles(builtin, extras)
+    local dict = nil
+    if is_tbl(builtin) and is_tbl(builtin.profiles) then builtin, dict = builtin.profiles, builtin.params end
     local by_id, order = {}, {}
     local function add(p, source)
-        local c = clean_profile(p)
+        local c = clean_profile(p, dict)
         if not c then return end
         c.source = source
         if not by_id[c.id] then order[#order + 1] = c.id end
@@ -133,6 +170,105 @@ function Palette.generic(has)
     end
     table.sort(names)
     return names
+end
+
+-- 没被任何主映射认出来时(例如在原版母材质上加了溶解参数、签名就对不上了):按参数名借用已有映射的含义。
+--   1. 附加映射(addons,已经命中的)列出的参数不再重复;
+--   2. 其余映射按"这个材质上能用的参数个数"从多到少排(同数按原顺序,即优先级),越接近的越先认领;
+--      一个参数只从一份映射里取,这样分量的拆法前后一致;组按 层级 + 组名 合并,类别沿用原映射;
+--   3. 哪份映射都没写、也没被任何映射 ignore 的参数原样列在「其他」里。
+-- 返回一份临时的主映射(id 按材质的参数表算,同样的材质得到同一个 id);什么都列不出时返回 nil
+local function hash(s)
+    local h = 5381
+    for i = 1, #s do h = (h * 33 + s:byte(i)) % 4294967296 end
+    return string.format("%08x", h)
+end
+
+function Palette.fallback(profiles, has, addons)
+    local taken, ignored = {}, {}
+    for _, a in ipairs(addons or {}) do
+        for _, g in ipairs(a.groups) do for _, e in ipairs(g.params) do taken[e.param] = true end end
+    end
+    for _, p in ipairs(profiles or {}) do for _, n in ipairs(p.ignore or {}) do ignored[n] = true end end
+
+    local ranked = {}
+    for i, p in ipairs(profiles or {}) do
+        if not p.addon then
+            local seen, n = {}, 0
+            for _, g in ipairs(p.groups) do
+                for _, e in ipairs(g.params) do
+                    if not seen[e.param] and not taken[e.param] and Palette.entry_usable(e, has) then seen[e.param] = true; n = n + 1 end
+                end
+            end
+            if n > 0 then ranked[#ranked + 1] = { p = p, n = n, i = i } end
+        end
+    end
+    table.sort(ranked, function(a, b) if a.n ~= b.n then return a.n > b.n end return a.i < b.i end)
+
+    local out = { label = { zh = "按参数名识别", en = "Matched by parameter name" }, addon = false, priority = 0, fallback = true,
+                  match = { all = {}, any = {}, none = {}, master = {} }, enums = {}, ignore = {}, groups = {}, sections = {} }
+    local owner, by_label, sec_seen = {}, {}, {}
+    for _, r in ipairs(ranked) do
+        local p = r.p
+        for _, g in ipairs(p.groups) do
+            for _, e in ipairs(g.params) do
+                if not taken[e.param] and (owner[e.param] == nil or owner[e.param] == p.id) and Palette.entry_usable(e, has) then
+                    owner[e.param] = p.id
+                    local entry = e
+                    if e.enum and is_tbl(p.enums[e.enum]) then
+                        -- 不同映射的枚举可能同名,换成带映射 id 的名字
+                        local key = p.id .. "/" .. e.enum
+                        out.enums[key] = p.enums[e.enum]
+                        entry = {}
+                        for k, v in pairs(e) do entry[k] = v end
+                        entry.enum = key
+                    end
+                    local label = is_tbl(g.label) and (g.label.zh or g.label.en) or g.id
+                    local gk = g.tier .. "|" .. tostring(label)
+                    local dst = by_label[gk]
+                    if not dst then
+                        dst = { id = p.id .. "/" .. g.id, label = g.label, note = g.note, tier = g.tier, section = g.section, params = {} }
+                        by_label[gk] = dst
+                        out.groups[#out.groups + 1] = dst
+                    end
+                    dst.params[#dst.params + 1] = entry
+                    if g.section and not sec_seen[g.section] then
+                        for _, s in ipairs(p.sections or {}) do
+                            if s.id == g.section then sec_seen[g.section] = true; out.sections[#out.sections + 1] = s; break end
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    local rest = {}
+    for n in pairs(has) do
+        local t = has[n]
+        if owner[n] == nil and not taken[n] and not ignored[n] and (t == Palette.TYPE_FLOAT or t == Palette.TYPE_FLOAT4) then
+            rest[#rest + 1] = n
+        end
+    end
+    table.sort(rest)
+    if #rest > 0 then
+        local params = {}
+        for _, n in ipairs(rest) do
+            local label = { zh = n, en = n }
+            if has[n] == Palette.TYPE_FLOAT then params[#params + 1] = { param = n, kind = "float", label = label }
+            elseif n:match("Color$") then params[#params + 1] = { param = n, kind = "color", channels = "rgb", label = label }
+            else params[#params + 1] = { param = n, kind = "vec", label = label } end
+        end
+        out.groups[#out.groups + 1] = { id = "unmapped", tier = "other", label = { zh = "未识别的参数", en = "Unrecognised parameters" }, params = params }
+    end
+    if #out.groups == 0 then return nil end
+
+    local names = {}
+    for n, t in pairs(has) do names[#names + 1] = n .. ":" .. tostring(t) end
+    table.sort(names)
+    local ids = {}
+    for _, a in ipairs(addons or {}) do ids[#ids + 1] = a.id end
+    out.id = "avm.fallback." .. hash(table.concat(names, ",") .. "|" .. table.concat(ids, ","))
+    return out
 end
 
 -- ============================================================ 配置

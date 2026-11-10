@@ -1,15 +1,16 @@
 {
   "format": 1,
   "id": "auto_character_reflectivetransparent",
-  "source": "自动生成：tools/re4/gen_auto_profiles.py ← 离线材质库 library.json（_chainsaw/mastermaterial/master/character_reflectivetransparent.mmtr）",
+  "source": "自动生成：tools/re4/gen_auto_profiles.py ← 离线材质库 library.json（_chainsaw/mastermaterial/master/character_reflectivetransparent.mmtr, _chainsaw/mastermaterial/master/character_reflectivetransparent_light.mmtr）",
   "label": {
-    "zh": "原版：character_reflectivetransparent",
-    "en": "Vanilla: character_reflectivetransparent"
+    "zh": "原版：character_reflectivetransparent / character_reflectivetransparent_light",
+    "en": "Vanilla: character_reflectivetransparent / character_reflectivetransparent_light"
   },
   "priority": 10,
   "match": {
     "master": [
-      "_chainsaw/mastermaterial/master/character_reflectivetransparent.mmtr"
+      "_chainsaw/mastermaterial/master/character_reflectivetransparent.mmtr",
+      "_chainsaw/mastermaterial/master/character_reflectivetransparent_light.mmtr"
     ]
   },
   "sections": [
@@ -109,7 +110,7 @@
           "param": "Occlusion",
           "kind": "float",
           "min": 0.0,
-          "max": 1.0,
+          "max": 2,
           "label": {
             "zh": "遮蔽（Occlusion）",
             "en": "Occlusion"
@@ -163,7 +164,7 @@
         {
           "param": "EyeCatch_Horizontal",
           "kind": "float",
-          "min": 0.0,
+          "min": -1.0,
           "max": 1.0,
           "label": {
             "zh": "眼神光水平位置（EyeCatch_Horizontal）",
@@ -174,7 +175,7 @@
         {
           "param": "EyeCatch_Vertical",
           "kind": "float",
-          "min": 0.0,
+          "min": -1.0,
           "max": 1.0,
           "label": {
             "zh": "眼神光垂直位置（EyeCatch_Vertical）",
@@ -355,7 +356,7 @@
           "param": "Alpha",
           "kind": "float",
           "min": 0.0,
-          "max": 1.0,
+          "max": 2,
           "label": {
             "zh": "不透明度",
             "en": "Alpha"
@@ -419,7 +420,7 @@
           "param": "FakeSphere_Intensity",
           "kind": "float",
           "min": 0.0,
-          "max": 1.0,
+          "max": 2,
           "label": {
             "zh": "假反射球强度",
             "en": "FakeSphere_Intensity"

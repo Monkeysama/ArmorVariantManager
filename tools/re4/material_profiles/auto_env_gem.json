@@ -1,0 +1,644 @@
+{
+  "format": 1,
+  "id": "auto_env_gem",
+  "source": "自动生成：tools/re4/gen_auto_profiles.py ← 离线材质库 library.json（_chainsaw/mastermaterial/master/env_gem.mmtr）",
+  "label": {
+    "zh": "原版：env_gem",
+    "en": "Vanilla: env_gem"
+  },
+  "priority": 10,
+  "match": {
+    "master": [
+      "_chainsaw/mastermaterial/master/env_gem.mmtr"
+    ]
+  },
+  "sections": [
+    {
+      "id": "color",
+      "label": {
+        "zh": "颜色层",
+        "en": "Colour layers"
+      }
+    },
+    {
+      "id": "light",
+      "label": {
+        "zh": "明暗",
+        "en": "Light and shade"
+      }
+    },
+    {
+      "id": "surface",
+      "label": {
+        "zh": "质感",
+        "en": "Surface"
+      }
+    },
+    {
+      "id": "emission",
+      "label": {
+        "zh": "发光",
+        "en": "Emission"
+      }
+    },
+    {
+      "id": "system",
+      "label": {
+        "zh": "系统",
+        "en": "System"
+      }
+    }
+  ],
+  "groups": [
+    {
+      "id": "base",
+      "section": "color",
+      "tier": "basic",
+      "label": {
+        "zh": "基础色",
+        "en": "Base colour"
+      },
+      "params": [
+        {
+          "param": "BaseColor",
+          "kind": "color",
+          "channels": "rgb",
+          "label": {
+            "zh": "基础色（主色）",
+            "en": "base colour"
+          },
+          "tier": "basic",
+          "note": {
+            "zh": "乘在 BaseDielectricMap 上；lilToon 母材质里同样是主色（lilToon 在原版反照率之上运算）",
+            "en": "乘在 BaseDielectricMap 上；lilToon 母材质里同样是主色（lilToon 在原版反照率之上运算）"
+          }
+        }
+      ]
+    },
+    {
+      "id": "record_other",
+      "section": "color",
+      "tier": "other",
+      "label": {
+        "zh": "血迹 / 污渍 / 伤痕（记录系统）",
+        "en": "Blood / stain / injury (record system)"
+      },
+      "params": [
+        {
+          "param": "FresnelBasedBumpCorrect",
+          "kind": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "label": {
+            "zh": "菲涅尔 BasedBumpCorrect（FresnelBasedBumpCorrect）",
+            "en": "FresnelBasedBumpCorrect"
+          },
+          "tier": "other"
+        }
+      ]
+    },
+    {
+      "id": "native_rim",
+      "section": "light",
+      "tier": "basic",
+      "label": {
+        "zh": "原版边缘光",
+        "en": "Native rim colour"
+      },
+      "params": [
+        {
+          "param": "RimColor",
+          "kind": "color",
+          "channels": "rgb",
+          "label": {
+            "zh": "原版边缘光颜色",
+            "en": "native rim colour"
+          },
+          "tier": "basic"
+        }
+      ]
+    },
+    {
+      "id": "fresnel_other",
+      "section": "light",
+      "tier": "other",
+      "label": {
+        "zh": "菲涅尔 / 边缘光（原版）",
+        "en": "Fresnel / rim (native)"
+      },
+      "params": [
+        {
+          "param": "RimColor_Grad",
+          "kind": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "label": {
+            "zh": "边缘颜色渐变（RimColor_Grad）",
+            "en": "RimColor_Grad"
+          },
+          "tier": "other"
+        }
+      ]
+    },
+    {
+      "id": "parallax_other",
+      "section": "surface",
+      "tier": "other",
+      "label": {
+        "zh": "视差",
+        "en": "Parallax"
+      },
+      "params": [
+        {
+          "param": "ParallaxColor",
+          "kind": "vec",
+          "label": {
+            "zh": "视差颜色（ParallaxColor）",
+            "en": "ParallaxColor"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "ParallaxMap_UV_Scale",
+          "kind": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "label": {
+            "zh": "视差贴图 UV 缩放（ParallaxMap_UV_Scale）",
+            "en": "ParallaxMap_UV_Scale"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "ParallaxMap_Depth",
+          "kind": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "label": {
+            "zh": "视差贴图深度（ParallaxMap_Depth）",
+            "en": "ParallaxMap_Depth"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "ParallaxMap_Opacity",
+          "kind": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "label": {
+            "zh": "视差贴图 Opacity（ParallaxMap_Opacity）",
+            "en": "ParallaxMap_Opacity"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "ParallaxMap_UV_Ratio",
+          "kind": "float",
+          "min": 0.0,
+          "max": 2,
+          "label": {
+            "zh": "视差贴图 UVRatio（ParallaxMap_UV_Ratio）",
+            "en": "ParallaxMap_UV_Ratio"
+          },
+          "tier": "other"
+        }
+      ]
+    },
+    {
+      "id": "rain",
+      "section": "surface",
+      "tier": "more",
+      "label": {
+        "zh": "雨水 / 湿润",
+        "en": "Rain / wetness"
+      },
+      "params": [
+        {
+          "param": "Wetness",
+          "kind": "float",
+          "min": 0.0,
+          "max": 2,
+          "label": {
+            "zh": "湿润",
+            "en": "Wetness"
+          },
+          "tier": "more"
+        }
+      ]
+    },
+    {
+      "id": "native_emission",
+      "section": "emission",
+      "tier": "basic",
+      "label": {
+        "zh": "原版自发光",
+        "en": "Native emission"
+      },
+      "params": [
+        {
+          "param": "EmissiveColor",
+          "kind": "color",
+          "channels": "rgb",
+          "label": {
+            "zh": "原版自发光颜色",
+            "en": "emissive colour"
+          },
+          "tier": "basic"
+        },
+        {
+          "param": "EmissiveIntensity",
+          "kind": "bool",
+          "label": {
+            "zh": "原版自发光强度（0 = 关）",
+            "en": "EmissiveIntensity"
+          },
+          "tier": "basic"
+        },
+        {
+          "param": "EmissiveRate",
+          "kind": "float",
+          "min": 0.0,
+          "max": 2,
+          "label": {
+            "zh": "原版自发光比例",
+            "en": "EmissiveRate"
+          },
+          "tier": "more"
+        },
+        {
+          "param": "EmissiveRateGamma",
+          "kind": "float",
+          "min": 0.0,
+          "max": 8,
+          "label": {
+            "zh": "原版自发光伽马",
+            "en": "EmissiveRateGamma"
+          },
+          "tier": "more"
+        }
+      ]
+    },
+    {
+      "id": "bulb",
+      "section": "emission",
+      "tier": "more",
+      "label": {
+        "zh": "灯泡",
+        "en": "Bulb"
+      },
+      "params": [
+        {
+          "param": "Bulb_Color",
+          "kind": "color",
+          "channels": "rgb",
+          "label": {
+            "zh": "灯泡颜色",
+            "en": "Bulb_Color"
+          },
+          "tier": "basic"
+        },
+        {
+          "param": "use_Bulb",
+          "kind": "bool",
+          "label": {
+            "zh": "灯泡开关",
+            "en": "use_Bulb"
+          },
+          "tier": "basic"
+        },
+        {
+          "param": "Bulb_Intensity",
+          "kind": "float",
+          "min": 0.0,
+          "max": 100,
+          "label": {
+            "zh": "灯泡强度",
+            "en": "Bulb_Intensity"
+          },
+          "tier": "more"
+        },
+        {
+          "param": "Bulb_Pow_Rate",
+          "kind": "float",
+          "min": 0.0,
+          "max": 40,
+          "label": {
+            "zh": "灯泡幂",
+            "en": "Bulb_Pow_Rate"
+          },
+          "tier": "more"
+        },
+        {
+          "param": "Bulb_Levels_min",
+          "kind": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "label": {
+            "zh": "灯泡色阶下限",
+            "en": "Bulb_Levels_min"
+          },
+          "tier": "more"
+        },
+        {
+          "param": "Bulb_Levels_max",
+          "kind": "float",
+          "min": 0.0,
+          "max": 2,
+          "label": {
+            "zh": "灯泡色阶上限",
+            "en": "Bulb_Levels_max"
+          },
+          "tier": "more"
+        }
+      ]
+    },
+    {
+      "id": "lampshade",
+      "section": "emission",
+      "tier": "more",
+      "label": {
+        "zh": "灯罩",
+        "en": "Lamp shade"
+      },
+      "params": [
+        {
+          "param": "LampShade_Color",
+          "kind": "color",
+          "channels": "rgb",
+          "label": {
+            "zh": "灯罩颜色",
+            "en": "LampShade_Color"
+          },
+          "tier": "basic"
+        },
+        {
+          "param": "use_LampShade",
+          "kind": "bool",
+          "label": {
+            "zh": "灯罩开关",
+            "en": "use_LampShade"
+          },
+          "tier": "basic"
+        },
+        {
+          "param": "LampShade_Intensity",
+          "kind": "float",
+          "min": 0.0,
+          "max": 100,
+          "label": {
+            "zh": "灯罩强度",
+            "en": "LampShade_Intensity"
+          },
+          "tier": "more"
+        },
+        {
+          "param": "LampShade_Scale",
+          "kind": "float",
+          "min": 0.0,
+          "max": 2,
+          "label": {
+            "zh": "灯罩缩放",
+            "en": "LampShade_Scale"
+          },
+          "tier": "more"
+        },
+        {
+          "param": "LampShade_Smoothness",
+          "kind": "float",
+          "min": 0.0,
+          "max": 2,
+          "label": {
+            "zh": "灯罩平滑",
+            "en": "LampShade_Smoothness"
+          },
+          "tier": "more"
+        },
+        {
+          "param": "LampShader_HightOffset",
+          "kind": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "label": {
+            "zh": "灯罩高度偏移",
+            "en": "LampShader_HightOffset"
+          },
+          "tier": "more"
+        }
+      ]
+    },
+    {
+      "id": "native_emission_other",
+      "section": "emission",
+      "tier": "other",
+      "label": {
+        "zh": "原版自发光",
+        "en": "Native emission"
+      },
+      "params": [
+        {
+          "param": "RimColor_Emissive",
+          "kind": "float",
+          "min": 0.0,
+          "max": 3,
+          "label": {
+            "zh": "边缘颜色自发光（RimColor_Emissive）",
+            "en": "RimColor_Emissive"
+          },
+          "tier": "other"
+        }
+      ]
+    },
+    {
+      "id": "emission_fade",
+      "section": "emission",
+      "tier": "more",
+      "label": {
+        "zh": "自发光距离渐隐",
+        "en": "Emission fade"
+      },
+      "params": [
+        {
+          "param": "UseEmmisiveFade",
+          "kind": "bool",
+          "label": {
+            "zh": "自发光渐隐开关",
+            "en": "UseEmmisiveFade"
+          },
+          "tier": "basic"
+        },
+        {
+          "param": "EmmisiveFadeStart",
+          "kind": "float",
+          "min": 0.0,
+          "max": 2,
+          "label": {
+            "zh": "渐隐起点",
+            "en": "EmmisiveFadeStart"
+          },
+          "tier": "more"
+        },
+        {
+          "param": "EmmisiveFadeRamp",
+          "kind": "float",
+          "min": 0.0,
+          "max": 2,
+          "label": {
+            "zh": "渐隐过渡",
+            "en": "EmmisiveFadeRamp"
+          },
+          "tier": "more"
+        }
+      ]
+    },
+    {
+      "id": "dirt_other",
+      "section": "system",
+      "tier": "other",
+      "label": {
+        "zh": "污垢 / 灰尘",
+        "en": "Dirt / dust"
+      },
+      "params": [
+        {
+          "param": "UseDirtMask",
+          "kind": "bool",
+          "label": {
+            "zh": "使用污垢遮罩（UseDirtMask）",
+            "en": "UseDirtMask"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "Dirt_Tiling",
+          "kind": "float",
+          "min": 0.0,
+          "max": 2,
+          "label": {
+            "zh": "污垢缩放（Dirt_Tiling）",
+            "en": "Dirt_Tiling"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "DirtMaskArea",
+          "kind": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "label": {
+            "zh": "污垢遮罩 Area（DirtMaskArea）",
+            "en": "DirtMaskArea"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "DirtMaskContrast",
+          "kind": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "label": {
+            "zh": "污垢遮罩对比度（DirtMaskContrast）",
+            "en": "DirtMaskContrast"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "DirtNRMBlending",
+          "kind": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "label": {
+            "zh": "污垢 NRMBlending（DirtNRMBlending）",
+            "en": "DirtNRMBlending"
+          },
+          "tier": "other"
+        }
+      ]
+    },
+    {
+      "id": "misc_other",
+      "section": "system",
+      "tier": "other",
+      "label": {
+        "zh": "其他",
+        "en": "Misc"
+      },
+      "params": [
+        {
+          "param": "RefractNormal_UV_Scale",
+          "kind": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "label": {
+            "zh": "Refract 法线 UV 缩放（RefractNormal_UV_Scale）",
+            "en": "RefractNormal_UV_Scale"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "RefractNormal_Depth",
+          "kind": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "label": {
+            "zh": "Refract 法线深度（RefractNormal_Depth）",
+            "en": "RefractNormal_Depth"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "RefractNormal_Blend",
+          "kind": "float",
+          "min": 0.0,
+          "max": 2,
+          "label": {
+            "zh": "Refract 法线混合（RefractNormal_Blend）",
+            "en": "RefractNormal_Blend"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "Use_Model_Normal",
+          "kind": "bool",
+          "label": {
+            "zh": "使用 Model 法线（Use_Model_Normal）",
+            "en": "Use_Model_Normal"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "RefractNormal_UV_Ratio",
+          "kind": "float",
+          "min": 0.0,
+          "max": 2,
+          "label": {
+            "zh": "Refract 法线 UVRatio（RefractNormal_UV_Ratio）",
+            "en": "RefractNormal_UV_Ratio"
+          },
+          "tier": "other"
+        }
+      ]
+    },
+    {
+      "id": "misc",
+      "section": "system",
+      "tier": "more",
+      "label": {
+        "zh": "其他",
+        "en": "Misc"
+      },
+      "params": [
+        {
+          "param": "UV_Select",
+          "kind": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "label": {
+            "zh": "UV 选择",
+            "en": "UV_Select"
+          },
+          "tier": "more"
+        }
+      ]
+    }
+  ]
+}

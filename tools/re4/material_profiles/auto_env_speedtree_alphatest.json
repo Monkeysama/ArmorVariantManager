@@ -1,0 +1,240 @@
+{
+  "format": 1,
+  "id": "auto_env_speedtree_alphatest",
+  "source": "自动生成：tools/re4/gen_auto_profiles.py ← 离线材质库 library.json（_chainsaw/mastermaterial/master/env_speedtree_alphatest.mmtr）",
+  "label": {
+    "zh": "原版：env_speedtree_alphatest",
+    "en": "Vanilla: env_speedtree_alphatest"
+  },
+  "priority": 10,
+  "match": {
+    "master": [
+      "_chainsaw/mastermaterial/master/env_speedtree_alphatest.mmtr"
+    ]
+  },
+  "sections": [
+    {
+      "id": "color",
+      "label": {
+        "zh": "颜色层",
+        "en": "Colour layers"
+      }
+    },
+    {
+      "id": "light",
+      "label": {
+        "zh": "明暗",
+        "en": "Light and shade"
+      }
+    },
+    {
+      "id": "surface",
+      "label": {
+        "zh": "质感",
+        "en": "Surface"
+      }
+    },
+    {
+      "id": "emission",
+      "label": {
+        "zh": "发光",
+        "en": "Emission"
+      }
+    },
+    {
+      "id": "system",
+      "label": {
+        "zh": "系统",
+        "en": "System"
+      }
+    }
+  ],
+  "groups": [
+    {
+      "id": "rain",
+      "section": "surface",
+      "tier": "more",
+      "label": {
+        "zh": "雨水 / 湿润",
+        "en": "Rain / wetness"
+      },
+      "params": [
+        {
+          "param": "Wetness",
+          "kind": "float",
+          "min": 0.0,
+          "max": 2,
+          "label": {
+            "zh": "湿润",
+            "en": "Wetness"
+          },
+          "tier": "more"
+        }
+      ]
+    },
+    {
+      "id": "misc_other",
+      "section": "system",
+      "tier": "other",
+      "label": {
+        "zh": "其他",
+        "en": "Misc"
+      },
+      "params": [
+        {
+          "param": "Basecolor_Multiply",
+          "kind": "vec",
+          "label": {
+            "zh": "Basecolor 乘（Basecolor_Multiply）",
+            "en": "Basecolor_Multiply"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "Basecolor_Multiply_Outside",
+          "kind": "vec",
+          "label": {
+            "zh": "Basecolor 乘外侧（Basecolor_Multiply_Outside）",
+            "en": "Basecolor_Multiply_Outside"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "Outside_Mask",
+          "kind": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "label": {
+            "zh": "外侧遮罩（Outside_Mask）",
+            "en": "Outside_Mask"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "Outside_Mask_Mul",
+          "kind": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "label": {
+            "zh": "外侧遮罩 Mul（Outside_Mask_Mul）",
+            "en": "Outside_Mask_Mul"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "Basecolor_Mask_Brightness",
+          "kind": "float",
+          "min": 0.0,
+          "max": 4,
+          "label": {
+            "zh": "Basecolor 遮罩亮度（Basecolor_Mask_Brightness）",
+            "en": "Basecolor_Mask_Brightness"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "Roughness_Multiply",
+          "kind": "float",
+          "min": 0.0,
+          "max": 2,
+          "label": {
+            "zh": "粗糙度乘（Roughness_Multiply）",
+            "en": "Roughness_Multiply"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "AlphaTest_Divide_Intensity",
+          "kind": "float",
+          "min": 0.0,
+          "max": 1.0,
+          "label": {
+            "zh": "AlphaTestDivide 强度（AlphaTest_Divide_Intensity）",
+            "en": "AlphaTest_Divide_Intensity"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "TLS_Intensity",
+          "kind": "float",
+          "min": 0.0,
+          "max": 3,
+          "label": {
+            "zh": "TLS 强度（TLS_Intensity）",
+            "en": "TLS_Intensity"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "Enable_GeoAO",
+          "kind": "bool",
+          "label": {
+            "zh": "开关 GeoAO（Enable_GeoAO）",
+            "en": "Enable_GeoAO"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "Enable_BakedAO",
+          "kind": "bool",
+          "label": {
+            "zh": "开关 BakedAO（Enable_BakedAO）",
+            "en": "Enable_BakedAO"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "AO_Intensity",
+          "kind": "float",
+          "min": 0.0,
+          "max": 7,
+          "label": {
+            "zh": "AO 强度（AO_Intensity）",
+            "en": "AO_Intensity"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "Enable_CustomAO",
+          "kind": "bool",
+          "label": {
+            "zh": "开关 CustomAO（Enable_CustomAO）",
+            "en": "Enable_CustomAO"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "VertexColorAO_Intensity",
+          "kind": "float",
+          "min": 0.0,
+          "max": 2,
+          "label": {
+            "zh": "顶点颜色 AO 强度（VertexColorAO_Intensity）",
+            "en": "VertexColorAO_Intensity"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "EnableSpecFix",
+          "kind": "bool",
+          "label": {
+            "zh": "开关高光 Fix（EnableSpecFix）",
+            "en": "EnableSpecFix"
+          },
+          "tier": "other"
+        },
+        {
+          "param": "ReflectionVectorPower",
+          "kind": "float",
+          "min": 0.0,
+          "max": 2,
+          "label": {
+            "zh": "ReflectionVector 幂（ReflectionVectorPower）",
+            "en": "ReflectionVectorPower"
+          },
+          "tier": "other"
+        }
+      ]
+    }
+  ]
+}

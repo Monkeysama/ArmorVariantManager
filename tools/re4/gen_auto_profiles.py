@@ -70,13 +70,39 @@ def label_of(name, p):
     return f"{zh}（{name}）", name
 
 
-def slider(p, rng):
-    if rng and len(rng) == 2:
-        return rng[0], rng[1]
+def default_span(p):
     d = p.get("default")
     d = d[0] if isinstance(d, list) and d else d
     top = max(1.0, math.ceil(abs(d) * 2)) if isinstance(d, (int, float)) else 1.0
     return (-top if isinstance(d, (int, float)) and d < 0 else 0.0), top
+
+
+# Soft slider ranges guessed from default values, unified per parameter (and component) across all masters, so that a
+# parameter with the same meaning gets the same entry everywhere (gen_palette_profiles.py can then share it).
+SPAN = {}
+
+
+def collect_spans(masters):
+    for mid, m in masters:
+        for name, p in m["params"].items():
+            keys = []
+            if p["type"] == "float":
+                if not p.get("range"):
+                    keys.append((name, None))
+            else:
+                for c, info in (p.get("components") or {}).items():
+                    if not (info or {}).get("range") and not p.get("range"):
+                        keys.append((name, c))
+            for k in keys:
+                lo, hi = default_span(p)
+                cur = SPAN.get(k)
+                SPAN[k] = (min(lo, cur[0]), max(hi, cur[1])) if cur else (lo, hi)
+
+
+def slider(p, rng, key=None):
+    if rng and len(rng) == 2:
+        return rng[0], rng[1]
+    return SPAN.get(key) or default_span(p)
 
 
 def entries(name, p):
@@ -101,7 +127,7 @@ def entries(name, p):
         if p.get("kind") == "switch":
             add({"param": name, "kind": "bool", "label": text(zh, en), "tier": "basic"})
         else:
-            lo, hi = slider(p, p.get("range"))
+            lo, hi = slider(p, p.get("range"), (name, None))
             add({"param": name, "kind": "float", "min": lo, "max": hi, "label": text(zh, en), "tier": "more"})
         return out
     comps = p.get("components") or {}
@@ -115,7 +141,7 @@ def entries(name, p):
         info = comps.get(c) or {}
         if (color and c in "xyz") or info.get("kind") == "unused" or c not in used:
             continue
-        lo, hi = slider(p, info.get("range") or p.get("range"))
+        lo, hi = slider(p, info.get("range") or p.get("range"), (name, c))
         kind = "bool" if info.get("kind") == "switch" else "float"
         cz = c.upper() if (low(p) and zh == name) else (info.get("zh") or c.upper())
         e = {"param": name, "component": c, "kind": kind,
@@ -138,6 +164,7 @@ def main(argv):
     lib = json.loads(Path(argv[0]).read_text(encoding="utf-8"))
     groups_meta = lib.get("groups", {})
     # masters with the same signature (parameter count + texture slots) cannot be told apart at runtime: one profile
+    collect_spans([(mid, m) for mid, m in lib["masters"].items() if SKIP not in mid])
     by_sig = {}
     for mid, m in sorted(lib["masters"].items()):
         if SKIP in mid:
