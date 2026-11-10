@@ -343,6 +343,9 @@ snap = act({kind = "manual", character = "Leon", layer = "Hide Hair", option = "
 assert(snap.groups[1].active == "" and snap.groups[1].effective == nil)
 run_frames()
 assert(meshes.hair.state().Hair == true, "group set to none falls back to the full outfit")
+-- 再点一次当前已选的项是无操作,不应报错
+snap = act({kind = "manual", character = "Leon", layer = "Hide Hair", option = ""})
+assert(snap.groups[1].active == "", "re-selecting the current option is a no-op")
 
 -- 条件状态:新建、条件、目标、保持;条件成立时接管状态组
 snap = act({kind = "state-new", character = "Leon", name = "Healthy"})

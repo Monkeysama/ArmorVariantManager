@@ -530,7 +530,18 @@ function Reff.new(deps)
 
     -- v3 的操作。返回 changed, reapply;已经自己存过盘的返回 "saved"。
     local actions = {
-        manual = function(p, cfg) return OpsV3.set_manual(cfg, str(p.layer), str(p.option) or "") end,
+        manual = function(p, cfg)
+            local layer, option = str(p.layer), str(p.option) or ""
+            local changed, reapply = OpsV3.set_manual(cfg, layer, option)
+            if changed then return changed, reapply end
+            -- 点的就是当前状态(单选组再点已选中的选项、复选组全关时再点「—」):没什么要改,照常回快照
+            local g = layer ~= "base" and M3.find_group(cfg, layer) or nil
+            if g and (option == "" or g.options[option]) then
+                local already = M3.is_multi(g) and option == "" or (not M3.is_multi(g) and g.active == option)
+                if already then return "saved" end
+            end
+            return false
+        end,
         -- 复选组:打开 / 关闭一个选项;选择方式(on = 复选)
         ["option-on"] = function(p, cfg) return OpsV3.set_option_on(cfg, str(p.group), str(p.option), p.on == true) end,
         ["group-multi"] = function(p, cfg) return OpsV3.set_group_multi(cfg, str(p.group), p.on == true) end,
