@@ -9,15 +9,35 @@ import { cycleOf, keyOf as hotkeyFor } from './hotkeys';
 
 // 快速切换：一切从简。被条件状态接管的层锁定（只在这里锁，编辑页照常能改手动选择）。
 const props = defineProps<{ snapshot: Re4Snapshot; busy: boolean; perform: Re4Perform; t: Re4Translate }>();
+const nfOff = computed(() => props.snapshot.settings.newFeatures === false);   // 新版特性关闭:相关界面灰掉、不可改
 const c = () => ({ character: props.snapshot.character });
 const states = computed(() => props.snapshot.states ?? []);
 const groupsOpen = shallowRef(true);
 const owner = (index?: number) => index ? states.value[index - 1]?.name ?? '' : '';
 const pick = (layer: string, option: string) => props.perform({ kind: 'manual', ...c(), layer, option });
-const rows = computed(() => (props.snapshot.groups ?? []).map(g => ({
+// 造型归属:当前整套造型不在状态组的归属里时不显示这一行
+const rows = computed(() => (props.snapshot.groups ?? []).filter(g => g.shown !== false).map(g => ({
   layer: g.name, label: g.name, active: g.active, effective: g.effective, locked: g.fromState, none: true,
-  options: g.options.map(o => o.name),
+  options: g.options.map(o => o.name), multi: g.multi === true,
+  // 复选组各选项:手动开关 / 这一帧生效 / 被哪个条件状态接管
+  opts: Object.fromEntries(g.options.map(o => [o.name, { on: o.on === true, eff: o.effective === true, locked: o.fromState }])),
 })));
+type QRow = (typeof rows.value)[number];
+// 一个按钮按下 / 锁定 / 高亮:复选组按选项各自看,单选组按整组看
+const optPressed = (r: QRow, name: string) => r.multi ? r.opts[name]?.on === true : r.active === name;
+const optLocked = (r: QRow, name: string) => r.multi ? r.opts[name]?.locked : r.locked;
+const optEff = (r: QRow, name: string) => r.multi ? !!r.opts[name]?.locked && r.opts[name]?.eff === true : !!r.locked && r.effective === name;
+const nonePressed = (r: QRow) => r.multi ? !Object.values(r.opts).some(o => o.on) : r.active === '';
+const toggleOpt = (r: QRow, name: string) => r.multi
+  ? props.perform({ kind: 'option-on', ...c(), group: r.layer, option: name, on: !optPressed(r, name) })
+  : pick(r.layer, name);
+// 只有一个选项(不算「（无）」)的状态组用勾选框紧凑排在一起:勾上 = 选这个选项,取消 = 「（无）」
+const multiRows = computed(() => rows.value.filter(r => r.options.length !== 1));
+const singleRows = computed(() => rows.value.filter(r => r.options.length === 1));
+// 被条件接管时显示生效的选项,否则显示手动选择
+const singleOn = (r: QRow) => r.multi
+  ? (r.opts[r.options[0]]?.locked ? r.opts[r.options[0]]?.eff === true : r.opts[r.options[0]]?.on === true)
+  : (r.locked ? r.effective : r.active) === r.options[0];
 // 模型高度:显示当前生效的值和来源;全局覆盖打开时无视各预设 / 选项,统一用这里的值(存在当前配置里)
 const override = computed(() => props.snapshot.heightOverride ?? { enabled: false, cm: 0 });
 const signed = (v: number) => (v > 0 ? '+' : '') + v;
@@ -70,15 +90,38 @@ const cycleKey = (layer: string) => cycleOf(props.snapshot, layerTarget(layer))?
       </div>
       <div v-if="groupsOpen" class="re4-panel-body">
         <span v-if="!rows.length" class="re4-muted re4-small">{{ t('noGroups') }}</span>
-        <div v-for="row in rows" :key="row.layer" class="re4-qrow" :class="{ locked: row.locked }">
+        <div v-for="row in multiRows" :key="row.layer" class="re4-qrow" :class="{ locked: row.locked }">
           <span class="re4-qname">{{ row.label }}<span v-if="cycleKey(row.layer) !== undefined" class="re4-qkey" :title="t('hotkeyCycleHint')">Alt+{{ cycleKey(row.layer) }} {{ t('hotkeyCycle') }}</span></span>
-          <span class="re4-seg" role="group" :aria-label="row.label">
-            <button :disabled="busy || !!row.locked" :aria-pressed="row.active === ''" :title="row.locked ? t('lockedBy', owner(row.locked)) : ''"
-              @click="pick(row.layer, '')">{{ t('none') }}<span v-if="hotkeyOf(row.layer, '') !== undefined" class="re4-qkey">Alt+{{ hotkeyOf(row.layer, '') }}</span></button>
-            <button v-for="name in row.options" :key="name" :disabled="busy || !!row.locked"
-              :aria-pressed="row.active === name" :class="{ eff: row.locked && row.effective === name }"
-              :title="row.locked ? t('lockedBy', owner(row.locked)) : ''" @click="pick(row.layer, name)">{{ name }}<span v-if="hotkeyOf(row.layer, name) !== undefined" class="re4-qkey">Alt+{{ hotkeyOf(row.layer, name) }}</span></button>
+          <!-- 复选组:左边「（无）」用分段按钮的框(点一下关掉全部),右边各选项用勾选框紧凑排列 -->
+          <span v-if="row.multi" class="re4-qmulti" role="group" :aria-label="row.label">
+            <span class="re4-seg"><button :disabled="busy" :aria-pressed="nonePressed(row)" @click="!nonePressed(row) && pick(row.layer, '')">{{ t('none') }}<span v-if="hotkeyOf(row.layer, '') !== undefined" class="re4-qkey">Alt+{{ hotkeyOf(row.layer, '') }}</span></button></span>
+            <label v-for="name in row.options" :key="name + '|' + optPressed(row, name) + '|' + optEff(row, name)" class="re4-schip"
+              :class="{ locked: !!optLocked(row, name), eff: optEff(row, name) }" :title="optLocked(row, name) ? t('lockedBy', owner(optLocked(row, name))) : ''">
+              <input type="checkbox" :checked="optLocked(row, name) ? optEff(row, name) : optPressed(row, name)" :disabled="busy || !!optLocked(row, name)"
+                @change="toggleOpt(row, name)">
+              <span class="re4-sname">{{ name }}</span>
+              <span v-if="hotkeyOf(row.layer, name) !== undefined" class="re4-qkey">Alt+{{ hotkeyOf(row.layer, name) }}</span>
+            </label>
           </span>
+          <span v-else class="re4-seg" role="group" :aria-label="row.label">
+            <button :disabled="busy || (!row.multi && !!row.locked)" :aria-pressed="nonePressed(row)" :title="!row.multi && row.locked ? t('lockedBy', owner(row.locked)) : ''"
+              @click="pick(row.layer, '')">{{ t('none') }}<span v-if="hotkeyOf(row.layer, '') !== undefined" class="re4-qkey">Alt+{{ hotkeyOf(row.layer, '') }}</span></button>
+            <button v-for="name in row.options" :key="name" :disabled="busy || !!optLocked(row, name)"
+              :aria-pressed="optPressed(row, name)" :class="{ eff: optEff(row, name) }"
+              :title="optLocked(row, name) ? t('lockedBy', owner(optLocked(row, name))) : ''" @click="toggleOpt(row, name)">{{ name }}<span v-if="hotkeyOf(row.layer, name) !== undefined" class="re4-qkey">Alt+{{ hotkeyOf(row.layer, name) }}</span></button>
+          </span>
+        </div>
+        <div v-if="singleRows.length" class="re4-sflow re4-qsingles">
+          <label v-for="row in singleRows" :key="row.layer + '|' + row.active + '|' + row.effective" class="re4-schip"
+            :class="{ locked: optLocked(row, row.options[0]), eff: optLocked(row, row.options[0]) && singleOn(row) }"
+            :title="optLocked(row, row.options[0]) ? t('lockedBy', owner(optLocked(row, row.options[0]))) : (row.options[0] !== row.label ? row.options[0] : '')">
+            <input type="checkbox" :checked="singleOn(row)" :disabled="busy || !!optLocked(row, row.options[0])"
+              @change="e => pick(row.layer, (e.target as HTMLInputElement).checked ? row.options[0] : '')">
+            <span class="re4-sname">{{ row.label }}</span>
+            <span v-if="row.options[0] !== row.label" class="re4-muted re4-small">{{ row.options[0] }}</span>
+            <span v-if="cycleKey(row.layer) !== undefined" class="re4-qkey" :title="t('hotkeyCycleHint')">Alt+{{ cycleKey(row.layer) }}</span>
+            <span v-else-if="hotkeyOf(row.layer, row.options[0]) !== undefined" class="re4-qkey">Alt+{{ hotkeyOf(row.layer, row.options[0]) }}</span>
+          </label>
         </div>
       </div>
     </section>
@@ -101,7 +144,7 @@ const cycleKey = (layer: string) => cycleOf(props.snapshot, layerTarget(layer))?
       </div>
     </section>
 
-    <section class="re4-panel re4-panel-body">
+    <section class="re4-panel re4-panel-body" :class="{ 're4-nf-lock': nfOff }" :inert="nfOff">
       <div class="re4-qrow">
         <span class="re4-qname">{{ t('paletteScheme') }}</span>
         <span class="re4-seg" role="group" :aria-label="t('paletteScheme')">
@@ -114,7 +157,7 @@ const cycleKey = (layer: string) => cycleOf(props.snapshot, layerTarget(layer))?
       </div>
     </section>
 
-    <section class="re4-panel re4-panel-body">
+    <section class="re4-panel re4-panel-body" :class="{ 're4-nf-lock': nfOff }" :inert="nfOff">
       <div class="re4-qrow">
         <span class="re4-qname">{{ t('heightQuick') }}</span>
         <span class="re4-hnow" :class="{ off: snapshot.settings.heightEnabled === false }">
@@ -160,4 +203,9 @@ const cycleKey = (layer: string) => cycleOf(props.snapshot, layerTarget(layer))?
 .re4-schip { display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px 2px 6px; border: 1px solid var(--avm-line); border-radius: 14px; cursor: pointer; user-select: none; }
 .re4-schip input { margin: 0; }
 .re4-schip .re4-sname { font-weight: 500; }
+.re4-qsingles { padding-top: 6px; }
+.re4-qmulti { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.re4-qrow + .re4-qsingles { border-top: 1px solid var(--avm-line); }
+.re4-schip.locked { cursor: not-allowed; color: var(--avm-muted); }
+.re4-schip.eff { box-shadow: 0 0 0 2px var(--re4-ok); }
 </style>

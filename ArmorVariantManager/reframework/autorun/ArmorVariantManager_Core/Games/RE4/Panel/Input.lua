@@ -216,7 +216,9 @@ function I.over_overlay()
     return false
 end
 
+-- I.locked:整页锁定(新版特性关闭时的调色页、溶解页),所有控件不响应;浮层(下拉列表)照常
 function I.hit(x, y, w, h)
+    if I.locked and not I.in_overlay then return false end
     if not I.inside(x, y, w, h) then return false end
     local c = D.get_clip()
     if c and (I.mx < c[1] or I.mx >= c[3] or I.my < c[2] or I.my >= c[4]) then return false end

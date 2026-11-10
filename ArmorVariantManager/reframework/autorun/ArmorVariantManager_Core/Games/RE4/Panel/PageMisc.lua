@@ -33,8 +33,9 @@ function Page.draw(ctx, x, y, w)
     -- 设置
     W.h2(t("settings"), x, cy)
     cy = cy + 28
-    local function setting_row(label, value, hint, on_change)
-        local changed, v, tw = W.toggle(label, x, cy, value)
+    -- disabled:新版特性关闭时灰掉的设置(模型高度)
+    local function setting_row(label, value, hint, on_change, disabled)
+        local changed, v, tw = W.toggle(label, x, cy, value, { disabled = disabled })
         if changed then on_change(v) end
         local used = 30
         if hint then
@@ -48,10 +49,15 @@ function Page.draw(ctx, x, y, w)
         setting_row(t("armorMirror"), snap.armorMirror == true, t("armorMirrorHint"),
             function(v) ctx.act({ kind = "armor-mirror", enabled = v }) end)
     end
+    -- 新版特性(见 Main.features_on):关闭后开销与旧版相当
+    local nf_hint = t("newFeaturesHint") .. (s.newFeaturesAuto and ("\n" .. t("newFeaturesAuto")) or "")
+        .. ((s.newFeatures == false and s.extrasInstalled) and ("\n" .. t("newFeaturesReset")) or "")
+    setting_row(t("newFeatures"), s.newFeatures ~= false, nf_hint,
+        function(v) ctx.act({ kind = "setting", id = "new_features", value = v }) end)
     setting_row(t("blockGameMouse"), s.blockGameMouse ~= false, t("blockGameMouseHint"),
         function(v) ctx.act({ kind = "setting", id = "block_game_mouse", value = v }) end)
     setting_row(t("heightEnabled"), s.heightEnabled ~= false, t("heightEnabledHint"),
-        function(v) ctx.act({ kind = "setting", id = "height_enabled", value = v }) end)
+        function(v) ctx.act({ kind = "setting", id = "height_enabled", value = v }) end, s.newFeatures == false)
     setting_row(t("weaponHide"), s.weaponHideStorage == true, nil,
         function(v) ctx.act({ kind = "setting", id = "weapon_hide_storage", value = v }) end)
     -- 溶解相关的设置在「溶解」页(PageDissolve.lua)

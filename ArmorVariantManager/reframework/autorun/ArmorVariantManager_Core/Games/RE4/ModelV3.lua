@@ -29,6 +29,21 @@
 --     palette_active = 方案名:调色页里选中的方案,选中就一直生效(相当于调色的手动选择)。
 --     另外可以被引用:base.palettes = { [预设名] = 方案名 },groups[i].palettes = { [选项名] = 方案名 },
 --     条件状态的 palette = 方案名。叠加顺序见 palette_layers。引用到不存在的方案时保留原样,解算时跳过。
+--     状态组选项引用的方案只作用于这个选项设为开 / 关的材质(「-」的不改),见 palette_sources 的 masks;
+--     整套造型、条件状态、调色页选中的方案照旧整份生效。
+--   选择方式(可选):groups[i].multi = true 为复选,省略为单选。
+--     单选:groups[i].active = 选项名 | ""(「（无）」),整组是一个叠加层(层键 "group:<组名>")。
+--     复选:groups[i].actives = { 选项名, ... }(手动打开的选项),active 恒为 "";每个选项各自是一个叠加层
+--     (层键见 option_key),按选项顺序叠加,同一个材质靠后的选项说了算。条件状态的目标指向复选组的选项时,
+--     含义是"打开这个选项",只接管这一个选项,同组其他选项照常手动开关。
+--     高度、调色、溶解、SKS 键组的引用按打开的选项依次叠加(见 group_picks)。
+--   造型归属(可选):groups[i].bases = { 整套造型预设名, ... };nil = 全部。只影响快速切换页:
+--     当前生效的整套造型不在列表里时,这个状态组在快速切换页不显示。不影响解算和条件状态。
+--   SKS 键组(可选,形态键插件 ShapeKeySystem 的键组选项,见 SksLink.lua):
+--     base.sks = { [预设名] = { [键组名] = 选项名 | 0 } },groups[i].sks = { [选项名] = { ... } }。
+--     0 = 这个键组不选任何选项。只引用键组和选项的名字,不选 SKS 的捏脸配置(配置归 SKS 自己管),
+--     按名字在这个角色当前生效的 SKS 配置里查找。解算见 sks_of:按叠加顺序逐个键组合并,后写覆盖先写;
+--     AVM 写过、现在没有任何一层写到的键组还原成「（无）」;从没写过的键组不碰(见 SksLink)。
 --   条件状态 = { name, enabled, exclusive, logic, conditions, hold, fade_in, fade_out,
 --               hp = nil | { upper, lower, invert }, base = nil | "整套造型名",
 --               targets = { { group, option }, ... }, palette = nil | "调色方案名" }
@@ -51,6 +66,54 @@ function M.split_key(k)
 end
 function M.layer_key(group_name) return "group:" .. group_name end
 function M.is_v3(cfg) return is_tbl(cfg) and cfg.version == M.VERSION end
+
+-- 复选组的单个选项的层键:"group:<组名>" + 分隔符 + 选项名。分隔符用控制字符,名字里不会出现
+local OPTION_SEP = "\1"
+function M.option_key(group_name, option) return "group:" .. group_name .. OPTION_SEP .. option end
+-- 层键 → 状态组名, 选项名(复选组的单个选项)| nil(单选组)。不是状态组的层键返回 nil
+function M.parse_layer_key(key)
+    if type(key) ~= "string" or key:sub(1, 6) ~= "group:" then return nil end
+    local rest = key:sub(7)
+    local i = rest:find(OPTION_SEP, 1, true)
+    if i then return rest:sub(1, i - 1), rest:sub(i + 1) end
+    return rest, nil
+end
+function M.is_multi(g) return is_tbl(g) and g.multi == true end
+
+-- 一个状态组的叠加层,按叠加顺序:单选组一层 { key };复选组每个选项一层 { key, option }
+function M.group_layers(g)
+    if M.is_multi(g) then
+        local out = {}
+        for _, n in ipairs(g.order or {}) do out[#out + 1] = { key = M.option_key(g.name, n), option = n } end
+        return out
+    end
+    return { { key = M.layer_key(g.name) } }
+end
+
+-- 这一帧这个状态组选中的选项(按叠加顺序;单选组最多一个)
+function M.group_picks(g, picks)
+    local out = {}
+    for _, l in ipairs(M.group_layers(g)) do
+        local p = picks and picks[l.key]
+        if p then out[#out + 1] = p end
+    end
+    return out
+end
+
+-- 复选组的手动选择里有没有这个选项
+function M.is_on(g, name)
+    for _, n in ipairs(is_tbl(g) and g.actives or {}) do if n == name then return true end end
+    return false
+end
+
+-- 复选组的手动选择:只留存在的选项,去重,按选项顺序排
+function M.clean_actives(list, g)
+    local want = {}
+    for _, n in ipairs(is_tbl(list) and list or {}) do if type(n) == "string" and g.options[n] then want[n] = true end end
+    local out = {}
+    for _, n in ipairs(g.order or {}) do if want[n] then out[#out + 1] = n end end
+    return out
+end
 
 function M.find_group(cfg, name)
     for i, g in ipairs(cfg.groups or {}) do
@@ -85,6 +148,15 @@ function M.groups_of(cfg)
     end
     return map
 end
+
+-- REFramework 的 json 把空表写成 null,读回来这一项就整个不见了(只设了 SKS 键组、高度、调色等引用而
+-- 没写材质的选项,快照就是空表)。order 里还留着它的名字:把这些名字补回成空快照,引用也就跟着保住了
+local function restore_empty(map, order)
+    for _, n in ipairs(is_tbl(order) and order or {}) do
+        if type(n) == "string" and n ~= "" and map[n] == nil then map[n] = {} end
+    end
+end
+M.restore_empty = restore_empty
 
 -- order 和表对齐:保留原顺序,缺的按名字补在末尾
 function M.reconcile_order(order, map)
@@ -157,6 +229,60 @@ local function clean_palette_refs(refs, names)
     return next(out) and out or nil
 end
 
+-- SKS 键组引用:{ [预设 / 选项名] = { [键组名] = 选项名 | 0 } },丢掉不存在的预设和写错类型的项
+local function sks_value_ok(v) return (type(v) == "string" and v ~= "") or v == 0 end
+function M.clean_sks_refs(refs, names)
+    local out = {}
+    for n, map in pairs(is_tbl(refs) and refs or {}) do
+        if names[n] ~= nil and is_tbl(map) then
+            local m = {}
+            for g, v in pairs(map) do
+                if type(g) == "string" and g ~= "" and sks_value_ok(v) then m[g] = v end
+            end
+            if next(m) then out[n] = m end
+        end
+    end
+    return next(out) and out or nil
+end
+M.sks_value_ok = sks_value_ok
+
+-- 造型归属:只留存在的整套造型预设名,去重;空 = nil(全部)
+function M.clean_bases(list, presets)
+    local out, seen = {}, {}
+    for _, n in ipairs(is_tbl(list) and list or {}) do
+        if type(n) == "string" and presets[n] ~= nil and not seen[n] then
+            seen[n] = true
+            out[#out + 1] = n
+        end
+    end
+    return out[1] and out or nil
+end
+
+-- 快速切换页上这个状态组显示不显示:没设造型归属,或当前生效的整套造型在列表里
+function M.group_shown_for(g, base_name)
+    if not is_tbl(g) or not is_tbl(g.bases) or not g.bases[1] then return true end
+    for _, n in ipairs(g.bases) do if n == base_name then return true end end
+    return false
+end
+
+-- 这一帧要交给 SKS 的键组选项:整套造型 → 状态组按叠加顺序,同一个键组后写覆盖先写。
+-- 返回 { [键组名] = 选项名 | 0 } 或 nil(没有任何一层写键组)
+function M.sks_of(cfg, picks)
+    if not is_tbl(cfg) or not is_tbl(picks) then return nil end
+    local out, any = {}, false
+    local function add(map)
+        for g, v in pairs(is_tbl(map) and map or {}) do out[g] = v; any = true end
+    end
+    local base = cfg.base or {}
+    if picks.base and is_tbl(base.sks) then add(base.sks[picks.base]) end
+    for _, g in ipairs(cfg.groups or {}) do
+        if is_tbl(g.sks) then
+            for _, pick in ipairs(M.group_picks(g, picks)) do add(g.sks[pick]) end
+        end
+    end
+    return any and out or nil
+end
+
 -- ============================================================ 快捷键绑定
 -- 结构键:同一个结构的轮换和单项共用(用来判断互斥);目标键:一个设定只占一个键
 function M.hotkey_structure(b) return b.kind == "group" and ("group:" .. tostring(b.group)) or b.kind end
@@ -189,7 +315,10 @@ end
 function M.hotkey_valid(cfg, b)
     local items = M.hotkey_items(cfg, b)
     if not items then return false end
-    if M.hotkey_is_cycle(b) then return true end
+    if M.hotkey_is_cycle(b) then
+        -- 复选组没有轮换(各选项各自开关)
+        return not (b.kind == "group" and M.is_multi(M.find_group(cfg, b.group)))
+    end
     local want = b.kind == "palette" and b.scheme or b.option
     if b.kind == "base" and want == "" then return false end
     for _, n in ipairs(items) do if n == want then return true end end
@@ -285,8 +414,9 @@ function M.height_of(cfg, picks)
         cm, src = base.heights[picks.base], { layer = "base", option = picks.base }
     end
     for _, g in ipairs(cfg.groups or {}) do
-        local pick = picks[M.layer_key(g.name)]
-        if pick and g.heights and g.heights[pick] then cm, src = g.heights[pick], { layer = g.name, option = pick } end
+        for _, pick in ipairs(M.group_picks(g, picks)) do
+            if g.heights and g.heights[pick] then cm, src = g.heights[pick], { layer = g.name, option = pick } end
+        end
     end
     return cm, src
 end
@@ -351,6 +481,7 @@ function M.normalize(cfg)
     for n, p in pairs(is_tbl(base.presets) and base.presets or {}) do
         if type(n) == "string" then presets[n] = clean_snapshot(p) end
     end
+    restore_empty(presets, base.order)
     base.presets = presets
     base.order = M.reconcile_order(base.order, presets)
     if type(base.active) ~= "string" or (base.active ~= "" and not presets[base.active]) then base.active = "" end
@@ -359,6 +490,7 @@ function M.normalize(cfg)
     base.palettes = clean_palette_refs(base.palettes, presets)
     -- 溶解预设引用:{ [预设名] = 溶解预设名 },形态同调色方案引用(溶解预设是全局的,不存在时解算退回默认)
     base.dissolves = clean_palette_refs(base.dissolves, presets)
+    base.sks = M.clean_sks_refs(base.sks, presets)
     cfg.base = base
 
     local groups, names = {}, {}
@@ -370,14 +502,20 @@ function M.normalize(cfg)
             for n, p in pairs(is_tbl(g.options) and g.options or {}) do
                 if type(n) == "string" then options[n] = clean_snapshot(p, nil, true) end
             end
-            groups[#groups + 1] = {
-                name = g.name, options = options,
+            restore_empty(options, g.order)
+            local multi = g.multi == true
+            local row = {
+                name = g.name, options = options, multi = multi or nil,
                 order = M.reconcile_order(g.order, options),
-                active = (type(g.active) == "string" and options[g.active]) and g.active or "",
+                active = (not multi and type(g.active) == "string" and options[g.active]) and g.active or "",
                 heights = clean_heights(g.heights, options),
                 palettes = clean_palette_refs(g.palettes, options),
                 dissolves = clean_palette_refs(g.dissolves, options),
+                sks = M.clean_sks_refs(g.sks, options),
+                bases = M.clean_bases(g.bases, presets),
             }
+            if multi then row.actives = M.clean_actives(g.actives, row) end
+            groups[#groups + 1] = row
         end
     end
     cfg.groups = groups
@@ -632,7 +770,9 @@ function M.resolve(cfg, context)
         if st.base then list[#list + 1] = { key = "base", option = st.base, valid = base.presets[st.base] ~= nil, is_base = true } end
         for _, t in ipairs(st.targets) do
             local g = groups[t.group]
-            list[#list + 1] = { key = M.layer_key(t.group), option = t.option, valid = g ~= nil and g.options[t.option] ~= nil }
+            -- 复选组:目标 = 打开这个选项,认领的是这个选项自己的层
+            local key = M.is_multi(g) and M.option_key(t.group, t.option) or M.layer_key(t.group)
+            list[#list + 1] = { key = key, option = t.option, valid = g ~= nil and g.options[t.option] ~= nil }
         end
         -- 调色方案放在最后,不影响状态组目标的序号(血量驱动那里按序号回填)
         if st.palette then list[#list + 1] = { key = "palette", option = st.palette, valid = schemes[st.palette] ~= nil, is_palette = true } end
@@ -736,7 +876,13 @@ function M.resolve(cfg, context)
         end
     end
     pick("base", base.active)
-    for _, g in ipairs(cfg.groups) do pick(M.layer_key(g.name), g.active) end
+    for _, g in ipairs(cfg.groups) do
+        if M.is_multi(g) then
+            for _, l in ipairs(M.group_layers(g)) do pick(l.key, M.is_on(g, l.option) and l.option or "") end
+        else
+            pick(M.layer_key(g.name), g.active)
+        end
+    end
 
     -- 血量驱动:每层一条链。排在第一个血量状态之前的普通状态认领了这一层时,这一层不驱动
     local drives = {}
@@ -797,12 +943,30 @@ end
 -- 或者它认领的整套造型 / 状态组选项引用的)| false(手动选择带来的);
 -- hp[i] = 血量进度(0~1,这个方案由带血量区间的条件状态带来,按进度加权叠加)| nil(完全生效)。
 -- 血量状态进度为 0 时也列出来(权重 0),好让平滑后的权重能渐渐退到 0
+-- 第四个返回值 masks[k]:这个方案只作用于哪些材质({ [slot] = { [材质] = true } });nil = 整份生效。
+-- 状态组选项引用的方案带上这个选项设为开 / 关的材质(写成「-」的不在里面)
+local function option_mask(opt)
+    local mask = {}
+    for slot, data in pairs(is_tbl(opt) and opt or {}) do
+        if type(slot) == "string" and is_tbl(data) and is_tbl(data.materials) then
+            for m, v in pairs(data.materials) do
+                if type(m) == "string" and type(v) == "boolean" then
+                    mask[slot] = mask[slot] or {}
+                    mask[slot][m] = true
+                end
+            end
+        end
+    end
+    return mask
+end
+M.option_mask = option_mask
+
 function M.palette_sources(cfg, r)
-    local names, src, hp = {}, {}, {}
+    local names, src, hp, masks = {}, {}, {}, {}
     local schemes = cfg.palettes or {}
-    local function add(n, by, w)
+    local function add(n, by, w, mask)
         if type(n) == "string" and schemes[n] then
-            names[#names + 1] = n; src[#src + 1] = by or false; hp[#names] = w
+            names[#names + 1] = n; src[#src + 1] = by or false; hp[#names] = w; masks[#names] = mask
         end
     end
     add(cfg.palette_active, false)
@@ -811,9 +975,10 @@ function M.palette_sources(cfg, r)
     local base = cfg.base or {}
     if picks.base then add((base.palettes or {})[picks.base], (layers.base or {}).prio) end
     for _, g in ipairs(cfg.groups or {}) do
-        local key = M.layer_key(g.name)
-        local pick = picks[key]
-        if pick then add((g.palettes or {})[pick], (layers[key] or {}).prio) end
+        for _, l in ipairs(M.group_layers(g)) do
+            local pick = picks[l.key]
+            if pick then add((g.palettes or {})[pick], (layers[l.key] or {}).prio, nil, option_mask(g.options[pick])) end
+        end
     end
     local states = (cfg.conditions or {}).states or {}
     for i = #states, 1, -1 do
@@ -830,17 +995,17 @@ function M.palette_sources(cfg, r)
         if hp[k] ~= nil and st and st.hp then
             local depth = st.hp.invert and st.hp.lower or (100 - st.hp.upper)
             slots[#slots + 1] = k
-            items[#items + 1] = { n = names[k], s = src[k], w = hp[k], depth = depth, k = k }
+            items[#items + 1] = { n = names[k], s = src[k], w = hp[k], depth = depth, k = k, m = masks[k] }
         end
     end
     if #items > 1 then
         table.sort(items, function(a, b) if a.depth ~= b.depth then return a.depth < b.depth end return a.k < b.k end)
         for idx, k in ipairs(slots) do
             local it = items[idx]
-            names[k], src[k], hp[k] = it.n, it.s, it.w
+            names[k], src[k], hp[k], masks[k] = it.n, it.s, it.w, it.m
         end
     end
-    return names, src, hp
+    return names, src, hp, masks
 end
 
 -- 调色方案组合从 prev 变成 cur 时渐变多久(秒)。prev / cur = { names, src, states }(states = 当时的条件状态表)。
@@ -881,16 +1046,31 @@ function M.mirror_palette(pal, on)
 end
 
 -- 带权重叠加(血量驱动的方案):weights[i] 缺省 1;original / discrete 见 Palette.blend
-function M.palette_blend_of(cfg, names, weights, original, discrete)
+-- 按 masks[k](见 palette_sources)只留方案里在范围内的材质;没有 mask 的整份用
+local function masked(pal, mask)
+    if not mask or not is_tbl(pal) then return pal end
+    local out = {}
+    for slot, mats in pairs(pal) do
+        local keep = mask[slot]
+        if keep and is_tbl(mats) then
+            for m, params in pairs(mats) do
+                if keep[m] then out[slot] = out[slot] or {}; out[slot][m] = params end
+            end
+        end
+    end
+    return out
+end
+
+function M.palette_blend_of(cfg, names, weights, original, discrete, masks)
     local list = {}
-    for _, n in ipairs(names or {}) do list[#list + 1] = (cfg.palettes or {})[n] end
+    for k, n in ipairs(names or {}) do list[#list + 1] = masked((cfg.palettes or {})[n], masks and masks[k]) or {} end
     return Palette.blend(list, weights, original, discrete)
 end
 
 -- 叠好的覆盖表(交给 Palette.apply_mesh)
-function M.palette_of(cfg, names)
+function M.palette_of(cfg, names, masks)
     local list = {}
-    for _, n in ipairs(names or {}) do list[#list + 1] = (cfg.palettes or {})[n] end
+    for k, n in ipairs(names or {}) do list[#list + 1] = masked((cfg.palettes or {})[n], masks and masks[k]) or {} end
     return Palette.merge(list)
 end
 

@@ -19,6 +19,8 @@ DEFAULT_TESTS = (
     "tests/re4_effect_providers.lua",
     "tests/re4_dissolve_styles.lua",
     "tests/re4_height.lua",
+    "tests/re4_sks_link.lua",
+    "tests/re4_multi_group.lua",
     "tests/re4_palette.lua",
     "tests/re4_palette_schemes.lua",
     "tests/re4_hotkeys.lua",

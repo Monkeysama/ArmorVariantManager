@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import Re4Num from './Re4Num.vue';
-import { shallowRef } from 'vue';
+import { computed, shallowRef } from 'vue';
 import { ElButton, ElSwitch } from '@reff/ui';
 import type { Documentation } from '../types';
 import type { Re4Translate } from './i18n';
@@ -11,12 +11,13 @@ import { describe } from './hotkeys';
 const props = defineProps<{ snapshot: Re4Snapshot; busy: boolean; perform: Re4Perform; t: Re4Translate;
   documentation: Documentation | null; documentationLoading: boolean; documentationError: string }>();
 defineEmits<{ 'retry-documentation': [] }>();
+const nfOff = computed(() => props.snapshot.settings.newFeatures === false);   // 新版特性关闭:相关界面灰掉、不可改
 const helpOpen = shallowRef(false);
 const old = () => props.snapshot.configVersion === 2;
 // 快捷键总览:十个键各自绑的是什么(只在 v3 配置时有)
 const hotkeys = () => props.snapshot.hotkeys ?? [];
 const skipText = (skip: string[], kind: string) => skip.map(n => n === '' ? (kind === 'palette' ? props.t('paletteAlways') : props.t('none')) : n).join('、');
-const setting = (id:'weapon_hide_storage' | 'portrait_distance' | 'portrait_height' | 'block_game_mouse' | 'height_enabled', value: boolean | number) =>
+const setting = (id:'weapon_hide_storage' | 'portrait_distance' | 'portrait_height' | 'block_game_mouse' | 'height_enabled' | 'new_features', value: boolean | number) =>
   props.perform({ kind: 'setting', id, value });
 </script>
 
@@ -56,7 +57,15 @@ const setting = (id:'weapon_hide_storage' | 'portrait_distance' | 'portrait_heig
         <ElSwitch :model-value="snapshot.settings.blockGameMouse !== false" :disabled="busy" size="small" @change="v => setting('block_game_mouse', v === true)" />
         <span>{{ t('blockGameMouse') }}</span><span class="re4-muted re4-small">{{ t('blockGameMouseHint') }}</span>
       </div>
+      <!-- 新版特性:关闭后开销与旧版相当(见 Main.features_on) -->
       <div class="re4-row">
+        <ElSwitch :model-value="snapshot.settings.newFeatures !== false" :disabled="busy" size="small" @change="v => setting('new_features', v === true)" />
+        <span>{{ t('newFeatures') }}</span>
+        <span v-if="snapshot.settings.newFeaturesAuto" class="re4-tag">{{ t('newFeaturesAuto') }}</span>
+        <span class="re4-muted re4-small">{{ t('newFeaturesHint') }}</span>
+        <span v-if="snapshot.settings.newFeatures === false && snapshot.settings.extrasInstalled" class="re4-small re4-bad-text">{{ t('newFeaturesReset') }}</span>
+      </div>
+      <div class="re4-row" :class="{ 're4-nf-lock': nfOff }" :inert="nfOff">
         <ElSwitch :model-value="snapshot.settings.heightEnabled !== false" :disabled="busy" size="small" @change="v => setting('height_enabled', v === true)" />
         <span>{{ t('heightEnabled') }}</span><span class="re4-muted re4-small">{{ t('heightEnabledHint') }}</span>
       </div>
@@ -64,7 +73,7 @@ const setting = (id:'weapon_hide_storage' | 'portrait_distance' | 'portrait_heig
         <ElSwitch :model-value="snapshot.settings.weaponHideStorage" :disabled="busy" size="small" @change="v => setting('weapon_hide_storage', v === true)" />
         <span>{{ t('weaponHide') }}</span>
       </div>
-      <div v-if="snapshot.preview" class="re4-row">
+      <div v-if="snapshot.preview" class="re4-row" :class="{ 're4-nf-lock': nfOff }" :inert="nfOff">
         <span>{{ t('previewDistance') }}</span>
         <Re4Num :value="snapshot.settings.previewDistance ?? 3" :min="1.2" :max="8" :disabled="busy" :aria-label="t('previewDistance')"
           @change="v => v !== undefined && setting('portrait_distance', v)" />

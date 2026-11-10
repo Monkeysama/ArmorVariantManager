@@ -456,10 +456,13 @@ end
 
 -- v3:各层的选择来自条件状态表(ModelV3.resolve),叠加和 v2 共用 make_build。
 -- 状态组的叠加顺序就是 groups 的顺序:几个组可以写同一个材质,靠后的组覆盖靠前的。
+-- 复选组的每个选项各是一层(ModelV3.group_layers),组内按选项顺序叠加。
 local function resolve_v3(char_addr, config, context, body_updater)
     local sparse = {}
     for _, g in ipairs(config.groups or {}) do
-        sparse[#sparse + 1] = { key = ModelV3.layer_key(g.name), presets = g.options }
+        for _, l in ipairs(ModelV3.group_layers(g)) do
+            sparse[#sparse + 1] = { key = l.key, presets = g.options }
+        end
     end
     local r = ModelV3.resolve(config, context)
     local build = make_build(config.base or {}, sparse, config.armor_mirrors_body, body_updater)

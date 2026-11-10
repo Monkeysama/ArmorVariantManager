@@ -16,6 +16,7 @@ import type {
 // 垫在被整套造型 / 状态组 / 条件状态引用的方案下面)。调色页编辑的就是选中的那一份;
 // 选着初始时一改,Lua 自动新建一个方案并选中,改动记在新方案里。
 const props = defineProps<{ snapshot: Re4Snapshot; busy: boolean; perform: Re4Perform; liveWrite?: Re4LiveWrite; t: Re4Translate }>();
+const nfOff = computed(() => props.snapshot.settings.newFeatures === false);   // 新版特性关闭:相关界面灰掉、不可改
 const c = () => ({ character: props.snapshot.character });
 const pal = computed<Re4Palette | undefined>(() => props.snapshot.palette);
 const en = computed(() => props.snapshot.language === 'en');
@@ -432,7 +433,8 @@ const clampSlider = (e: Re4PaletteEntry, v?: number) => Math.max(sliderMin(e), M
 </script>
 
 <template>
-  <div class="re4-main re4-pal">
+  <div v-if="nfOff" class="re4-banner" role="status">{{ t('newFeaturesOffPage') }}</div>
+  <div class="re4-main re4-pal" :class="{ 're4-nf-lock': nfOff }" :inert="nfOff">
     <div v-if="pal?.error" class="re4-banner" role="alert">{{ pal.error }}</div>
     <div v-if="pal?.errors?.length" class="re4-banner" role="status">{{ t('paletteBadFiles', pal.errors.join('、')) }}</div>
     <div v-if="!pal" class="re4-muted re4-small">{{ t('loading') }}</div>

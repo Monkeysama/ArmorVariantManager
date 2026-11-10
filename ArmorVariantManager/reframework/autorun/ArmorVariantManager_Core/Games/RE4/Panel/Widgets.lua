@@ -407,7 +407,7 @@ function W.text_box(id, x, y, w, h, value, placeholder, on_change, opt)
     local hover = I.hit(x, y, w, h)
     D.rrect(x, y, w, h, 3, C.ink)
     D.outline(x, y, w, h, 3, 1, (TextInput.active == id and C.brass) or (hover and C.muted or C.line))
-    local registered = not opt.disabled and TextInput.register(id, x, y, w, h, value, on_change)
+    local registered = not opt.disabled and not I.locked and TextInput.register(id, x, y, w, h, value, on_change)
     if not registered and value and value ~= "" then D.text_mid(value, x + 8, y, h, opt.disabled and C.faint or C.text, body(), w - 16)
     elseif (not value or value == "") and TextInput.active ~= id then
         D.text_mid(placeholder or "", x + 8, y, h, C.faint, body(), w - 16)

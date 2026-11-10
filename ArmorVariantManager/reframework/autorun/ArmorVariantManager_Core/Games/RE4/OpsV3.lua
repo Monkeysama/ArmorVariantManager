@@ -16,14 +16,56 @@ function OpsV3.set_auto(cfg, on)
     return true, true
 end
 
--- layer:"base" 或状态组名;option:"" = （无）(整套造型也允许,= 全启用兜底)
+-- layer:"base" 或状态组名;option:"" = （无）(整套造型也允许,= 全启用兜底)。
+-- 复选组:option = 选项名时切换这个选项的开关,"" 时关掉全部选项
 function OpsV3.set_manual(cfg, layer, option)
     if type(option) ~= "string" then return false end
     if layer == "base" then return Ops.set_active(cfg.base, option) end
     local g = M3.find_group(cfg, layer)
     if not g or (option ~= "" and not g.options[option]) then return false end
+    if M3.is_multi(g) then
+        if option == "" then
+            if not (g.actives and g.actives[1]) then return false end
+            g.actives = {}
+            return true, true
+        end
+        return OpsV3.set_option_on(cfg, layer, option, not M3.is_on(g, option))
+    end
     if g.active == option then return false end
     g.active = option
+    return true, true
+end
+
+-- 复选组:打开 / 关闭一个选项(单选组拒绝)
+function OpsV3.set_option_on(cfg, group, option, on)
+    local g = M3.find_group(cfg, group)
+    if not M3.is_multi(g) or type(option) ~= "string" or not g.options[option] then return false end
+    on = on == true
+    if M3.is_on(g, option) == on then return false end
+    local list = {}
+    for _, n in ipairs(g.actives or {}) do if n ~= option then list[#list + 1] = n end end
+    if on then list[#list + 1] = option end
+    g.actives = M3.clean_actives(list, g)
+    return true, true
+end
+
+-- 选择方式:on = 复选。单选改复选时原来选中的选项保持打开;复选改单选时只保留顺序最靠后的已选选项
+-- (它本来就是叠加结果里说了算的那个)。复选组没有轮换快捷键,改成复选时作废
+function OpsV3.set_group_multi(cfg, group, on)
+    local g = M3.find_group(cfg, group)
+    if not g then return false end
+    on = on == true
+    if M3.is_multi(g) == on then return false end
+    if on then
+        g.multi = true
+        g.actives = (g.active ~= "" and g.options[g.active]) and { g.active } or {}
+        g.active = ""
+    else
+        local list = M3.clean_actives(g.actives, g)
+        g.multi, g.actives = nil, nil
+        g.active = list[#list] or ""
+    end
+    M3.clean_hotkey_table(cfg)
     return true, true
 end
 
@@ -113,6 +155,9 @@ function OpsV3.rename_base(cfg, old, new)
     for _, st in ipairs(cfg.conditions.states) do
         if st.base == old then st.base = new end
     end
+    for _, g in ipairs(cfg.groups) do
+        for i, n in ipairs(type(g.bases) == "table" and g.bases or {}) do if n == old then g.bases[i] = new end end
+    end
     hotkeys_rename_item(cfg, "base", nil, old, new)
     return true, false
 end
@@ -120,7 +165,11 @@ end
 -- 删除后指向它的条件状态保留引用,显示为"引用失效"
 function OpsV3.delete_base(cfg, name)
     local ok, reapply = Ops.delete_preset(cfg.base, name)
-    if ok then M3.clean_hotkey_table(cfg) end   -- 指向它的快捷键作废
+    if ok then
+        M3.clean_hotkey_table(cfg)   -- 指向它的快捷键作废
+        -- 造型归属里去掉它;列表删空后回到「全部」
+        for _, g in ipairs(cfg.groups) do g.bases = M3.clean_bases(g.bases, cfg.base.presets) end
+    end
     return ok, reapply
 end
 
@@ -155,6 +204,19 @@ function OpsV3.delete_group(cfg, name)
     return true, true
 end
 
+-- 造型归属:list = 整套造型预设名的列表;空表 / nil = 全部。不存在的名字丢掉
+function OpsV3.set_group_bases(cfg, name, list)
+    local g = M3.find_group(cfg, name)
+    if not g then return false end
+    local v = M3.clean_bases(type(list) == "table" and list or nil, cfg.base.presets)
+    local old = g.bases or {}
+    local same = #old == #(v or {})
+    if same then for i, n in ipairs(v or {}) do if old[i] ~= n then same = false end end end
+    if same then return false end
+    g.bases = v
+    return true, false
+end
+
 function OpsV3.move_group(cfg, name, offset)
     local _, from = M3.find_group(cfg, name)
     local to = from and from + (tonumber(offset) or 0)
@@ -186,19 +248,35 @@ function OpsV3.new_option(cfg, group, name)
     if not valid_name(name) or g.options[name] then return false end
     g.options[name] = {}
     table.insert(g.order, name)
-    g.active = name
+    if M3.is_multi(g) then
+        local list = g.actives or {}
+        list[#list + 1] = name
+        g.actives = M3.clean_actives(list, g)
+    else
+        g.active = name
+    end
     return true, true, name
 end
 
 function OpsV3.duplicate_option(cfg, group, name)
-    local _, layer = group_layer(cfg, group)
+    local g, layer = group_layer(cfg, group)
     if not layer then return false end
-    return Ops.duplicate_preset(layer, name)
+    local ok, reapply, newn = Ops.duplicate_preset(layer, name)
+    -- 复选组:复制出的选项和新建的一样直接打开(Ops 按单选写了 active,改回来)
+    if ok and M3.is_multi(g) then
+        g.active = ""
+        local list = g.actives or {}
+        list[#list + 1] = newn
+        g.actives = M3.clean_actives(list, g)
+    end
+    return ok, reapply, newn
 end
 
 function OpsV3.rename_option(cfg, group, old, new)
     local _, layer = group_layer(cfg, group)
     if not layer or not Ops.rename_preset(layer, old, new) then return false end
+    local g = M3.find_group(cfg, group)
+    for i, n in ipairs(g.actives or {}) do if n == old then g.actives[i] = new end end
     for _, st in ipairs(cfg.conditions.states) do
         for _, t in ipairs(st.targets) do
             if t.group == group and t.option == old then t.option = new end
@@ -212,7 +290,11 @@ function OpsV3.delete_option(cfg, group, name)
     local _, layer = group_layer(cfg, group)
     if not layer then return false end
     local ok, reapply = Ops.delete_preset(layer, name)
-    if ok then M3.clean_hotkey_table(cfg) end
+    if ok then
+        M3.clean_hotkey_table(cfg)
+        local g = M3.find_group(cfg, group)
+        if g.actives then g.actives = M3.clean_actives(g.actives, g) end
+    end
     return ok, reapply
 end
 
@@ -415,6 +497,30 @@ function OpsV3.set_state_dissolve(cfg, i, preset)
     local v = preset ~= "" and preset or nil
     if st.dissolve == v then return false end
     st.dissolve = v
+    return true, false
+end
+
+-- ============================================================ SKS 键组引用(见 ModelV3 文件头、SksLink.lua)
+-- 整套造型的预设 / 状态组的选项指定 SKS 某个键组用哪个选项。value:选项名;0 = 不选任何选项;
+-- nil / "" = 这一层不写这个键组。不检查 SKS 里是否存在(SKS 可能没装、配置可能换了),发送时不存在就跳过
+function OpsV3.set_sks_ref(cfg, layer, option, group, value)
+    local holder, names
+    if layer == "base" then
+        holder, names = cfg.base, cfg.base.presets
+    else
+        local g = M3.find_group(cfg, layer)
+        if not g then return false end
+        holder, names = g, g.options
+    end
+    if type(option) ~= "string" or not names[option] or type(group) ~= "string" or group == "" then return false end
+    if value == "" then value = nil end
+    if value ~= nil and not M3.sks_value_ok(value) then return false end
+    local refs = type(holder.sks) == "table" and holder.sks or {}
+    local map = type(refs[option]) == "table" and refs[option] or {}
+    if map[group] == value then return false end
+    map[group] = value
+    refs[option] = next(map) and map or nil
+    holder.sks = next(refs) and refs or nil
     return true, false
 end
 

@@ -25,6 +25,7 @@ function Main.start(ctx)
     local ModelV3 = require("ArmorVariantManager_Core.Games.RE4.ModelV3")
     local Presets = require("ArmorVariantManager_Core.Games.RE4.Presets")
     local Hotkeys = require("ArmorVariantManager_Core.Games.RE4.Hotkeys")
+    local SksLink = require("ArmorVariantManager_Core.Games.RE4.SksLink")   -- SKS 键组联动
 
     local global_config_path = "ArmorVariantManager/GlobalSettings.json"
     -- 默认英文(面板顶部有「中文」勾选框,勾了才切中文)。语言是全局的,不跟角色配置走。
@@ -47,6 +48,8 @@ function Main.start(ctx)
         if type(loaded.ui_dissolve_enabled) == "boolean" then global_config.ui_dissolve_enabled = loaded.ui_dissolve_enabled end
         if type(loaded.block_game_mouse) == "boolean" then global_config.block_game_mouse = loaded.block_game_mouse end
         if type(loaded.height_enabled) == "boolean" then global_config.height_enabled = loaded.height_enabled end
+        -- 新版特性开关(见下面 Main.features_on);没存过 = 自动
+        if type(loaded.new_features) == "boolean" then global_config.new_features = loaded.new_features end
         if tonumber(loaded.ui_dissolve_time) then global_config.ui_dissolve_time = tonumber(loaded.ui_dissolve_time) end
         -- 溶解预设库;旧版只有一套全局设置(内置样式的形状存在 DissolveEffects.json,光边在 dissolve_edge),
         -- 第一次读到时迁移成一个「默认」预设,外观不变
@@ -195,6 +198,37 @@ function Main.start(ctx)
         table.insert(global_config.known, kind_id)
         table.sort(global_config.known)
         save_global_settings()
+    end
+
+    -- ============================================================
+    -- 新版特性开关(global_config.new_features)
+    --
+    -- 关闭时只保留旧版(MVM)就有的核心:材质开关、整套造型 / 状态组(含复选)、条件状态、手动选择、
+    -- 护甲同步、收纳武器隐藏。不运行:溶解过渡(切换变成瞬间)、血量驱动的渐变(到区间一半时直接切)、
+    -- 调色方案、模型高度、SKS 键组联动、条件状态的武器显示、快捷键、全身预览。v3 配置照常按 v3 解算,
+    -- 不转换、不丢数据。目的是让配置较低的电脑上的开销和旧版相当。
+    -- 没设过时自动:有任何 v3 配置(已登记角色的配置文件,或这次加载过的配置)就开,全是 v2 就关。
+    -- 钩子装上卸不掉,所以快捷键 / 高度修正 / 全身预览的钩子按需安装(Main.ensure_extras):
+    -- 开关一直关着就永远不装;关掉之前装过的,回调会直接返回,钩子本身要 Reset Scripts 后才消失。
+    -- 状态放在 Main 上而不是局部变量:Main.start 的局部变量已经接近 Lua 的 200 个上限。
+    -- ============================================================
+    Main.features = { default = nil }
+    function Main.features_on()
+        if type(global_config.new_features) == "boolean" then return global_config.new_features end
+        local f = Main.features
+        if f.default == nil then
+            f.default = false
+            for _, k in ipairs(global_config.known or {}) do
+                local ok, d = pcall(json.load_file, "ArmorVariantManager/" .. cfg_key(k) .. ".json")
+                if ok and type(d) == "table" and d.version == ModelV3.VERSION then f.default = true; break end
+            end
+        end
+        if not f.default then
+            for _, c in pairs(loaded_configs) do
+                if ModelV3.is_v3(c) then f.default = true; break end
+            end
+        end
+        return f.default
     end
 
     -- 配置格式 v2:主层 + 轴,两者同构({presets, active, rules})。
@@ -926,6 +960,8 @@ function Main.start(ctx)
     -- 模型高度:应用循环每帧按解算结果收集 { source, cm },循环结束交给 HeightFix(下面安装)
     local height_fix = nil
     local frame_heights = {}
+    -- SKS 键组联动:应用循环每帧按解算结果收集 { head, want, player },循环结束交给 SksLink.push
+    local frame_sks = {}
 
     -- 调色盘(Palette.lua)。映射 = 内置(PaletteProfiles.lua)+ data/ArmorVariantManager/material_profiles/*.json,
     -- 同 id 的外部文件覆盖内置;按需读一次,网页上「重新读取映射」时重读。
@@ -1120,7 +1156,8 @@ function Main.start(ctx)
         if current and current ~= "full" then
             for _, r in ipairs(ranked) do if r.match == "full" then better[#better + 1] = r.entry end end
         end
-        local src = cfg and cfg.source_preset and preset_lib.get(cfg.source_preset) or nil
+        -- 来源是被覆盖过的 mod 预设时,按覆盖它的那份看(名字相同,内容是自己存的)
+        local src = cfg and cfg.source_preset and preset_lib.effective(cfg.source_preset) or nil
         return {
             current = current,
             source = src,
@@ -1181,16 +1218,19 @@ function Main.start(ctx)
     end
 
     -- 保存至预设:用当前配置**完全替换**预设内容(不合并)。id 省略时存到当前预设。
-    -- 只能存到自己保存的预设;被替换掉的旧内容先进自动保存,存错了还能找回。
+    -- 自己保存的预设直接覆盖;mod 自带的预设不改它的文件,存进覆盖它的那份(见 Presets.lua)。
+    -- 被替换掉的旧内容先进自动保存,存错了还能找回。
     local function update_source_preset(kind_id, id)
         local key = cfg_key(kind_id)
         local cfg = loaded_configs[key]
         id = id or (cfg and cfg.source_preset)
-        local e = id and preset_lib.get(id)
-        if not cfg or not e or e.source ~= "user" or not ModelV3.is_v3(cfg) then return false end
+        local e = id and preset_lib.effective(id)
+        if not cfg or not e or not ModelV3.is_v3(cfg) then return false end
         preset_lib.autosave_push(key, string.format(T("autosave_before_overwrite"), e.name), e.config)
-        if not preset_lib.update(id, cfg) then return false end
-        if cfg.source_preset ~= id then cfg.source_preset = id; commit(kind_id, true, false) end
+        local ok, written = preset_lib.update(e.id, cfg)
+        if not ok then return false end
+        written = written or e.id
+        if cfg.source_preset ~= written then cfg.source_preset = written; commit(kind_id, true, false) end
         return true
     end
 
@@ -1349,7 +1389,7 @@ function Main.start(ctx)
 
     local function layer_of(config, key)
         if key == "base" then return config.base end
-        if key:sub(1, 6) == "group:" then return (ModelV3.find_group(config, key:sub(7))) end
+        if key:sub(1, 6) == "group:" then return (ModelV3.find_group(config, (ModelV3.parse_layer_key(key)))) end
         return (config.axes or {})[key:sub(6)]
     end
 
@@ -1433,13 +1473,20 @@ function Main.start(ctx)
         local resolved, changed, info = TransformManager.resolve(target.id, config, target.context, source)
         if info.v3 and not target.borrowed and type(target.id) == "string" and target.id:sub(1, 7) == "player:" then
             hotkey_ctx = { kind_id = kind_id, config = config, v3 = info.v3, layers = info.layers }
-            frame_weapons = info.v3.weapons
+            -- 条件状态的武器显示属于新版特性;关掉时只按全局「隐藏收纳武器」
+            frame_weapons = Main.nf and info.v3.weapons or nil
         end
 
         -- 模型高度:整套造型 → 状态组按叠加顺序,最后设过的那一层说了算
-        if global_config.height_enabled ~= false and info.v3 then
+        if Main.nf and global_config.height_enabled ~= false and info.v3 then
             local cm = ModelV3.height_of(config, info.v3.picks)
             if cm and cm ~= 0 then frame_heights[#frame_heights + 1] = { source = source, cm = cm } end
+        end
+
+        -- SKS 键组:整套造型 → 状态组按叠加顺序合并;按 head 网格认人,循环结束统一发送
+        if Main.nf and info.v3 and target.ident and target.ident.head_mesh then
+            frame_sks[#frame_sks + 1] = { head = target.ident.head_mesh, want = ModelV3.sks_of(config, info.v3.picks),
+                player = type(target.id) == "string" and target.id:sub(1, 7) == "player:" }
         end
 
         -- 一:mesh 实例被换掉 —— 之前写的开关必然全丢,无条件重新应用。每帧四次指针比较,很便宜。
@@ -1471,7 +1518,22 @@ function Main.start(ctx)
         -- 血量驱动:起点外观(各驱动层取本段起点)照常应用,和本段终点不同的材质按进度溶解
         local drive_map, drive_stopped = nil, false
         local now_drives = {}
-        if next(info.drives) then
+        if next(info.drives) and not Main.nf then
+            -- 新版特性关闭:不做逐渐溶解,每段走过一半就直接切到这一段的终点外观;只在外观变化时重写
+            local snap_picks, parts = copy_picks(info.picks), {}
+            for key, d in pairs(info.drives) do
+                local chain = math.max(0, tonumber(d.chain) or 0)
+                local k = math.max(1, math.min(#d.names, math.ceil(chain)))
+                local p = math.max(0, math.min(1, chain - (k - 1)))
+                local name = (p >= 0.5 and d.names[k]) or ((k > 1) and d.names[k - 1] or d.base_name)
+                snap_picks[key] = name
+                parts[#parts + 1] = key .. "=" .. tostring(name)
+            end
+            table.sort(parts)
+            local sig = table.concat(parts, "|")
+            resolved, info.owner = info.build(snap_picks)
+            if ds.snap_sig ~= sig then ds.snap_sig = sig; drive_stopped = true end
+        elseif next(info.drives) then
             local from_picks, segments = copy_picks(info.picks), {}
             for key, d in pairs(info.drives) do
                 local dkey = target.id .. "|" .. key
@@ -1506,7 +1568,7 @@ function Main.start(ctx)
         -- 材质归属 → 用哪一层的过渡:见 Dissolve.transition_layer(放手的层也要带过渡)
         local owner, prev_owner = info.owner, ds.owner
         -- 预览刚结束的那一次恢复也是瞬间的:被预览关掉的材质不该一个个溶解着"出现"
-        local trans = (not fresh) and (not preview_restoring) and ds.trans or nil
+        local trans = Main.nf and (not fresh) and (not preview_restoring) and ds.trans or nil
         -- 面板改了某层当前选项里的材质(选项没换,例如勾掉整套造型里的一个材质):这一帧用界面溶解设置。
         -- 以前这种改动沿用这一层上一次换选项时留下的过渡:这一层从没换过选项(只有一个预设、
         -- 或模型鉴赏里新出现的人偶)就没有过渡,材质直接开关;换过的话用的是那次的时长和方向。
@@ -1561,8 +1623,19 @@ function Main.start(ctx)
         -- (条件状态只带调色方案时,材质开关的 changed 不会变)
         -- 组合变了就渐变:进来的方案用带来它的条件状态的渐入时间,离开的用渐出,手动选择用界面溶解时间。
         -- 渐变中途再变就从当前显示的值接着走;首次 / 换实例 / 组合没变时的重写(调色页里直接改值)都是瞬间的
-        local names, src, hpw = nil, nil, nil
-        if info.v3 then names, src, hpw = ModelV3.palette_sources(config, info.v3) end
+        -- 调色属于新版特性:关掉时把写过的参数还原一次,之后整段跳过
+        if not Main.nf then
+            if palette_state[target.id] then
+                apply_palette(target, source, nil)
+                palette_state[target.id], palette_sig[target.id], palette_prev[target.id] = nil, nil, nil
+                palette_fade[target.id], palette_wsig[target.id] = nil, nil
+                for dkey in pairs(palette_drive_keys[target.id] or {}) do Dissolve.drive_end(dkey) end
+                palette_drive_keys[target.id] = nil
+            end
+            return
+        end
+        local names, src, hpw, pmasks = nil, nil, nil, nil
+        if info.v3 then names, src, hpw, pmasks = ModelV3.palette_sources(config, info.v3) end
         -- 血量状态带来的方案:按血量进度加权叠加,权重平滑追向目标(同血量溶解,掉血时颜色渐变过去)。
         -- 这些方案不参与「组合变了就按时间渐变」:签名和渐变时长只看完全生效的方案;权重一变就直接重写
         local fixed, fixed_src, weights, wsig = names, src, nil, ""
@@ -1620,9 +1693,9 @@ function Main.start(ctx)
                     if o == nil then o = Palette.original(palette_state[target.id], mesh, j, param) end
                     return o
                 end
-                pal = ModelV3.palette_blend_of(config, names, weights, original, discrete_params())
+                pal = ModelV3.palette_blend_of(config, names, weights, original, discrete_params(), pmasks)
             else
-                pal = names and ModelV3.palette_of(config, names) or config.palette
+                pal = names and ModelV3.palette_of(config, names, pmasks) or config.palette
             end
             pal = ModelV3.mirror_palette(pal, config.armor_mirrors_body == true)
             local manual = (global_config.ui_dissolve_enabled ~= false)
@@ -1642,7 +1715,9 @@ function Main.start(ctx)
     end
 
     local function frame_logic()
-        if not styles_preloaded then
+        Main.nf = Main.features_on()
+        if Main.nf and Main.ensure_extras then Main.ensure_extras() end
+        if Main.nf and not styles_preloaded then
             styles_preloaded = true
             local ok, err = pcall(dissolve_styles.preload)
             if not ok then note_error("dissolve styles preload", err) end
@@ -1650,6 +1725,7 @@ function Main.start(ctx)
         -- 推进正在跑的溶解过渡(和有没有目标无关:目标消失时动画自己会清掉)
         Dissolve.update()
         frame_heights = {}
+        frame_sks = {}
         hotkey_ctx = nil
         frame_weapons = nil
         local targets = Targets.collect()
@@ -1683,6 +1759,8 @@ function Main.start(ctx)
             if not ok then note_error("apply_target " .. tostring(target.label), err) end
         end
         if height_fix then height_fix.set_targets(frame_heights) end
+        local ok_sks, err_sks = pcall(SksLink.push, frame_sks)
+        if not ok_sks then note_error("sks_link", err_sks) end
 
         -- 武器显示放在目标循环之后:要用玩家配置这一帧解出来的 weapons(apply_target 里记下)
         local ok_ws, err_ws = pcall(apply_weapon_hide_storage, context, frame_weapons)
@@ -1697,7 +1775,7 @@ function Main.start(ctx)
         local ok, err = pcall(frame_logic)
         if not ok then note_error("on_frame", err) end
         -- 整套造型快捷键:看这一帧新按下的 Alt + 数字;切换提示画在左上角
-        if hotkey_logic then
+        if hotkey_logic and Main.nf then
             local ok_h, err_h = pcall(hotkey_logic.tick)
             if not ok_h then note_error("hotkeys", err_h) end
             pcall(Hotkeys.draw_toast)
@@ -2263,7 +2341,8 @@ function Main.start(ctx)
         --   溶解过渡:进入 / 离开这个状态时按时长溶解,而不是瞬间开关
         --   按血量驱动:不看条件,溶解进度直接跟血量走;没有规则时也给勾选框,勾上就建一条空条件的规则
         imgui.separator()
-        if rule then
+        -- 溶解过渡属于新版特性,关掉时不显示;血量驱动照常生效(到区间一半时直接切),设置保留
+        if rule and Main.features_on() then
             local ch_de, de = imgui.checkbox(T("dissolve_transition") .. "###dis_" .. id_prefix, rule.dissolve_enabled == true)
             if ch_de then commit(kind_id, Ops.set_dissolve(layer, target, de)) end
             if rule.dissolve_enabled == true and rule.dissolve_hp_driven ~= true then
@@ -2695,6 +2774,14 @@ function Main.start(ctx)
         if ch_lang and Ops.set_global(global_config, "language", want_zh and "zh" or "en") then
             save_global_settings()
         end
+        -- 新版特性开关(全局,见 Main.features_on),放在语言旁边。关掉时下面不生效的设置一律不显示
+        imgui.same_line()
+        local ch_nf, nf = imgui.checkbox(T("new_features") .. "###avm_new_features", Main.features_on())
+        if ch_nf and Ops.set_global(global_config, "new_features", nf) then
+            save_global_settings()
+            request_reapply()
+        end
+        local nf_on = Main.features_on()
 
         -- 最上面给独立面板的入口(另有快捷键,默认 F8)。装了 REFF 也给:REFF.dll 加载了不等于网页
         -- 打得开(缺 WebView2 Runtime、宿主被杀软拦掉等),只留 Home 的话用户会两头都打不开
@@ -2725,13 +2812,15 @@ function Main.start(ctx)
         if ch_st and Ops.set_global(global_config, "weapon_hide_storage", st) then
             save_global_settings()
         end
-        -- 界面切换溶解:在面板上手动切状态 / 预设时播放溶解(只作用于溶解模板的材质)
-        local ch_ud, ud = imgui.checkbox(T("ui_dissolve_enabled") .. "###ui_dissolve",
-            global_config.ui_dissolve_enabled ~= false)
-        if ch_ud and Ops.set_global(global_config, "ui_dissolve_enabled", ud) then
-            save_global_settings()
+        -- 界面切换溶解:在面板上手动切状态 / 预设时播放溶解(只作用于溶解模板的材质;属于新版特性)
+        if nf_on then
+            local ch_ud, ud = imgui.checkbox(T("ui_dissolve_enabled") .. "###ui_dissolve",
+                global_config.ui_dissolve_enabled ~= false)
+            if ch_ud and Ops.set_global(global_config, "ui_dissolve_enabled", ud) then
+                save_global_settings()
+            end
         end
-        if global_config.ui_dissolve_enabled ~= false then
+        if nf_on and global_config.ui_dissolve_enabled ~= false then
             ui_w()
             local ch_ut, ut = imgui.slider_float(T("ui_dissolve_time") .. "###ui_dissolve_time",
                 tonumber(global_config.ui_dissolve_time) or 1.0, 0.0, 30.0)
@@ -3232,15 +3321,24 @@ function Main.start(ctx)
                     Hotkeys.toast({ where .. (zh() and "：没有可轮换的项" or ": nothing to cycle through") .. suffix })
                     return
                 end
-                local layer_key
+                local layer_key, on_label
                 if b.kind == "base" then
                     commit(ctx.kind_id, OpsV3.set_manual(cfg, "base", target)); layer_key = "base"
                 elseif b.kind == "group" then
-                    commit(ctx.kind_id, OpsV3.set_manual(cfg, b.group, target)); layer_key = ModelV3.layer_key(b.group)
+                    -- 复选组:单项键切换这个选项的开关(「（无）」= 全部关掉),接管按这个选项自己的层看
+                    local g = ModelV3.find_group(cfg, b.group)
+                    commit(ctx.kind_id, OpsV3.set_manual(cfg, b.group, target))
+                    if ModelV3.is_multi(g) and target ~= "" then
+                        layer_key = ModelV3.option_key(b.group, target)
+                        on_label = ModelV3.is_on(g, target) and (zh() and "开" or "on") or (zh() and "关" or "off")
+                    else
+                        layer_key = ModelV3.layer_key(b.group)
+                    end
                 else
                     commit(ctx.kind_id, OpsV3.set_palette_active(cfg, target))
                 end
                 local label = target
+                if on_label then label = target .. (zh() and "：" or ": ") .. on_label end
                 if target == "" then
                     label = b.kind == "palette" and (zh() and "初始" or "Original") or (zh() and "（无）" or "(none)")
                 end
@@ -3255,17 +3353,23 @@ function Main.start(ctx)
                 Hotkeys.toast(lines)
             end,
         })
-        Hotkeys.install(hotkey_logic, function() return bound() ~= nil end, function(msg) log.warn(msg) end)
+        -- 按键钩子按需安装(见 Main.features_on):新版特性一直关着就不装
+        Main.install_hotkeys = function()
+            Hotkeys.install(hotkey_logic, function() return Main.nf == true and bound() ~= nil end, function(msg) log.warn(msg) end)
+        end
     end)
 
     -- 模型高度。装不上只记日志,不影响其他功能
-    local ok_hf, err_hf = pcall(function()
-        height_fix = require("ArmorVariantManager_Core.Games.RE4.HeightFix").new({
-            skeleton_of = Utils.get_skeleton_transform,
-            on_error = function(msg) note_error("height_fix", msg) end,
-        })
-    end)
-    if not ok_hf then note_error("height_fix", err_hf) end
+    -- 按需安装(见 Main.features_on):新版特性一直关着就不装它的引擎阶段回调
+    Main.install_height_fix = function()
+        local ok_hf, err_hf = pcall(function()
+            height_fix = require("ArmorVariantManager_Core.Games.RE4.HeightFix").new({
+                skeleton_of = Utils.get_skeleton_transform,
+                on_error = function(msg) note_error("height_fix", msg) end,
+            })
+        end)
+        if not ok_hf then note_error("height_fix", err_hf) end
+    end
 
     -- 全身预览的拍摄对象:{ root = 角色根变换, meshes = 四个槛位的网格 }。
     --   玩家 / 伙伴:BodyUpdater 挂在身体对象上,它的变换就是角色根(2026-11-05 实测伙伴 ch2a1z0_body 无父节点)
@@ -3336,11 +3440,18 @@ function Main.start(ctx)
             end,
             log = function(message) if log and log.info then log.info("[AVM Portrait] " .. message) end end,
         })
-        if not portrait.register() then portrait_web = nil end
+        -- 按需注册(见 Main.features_on):新版特性开着才装阶段回调;装不上时网页上预览显示为不可用
+        Main.install_portrait = function()
+            if not portrait.register() then Main.portrait_failed = true end
+        end
+        -- 没装之前没有帧回调去更新状态,网页上直接说明原因
+        portrait.status = "preview_features_off"
         Main.portrait = portrait
         Main.reff = require("ArmorVariantManager_Core.Games.RE4.Reff").connect({
             version = version, global_config = global_config, save_global_settings = save_global_settings, T = T,
             rename_dissolve = rename_dissolve_everywhere,
+            features_on = function() return Main.features_on() end,
+            extras_installed = function() return Main.extras_installed == true end,
             targets = Targets.collect, groups = collect_character_groups, pick_group = pick_character_group,
             resolve_key = resolve_config_key, cfg_key = cfg_key, register_kind = register_kind,
             load_config = load_config, commit = commit, reset_ui_state = function() ui_state = {} end,
@@ -3384,6 +3495,16 @@ function Main.start(ctx)
         })
     end)
     if not reff_ok then note_error("reff", reff_err) end
+
+    -- 新版特性需要的钩子:开关第一次是开的时候装一次(启动时或运行中打开时)
+    function Main.ensure_extras()
+        if Main.extras_installed then return end
+        Main.extras_installed = true
+        if Main.install_hotkeys then pcall(Main.install_hotkeys) end
+        if Main.install_height_fix then Main.install_height_fix() end
+        if Main.install_portrait then pcall(Main.install_portrait) end
+    end
+    if Main.features_on() then Main.ensure_extras() end
 
     -- 独立面板:不依赖 REFF 的图形界面(外观照 SKS)。数据走同一个 Reff 控制器,和网页语义一致。
     -- 装没装 REFF 都给入口;画不了(REFramework 太旧)时 available() 为 false,入口不显示

@@ -15,6 +15,7 @@ local Mdf2 = require("ArmorVariantManager_Core.Games.RE4.Mdf2")
 local MdfReplace = require("ArmorVariantManager_Core.Games.RE4.MdfReplace")
 local Dissolve = require("ArmorVariantManager_Core.Games.RE4.Dissolve")
 local DissolveStyles = require("ArmorVariantManager_Core.Games.RE4.DissolveStyles")
+local SksLink = require("ArmorVariantManager_Core.Games.RE4.SksLink")
 -- 默认贴图失效规则(离线材质库生成);加载失败就不做判断,不影响调色盘本身
 local ok_effects, MaterialEffects = pcall(require, "ArmorVariantManager_Core.Games.RE4.MaterialEffects")
 local effects_index = ok_effects and Palette.effects_index(MaterialEffects) or nil
@@ -369,20 +370,36 @@ function Reff.new(deps)
         for _, name in ipairs(base.order) do
             snapshot.base.presets[#snapshot.base.presets + 1] = { name = name, values = values_of(base.presets[name]),
                 match = base_match(source, base.presets[name]), height = (base.heights or {})[name],
-                palette = (base.palettes or {})[name], dissolve = (base.dissolves or {})[name] }
+                palette = (base.palettes or {})[name], dissolve = (base.dissolves or {})[name], sks = (base.sks or {})[name] }
         end
 
         snapshot.groups = {}
         for _, g in ipairs(config.groups) do
             local key = M3.layer_key(g.name)
-            local row = { name = g.name, active = g.active, effective = v3.picks[key],
-                fromState = (info.layers[key] or {}).prio, options = {} }
+            local multi = M3.is_multi(g)
+            local row = { name = g.name, active = g.active, effective = (not multi) and v3.picks[key] or nil,
+                fromState = (not multi) and (info.layers[key] or {}).prio or nil, options = {}, bases = g.bases,
+                shown = M3.group_shown_for(g, v3.picks.base), multi = multi, actives = multi and (g.actives or {}) or nil }
             for _, name in ipairs(g.order) do
-                row.options[#row.options + 1] = { name = name, values = values_of(g.options[name]), height = (g.heights or {})[name],
-                    palette = (g.palettes or {})[name], dissolve = (g.dissolves or {})[name] }
+                local o = { name = name, values = values_of(g.options[name]), height = (g.heights or {})[name],
+                    palette = (g.palettes or {})[name], dissolve = (g.dissolves or {})[name], sks = (g.sks or {})[name] }
+                if multi then
+                    -- 复选组:每个选项各自的手动开关、这一帧是否生效、被哪个条件状态接管
+                    local okey = M3.option_key(g.name, name)
+                    o.on = M3.is_on(g, name)
+                    o.effective = v3.picks[okey] ~= nil
+                    o.fromState = (info.layers[okey] or {}).prio
+                    if o.fromState and (row.fromState == nil or o.fromState < row.fromState) then row.fromState = o.fromState end
+                end
+                row.options[#row.options + 1] = o
             end
             snapshot.groups[#snapshot.groups + 1] = row
         end
+
+        -- SKS 键组联动:可选的键组(nil = 没装 SKS 1.1+)和这一帧解算出的 { 键组 -> 选项 }
+        local ident = cur.target.ident
+        snapshot.sks = SksLink.view(ident and ident.head_mesh)
+        if snapshot.sks then snapshot.sks.want = M3.sks_of(config, v3.picks) end
 
         -- 这一帧生效的模型高度(厘米,nil = 不抬高;总开关关掉时也照算,界面上另外标出)
         -- heightSource:来自哪一层("override" / "base" / 状态组名 + 选项名);heightOverride:快速切换页的全局覆盖
@@ -435,7 +452,9 @@ function Reff.new(deps)
         local p = { current = view.current, dismissed = view.dismissed == true, dirty = view.dirty == true, list = {}, better = {}, autosaves = {} }
         if view.source then p.source = { id = view.source.id, name = view.source.name, own = view.source.source == "user" } end
         for _, r in ipairs(view.presets) do
-            p.list[#p.list + 1] = { id = r.entry.id, name = r.entry.name, source = r.entry.source, match = r.match }
+            -- override:这份是覆盖某个 mod 预设的自己的副本(界面归在模组自带一类,可恢复原版)
+            p.list[#p.list + 1] = { id = r.entry.id, name = r.entry.name, source = r.entry.source, match = r.match,
+                override = r.entry.override_of ~= nil or nil }
         end
         for _, e in ipairs(view.better) do p.better[#p.better + 1] = { id = e.id, name = e.name } end
         for k, a in ipairs(view.autosaves) do p.autosaves[k] = { name = a.name, time = a.time } end
@@ -476,6 +495,10 @@ function Reff.new(deps)
             settings = { weaponHideStorage = g.weapon_hide_storage == true,
                 uiDissolveEnabled = g.ui_dissolve_enabled ~= false, blockGameMouse = g.block_game_mouse ~= false,
                 heightEnabled = g.height_enabled ~= false,
+                -- 新版特性:生效值、是否为自动、关掉后是否还有装过的钩子(要 Reset Scripts 才完全卸下)
+                newFeatures = deps.features_on == nil or deps.features_on() == true,
+                newFeaturesAuto = g.new_features == nil,
+                extrasInstalled = deps.extras_installed ~= nil and deps.extras_installed() == true,
                 uiDissolveTime = tonumber(g.ui_dissolve_time) or 1.0,
                 -- 「溶解」页的溶解预设库(全局,见 DissolveStyles):{ default, list = { name, shape, edge }, shapes }
                 dissolvePresets = DissolveStyles.presets_view(type(g.dissolve_presets) == "table" and g.dissolve_presets
@@ -508,6 +531,9 @@ function Reff.new(deps)
     -- v3 的操作。返回 changed, reapply;已经自己存过盘的返回 "saved"。
     local actions = {
         manual = function(p, cfg) return OpsV3.set_manual(cfg, str(p.layer), str(p.option) or "") end,
+        -- 复选组:打开 / 关闭一个选项;选择方式(on = 复选)
+        ["option-on"] = function(p, cfg) return OpsV3.set_option_on(cfg, str(p.group), str(p.option), p.on == true) end,
+        ["group-multi"] = function(p, cfg) return OpsV3.set_group_multi(cfg, str(p.group), p.on == true) end,
         auto = function(p, cfg) return OpsV3.set_auto(cfg, p.enabled == true) end,
         ["armor-mirror"] = function(p, cfg) return Ops.set_armor_mirror(cfg, p.enabled == true) end,
         note = function(p, cfg) return Ops.set_note(cfg, p.slot, p.material, p.text) end,
@@ -655,6 +681,13 @@ function Reff.new(deps)
         ["state-palette"] = function(p, cfg) return OpsV3.set_state_palette(cfg, integer(p.index), str(p.scheme) or "") end,
         -- 溶解预设引用(预设在全局库):整套造型预设 / 状态组选项、条件状态
         ["dissolve-ref"] = function(p, cfg) return OpsV3.set_dissolve_ref(cfg, str(p.layer), str(p.option), str(p.preset) or "") end,
+        -- SKS 键组引用:整套造型预设 / 状态组选项;value = 选项名 / 0(不选任何选项)/ ""(这一层不写)
+        ["sks-ref"] = function(p, cfg)
+            local v = p.value
+            if type(v) == "number" then v = (v == 0) and 0 or nil elseif type(v) ~= "string" then v = "" end
+            if v == nil then return false end
+            return OpsV3.set_sks_ref(cfg, str(p.layer), str(p.option), str(p.group), v)
+        end,
         ["state-dissolve"] = function(p, cfg) return OpsV3.set_state_dissolve(cfg, integer(p.index), str(p.preset) or "") end,
         ["state-weapons"] = function(p, cfg) return OpsV3.set_state_weapons(cfg, integer(p.index), str(p.mode) or "") end,
         ["base-height"] = function(p, cfg) return OpsV3.set_height(cfg, "base", p.preset, p.cm) end,
@@ -684,6 +717,12 @@ function Reff.new(deps)
         ["group-new"] = function(p, cfg) return OpsV3.new_group(cfg, str(p.name)) end,
         ["group-rename"] = function(p, cfg) return OpsV3.rename_group(cfg, p.group, str(p.name)) end,
         ["group-move"] = function(p, cfg) return OpsV3.move_group(cfg, p.group, integer(p.offset)) end,
+        -- 造型归属:bases = 整套造型预设名的列表,空 = 全部
+        ["group-bases"] = function(p, cfg)
+            local list = {}
+            for _, n in ipairs(type(p.bases) == "table" and p.bases or {}) do if type(n) == "string" then list[#list + 1] = n end end
+            return OpsV3.set_group_bases(cfg, p.group, list)
+        end,
         ["group-delete"] = function(p, cfg, cur)
             if not M3.find_group(cfg, p.group) then return false end
             deps.snapshot_before_destructive(cur.kind_id)
@@ -738,6 +777,14 @@ function Reff.new(deps)
         ["preset-blank"] = function(p, _, cur) return deps.new_blank_config(cur.kind_id, cur.target.source, p.capture == true) and "saved" end,
         ["preset-rename"] = function(p) return deps.preset_lib.rename(str(p.id), str(p.name)) and "saved" end,
         ["preset-delete"] = function(p) return deps.preset_lib.delete(str(p.id)) and "saved" end,
+        -- 恢复原版:删掉覆盖 mod 预设的那份;当前配置的来源指向它时改回原 mod 预设
+        ["preset-revert"] = function(p, cfg)
+            local ok, mod_id = deps.preset_lib.revert(str(p.id))
+            if not ok then return false end
+            -- 改了来源要存当前配置(changed),否则预设库已经自己存过盘
+            if cfg.source_preset == str(p.id) then cfg.source_preset = mod_id; return true, false end
+            return "saved"
+        end,
         ["preset-dismiss"] = function(_, _, cur) return deps.dismiss_preset_hint(cur.kind_id, cur.target.source) and "saved" end,
         ["autosave-restore"] = function(p, _, cur) return deps.restore_autosave(cur.kind_id, integer(p.index)) and "saved" end,
         ["autosave-promote"] = function(p, _, cur) return deps.promote_autosave(cur.kind_id, integer(p.index), str(p.name)) and "saved" end,

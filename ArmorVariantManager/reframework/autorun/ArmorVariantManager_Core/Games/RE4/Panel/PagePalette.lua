@@ -7,6 +7,7 @@ local D = require("ArmorVariantManager_Core.Games.RE4.Panel.Draw")
 local W = require("ArmorVariantManager_Core.Games.RE4.Panel.Widgets")
 local U = require("ArmorVariantManager_Core.Games.RE4.Panel.Common")
 local I = require("ArmorVariantManager_Core.Games.RE4.Panel.Input")
+local R = require("ArmorVariantManager_Core.Games.RE4.Panel.Refs")
 
 local C = T.c
 local max, min, floor, abs = math.max, math.min, math.floor, math.abs
@@ -111,6 +112,81 @@ function Page.draw(ctx, x, y, w)
     for _, m in ipairs(materials) do by_key[m.key] = m end
     local chosen = {}
     for _, k in ipairs(st.sel) do if by_key[k] then chosen[#chosen + 1] = by_key[k] end end
+
+    -- ---------------------------------------------------- 调色方案(同网页):选择 / 新建 / 改名 / 删除,快捷键
+    -- 选中就生效(存进配置),本页编辑选中的那一份;"" = 初始
+    do
+        local pl = snap.palettes or {}
+        local list = type(pl.list) == "table" and pl.list or {}
+        local scheme = type(pl.selected) == "string" and pl.selected or ""
+        local active = {}
+        for _, n in ipairs(type(pl.active) == "table" and pl.active or {}) do active[n] = true end
+        local SF = W.flow(x, cy, w, 10, T.m.row_h)
+        R.hotkey(ctx, SF, "pal|*", { kind = "palette" }, t("hotkeyCycleRef"))
+        cy = cy + SF:height() + 4
+        SF = W.flow(x, cy, w, 10, T.m.row_h)
+        local labels, values, index = { t("paletteAlways") }, { "" }, 1
+        for _, s in ipairs(list) do
+            labels[#labels + 1] = s.name .. (active[s.name] and ("  · " .. t("paletteSchemeOn")) or "")
+            values[#values + 1] = s.name
+            if s.name == scheme then index = #labels end
+        end
+        local sx, sy = SF:place(220, T.m.row_h)
+        local changed, picked = W.select("pal-scheme", sx, sy + 1, 220, 24, labels, index, { popup_w = 280 })
+        if changed and picked ~= index and values[picked] ~= nil then
+            st.local_vals = {}
+            ctx.act({ kind = "palette-scheme-select", scheme = values[picked] })
+            view(ctx, st, true)
+        end
+        if SF:button(t("paletteSchemeNew")) then
+            st.scheme_edit = { mode = "new", name = "", copy = scheme ~= "" }; st.scheme_delete = nil
+        end
+        if scheme ~= "" then
+            if SF:button(t("rename")) then st.scheme_edit = { mode = "rename", name = scheme }; st.scheme_delete = nil end
+            if SF:button(t("delete"), { kind = "danger" }) then st.scheme_delete = scheme; st.scheme_edit = nil end
+        end
+        R.hotkey(ctx, SF, "pal|" .. scheme, { kind = "palette", scheme = scheme })
+        cy = cy + SF:height() + 6
+        -- 新建 / 改名:名字(64 字以内、不能重名),新建时可以复制当前方案
+        local ed = st.scheme_edit
+        if ed then
+            local EF = W.flow(x + 16, cy, w - 16, 10, T.m.row_h)
+            EF:text(ed.mode == "rename" and t("paletteSchemeRename") or t("paletteSchemeNew"), C.text, W.bold())
+            local nx, ny = EF:place(200, T.m.row_h)
+            W.text_box("pal-scheme-name", nx, ny + 1, 200, 24, ed.name, t("paletteSchemeName"), function(v) ed.name = v end)
+            local name = (ed.name or ""):gsub("^%s+", ""):gsub("%s+$", "")
+            local taken = false
+            for _, s in ipairs(list) do if s.name == name and not (ed.mode == "rename" and name == scheme) then taken = true end end
+            if ed.mode == "new" and scheme ~= "" then
+                local c2, v2 = EF:checkbox(t("paletteFromCurrent", scheme), ed.copy == true)
+                if c2 then ed.copy = v2 end
+            end
+            if taken then EF:text(t("paletteSchemeTaken"), C.error) end
+            local ok_name = name ~= "" and #name <= 64 and not taken
+            if EF:button(t("confirm"), { kind = "primary", disabled = not ok_name }) then
+                local done
+                if ed.mode == "rename" then done = ctx.act({ kind = "palette-scheme-rename", scheme = scheme, name = name })
+                else done = ctx.act({ kind = "palette-scheme-new", name = name, from = (ed.copy and scheme ~= "") and scheme or nil }) end
+                if done then st.scheme_edit = nil; st.local_vals = {}; view(ctx, st, true) end
+            end
+            if EF:button(t("cancel")) then st.scheme_edit = nil end
+            cy = cy + EF:height() + 6
+        end
+        if st.scheme_delete and st.scheme_delete == scheme then
+            local used = 0
+            for _, s in ipairs(list) do if s.name == scheme then used = tonumber(s.used) or 0 end end
+            local r, h = W.confirm(x + 16, cy, w - 20, t("paletteSchemeDeleteBody", scheme, used), t("confirmDelete"), t("cancel"), "danger", C.error)
+            if r then st.scheme_delete = nil end
+            if r == "yes" then
+                st.local_vals = {}
+                ctx.act({ kind = "palette-scheme-delete", scheme = scheme })
+                view(ctx, st, true)
+            end
+            cy = cy + h
+        elseif st.scheme_delete then
+            st.scheme_delete = nil
+        end
+    end
 
     -- 「仅显示选中部位」:开着时人物身上只留选中的材质(其余部位整个隐藏),跟着选择走,离开调色页自动关
     if st.solo == nil then st.solo = snap.solo == true end

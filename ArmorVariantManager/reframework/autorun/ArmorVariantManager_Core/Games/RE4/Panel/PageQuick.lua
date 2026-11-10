@@ -4,12 +4,41 @@ local T = require("ArmorVariantManager_Core.Games.RE4.Panel.Theme")
 local D = require("ArmorVariantManager_Core.Games.RE4.Panel.Draw")
 local W = require("ArmorVariantManager_Core.Games.RE4.Panel.Widgets")
 local U = require("ArmorVariantManager_Core.Games.RE4.Panel.Common")
+local R = require("ArmorVariantManager_Core.Games.RE4.Panel.Refs")
 
 local C = T.c
 local max = math.max
 local Page = {}
 
 local function owner(snap, i) return i and (snap.states[i] or {}).name or "" end
+
+-- 复选组的一行:左边名字;右边先是「（无）」按钮(框同分段按钮,点一下关掉全部),
+-- 后面各选项用勾选框紧凑排列,按各自的接管锁定。返回高度
+local function multi_row(ctx, x, y, w, g)
+    local snap, t = ctx.snap, ctx.t
+    local name_w = math.min(180, w * 0.28)
+    D.text_mid(g.name, x, y, 26, C.text, W.body(), name_w - 8)
+    local any = false
+    for _, o in ipairs(g.options) do if o.on then any = true end end
+    local F = W.flow(x + name_w, y, w - name_w, 10, 26)
+    local nw = D.measure(W.small(), t("none")) + 20
+    local nx, ny = F:place(nw, 26)
+    if W.button(t("none"), nx, ny, nw, 26, { font = W.small(), pressed = not any }) and any then
+        ctx.act({ kind = "manual", layer = g.name, option = "" })
+    end
+    for _, o in ipairs(g.options) do
+        local locked = o.fromState
+        local on
+        if locked then on = o.effective == true else on = o.on == true end
+        local cw = 16 + 8 + D.measure(W.body(), o.name) + 6
+        local bx, by = F:place(cw, 26)
+        local ch = W.checkbox("", bx, by, on, { h = 26, disabled = locked ~= nil })
+        if ch then ctx.act({ kind = "option-on", group = g.name, option = o.name, on = not o.on }) end
+        D.text_mid(o.name, bx + 22, by, 26, (locked and on) and C.ok or (locked and C.muted or C.text), W.body())
+        if locked then W.tooltip(t("lockedBy", owner(snap, locked)), bx, by, cw, 26) end
+    end
+    return max(26, F:height())
+end
 
 -- 一行:左边名字,右边分段按钮。返回高度
 local function layer_row(ctx, x, y, w, label, layer, active, effective, locked, options, with_none)
@@ -117,11 +146,50 @@ function Page.draw(ctx, x, y, w)
             D.text_mid(t("noGroups"), x + 12, cy, 22, C.muted, W.small())
             cy = cy + 26
         end
+        -- 造型归属:当前整套造型不在这个状态组的归属里时不显示。
+        -- 只有一个选项(不算「（无）」)的状态组用勾选框紧凑排在最后:勾上 = 选这个选项,取消 = 「（无）」
+        local singles = {}
         for _, g in ipairs(snap.groups or {}) do
-            local opts = {}
-            for i, o in ipairs(g.options) do opts[i] = o.name end
-            local rh = layer_row(ctx, x + 12, cy, w - 24, g.name, g.name, g.active, g.effective, g.fromState, opts, true)
-            cy = cy + rh + 6
+            if g.shown ~= false then
+                if #g.options == 1 then
+                    singles[#singles + 1] = g
+                elseif g.multi then
+                    cy = cy + multi_row(ctx, x + 12, cy, w - 24, g) + 6
+                else
+                    local opts = {}
+                    for i, o in ipairs(g.options) do opts[i] = o.name end
+                    local rh = layer_row(ctx, x + 12, cy, w - 24, g.name, g.name, g.active, g.effective, g.fromState, opts, true)
+                    cy = cy + rh + 6
+                end
+            end
+        end
+        if #singles > 0 then
+            local F = W.flow(x + 12, cy, w - 24, 10, 26)
+            for _, g in ipairs(singles) do
+                local opt = g.options[1].name
+                local locked, on
+                if g.multi then
+                    local o = g.options[1]
+                    locked = o.fromState
+                    if locked then on = o.effective == true else on = o.on == true end
+                else
+                    locked = g.fromState
+                    on = (locked and g.effective or g.active) == opt
+                end
+                local label = g.name
+                local extra = opt ~= g.name and opt or nil
+                local cw = 16 + 8 + D.measure(W.body(), label) + (extra and (8 + D.measure(W.small(), extra)) or 0) + 6
+                local bx, by = F:place(cw, 26)
+                local ch, v2 = W.checkbox("", bx, by, on, { h = 26, disabled = locked ~= nil })
+                if ch then ctx.act({ kind = "manual", layer = g.name, option = v2 and opt or "" }) end
+                local tx = bx + 22
+                D.text_mid(label, tx, by, 26, (locked and on) and C.ok or (locked and C.muted or C.text), W.body())
+                if extra then
+                    D.text_mid(extra, tx + D.measure(W.body(), label) + 8, by, 26, C.muted, W.small())
+                end
+                if locked then W.tooltip(t("lockedBy", owner(snap, locked)), bx, by, cw, 26) end
+            end
+            cy = cy + F:height() + 6
         end
         cy = cy + 4
     end
@@ -150,6 +218,26 @@ function Page.draw(ctx, x, y, w)
         cy = cy + F:height() + 8
     end
 
+    -- 调色方案:点一下就选中(选中就生效);"" = 初始。被引用、这一帧正在叠加生效的方案标成生效样式。
+    -- 调色、模型高度属于新版特性:关闭时灰掉、不可改
+    local nf_off = R.nf_off(snap)
+    do
+        local pl = snap.palettes or {}
+        local selected = type(pl.selected) == "string" and pl.selected or ""
+        local referenced = {}
+        for _, n in ipairs(type(pl.active) == "table" and pl.active or {}) do referenced[n] = true end
+        local name_w = math.min(180, w * 0.28)
+        D.text_mid(t("paletteScheme"), x, cy + 4, 26, nf_off and C.faint or C.text, W.body(), name_w - 8)
+        local items = { { t("paletteAlways"), "" } }
+        for _, s in ipairs((type(pl.list) == "table" and pl.list) or {}) do
+            local eff = selected ~= s.name and referenced[s.name] or nil
+            items[#items + 1] = { s.name, s.name, eff = eff, tip = eff and t("paletteSchemeRefOn") or nil }
+        end
+        local picked, sh = W.segments(x + name_w, cy + 4, w - name_w, items, selected, { disabled = nf_off })
+        if picked ~= nil and picked ~= selected then ctx.act({ kind = "palette-scheme-select", scheme = picked }) end
+        cy = cy + max(26, sh) + 12
+    end
+
     -- 模型高度
     cy = cy + 4
     D.text_mid(t("heightQuick"), x, cy, 26, C.text, W.bold())
@@ -168,10 +256,10 @@ function Page.draw(ctx, x, y, w)
     cy = cy + F:height() + 6
     D.text_mid(t("heightOverride"), x, cy, 26, C.text, W.body())
     local ov = snap.heightOverride or { enabled = false, cm = 0 }
-    changed, v = W.toggle("", x + 140, cy, ov.enabled)
+    changed, v = W.toggle("", x + 140, cy, ov.enabled, { disabled = nf_off })
     if changed then ctx.act({ kind = "height-override", enabled = v }) end
     st.drafts = st.drafts or {}
-    W.num_box(st.drafts, "q_height", x + 180, cy + 1, 70, ov.cm, { min = -10, max = 50 }, function(n)
+    W.num_box(st.drafts, "q_height", x + 180, cy + 1, 70, ov.cm, { min = -10, max = 50, disabled = nf_off }, function(n)
         ctx.act({ kind = "height-override", cm = n })
     end)
     D.text_mid("cm", x + 256, cy, 26, C.muted, W.small())

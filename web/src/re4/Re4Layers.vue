@@ -5,7 +5,7 @@ import { cycleOf, keyOf as hotkeyFor } from './hotkeys';
 import { computed, reactive, ref, shallowRef } from 'vue';
 import { ElButton, ElInput, ElOption, ElSelect, ElSwitch } from '@reff/ui';
 import type { Re4Translate } from './i18n';
-import type { Re4Perform, Re4Snapshot, Re4Values } from './types';
+import type { Re4Perform, Re4SksRefs, Re4Snapshot, Re4Values } from './types';
 import { keyOf, shortSlot, splitKey, usersOf } from './util';
 import { usePointerReorder } from './reorder';
 
@@ -18,10 +18,12 @@ const props = defineProps<{ mode: 'base' | 'groups'; snapshot: Re4Snapshot; busy
 const c = () => ({ character: props.snapshot.character });
 
 const open = reactive(new Set<string>());          // 展开的组 / 选项
+const nfOff = computed(() => props.snapshot.settings.newFeatures === false);   // 新版特性关闭:相关界面灰掉、不可改
 const toggle = (set: Set<string>, key: string) => { if (set.has(key)) set.delete(key); else set.add(key); };
+const sksClosed = reactive(new Set<string>());     // 折叠起来的「形态键（SKS）」栏(默认展开)
+const sksAll = reactive(new Set<string>());        // 也列出其他 SKS 配置里键组的选项
 const notes = shallowRef(false);
 // 整套造型预设的改名框。必须是 ref:v-model 改的是对象里的 value,shallowRef 不会因此重绘(打字看不到变化)
-const renaming = ref<{ id: string; value: string } | null>(null);
 const confirming = shallowRef('');
 const newGroupName = shallowRef('');
 
@@ -91,8 +93,10 @@ const { from: dragFrom, drop: dropAt, start: startDrag } = usePointerReorder('.r
 const stateName = (i?: number) => i ? props.snapshot.states?.[i - 1]?.name ?? '' : '';
 
 interface Card {
-  id: string; isBase: boolean; name: string; active: string; effective?: string; fromState?: number;
-  options: { name: string; values: Re4Values; match?: { status: string; skipped: string[] }; height?: number; palette?: string; dissolve?: string }[];
+  id: string; isBase: boolean; name: string; active: string; effective?: string; fromState?: number; bases?: string[];
+  multi?: boolean; actives?: string[];
+  options: { name: string; values: Re4Values; match?: { status: string; skipped: string[] }; height?: number; palette?: string; dissolve?: string; sks?: Re4SksRefs;
+    on?: boolean; effective?: boolean; fromState?: number }[];
 }
 const cards = computed<Card[]>(() => {
   if (props.mode === 'base') {
@@ -101,7 +105,8 @@ const cards = computed<Card[]>(() => {
       options: b.presets }];
   }
   return (props.snapshot.groups ?? []).map(g => ({ id: 'g:' + g.name, isBase: false, name: g.name, active: g.active,
-    effective: g.effective, fromState: g.fromState, options: g.options }));
+    effective: g.effective, fromState: g.fromState, options: g.options, bases: Array.isArray(g.bases) ? g.bases : [],
+    multi: g.multi === true, actives: Array.isArray(g.actives) ? g.actives : [] }));
 });
 
 // 整套造型只数当前模型上的材质;状态组数选项写了的材质
@@ -130,6 +135,13 @@ function act(kind: string, card: Card, extra: Record<string, unknown>) {
   return props.perform({ kind, ...c(), ...target, ...extra } as never);
 }
 const pick = (card: Card, option: string) => props.perform({ kind: 'manual', ...c(), layer: card.isBase ? 'base' : card.name, option });
+// 复选组:选项各自开关;「（无）」= 全部关掉。行的高亮:复选组按各选项自己的开关 / 接管看
+const setOn = (card: Card, option: string, on: boolean) => props.perform({ kind: 'option-on', ...c(), group: card.name, option, on });
+const noneOn = (card: Card) => card.multi ? !(card.actives ?? []).length : card.active === '';
+const optManual = (card: Card, opt: Card['options'][number]) => card.multi ? opt.on === true : card.active === opt.name;
+const optEff = (card: Card, opt: Card['options'][number]) =>
+  card.multi ? !!opt.fromState && opt.effective === true : !!card.fromState && card.effective === opt.name;
+const setMulti = (card: Card, on: boolean) => card.multi !== on && props.perform({ kind: 'group-multi', ...c(), group: card.name, on });
 const prefix = (card: Card) => card.isBase ? 'base' : 'option';
 
 function setMaterial(card: Card, option: string, key: string, value: 'none' | 'off' | 'on') {
@@ -139,25 +151,16 @@ function setMaterial(card: Card, option: string, key: string, value: 'none' | 'o
 }
 const valueOf = (values: Re4Values, key: string) => values[key] === true ? 'on' : values[key] === false ? 'off' : 'none';
 
-// 状态组选项的行内改名;失败(重名 / 非法)就把输入框恢复成原名。展开状态按名字记,改名后跟着搬
+// 整套造型预设 / 状态组选项的行内改名;失败(重名 / 非法)就把输入框恢复成原名。展开状态按名字记,改名后跟着搬
 async function renameOption(card: Card, old: string, input: HTMLInputElement) {
   const name = input.value.trim();
   if (!name || name === old) { input.value = old; return; }
-  const ok = await props.perform({ kind: 'option-rename', ...c(), group: card.name, option: old, name });
+  const ok = card.isBase
+    ? await props.perform({ kind: 'base-rename', ...c(), preset: old, name })
+    : await props.perform({ kind: 'option-rename', ...c(), group: card.name, option: old, name });
   if (!ok) { input.value = old; return; }
   const from = card.id + '|' + old;
   if (open.delete(from)) open.add(card.id + '|' + name);
-}
-function startRename(id: string, value: string) { renaming.value = { id, value }; confirming.value = ''; }
-async function commitRename(card: Card, option?: string) {
-  const r = renaming.value;
-  if (!r) return;
-  const name = r.value.trim();
-  renaming.value = null;
-  if (!name) return;
-  if (option === undefined || name === option) return;
-  if (card.isBase) await props.perform({ kind: 'base-rename', ...c(), preset: option, name });
-  else await props.perform({ kind: 'option-rename', ...c(), group: card.name, option, name });
 }
 // 模型高度(厘米,同 Lua 的 ModelV3.HEIGHT_MIN / MAX)。value = undefined(数值框清空 / 点清除)→ 清除
 const HEIGHT_MIN = -10, HEIGHT_MAX = 50;
@@ -177,13 +180,40 @@ const dissolveNames = computed(() => (props.snapshot.settings.dissolvePresets?.l
 const dissolveMissing = (name?: string) => !!name && !dissolveNames.value.includes(name);
 const setDissolve = (card: Card, option: string, preset: string) =>
   props.perform({ kind: 'dissolve-ref', ...c(), layer: card.isBase ? 'base' : card.name, option, preset });
+// 造型归属的下拉:所有整套造型预设
+const baseNames = computed(() => (props.snapshot.base?.presets ?? []).map(p => p.name));
+// ShapeKeySystem 键组:SKS 驱动这个角色时才能编辑。默认只列当前生效的 SKS 配置里的键组,
+// 外加这一项已经设置了的键组(不在当前配置里的标「*」);all = 也列出这个角色其他 SKS 配置里的键组
+type SksRow = { name: string; options: string[]; inCurrent: boolean };
+const sksEditable = computed(() => !!props.snapshot.sks?.actor);
+const sksKnown = computed<SksRow[]>(() => {
+  const g = props.snapshot.sks?.groups;
+  return (Array.isArray(g) ? g : []).map(x => ({ name: x.name, options: Array.isArray(x.options) ? x.options : [], inCurrent: x.inCurrent }));
+});
+function sksRows(opt: { sks?: Re4SksRefs }, all = false): SksRow[] {
+  const set = opt.sks ?? {};
+  const rows = sksKnown.value.filter(r => all || r.inCurrent || r.name in set);
+  for (const name of Object.keys(set)) {
+    if (!rows.some(r => r.name === name)) rows.push({ name, options: [], inCurrent: false });
+  }
+  return rows;
+}
+// 默认被隐去的键组数(其他配置里有、当前配置没有、这一项也没设置)
+const sksHidden = (opt: { sks?: Re4SksRefs }) => sksRows(opt, true).length - sksRows(opt).length;
+const sksSetCount = (opt: { sks?: Re4SksRefs }) => Object.keys(opt.sks ?? {}).length;
+const sksValue = (opt: { sks?: Re4SksRefs }, group: string): string | 0 => opt.sks?.[group] ?? '';
+const sksOptionMissing = (row: SksRow, v: string | 0) => typeof v === 'string' && v !== '' && !row.options.includes(v);
+const sksError = (opt: { sks?: Re4SksRefs }, group: string) =>
+  sksValue(opt, group) !== '' ? props.snapshot.sks?.errors?.[group] : undefined;
+const sksText = (refs?: Re4SksRefs) => Object.entries(refs ?? {}).map(([g, v]) => g + '＝' + (v === 0 ? props.t('sksNoneOption') : v)).join('、');
+const setSks = (card: Card, option: string, group: string, value: unknown) =>
+  props.perform({ kind: 'sks-ref', ...c(), layer: card.isBase ? 'base' : card.name, option, group, value: value === 0 ? 0 : String(value ?? '') });
 // 快捷键(Alt + 数字,见 hotkeys.ts):卡片标题上是整个结构的轮换键,每一项上是单项键或「参与轮换」开关
 const cycleTarget = (card: Card) => card.isBase ? { kind: 'base' as const } : { kind: 'group' as const, group: card.name };
 const itemTarget = (card: Card, option: string) =>
   card.isBase ? { kind: 'base' as const, option } : { kind: 'group' as const, group: card.name, option };
 const itemKey = (card: Card, option: string) => hotkeyFor(props.snapshot, itemTarget(card, option))?.digit;
 // 结构绑了轮换键:每一行外面直接给「参与轮换」开关(不用展开);没绑时单项选键在展开的工具栏里
-const cycling = (card: Card) => !!cycleOf(props.snapshot, cycleTarget(card));
 // 卡片按名字做键，改名后展开状态要跟着搬到新名字上，否则改完就收起了
 async function renameGroup(card: Card, input: HTMLInputElement) {
   const name = input.value.trim();
@@ -239,10 +269,11 @@ function nameTitle(card: Card, key: string) {
         <!-- 同条件状态：展开时名字就是输入框，回车或离开即改名 -->
         <input v-if="!card.isBase && open.has(card.id)" class="re4-sname-input" :value="card.name" :aria-label="t('groupName')" :disabled="busy"
           @change="e => renameGroup(card, e.target as HTMLInputElement)">
-        <span v-else class="re4-panel-title">{{ card.name }}</span>
+        <span v-else class="re4-panel-title" :title="card.isBase ? undefined : t('optionsCount', card.options.length) + ' · ' + t('materialsCount', setCount(card))">{{ card.name }}</span>
         <!-- 信息区可收缩，操作按钮固定在右侧同一行 -->
         <span class="re4-gmeta">
-          <span class="re4-muted re4-small">{{ card.isBase ? t('baseCount', card.options.length) : t('optionsCount', card.options.length) + ' · ' + t('materialsCount', setCount(card)) }}</span>
+          <!-- 状态组的选项数、材质数不占标题栏(窄屏时挤掉名字),放在名字的悬停提示里 -->
+          <span v-if="card.isBase" class="re4-muted re4-small">{{ t('baseCount', card.options.length) }}</span>
           <span v-if="card.fromState" class="re4-tag ok">{{ t('takenOverBy', stateName(card.fromState)) }}</span>
           <template v-if="!card.isBase">
             <span v-for="o in overlaps[card.name]?.below ?? []" :key="'b' + o.name" class="re4-tag bad" :title="t('overlapHint')">{{ t('overriddenBy', o.name, o.n) }}</span>
@@ -250,7 +281,20 @@ function nameTitle(card: Card, key: string) {
           </template>
         </span>
         <span class="re4-gacts">
-          <Re4HotkeyPick :snapshot="snapshot" :busy="busy" :perform="perform" :t="t" :target="cycleTarget(card)" :label="t('hotkeyCycleRef')" />
+          <!-- 选择方式:单选 / 复选(复选组各选项分别开关) -->
+          <span v-if="!card.isBase" class="re4-height" :title="t('groupModeHint')">{{ t('groupMode') }}
+            <span class="re4-seg re4-gmode" role="group" :aria-label="t('groupMode')">
+              <button :aria-pressed="!card.multi" :disabled="busy" @click="setMulti(card, false)">{{ t('groupSingle') }}</button>
+              <button :aria-pressed="card.multi === true" :disabled="busy" @click="setMulti(card, true)">{{ t('groupMulti') }}</button>
+            </span></span>
+          <!-- 造型归属:快速切换页只在当前整套造型属于这些造型时显示这个状态组;空 = 全部 -->
+          <label v-if="!card.isBase" class="re4-height re4-gbases" :title="t('groupBasesHint')">{{ t('groupBases') }}
+            <ElSelect :model-value="card.bases" multiple collapse-tags collapse-tags-tooltip size="small" style="width:10em" :disabled="busy"
+              :placeholder="t('groupBasesAll')" :aria-label="t('groupBases')"
+              @change="v => perform({ kind: 'group-bases', ...c(), group: card.name, bases: (v as string[]) ?? [] })">
+              <ElOption v-for="n in baseNames" :key="n" :value="n" :label="n" />
+            </ElSelect></label>
+          <Re4HotkeyPick v-if="!card.multi" :snapshot="snapshot" :busy="busy" :perform="perform" :t="t" :target="cycleTarget(card)" :label="t('hotkeyCycleRef')" />
           <ElButton v-if="card.isBase" size="small" :disabled="busy" @click="perform({ kind: 'base-new', ...c() }).then(ok => ok && open.add(card.id))">{{ t('newBase') }}</ElButton>
           <ElButton v-else size="small" type="danger" plain :disabled="busy" @click="confirming = card.id">{{ t('delete') }}</ElButton>
         </span>
@@ -262,27 +306,26 @@ function nameTitle(card: Card, key: string) {
 
       <template v-if="card.isBase || open.has(card.id)">
         <div class="re4-olist">
-          <div v-if="!card.isBase" class="re4-orow" :class="{ manual: card.active === '' }">
+          <div v-if="!card.isBase" class="re4-orow" :class="{ manual: noneOn(card) }">
             <span class="re4-caret"></span>
-            <label class="re4-oname"><input type="radio" :name="card.id" :checked="card.active === ''" :disabled="busy" @change="pick(card, '')">{{ t('none') }}</label>
+            <label class="re4-oname"><input :type="card.multi ? 'checkbox' : 'radio'" :name="card.id" :checked="noneOn(card)" :disabled="busy || (card.multi && noneOn(card))"
+              @change="pick(card, '')">{{ t('none') }}</label>
             <span class="re4-oinfo"><span v-if="itemKey(card, '') !== undefined" class="re4-tag" :title="t('hotkeyHint')">Alt+{{ itemKey(card, '') }}</span></span>
             <span class="re4-oact"><Re4HotkeyPick :snapshot="snapshot" :busy="busy" :perform="perform" :t="t" :target="itemTarget(card, '')" /></span>
           </div>
           <template v-for="opt in card.options" :key="opt.name">
-            <div class="re4-orow" :class="{ manual: card.active === opt.name, eff: card.fromState && card.effective === opt.name }">
+            <div class="re4-orow" :class="{ manual: optManual(card, opt), eff: optEff(card, opt) }">
               <button class="re4-caret" :aria-expanded="open.has(card.id + '|' + opt.name)" @click="toggle(open, card.id + '|' + opt.name)">{{ open.has(card.id + '|' + opt.name) ? '▾' : '▸' }}</button>
-              <!-- 状态组的选项:名字就是输入框,点上就能改,回车或离开即改名,Esc 放弃 -->
-              <span v-if="!card.isBase" class="re4-oname">
-                <input type="radio" :name="card.id" :checked="card.active === opt.name" :disabled="busy" :aria-label="opt.name" @change="pick(card, opt.name)">
+              <!-- 整套造型的预设 / 状态组的选项:名字就是输入框,点上就能改,回车或离开即改名,Esc 放弃 -->
+              <span class="re4-oname">
+                <input v-if="card.multi" type="checkbox" :checked="opt.on === true" :disabled="busy" :aria-label="opt.name"
+                  @change="e => setOn(card, opt.name, (e.target as HTMLInputElement).checked)">
+                <input v-else type="radio" :name="card.id" :checked="card.active === opt.name" :disabled="busy" :aria-label="opt.name" @change="pick(card, opt.name)">
                 <input class="re4-oname-input" :value="opt.name" :aria-label="t('rename')" :disabled="busy"
                   @change="e => renameOption(card, opt.name, e.target as HTMLInputElement)"
                   @keydown.enter="e => (e.target as HTMLInputElement).blur()"
                   @keydown.esc="e => { const el = e.target as HTMLInputElement; el.value = opt.name; el.blur(); }">
               </span>
-              <span v-else-if="renaming?.id === card.id + '|' + opt.name" class="re4-oname">
-                <ElInput v-model="renaming.value" size="small" style="width:9em" @keyup.enter="commitRename(card, opt.name)" />
-              </span>
-              <label v-else class="re4-oname"><input type="radio" :name="card.id" :checked="card.active === opt.name" :disabled="busy" @change="pick(card, opt.name)">{{ opt.name }}</label>
               <span class="re4-oinfo">
                 <button class="re4-sum" @click="toggle(open, card.id + '|' + opt.name)">
                   <span class="on">{{ t('countOn', counts(card, opt.values).on) }}</span><span>{{ t('countOff', counts(card, opt.values).off) }}</span>
@@ -296,17 +339,12 @@ function nameTitle(card: Card, key: string) {
                   :title="schemeMissing(opt.palette) ? t('paletteRefBroken') : t('paletteRef')">🎨 {{ opt.palette }}</span>
                 <span v-if="opt.dissolve" class="re4-tag" :class="{ 're4-res broken': dissolveMissing(opt.dissolve) }"
                   :title="dissolveMissing(opt.dissolve) ? t('dissolveRefBroken') : t('dissolveRef')">✦ {{ opt.dissolve }}</span>
+                <span v-if="opt.sks && Object.keys(opt.sks).length" class="re4-tag" :title="t('sksHint')">{{ t('sksTag', sksText(opt.sks)) }}</span>
               </span>
               <span class="re4-oact">
-                <Re4HotkeyPick v-if="cycling(card)" :snapshot="snapshot" :busy="busy" :perform="perform" :t="t" :target="itemTarget(card, opt.name)" />
-                <template v-if="renaming?.id === card.id + '|' + opt.name">
-                  <ElButton size="small" type="primary" @click="commitRename(card, opt.name)">{{ t('done') }}</ElButton>
-                  <ElButton size="small" @click="renaming = null">{{ t('cancel') }}</ElButton>
-                </template>
-                <template v-else>
-                  <ElButton v-if="card.isBase" size="small" :disabled="busy" @click="startRename(card.id + '|' + opt.name, opt.name)">{{ t('rename') }}</ElButton>
-                  <ElButton size="small" type="danger" plain :disabled="busy" @click="confirming = card.id + '|' + opt.name">{{ t('delete') }}</ElButton>
-                </template>
+                <!-- 快捷键放在选项行上(同「（无）」):单项键;所在结构绑了轮换键时是「参与轮换」开关 -->
+                <Re4HotkeyPick :snapshot="snapshot" :busy="busy" :perform="perform" :t="t" :target="itemTarget(card, opt.name)" />
+                <ElButton size="small" type="danger" plain :disabled="busy" @click="confirming = card.id + '|' + opt.name">{{ t('delete') }}</ElButton>
               </span>
             </div>
             <div v-if="confirming === card.id + '|' + opt.name" class="re4-confirm">
@@ -325,13 +363,15 @@ function nameTitle(card: Card, key: string) {
                     <ElButton size="small" @click="confirming = ''">{{ t('cancel') }}</ElButton>
                   </template>
                 </template>
+                <!-- 模型高度、调色方案、溶解预设、形态键:新版特性,关闭时灰掉 -->
+                <span class="re4-nf-group" :class="{ 're4-nf-lock': nfOff }" :inert="nfOff">
                 <!-- 模型高度:留空 = 这一层不管高度(交给别的层);填了就按叠加顺序覆盖 -->
                 <label class="re4-height" :title="t('heightHint')">{{ t('heightLabel') }}
                   <Re4Num :value="opt.height" :min="HEIGHT_MIN" :max="HEIGHT_MAX" :placeholder="t('heightUnset')" allow-empty
                     :disabled="busy" @change="v => setHeight(card, opt.name, v)" />cm</label>
                 <button v-if="opt.height !== undefined" class="re4-link" :disabled="busy" @click="setHeight(card, opt.name, undefined)">{{ t('heightClear') }}</button>
                 <!-- 调色方案:选中这个预设 / 选项时叠加(在调色页新建和编辑方案) -->
-                <label class="re4-height">{{ t('paletteRef') }}
+                <label class="re4-height" :title="card.isBase ? undefined : t('paletteRefOptionHint')">{{ t('paletteRef') }}
                   <ElSelect :model-value="opt.palette ?? ''" :empty-values="[null, undefined]" size="small" style="width:11em" :disabled="busy" :aria-label="t('paletteRef')"
                     @change="v => setPalette(card, opt.name, String(v))">
                     <ElOption value="" :label="t('paletteRefNone')" />
@@ -346,8 +386,31 @@ function nameTitle(card: Card, key: string) {
                     <ElOption v-for="n in dissolveNames" :key="n" :value="n" :label="n" />
                     <ElOption v-if="dissolveMissing(opt.dissolve)" :value="opt.dissolve!" :label="t('dissolveRefBroken') + '：' + opt.dissolve" disabled />
                   </ElSelect></label>
-                <!-- 快捷键:单项键;所在结构绑了轮换键时是「参与轮换」开关 -->
-                <Re4HotkeyPick v-if="!cycling(card)" :snapshot="snapshot" :busy="busy" :perform="perform" :t="t" :target="itemTarget(card, opt.name)" />
+                </span>
+              </div>
+              <!-- ShapeKeySystem 键组:切到这个预设 / 选项时 SKS 的键组改用所选选项(数值在 SKS 里调)。折叠栏,默认展开 -->
+              <div v-if="sksEditable && sksRows(opt, true).length" class="re4-sksbox" :class="{ 're4-nf-lock': nfOff }" :inert="nfOff">
+                <div class="re4-sks-head">
+                  <button class="re4-caret" :aria-expanded="!sksClosed.has(card.id + '|' + opt.name)"
+                    @click="toggle(sksClosed, card.id + '|' + opt.name)">{{ sksClosed.has(card.id + '|' + opt.name) ? '▸' : '▾' }}</button>
+                  <span :title="t('sksHint')">{{ t('sksRef') }}</span>
+                  <span v-if="sksSetCount(opt)" class="re4-muted re4-small">{{ t('sksSetCount', sksSetCount(opt)) }}</span>
+                  <button v-if="!sksClosed.has(card.id + '|' + opt.name) && (sksHidden(opt) || sksAll.has(card.id + '|' + opt.name))" class="re4-link"
+                    @click="toggle(sksAll, card.id + '|' + opt.name)">{{ sksAll.has(card.id + '|' + opt.name) ? t('sksShowCurrent') : t('sksShowAll', sksHidden(opt)) }}</button>
+                </div>
+                <div v-if="!sksClosed.has(card.id + '|' + opt.name)" class="re4-sks">
+                  <span v-if="!sksRows(opt, sksAll.has(card.id + '|' + opt.name)).length" class="re4-muted re4-small">{{ t('sksNoCurrent') }}</span>
+                  <label v-for="row in sksRows(opt, sksAll.has(card.id + '|' + opt.name))" :key="row.name" class="re4-height" :class="{ 're4-bad-text': !!sksError(opt, row.name) }"
+                    :title="sksError(opt, row.name) ? t('sksError', sksError(opt, row.name)!) : (!row.inCurrent ? t('sksNotInCurrent') : '')">
+                    {{ row.name }}<span v-if="!row.inCurrent" class="re4-muted">*</span>
+                    <ElSelect :model-value="sksValue(opt, row.name)" :empty-values="[null, undefined]" size="small" style="width:8em" :disabled="busy" :aria-label="row.name"
+                      @change="v => setSks(card, opt.name, row.name, v)">
+                      <ElOption value="" :label="t('sksUnset')" />
+                      <ElOption :value="0" :label="t('sksNoneOption')" />
+                      <ElOption v-for="o in row.options" :key="o" :value="o" :label="o" />
+                      <ElOption v-if="sksOptionMissing(row, sksValue(opt, row.name))" :value="sksValue(opt, row.name)" :label="t('sksMissingOption') + '：' + sksValue(opt, row.name)" disabled />
+                    </ElSelect></label>
+                </div>
               </div>
               <span v-if="!sections(card, opt.values).length" class="re4-muted re4-small">{{ t('noMaterials') }}</span>
               <template v-for="sec in sections(card, opt.values)" :key="sec.id">
@@ -413,6 +476,13 @@ function nameTitle(card: Card, key: string) {
 .re4-oact .re4-hk-incl { margin-right: 6px; }
 .re4-oact .el-button + .el-button, .re4-mtools .el-button + .el-button { margin-left: 0; }
 .re4-height { display: inline-flex; align-items: center; gap: 4px; margin-left: 8px; font-size: 12.5px; color: var(--avm-muted); }
+.re4-nf-group { display: contents; }
+.re4-nf-group.re4-nf-lock { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.re4-gmode button { min-height: 22px; padding: 0 8px; font-size: 12px; }
+.re4-sksbox { display: grid; gap: 4px; }
+.re4-sks-head { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--avm-muted); }
+.re4-sks { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 0; padding-left: 1.4em; }
+.re4-sks .re4-height { margin-left: 0; margin-right: 12px; }
 .re4-mlist-wrap { padding: 6px 12px 8px 3.2em; background: var(--re4-soft); border-top: 1px dashed var(--avm-line); display: grid; gap: 6px; }
 @media (max-width: 640px) { .re4-mlist-wrap { padding-left: 12px; } }
 /* 材质三列排列(窄屏退到两列 / 一列);备注模式一行要放输入框和定位按钮,按宽度自动排 */

@@ -114,7 +114,8 @@ export function installRe4Fixture() {
   const params = new URLSearchParams(location.search);
   let config = initial();
   let version: 2 | 3 = params.has('re4-v2') ? 2 : 3;
-  const settings = { weaponHideStorage: false, uiDissolveEnabled: true, uiDissolveTime: 1, blockGameMouse: true, heightEnabled: true };
+  const settings = { weaponHideStorage: false, uiDissolveEnabled: true, uiDissolveTime: 1, blockGameMouse: true, heightEnabled: true,
+    newFeatures: !params.has('nf-off'), newFeaturesAuto: true, extrasInstalled: false };
   // 模型高度(夹具简化:不跟改名 / 删除走)。键:'base|预设' / 'g:组|选项'
   const heights: Record<string, number> = {};
   const heightOverride = { enabled: false, cm: 0 };
@@ -378,6 +379,7 @@ export function installRe4Fixture() {
       if (a.id === 'weapon_hide_storage') settings.weaponHideStorage = a.value === true;
       else if (a.id === 'block_game_mouse') settings.blockGameMouse = a.value === true;
       else if (a.id === 'height_enabled') settings.heightEnabled = a.value === true;
+      else if (a.id === 'new_features') { settings.newFeatures = a.value === true; settings.newFeaturesAuto = false; }
       else if (a.id === 'ui_dissolve_enabled') settings.uiDissolveEnabled = a.value === true;
       else if (a.id === 'portrait_enabled') previewEnabled = a.value === true;
       else if (a.id === 'portrait_distance' || a.id === 'portrait_height') return;

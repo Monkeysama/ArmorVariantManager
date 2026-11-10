@@ -45,7 +45,7 @@ function Page.draw(ctx, x, y, w)
     if p.source and p.dirty then F:tag(t("unsavedTag"), C.warn) end
     cy = cy + F:height() + 6
     local bx = x
-    if p.source and p.source.own then
+    if p.source then
         local c2, bw2 = W.button(t("savePreset"), bx, cy, nil, 26, { kind = "primary", font = W.small() })
         if c2 then
             if p.current == "full" then ctx.act({ kind = "preset-update" }) else st.saving_to, st.applying, st.deleting = "@current", nil, nil end
@@ -83,7 +83,9 @@ function Page.draw(ctx, x, y, w)
     -- 预设库
     W.h2(t("library"), x, cy)
     cy = cy + 28
-    -- 分两类:模组自带(只能加载)和自定义;每类里不适用的收进折叠栏。没有模组自带的预设时不显示那一类
+    -- 分两类:模组自带(可加载、覆盖至;覆盖过的可恢复原版,见 Presets.lua)和自定义;每类里不适用的收进折叠栏。
+    -- 没有模组自带的预设时不显示那一类
+    local function cat_of(e) return (e.source == "mod" or e.override) and "mod" or "user" end
     local any_usable = false
     for _, e in ipairs(p.list) do if e.match ~= "none" then any_usable = true end end
     if not any_usable then
@@ -95,7 +97,7 @@ function Page.draw(ctx, x, y, w)
         cy = cy + 4
         local RF = W.flow(x + 4, cy, w - 8, 8, 28)
         -- 自定义预设的名字就是输入框(同状态组选项),离开即改名
-        if e.source == "user" then
+        if e.source == "user" and not e.override then
             local rx, ry = RF:place(180, 28)
             W.commit_box(st.drafts, "pname:" .. e.id, rx, ry + 1, 180, 26, e.name, t("rename"), function(name)
                 name = name:gsub("^%s+", ""):gsub("%s+$", "")
@@ -105,14 +107,17 @@ function Page.draw(ctx, x, y, w)
             RF:text(e.name, C.text, W.body())
         end
         if p.source and p.source.id == e.id then RF:text("（" .. t("isSource") .. "）") end
+        if e.override then RF:tag(t("presetOverridden"), C.signal) end
         RF:tag(t(FIT[e.match]), FIT_COLOR[e.match])
         if RF:button(t("apply"), { disabled = e.match == "none" }) then st.applying, st.deleting, st.saving_to = e.id, nil, nil end
-        if e.source == "user" then
-            if not (p.source and p.source.id == e.id) and RF:button(t("saveTo")) then
-                if e.match == "full" then ctx.act({ kind = "preset-update", id = e.id })
-                else st.saving_to, st.applying, st.deleting = e.id, nil, nil end
-            end
-            if RF:button(t("delete"), { kind = "danger" }) then st.deleting, st.applying, st.saving_to = e.id, nil, nil end
+        if not (p.source and p.source.id == e.id) and RF:button(t("saveTo")) then
+            if e.match == "full" then ctx.act({ kind = "preset-update", id = e.id })
+            else st.saving_to, st.applying, st.deleting, st.reverting = e.id, nil, nil, nil end
+        end
+        if e.override then
+            if RF:button(t("presetRevert")) then st.reverting, st.applying, st.saving_to, st.deleting = e.id, nil, nil, nil end
+        elseif e.source == "user" then
+            if RF:button(t("delete"), { kind = "danger" }) then st.deleting, st.applying, st.saving_to, st.reverting = e.id, nil, nil, nil end
         end
         cy = cy + RF:height() + 4
         if st.applying == e.id then
@@ -123,9 +128,16 @@ function Page.draw(ctx, x, y, w)
             cy = cy + ch
         end
         if st.saving_to == e.id then
-            local r, ch = W.confirm(x + 16, cy, w - 20, t("saveToWarn", e.name), t("confirmSave"), t("cancel"), "primary")
+            local msg = t("saveToWarn", e.name) .. (cat_of(e) == "mod" and (" " .. t("saveToModNote")) or "")
+            local r, ch = W.confirm(x + 16, cy, w - 20, msg, t("confirmSave"), t("cancel"), "primary")
             if r then st.saving_to = nil end
             if r == "yes" then ctx.act({ kind = "preset-update", id = e.id }) end
+            cy = cy + ch
+        end
+        if st.reverting == e.id then
+            local r, ch = W.confirm(x + 16, cy, w - 20, t("presetRevertWarn", e.name), t("presetRevertConfirm"), t("cancel"), "primary")
+            if r then st.reverting = nil end
+            if r == "yes" then ctx.act({ kind = "preset-revert", id = e.id }) end
             cy = cy + ch
         end
         if st.deleting == e.id then
@@ -140,7 +152,7 @@ function Page.draw(ctx, x, y, w)
     for _, key in ipairs({ "mod", "user" }) do
         local usable, unusable = {}, {}
         for _, e in ipairs(p.list) do
-            if e.source == key then
+            if cat_of(e) == key then
                 if e.match == "none" then unusable[#unusable + 1] = e else usable[#usable + 1] = e end
             end
         end

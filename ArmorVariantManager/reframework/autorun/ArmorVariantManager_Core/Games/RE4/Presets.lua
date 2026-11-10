@@ -10,6 +10,9 @@
 -- 文件名用 ASCII 编号(p0001...),显示名放在文件里:改名不用动文件,也避开非 ASCII 路径。
 -- json 接口删不了文件,删除 = 把文件写成墓碑 { deleted = true },列表跳过,新建时复用。
 -- mod 作者随 mod 发布的预设也放在这个目录(source = "mod"),文件名随意。
+-- mod 预设的「覆盖至」:不改 mod 的文件(mod 更新时会被换掉),而是另存一份自己的预设,
+-- 文件里写 overrides = <mod 预设的 id>。列表里这份代替原 mod 预设显示(仍归在模组自带一类);
+-- 「恢复原版」= 删掉这份,原 mod 预设重新出现。mod 被卸载后,这份就当普通的自定义预设。
 --
 -- 匹配:预设的"指纹"是它记录的材质名(整套造型快照 + 状态组选项写到的材质),按槛位和当前模型比:
 --   full    当前模型每个有材质的槛位,材质名集合都和指纹完全相同
@@ -122,6 +125,7 @@ function Presets.library(io)
                 character = type(data.character) == "string" and data.character or nil,
                 updated = tonumber(data.updated) or 0,
                 config = data.config,
+                overrides = (data.source ~= "mod" and type(data.overrides) == "string" and data.overrides ~= "") and data.overrides or nil,
             }
         elseif is_tbl(data) and data.deleted == true then
             cache[id] = false    -- 墓碑:可复用的编号
@@ -168,13 +172,37 @@ function Presets.library(io)
 
     function lib.refresh() cache = nil end
 
-    -- 全部有效预设(不排序;排序由调用方按匹配程度来)
+    -- mod 预设 id → 覆盖它的那份自己的预设(没有时 nil)
+    function lib.override_of(mod_id)
+        if not cache then scan() end
+        for _, e in pairs(cache) do
+            if e and e.overrides == mod_id then return e end
+        end
+        return nil
+    end
+
+    -- 全部有效预设(不排序;排序由调用方按匹配程度来)。被覆盖的 mod 预设不列出,
+    -- 覆盖它的那份带 override_of = mod 预设的 id;对应的 mod 预设不在了时 override_of 为 nil
     function lib.list()
         if not cache then scan() end
-        local out = {}
-        for _, e in pairs(cache) do if e then out[#out + 1] = e end end
+        local out, hidden = {}, {}
+        for _, e in pairs(cache) do
+            if e and e.overrides then
+                local m = cache[e.overrides]
+                if m and m.source == "mod" then hidden[e.overrides] = true; e.override_of = e.overrides
+                else e.override_of = nil end
+            end
+        end
+        for id, e in pairs(cache) do if e and not hidden[id] then out[#out + 1] = e end end
         table.sort(out, function(a, b) return a.name < b.name end)
         return out
+    end
+
+    -- 实际生效的那份:mod 预设被覆盖时返回覆盖它的那份
+    function lib.effective(id)
+        local e = lib.get(id)
+        if e and e.source == "mod" then return lib.override_of(id) or e end
+        return e
     end
 
     function lib.get(id)
@@ -199,7 +227,7 @@ function Presets.library(io)
 
     local function write(e)
         io.dump(file_of(e.id), { version = 3, name = e.name, source = e.source, character = e.character,
-            updated = e.updated, config = e.config })
+            updated = e.updated, config = e.config, overrides = e.overrides })
     end
 
     -- 存为新预设:复制一份配置进去,source_preset 不进预设
@@ -215,20 +243,42 @@ function Presets.library(io)
         return e.id
     end
 
-    -- 存回:只能覆盖自己保存的预设,mod 发布的不改
+    -- 存回:自己保存的预设直接覆盖;mod 发布的不改它的文件,改存进覆盖它的那份(没有就新建)。
+    -- 返回 true, 实际写入的预设 id
     function lib.update(id, cfg)
         local e = lib.get(id)
-        if not e or e.source ~= "user" or not is_tbl(cfg) then return false end
+        if not e or not is_tbl(cfg) then return false end
+        if e.source == "mod" then
+            local ov = lib.override_of(id)
+            if not ov then
+                ov = { id = next_id(), name = e.name, source = "user", character = e.character, overrides = id }
+                cache[ov.id] = ov
+            end
+            e = ov
+        end
         e.config = Presets.deep_copy(cfg)
         e.config.source_preset = nil
         e.updated = io.now and io.now() or e.updated
         write(e)
-        return true
+        write_index()
+        return true, e.id
+    end
+
+    -- 恢复原版:删掉覆盖 mod 预设的那份(给覆盖的 id 或 mod 预设的 id 都行)。返回 mod 预设的 id
+    function lib.revert(id)
+        local e = lib.get(id)
+        if e and e.source == "mod" then e = lib.override_of(id) end
+        if not e or not e.overrides then return false end
+        cache[e.id] = false
+        io.dump(file_of(e.id), { deleted = true })
+        return true, e.overrides
     end
 
     function lib.rename(id, name)
         local e = lib.get(id)
-        if not e or e.source ~= "user" or type(name) ~= "string" or name == "" or e.name == name then return false end
+        -- 覆盖 mod 预设的那份沿用 mod 预设的名字,不改名
+        local m = e and e.overrides and cache[e.overrides]
+        if not e or e.source ~= "user" or (m and m.source == "mod") or type(name) ~= "string" or name == "" or e.name == name then return false end
         e.name = name
         write(e)
         return true

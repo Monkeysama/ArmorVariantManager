@@ -5,6 +5,7 @@ local T = require("ArmorVariantManager_Core.Games.RE4.Panel.Theme")
 local D = require("ArmorVariantManager_Core.Games.RE4.Panel.Draw")
 local W = require("ArmorVariantManager_Core.Games.RE4.Panel.Widgets")
 local U = require("ArmorVariantManager_Core.Games.RE4.Panel.Common")
+local R = require("ArmorVariantManager_Core.Games.RE4.Panel.Refs")
 
 local C = T.c
 local max, min = math.max, math.min
@@ -101,7 +102,7 @@ local function draw_trigger(ctx, k, st, x, y, w)
         if ci == 1 then
             D.text_mid(t("when"), cx, cy, ROW, C.muted, W.small())
         else
-            select_values("logic:" .. k, cx, cy + 1, 56, { t("and"), t("or") }, { "AND", "OR" }, st.logic, nil, function(val)
+            select_values("logic:" .. k, cx, cy + 1, 56, { t("andShort"), t("orShort") }, { "AND", "OR" }, st.logic, nil, function(val)
                 ctx.act({ kind = "state-field", index = k, field = "logic", value = val })
             end)
         end
@@ -179,10 +180,29 @@ local function draw_targets(ctx, k, st, x, y, w)
     local rt, rc = U.result_text(st.baseResult, states, t)
     if rt ~= "" then D.text_mid(rt, bx + sel_w + 8, cy, ROW, RES_COLOR[rc] or C.muted, W.small(), max(0, x + w - bx - sel_w - 8)) end
     cy = cy + ROW + 6
+    -- 调色方案、溶解预设、武器显示属于新版特性:关闭时灰掉、不可改
+    local nf_off = R.nf_off(snap)
+    local function ref_row(id, label, names, current, none_label, broken_label, on_pick, result)
+        D.text_mid(label, x, cy, ROW, nf_off and C.faint or C.muted, W.small(), sel_w)
+        local l, v = { none_label }, { "" }
+        local found = false
+        for _, n in ipairs(names) do l[#l + 1] = n; v[#v + 1] = n; if n == current then found = true end end
+        if current and current ~= "" and not found then l[#l + 1] = broken_label .. "：" .. current; v[#v + 1] = current end
+        select_values(id, bx, cy + 1, sel_w, l, v, current or "", { disabled = nf_off }, on_pick)
+        if current and result then
+            local rt2, rc2 = U.result_text(result, states, t)
+            if rt2 ~= "" then D.text_mid(rt2, bx + sel_w + 8, cy, ROW, RES_COLOR[rc2] or C.muted, W.small(), max(0, x + w - bx - sel_w - 8)) end
+        end
+        cy = cy + ROW + 6
+    end
+    ref_row("spal:" .. k, t("paletteRef"), R.scheme_names(snap), st.palette, t("paletteRefNone"), t("paletteRefBroken"),
+        function(val) ctx.act({ kind = "state-palette", index = k, scheme = val }) end, st.paletteResult)
+    ref_row("sdis:" .. k, t("dissolveRef"), R.dissolve_names(snap), st.dissolve, t("dissolveRefNone"), t("dissolveRefBroken"),
+        function(val) ctx.act({ kind = "state-dissolve", index = k, preset = val }) end)
     -- 武器显示
-    D.text_mid(t("weaponsTarget"), x, cy, ROW, C.muted, W.small(), sel_w)
+    D.text_mid(t("weaponsTarget"), x, cy, ROW, nf_off and C.faint or C.muted, W.small(), sel_w)
     select_values("sweap:" .. k, bx, cy + 1, sel_w, { t("weaponsKeep"), t("weaponsStowed"), t("weaponsAll") },
-        { "", "stowed", "all" }, st.weapons or "", nil, function(val)
+        { "", "stowed", "all" }, st.weapons or "", { disabled = nf_off }, function(val)
             ctx.act({ kind = "state-weapons", index = k, mode = val })
         end)
     if st.weapons then
@@ -315,10 +335,12 @@ function Page.draw(ctx, x, y, w)
             if W.tbutton(t("exclusive"), ex, ey + 2, { pressed = st.exclusive, tip = t("exclusiveHint") }) then
                 ctx.act({ kind = "state-field", index = k, field = "exclusive", value = not st.exclusive })
             end
+            -- 渐入 / 渐出(溶解过渡)属于新版特性:关闭时灰掉、不可改
+            local fade_off = R.nf_off(snap)
             local function fade(label, field, value)
-                HF:text(label)
+                HF:text(label, fade_off and C.faint or nil)
                 local fx, fy = HF:place(50, ROW)
-                W.num_box(ps.drafts, field .. ":" .. k, fx, fy + 1, 50, value, { min = 0, max = 30 }, function(n)
+                W.num_box(ps.drafts, field .. ":" .. k, fx, fy + 1, 50, value, { min = 0, max = 30, disabled = fade_off }, function(n)
                     ctx.act({ kind = "state-field", index = k, field = field, value = n })
                 end)
             end

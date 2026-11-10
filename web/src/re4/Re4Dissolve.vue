@@ -8,6 +8,7 @@ import type { Re4DissolveEdge, Re4DissolvePreset, Re4EffectLabel, Re4EffectProvi
 // 溶解:手动切换时的过渡(全局)、溶解预设库(全局:形状 + 光边覆盖;条件状态 / 整套造型预设 / 状态组选项按名字引用)、
 // 其他 mod 注册的效果提供者。和调色页一样:上面选要编辑的预设、新建 / 改名 / 删除,下面编辑它。
 const props = defineProps<{ snapshot: Re4Snapshot; busy: boolean; perform: Re4Perform; t: Re4Translate }>();
+const nfOff = computed(() => props.snapshot.settings.newFeatures === false);   // 新版特性关闭:相关界面灰掉、不可改
 
 const BUILTIN = 'avm.builtin';
 const en = computed(() => props.snapshot.language === 'en');
@@ -110,7 +111,8 @@ function setColor(key: string, value: string | null, live = false) {
 </script>
 
 <template>
-  <div class="re4-main">
+  <div v-if="nfOff" class="re4-banner" role="status">{{ t('newFeaturesOffPage') }}</div>
+  <div class="re4-main" :class="{ 're4-nf-lock': nfOff }" :inert="nfOff">
     <section class="re4-panel re4-panel-body">
       <div class="re4-panel-title">{{ t('dissolveTransition') }}</div>
       <div class="re4-row">

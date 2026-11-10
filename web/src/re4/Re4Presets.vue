@@ -9,11 +9,13 @@ import type { Re4Fit, Re4Perform, Re4PresetEntry, Re4Snapshot } from './types';
 const props = defineProps<{ snapshot: Re4Snapshot; busy: boolean; perform: Re4Perform; t: Re4Translate }>();
 const c = () => ({ character: props.snapshot.character });
 const p = computed(() => props.snapshot.presets!);
-// 预设库分两类:模组自带(只能加载)和自定义(自己存的,可覆盖 / 改名 / 删除);每类里不适用的收进折叠栏。
-// 没有模组自带的预设时不显示那一类
+// 预设库分两类:模组自带(可加载、覆盖至;覆盖过的可恢复原版)和自定义(自己存的,可覆盖 / 改名 / 删除);
+// 每类里不适用的收进折叠栏。没有模组自带的预设时不显示那一类。
+// 覆盖模组预设时不改模组的文件,另存一份自己的副本代替它显示(override),恢复原版 = 删掉副本
 const anyUsable = computed(() => p.value.list.some(e => e.match !== 'none'));
+const catOf = (e: Re4PresetEntry) => e.source === 'mod' || e.override ? 'mod' : 'user';
 const categories = computed(() => (['mod', 'user'] as const).map(key => {
-  const list = p.value.list.filter(e => e.source === key);
+  const list = p.value.list.filter(e => catOf(e) === key);
   return { key, list, usable: list.filter(e => e.match !== 'none'), unusable: list.filter(e => e.match === 'none') };
 }).filter(g => g.key === 'user' || g.list.length > 0));
 const folds = reactive(new Set<string>());
@@ -22,6 +24,7 @@ const applying = shallowRef('');
 // 保存至预设(完全替换预设内容):完全适用的直接存,其他的先确认。'@current' 表示当前预设
 const savingTo = shallowRef('');
 const confirmingDelete = shallowRef('');
+const confirmingRevert = shallowRef('');
 const newName = shallowRef('');
 // 新建空白配置:二次确认,默认同时抓取当前外观作为整套造型
 const blanking = shallowRef(false);
@@ -68,7 +71,7 @@ const time = (s: number) => s > 0 ? new Date(s * 1000).toLocaleString() : '';
         <span v-if="p.source && p.dirty" class="re4-tag partial">{{ t('unsavedTag') }}</span>
       </div>
       <div class="re4-row">
-        <ElButton v-if="p.source?.own" size="small" type="primary" :disabled="busy" @click="saveTo(undefined, p.current)">{{ t('savePreset') }}</ElButton>
+        <ElButton v-if="p.source" size="small" type="primary" :disabled="busy" @click="saveTo(undefined, p.current)">{{ t('savePreset') }}</ElButton>
         <ElInput v-model="newName" size="small" style="width:12em" :placeholder="t('newPresetName')" @keyup.enter="save" />
         <ElButton size="small" :disabled="busy || !newName.trim()" @click="save">{{ t('saveAsPreset') }}</ElButton>
         <ElButton size="small" :disabled="busy" @click="blanking = !blanking">{{ t('newBlank') }}</ElButton>
@@ -98,25 +101,30 @@ const time = (s: number) => s > 0 ? new Date(s * 1000).toLocaleString() : '';
           <span v-if="!g.list.length" class="re4-muted re4-small">{{ t('noCustom') }}</span>
           <template v-for="list in [g.usable, folds.has('unusable:' + g.key) ? g.unusable : []]" :key="list === g.usable ? 'u' : 'n'">
             <div v-for="e in list" :key="e.id" class="re4-prow">
-              <input v-if="e.source === 'user'" class="re4-pname-input" :value="e.name" :aria-label="t('rename')" :title="t('rename')" :disabled="busy"
+              <input v-if="e.source === 'user' && !e.override" class="re4-pname-input" :value="e.name" :aria-label="t('rename')" :title="t('rename')" :disabled="busy"
                 @change="ev => rename(e, ev.target as HTMLInputElement)"
                 @keydown.enter="ev => (ev.target as HTMLInputElement).blur()" @keydown.esc="ev => revert(ev, e)">
               <span v-else class="re4-pname">{{ e.name }}</span>
               <span v-if="p.source?.id === e.id" class="re4-muted re4-small">（{{ t('isSource') }}）</span>
+              <span v-if="e.override" class="re4-tag" :title="t('presetOverriddenHint')">{{ t('presetOverridden') }}</span>
               <span class="re4-tag" :class="fitClass(e.match)">{{ t(FIT[e.match]) }}</span>
               <span class="re4-spacer"></span>
               <ElButton size="small" :disabled="busy || e.match === 'none'" @click="applying = e.id; savingTo = ''">{{ t('apply') }}</ElButton>
-              <template v-if="e.source === 'user'">
-                <ElButton v-if="p.source?.id !== e.id" size="small" :disabled="busy" @click="saveTo(e.id, e.match)">{{ t('saveTo') }}</ElButton>
-                <ElButton size="small" type="danger" plain :disabled="busy" @click="confirmingDelete = e.id">{{ t('delete') }}</ElButton>
-              </template>
+              <ElButton v-if="p.source?.id !== e.id" size="small" :disabled="busy" @click="saveTo(e.id, e.match)">{{ t('saveTo') }}</ElButton>
+              <ElButton v-if="e.override" size="small" :disabled="busy" @click="confirmingRevert = e.id; savingTo = ''; applying = ''">{{ t('presetRevert') }}</ElButton>
+              <ElButton v-else-if="e.source === 'user'" size="small" type="danger" plain :disabled="busy" @click="confirmingDelete = e.id">{{ t('delete') }}</ElButton>
               <div v-if="applying === e.id" class="re4-pconfirm">
                 <span>{{ t(!p.dirty ? 'applyWarn' : p.source ? 'applyDirty' : 'applyUnsaved', e.name) }}<template v-if="e.match === 'partial'"> {{ t('applyPartial') }}</template></span>
                 <ElButton size="small" type="primary" @click="apply(e)">{{ t('confirmApply') }}</ElButton><ElButton size="small" @click="applying = ''">{{ t('cancel') }}</ElButton>
               </div>
               <div v-if="savingTo === e.id" class="re4-pconfirm">
-                <span>{{ t('saveToWarn', e.name) }}</span>
+                <span>{{ t('saveToWarn', e.name) }}<template v-if="catOf(e) === 'mod'"> {{ t('saveToModNote') }}</template></span>
                 <ElButton size="small" type="primary" :disabled="busy" @click="saveTo(e.id, e.match)">{{ t('confirmSave') }}</ElButton><ElButton size="small" @click="savingTo = ''">{{ t('cancel') }}</ElButton>
+              </div>
+              <div v-if="confirmingRevert === e.id" class="re4-pconfirm">
+                <span>{{ t('presetRevertWarn', e.name) }}</span>
+                <ElButton size="small" type="primary" :disabled="busy" @click="confirmingRevert = ''; perform({ kind: 'preset-revert', ...c(), id: e.id })">{{ t('presetRevertConfirm') }}</ElButton>
+                <ElButton size="small" @click="confirmingRevert = ''">{{ t('cancel') }}</ElButton>
               </div>
               <div v-if="confirmingDelete === e.id" class="re4-confirm" style="flex-basis:100%">
                 <span>{{ t('delete') }}「{{ e.name }}」？</span>

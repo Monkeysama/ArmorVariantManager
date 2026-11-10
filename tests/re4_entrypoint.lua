@@ -285,12 +285,16 @@ assert(handlers["monkeysama.avm.snapshot"] and handlers["monkeysama.avm.action"]
 assert(handlers["monkeysama.avm.imports"] == nil, "RE4 registers only what it serves")
 -- 全身预览:测试环境里没有原生 DLL,如实报告不可用,不报错
 local preview_state = handlers["monkeysama.avm.preview"]({visible = true, width = 330, height = 360})
-assert(preview_state.available == false and preview_state.status == "preview_native_missing")
+-- v2 配置、没有 v3 配置时新版特性默认关闭,预览不注册,直接说明原因
+assert(preview_state.available == false and preview_state.status == "preview_features_off")
 local snap = handlers["monkeysama.avm.snapshot"]()
 plain(snap, "v2 snapshot")
 assert(snap.game == "RE4" and snap.character == "Leon" and #snap.characters == 1 and snap.configVersion == 2)
 assert(snap.base == nil and snap.states == nil, "a v2 config only gets the migration entry")
 assert(snap.settings.uiDissolveEnabled == false and snap.settings.uiDissolveTime == 2.5)
+-- 新版特性:只有 v2 配置时自动关闭,没装过额外的钩子
+assert(snap.settings.newFeatures == false and snap.settings.newFeaturesAuto == true and snap.settings.extrasInstalled == false,
+    "new features default off with only v2 configs")
 local act = handlers["monkeysama.avm.action"]
 assert(not pcall(act, {kind = "manual", character = "Leon", layer = "base", option = ""}), "v3 actions wait for migration")
 
@@ -299,6 +303,14 @@ local function run_frames(n) for _ = 1, n or 2 do tick() end end
 snap = act({kind = "migrate", character = "Leon"})
 plain(snap, "v3 snapshot")
 assert(snap.configVersion == 3 and files[CONFIG_PATH].version == 3)
+-- 迁移出 v3 配置后自动打开;下一帧装上额外的钩子;手动关掉后存进全局设置,再打开恢复
+assert(snap.settings.newFeatures == true and snap.settings.newFeaturesAuto == true, "a v3 config turns new features on")
+tick()
+assert(act({kind = "setting", id = "new_features", value = false}).settings.newFeatures == false)
+assert(files["ArmorVariantManager/GlobalSettings.json"].new_features == false, "the choice is saved")
+local s_off = act({kind = "setting", id = "new_features", value = false})
+assert(s_off.settings.newFeaturesAuto == false and s_off.settings.extrasInstalled == true, "installed hooks are reported")
+assert(act({kind = "setting", id = "new_features", value = true}).settings.newFeatures == true)
 assert(snap.notice.kind == "migrated" and snap.notice.overlaps == nil and snap.notice.presets == 1)
 assert(files["ArmorVariantManager/backup/Leon.json"].version == 2, "restore point keeps the v2 config")
 assert(files["ArmorVariantManager/presets/p0001.json"].name == "Leon · Old")
@@ -669,6 +681,41 @@ do
         end
     end
     assert(clicks > 100, "clicked through the standalone panel: " .. clicks)
+    -- 新版特性关闭:调色页、溶解页整页锁住,点哪里都不响应;其余页面照常画,灰掉的控件不报错
+    assert(Main.reff.action({ kind = "setting", id = "new_features", value = false }).settings.newFeatures == false)
+    local landed = 0
+    I.click = function(x, y, w, h)
+        if rects then rects[#rects + 1] = {x + w / 2, y + h / 2, x, y, w} end
+        local r = real_click(x, y, w, h)
+        -- 只算页面自己发出的点击(窗口缩放把手、标题栏不在锁定范围里)
+        if r and rects and debug.traceback():find("Page", 1, true) then landed = landed + 1 end
+        return r
+    end
+    for _, page in ipairs({"quick", "base", "groups", "states", "palette", "dissolve", "misc"}) do
+        panel._ctx.goto_page(page)
+        frame(); frame()
+        if page == "palette" or page == "dissolve" then
+            rects = {}
+            frame()
+            local list = rects
+            for k = 1, math.min(#list, 40) do
+                local r = list[k]
+                if r[4] > 160 and r[3] > 252 then
+                    rects = {}
+                    mouse.x, mouse.y, mouse.down = r[1], r[2], true
+                    frame()
+                    mouse.down = false
+                    frame()
+                end
+            end
+            rects = nil
+            assert(landed == 0, page .. " is locked while new features are off")
+            assert(I.locked == false, "the lock is released after drawing")
+        end
+        assert(#warns == 0, page .. " (new features off): " .. tostring(warns[1]))
+    end
+    I.click = real_click
+    Main.reff.action({ kind = "setting", id = "new_features", value = true })
     panel.set_open(false)
     _G.imgui = base_imgui
     print("PASS: RE4 standalone panel (no REFF) drives the real controller through every page without errors (" .. clicks .. " clicks)")

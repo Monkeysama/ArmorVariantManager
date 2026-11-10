@@ -34,6 +34,7 @@ const LEGEND_KEY = { active: 'kindActive', partial: 'kindPartial', outranked: 'k
 
 const toggle = (i: number) => { if (open.has(i)) open.delete(i); else open.add(i); };
 const field = (i: number, f: 'enabled' | 'exclusive', value: boolean) => props.perform({ kind: 'state-field', ...c(), index: i, field: f, value });
+const nfOff = computed(() => props.snapshot.settings.newFeatures === false);   // 新版特性关闭:相关界面灰掉、不可改
 const numField = (i: number, f: 'hold' | 'fade_in' | 'fade_out', raw: string) => {
   const v = Number(raw);
   if (!Number.isFinite(v)) return;
@@ -111,7 +112,7 @@ const { from: dragFrom, drop: dropAt, start: startDrag } = usePointerReorder('.r
           <input class="re4-sname re4-sname-input" :value="st.name" :aria-label="t('stateName')"
             @change="e => perform({ kind: 'state-rename', ...c(), index: k + 1, name: (e.target as HTMLInputElement).value.trim() })">
           <button class="re4-xbtn" :aria-pressed="st.exclusive" :disabled="busy" :title="t('exclusiveHint')" @click="field(k + 1, 'exclusive', !st.exclusive)">{{ t('exclusive') }}</button>
-          <span class="re4-fade">
+          <span class="re4-fade" :class="{ 're4-nf-lock': nfOff }" :inert="nfOff">
             <label>{{ t('fadeIn') }}<Re4Num :value="st.fadeIn" :min="0" :max="30" @change="v => v !== undefined && numField(k + 1, 'fade_in', String(v))" /></label>
             <label>{{ t('fadeOut') }}<Re4Num :value="st.fadeOut" :min="0" :max="30" @change="v => v !== undefined && numField(k + 1, 'fade_out', String(v))" /></label>{{ t('seconds') }}
           </span>
@@ -144,7 +145,7 @@ const { from: dragFrom, drop: dropAt, start: startDrag } = usePointerReorder('.r
               <span class="re4-conn">
                 <template v-if="ci === 0">{{ t('when') }}</template>
                 <ElSelect v-else :model-value="st.logic" :disabled="busy" size="small" @change="v => setLogic(k + 1, String(v))">
-                  <ElOption value="AND" :label="t('and')" /><ElOption value="OR" :label="t('or')" />
+                  <ElOption value="AND" :label="t('andShort')" /><ElOption value="OR" :label="t('orShort')" />
                 </ElSelect>
               </span>
               <span class="re4-cexpr">
@@ -194,7 +195,7 @@ const { from: dragFrom, drop: dropAt, start: startDrag } = usePointerReorder('.r
             <span class="re4-res" :class="st.baseResult?.kind">{{ resultText(st.baseResult, states, t) }}</span>
           </div>
           <!-- 调色方案:命中时叠加;不独占,几个状态的方案按优先级叠起来 -->
-          <div class="re4-target">
+          <div class="re4-target" :class="{ 're4-nf-lock': nfOff }" :inert="nfOff">
             <span class="re4-muted re4-small">{{ t('paletteRef') }}</span>
             <ElSelect class="re4-sel-target" :model-value="st.palette ?? ''" :empty-values="[null, undefined]" :disabled="busy" size="small" :aria-label="t('paletteRef')"
               @change="v => perform({ kind: 'state-palette', ...c(), index: k + 1, scheme: String(v ?? '') })">
@@ -206,7 +207,7 @@ const { from: dragFrom, drop: dropAt, start: startDrag } = usePointerReorder('.r
             <span v-if="st.palette && st.hp" class="re4-muted re4-small">{{ t('paletteByHp') }}</span>
           </div>
           <!-- 溶解预设(全局库):这个状态引起的切换用它;「—」= 默认预设 -->
-          <div class="re4-target">
+          <div class="re4-target" :class="{ 're4-nf-lock': nfOff }" :inert="nfOff">
             <span class="re4-muted re4-small">{{ t('dissolveRef') }}</span>
             <ElSelect class="re4-sel-target" :model-value="st.dissolve ?? ''" :empty-values="[null, undefined]" :disabled="busy" size="small" :aria-label="t('dissolveRef')"
               @change="v => perform({ kind: 'state-dissolve', ...c(), index: k + 1, preset: String(v ?? '') })">
@@ -216,7 +217,7 @@ const { from: dragFrom, drop: dropAt, start: startDrag } = usePointerReorder('.r
             </ElSelect>
           </div>
           <!-- 武器显示:命中时隐藏武器;和状态组一样按优先级独占 -->
-          <div class="re4-target">
+          <div class="re4-target" :class="{ 're4-nf-lock': nfOff }" :inert="nfOff">
             <span class="re4-muted re4-small">{{ t('weaponsTarget') }}</span>
             <ElSelect class="re4-sel-target" :model-value="st.weapons ?? ''" :empty-values="[null, undefined]" :disabled="busy" size="small" :aria-label="t('weaponsTarget')"
               @change="v => perform({ kind: 'state-weapons', ...c(), index: k + 1, mode: String(v ?? '') })">

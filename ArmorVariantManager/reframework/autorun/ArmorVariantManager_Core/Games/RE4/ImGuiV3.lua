@@ -64,8 +64,25 @@ function ImGuiV3.draw(d)
 
     layer_combo(T("base_layer"), "base", "base", cfg.base.order, cfg.base.active, false, (info.layers.base or {}).prio)
     for _, g in ipairs(cfg.groups) do
-        local key = M3.layer_key(g.name)
-        layer_combo(g.name, key, g.name, g.order, g.active, true, (info.layers[key] or {}).prio)
+        if M3.is_multi(g) then
+            -- 复选组:每个选项一个勾选框;被条件状态接管的选项只显示
+            imgui.text(g.name)
+            for _, opt in ipairs(g.order) do
+                local okey = M3.option_key(g.name, opt)
+                local by = (info.layers[okey] or {}).prio
+                imgui.same_line()
+                if by then
+                    colored(string.format("[%s] %s (%s)", v3.picks[okey] and "x" or " ", opt,
+                        string.format(T("v3_taken_by"), state_name(by))), GREEN)
+                else
+                    local ch, on = imgui.checkbox(opt .. "###v3m_" .. okey, M3.is_on(g, opt))
+                    if ch then d.commit(OpsV3.set_option_on(cfg, g.name, opt, on)) end
+                end
+            end
+        else
+            local key = M3.layer_key(g.name)
+            layer_combo(g.name, key, g.name, g.order, g.active, true, (info.layers[key] or {}).prio)
+        end
     end
 
     -- 条件状态

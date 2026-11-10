@@ -61,7 +61,6 @@ do
     local lib = Presets.library(io)
     local list = lib.list()
     assert(#list == 1 and list[1].id == "author_pack" and list[1].source == "mod", "mod preset listed, broken skipped")
-    assert(not lib.update("author_pack", cfg_with({}, {})), "mod presets are read-only")
     assert(not lib.delete("author_pack") and not lib.rename("author_pack", "x"))
 
     local cfg = cfg_with({a = true, b = true}, {h = true})
@@ -118,4 +117,47 @@ do
     assert(#Presets.library(io).autosaves("Ashley") == 0)
 end
 
-print("PASS: preset fingerprint matching (full / partial / none, missing armor), preset files (ids, tombstone reuse, read-only mod presets, deep copies), ranking and 5-entry auto-save")
+-- ============================================================ 覆盖模组预设:不改模组文件,另存一份代替它
+do
+    local fs = {}
+    local io2 = setmetatable({
+        load = function(p) return fs[p] and Presets.deep_copy(fs[p]) or nil end,
+        dump = function(p, t) fs[p] = Presets.deep_copy(t) end,
+        glob = function()
+            local out = {}
+            for p in pairs(fs) do if p:find("^ArmorVariantManager/presets/") then out[#out + 1] = p end end
+            return out
+        end,
+    }, { __index = io })
+    local MOD = "ArmorVariantManager/presets/author_pack.json"
+    fs[MOD] = { version = 3, name = "作者推荐", source = "mod", config = cfg_with({ a = true }, { h = true }) }
+    local lib = Presets.library(io2)
+    local ok, written = lib.update("author_pack", cfg_with({ a = false }, { h = true }))
+    assert(ok and written == "p0001", "overwriting a mod preset writes an own copy")
+    assert(fs[MOD].config.base.presets.A.body.materials.a == true, "the mod file is untouched")
+    local copy = fs["ArmorVariantManager/presets/p0001.json"]
+    assert(copy.source == "user" and copy.overrides == "author_pack" and copy.name == "作者推荐")
+    local list = lib.list()
+    assert(#list == 1 and list[1].id == "p0001" and list[1].override_of == "author_pack", "the copy replaces the mod preset in the list")
+    assert(lib.effective("author_pack").id == "p0001", "effective() follows the overwrite")
+    assert(not lib.rename("p0001", "别的"), "an overwrite keeps the mod preset's name")
+    ok, written = lib.update("author_pack", cfg_with({ a = true }, { h = false }))
+    assert(ok and written == "p0001", "overwriting again reuses the same copy")
+    -- 重新扫描后照样认得
+    local lib2 = Presets.library(io2)
+    assert(#lib2.list() == 1 and lib2.list()[1].override_of == "author_pack")
+    -- 恢复原版:删掉副本,模组预设重新出现
+    local rok, mod_id = lib2.revert("p0001")
+    assert(rok and mod_id == "author_pack" and fs["ArmorVariantManager/presets/p0001.json"].deleted == true)
+    list = lib2.list()
+    assert(#list == 1 and list[1].id == "author_pack" and list[1].source == "mod", "mod preset is back")
+    assert(not lib2.revert("author_pack"), "nothing to restore")
+    -- 模组被卸载:副本当作普通自定义预设
+    lib2.update("author_pack", cfg_with({ a = false }, { h = true }))
+    fs[MOD] = nil
+    local lib3 = Presets.library(io2)
+    list = lib3.list()
+    assert(#list == 1 and list[1].source == "user" and list[1].override_of == nil, "orphaned copy is a plain user preset")
+end
+
+print("PASS: preset fingerprint matching (full / partial / none, missing armor), preset files (ids, tombstone reuse, read-only mod presets, deep copies), mod preset overwrite / restore, ranking and 5-entry auto-save")

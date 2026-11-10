@@ -15,6 +15,8 @@ export interface Re4Character { id: string; label: string; configured: boolean; 
 export interface Re4Settings {
   weaponHideStorage: boolean; uiDissolveEnabled: boolean; uiDissolveTime: number;
   previewDistance?: number; previewHeight?: number; blockGameMouse?: boolean; heightEnabled?: boolean;
+  // 新版特性开关:生效值、是否自动、关掉后是否还有装过的钩子(Reset Scripts 后完全卸下)
+  newFeatures?: boolean; newFeaturesAuto?: boolean; extrasInstalled?: boolean;
   dissolvePresets?: Re4DissolvePresets;
 }
 // 溶解预设库(全局,Lua DissolveStyles.presets_view):default = 预设名 / "random" / "";shapes = 内置形状
@@ -49,17 +51,34 @@ export type Re4Values = Record<string, boolean>;
 export interface Re4Match { status: 'ok' | 'partial' | 'mismatch'; skipped: string[] }
 // height:这个预设 / 选项设的模型高度（厘米）；没有 = 这一层不管高度
 // palette:选中这个预设 / 选项时叠加的调色方案（可能指向已删除的方案）
-export interface Re4BasePreset { name: string; values: Re4Values; match: Re4Match; height?: number; palette?: string; dissolve?: string }
+// sks:ShapeKeySystem 键组引用 { 键组名: 选项名 | 0 }(0 = 不选任何选项);没写的键组 SKS 里保持原样
+export type Re4SksRefs = Record<string, string | 0>;
+export interface Re4BasePreset { name: string; values: Re4Values; match: Re4Match; height?: number; palette?: string; dissolve?: string; sks?: Re4SksRefs }
 export interface Re4Base { active: string; effective?: string; fromState?: number; presets: Re4BasePreset[] }
-export interface Re4Option { name: string; values: Re4Values; height?: number; palette?: string; dissolve?: string }
-export interface Re4Group { name: string; active: string; effective?: string; fromState?: number; options: Re4Option[] }
+// on / effective / fromState 只在复选组里出现:手动打开、这一帧生效、被哪个条件状态接管
+export interface Re4Option { name: string; values: Re4Values; height?: number; palette?: string; dissolve?: string; sks?: Re4SksRefs;
+  on?: boolean; effective?: boolean; fromState?: number }
+// ShapeKeySystem 联动(没装 SKS 1.1+ 时整个字段不出现)。actor 为空 = SKS 不驱动这个角色。
+// groups:当前 SKS 配置的键组 + 这个角色所有 SKS 配置里键组的并集;inCurrent = 当前配置里有;value = 当前生效的选项
+// errors:{ 键组名: 错误码 } 上次发送失败的;want:这一帧解算出要发送的
+export interface Re4SksGroup { name: string; options: string[] | Record<string, never>; inCurrent: boolean; value?: string | 0 }
+export interface Re4Sks {
+  available: boolean; actor?: string; name?: string;
+  groups?: Re4SksGroup[] | Record<string, never>; errors?: Record<string, string>; want?: Re4SksRefs;
+}
+// bases:造型归属(整套造型预设名;没有 = 全部);shown:当前生效的整套造型下,快速切换页显示不显示
+export interface Re4Group { name: string; active: string; effective?: string; fromState?: number; options: Re4Option[];
+  bases?: string[] | Record<string, never>; shown?: boolean;
+  // multi:复选组(各选项各自开关);actives:手动打开的选项。复选组的 fromState 是各选项里优先级最高的接管
+  multi?: boolean; actives?: string[] | Record<string, never> }
 
 export interface Re4Material { name: string; note?: string }
 export interface Re4Slot { id: string; label: string; mirrored: boolean; materials: Re4Material[] }
 export interface Re4Look { slot: string; material: string; on: boolean }
 
 export type Re4Fit = 'full' | 'partial' | 'none';
-export interface Re4PresetEntry { id: string; name: string; source: 'user' | 'mod'; match: Re4Fit }
+// override:覆盖某个模组预设的自己的副本(归在模组自带一类,可恢复原版)
+export interface Re4PresetEntry { id: string; name: string; source: 'user' | 'mod'; match: Re4Fit; override?: boolean }
 export interface Re4Presets {
   current?: Re4Fit; source?: { id: string; name: string; own: boolean }; dismissed: boolean;
   /** 有改动未保存:没有来源预设,或者当前配置和来源预设内容不同 */
@@ -134,6 +153,7 @@ export interface Re4Snapshot {
   height?: number;   // 这一帧生效的模型高度（厘米）；没有 = 不抬高
   heightSource?: { layer: string; option?: string };   // layer: 'override' / 'base' / 状态组名
   heightOverride?: { enabled: boolean; cm: number };   // 快速切换页的全局覆盖（存在当前配置里）
+  sks?: Re4Sks;
   palette?: Re4Palette;   // 只在调色页打开时出现
   palettes?: Re4PaletteSchemes;
   hotkeys?: Re4Hotkey[];
@@ -155,7 +175,7 @@ export type Re4Action =
   | { kind: 'dissolve-preset-delete'; preset: string }
   | { kind: 'dissolve-preset-shape'; preset: string; shape: string }
   | { kind: 'dissolve-default'; preset: string }
-  | { kind: 'setting'; id: 'weapon_hide_storage' | 'ui_dissolve_enabled' | 'ui_dissolve_time' | 'portrait_enabled' | 'portrait_distance' | 'portrait_height' | 'block_game_mouse' | 'height_enabled'; value: boolean | number }
+  | { kind: 'setting'; id: 'weapon_hide_storage' | 'ui_dissolve_enabled' | 'ui_dissolve_time' | 'portrait_enabled' | 'portrait_distance' | 'portrait_height' | 'block_game_mouse' | 'height_enabled' | 'new_features'; value: boolean | number }
   | C & { kind: 'migrate' }
   | C & { kind: 'manual'; layer: string; option: string }
   | C & { kind: 'auto'; enabled: boolean }
@@ -183,6 +203,11 @@ export type Re4Action =
   | C & { kind: 'palette-ref'; layer: string; option: string; scheme: string }
   | C & { kind: 'state-palette'; index: number; scheme: string }
   | C & { kind: 'dissolve-ref'; layer: string; option: string; preset: string }
+  | C & { kind: 'group-bases'; group: string; bases: string[] }
+  | C & { kind: 'preset-revert'; id: string }
+  | C & { kind: 'group-multi'; group: string; on: boolean }
+  | C & { kind: 'option-on'; group: string; option: string; on: boolean }
+  | C & { kind: 'sks-ref'; layer: string; option: string; group: string; value: string | 0 }
   | C & { kind: 'state-dissolve'; index: number; preset: string }
   | C & { kind: 'state-weapons'; index: number; mode: string }
   | C & { kind: 'palette-reload' }

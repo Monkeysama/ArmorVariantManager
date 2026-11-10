@@ -334,4 +334,28 @@ do
     assert(not Palette.reset_in(nil, "body", "S"))
 end
 
-print("PASS: palette schemes: normalize, merge, layers from base / groups / states (priority, exclusive, broken, HP), selected scheme, OpsV3 edits and preset ref bookkeeping")
+-- ============================================================ 状态组选项引用的方案只作用于这个选项设为开 / 关的材质
+do
+    local cfg = config({ state("Hurt", "hurt", {targets = {{group = "Face", option = "Hurt"}}}) })
+    local r = M3.resolve(cfg, {hurt = true})
+    local names, _, _, masks = M3.palette_sources(cfg, r)
+    S.equal(names, {"Warm", "Pale"})
+    assert(masks[1] == nil, "base preset refs are not masked")
+    S.equal(masks[2], {}, "an option that writes no material masks everything out")
+    local merged = M3.palette_of(cfg, names, masks)
+    assert(merged.head == nil or merged.head.Face == nil, "Pale does not reach materials the option leaves at -")
+    S.equal(merged.body.Skin, {Base = {x = 0.9}}, "only Warm (from the base preset) reaches Skin")
+
+    -- 选项把 head/Face 设为开:Pale 只改 Face,不改 body/Skin
+    M3.find_group(cfg, "Face").options.Hurt = {head = {materials = {Face = true, Other = false}}}
+    names, _, _, masks = M3.palette_sources(cfg, M3.resolve(cfg, {hurt = true}))
+    S.equal(masks[2], {head = {Face = true, Other = true}}, "on and off both count; - does not")
+    merged = M3.palette_of(cfg, names, masks)
+    S.equal(merged.head.Face, {Base = col(0.3, 0.3, 0.3)}, "Pale reaches the option's materials")
+    S.equal(merged.body.Skin, {Base = {x = 0.9}}, "but not body/Skin")
+    -- 血量加权叠加同样按范围过滤
+    local blended = M3.palette_blend_of(cfg, names, {1, 1}, function() return nil end, {}, masks)
+    assert(blended.head.Face and blended.body.Skin.Base.y == nil, "blend is masked the same way")
+end
+
+print("PASS: palette schemes: normalize, merge, layers from base / groups / states (priority, exclusive, broken, HP), selected scheme, OpsV3 edits and preset ref bookkeeping, option refs limited to the option's materials")

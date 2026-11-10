@@ -8,6 +8,8 @@ import { DIGITS, cycleOf, digitLabel, isCycle, keyOf } from './hotkeys';
 // 一处快捷键设置(Alt + 数字)。target 没有 option / scheme = 整个结构的轮换键,否则是单项。
 // 单项所在的结构已经绑了轮换键时,这里换成「参与轮换」开关(单项不能再单独绑键)。
 const props = defineProps<{ snapshot: Re4Snapshot; busy: boolean; perform: Re4Perform; t: Re4Translate; target: Re4HotkeyTarget; label?: string }>();
+// 快捷键属于新版特性:关闭时灰掉、不可改
+const nfOff = computed(() => props.snapshot.settings.newFeatures === false);
 const c = () => ({ character: props.snapshot.character });
 const own = computed(() => keyOf(props.snapshot, props.target));
 const cycle = computed(() => isCycle(props.target) ? undefined : cycleOf(props.snapshot, props.target));
@@ -26,11 +28,11 @@ const toggle = (on: boolean) => props.perform({ kind: 'hotkey-skip', ...c(), str
 </script>
 
 <template>
-  <label v-if="cycle" class="re4-hk re4-hk-incl" :title="t('hotkeyIncludeHint', 'Alt+' + cycle.digit)">
+  <label v-if="cycle" class="re4-hk re4-hk-incl" :class="{ 're4-nf-lock': nfOff }" :inert="nfOff" :title="t('hotkeyIncludeHint', 'Alt+' + cycle.digit)">
     <input type="checkbox" :checked="included" :disabled="busy" @change="e => toggle((e.target as HTMLInputElement).checked)">
     {{ t('hotkeyInclude') }}
   </label>
-  <label v-else class="re4-hk" :title="isCycle(target) ? t('hotkeyCycleHint') : t('hotkeyHint')">{{ label ?? t('hotkeyRef') }}
+  <label v-else class="re4-hk" :class="{ 're4-nf-lock': nfOff }" :inert="nfOff" :title="isCycle(target) ? t('hotkeyCycleHint') : t('hotkeyHint')">{{ label ?? t('hotkeyRef') }}
     <ElSelect :model-value="own?.digit ?? ''" :empty-values="[null, undefined]" size="small" style="width:13em" :disabled="busy"
       :aria-label="label ?? t('hotkeyRef')" @change="pick">
       <ElOption value="" :label="t('hotkeyNone')" />

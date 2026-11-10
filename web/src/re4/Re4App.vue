@@ -164,6 +164,8 @@ watch(() => snapshot.value?.notice, value => { if (value) notice.value = value; 
 </template>
 
 <style>
+/* 新版特性关闭时(见 Lua 的 Main.features_on)相关的界面灰掉:不响应点击,也不能用键盘聚焦(inert) */
+.re4-nf-lock { opacity: .45; filter: grayscale(1); pointer-events: none; }
 /* 状态颜色：绿 = 生效，红 = 被覆盖（有问题），灰 = 未命中。颜色之外还有形状，照顾色弱 */
 .re4 { user-select: none; -webkit-user-drag: none; }
 .re4 input, .re4 textarea { user-select: text; }

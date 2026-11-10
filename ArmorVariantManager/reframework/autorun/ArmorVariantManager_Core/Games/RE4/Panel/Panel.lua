@@ -22,9 +22,9 @@ local PAGES = {
     { key = "base",    label = "tabBase",    mod = require("ArmorVariantManager_Core.Games.RE4.Panel.PageLayers"), mode = "base" },
     { key = "groups",  label = "tabGroups",  mod = require("ArmorVariantManager_Core.Games.RE4.Panel.PageLayers"), mode = "groups" },
     { key = "states",  label = "tabStates",  mod = require("ArmorVariantManager_Core.Games.RE4.Panel.PageStates") },
-    { key = "palette", label = "tabPalette", mod = require("ArmorVariantManager_Core.Games.RE4.Panel.PagePalette") },
+    { key = "palette", label = "tabPalette", mod = require("ArmorVariantManager_Core.Games.RE4.Panel.PagePalette"), nf_page = true },
     { key = "presets", label = "tabPresets", mod = require("ArmorVariantManager_Core.Games.RE4.Panel.PagePresets") },
-    { key = "dissolve", label = "tabDissolve", mod = require("ArmorVariantManager_Core.Games.RE4.Panel.PageDissolve") },
+    { key = "dissolve", label = "tabDissolve", mod = require("ArmorVariantManager_Core.Games.RE4.Panel.PageDissolve"), nf_page = true },
     { key = "misc",    label = "tabMisc",    mod = require("ArmorVariantManager_Core.Games.RE4.Panel.PageMisc") },
 }
 
@@ -380,7 +380,17 @@ function Panel.new(deps)
         local used = bh
         if go then
             ctx.state, ctx.view_h, ctx.scroll_id, ctx.mode = page_state(ui.page), ch, scroll_id, p.mode
+            -- 新版特性关闭时,调色页、溶解页整页灰掉、不可改:上面一条说明,页面照画,输入锁住,再盖一层半透明
+            local locked = p.nf_page and ctx.snap and ctx.snap.settings and ctx.snap.settings.newFeatures == false
+            if locked then
+                bh = bh + W.note(ctx.t("newFeaturesOffPage"), cx, y0 + 4 + bh, cw, C.warn) + 8
+            end
+            I.locked = locked == true
             local ok, res = pcall(p.mod.draw, ctx, cx, y0 + 4 + bh, cw)
+            I.locked = false
+            if locked and ok then
+                D.rect(cx - 4, y0 + 4 + bh, cw + 8, tonumber(res) or 0, (C.panel & 0x00FFFFFF) | 0xA0000000)
+            end
             if ok then used = bh + (tonumber(res) or 0)
             else
                 local e = tostring(res)

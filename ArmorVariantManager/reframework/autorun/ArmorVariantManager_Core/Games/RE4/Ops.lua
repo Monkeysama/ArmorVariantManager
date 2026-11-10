@@ -180,7 +180,7 @@ function Ops.set_global(global_config, id, value)
         if value ~= "zh" and value ~= "en" then return false end
         global_config.language = value
     elseif id == "weapon_hide_storage" or id == "ui_dissolve_enabled" or id == "portrait_enabled" or id == "block_game_mouse"
-        or id == "height_enabled" then
+        or id == "height_enabled" or id == "new_features" then
         global_config[id] = value == true
     elseif id == "portrait_distance" or id == "portrait_height" then
         local n = tonumber(value)
@@ -254,7 +254,13 @@ function Ops.duplicate_preset(layer, name)
     -- 引用的调色方案(layer.palettes)同样跟着走
     if type(layer.palettes) == "table" and layer.palettes[name] then layer.palettes[newn] = layer.palettes[name] end
     if type(layer.dissolves) == "table" and layer.dissolves[name] then layer.dissolves[newn] = layer.dissolves[name] end
-    local at = (order_index(layer, name) or #layer.order) + 1
+    -- SKS 键组引用({ 键组 -> 选项 })复制一份,两个预设以后各改各的
+    if type(layer.sks) == "table" and type(layer.sks[name]) == "table" then
+        local m = {}
+        for g, v in pairs(layer.sks[name]) do m[g] = v end
+        layer.sks[newn] = m
+    end
+    local at =(order_index(layer, name) or #layer.order) + 1
     table.insert(layer.order, at, newn)
     layer.active = newn
     return true, true, newn
@@ -270,6 +276,7 @@ function Ops.rename_preset(layer, old, new)
     if type(layer.heights) == "table" then layer.heights[new], layer.heights[old] = layer.heights[old], nil end
     if type(layer.palettes) == "table" then layer.palettes[new], layer.palettes[old] = layer.palettes[old], nil end
     if type(layer.dissolves) == "table" then layer.dissolves[new], layer.dissolves[old] = layer.dissolves[old], nil end
+    if type(layer.sks) == "table" then layer.sks[new], layer.sks[old] = layer.sks[old], nil end
     local i = order_index(layer, old)
     if i then layer.order[i] = new end
     if layer.active == old then layer.active = new end
@@ -287,6 +294,7 @@ function Ops.delete_preset(layer, name)
     if type(layer.heights) == "table" then layer.heights[name] = nil end
     if type(layer.palettes) == "table" then layer.palettes[name] = nil end
     if type(layer.dissolves) == "table" then layer.dissolves[name] = nil end
+    if type(layer.sks) == "table" then layer.sks[name] = nil end
     local i = order_index(layer, name)
     if i then table.remove(layer.order, i) end
     if layer.active == name then layer.active = "" end
