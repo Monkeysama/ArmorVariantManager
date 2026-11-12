@@ -203,6 +203,9 @@
   border: 0;
   background: var(--avm-active);
 }
+.avm[data-theme='white'] .catalog-row[aria-pressed='true'] .active-dot {
+  background: var(--world-signal);
+}
 .catalog-row[aria-pressed='true']::before {
   content: '▸';
   display: grid;

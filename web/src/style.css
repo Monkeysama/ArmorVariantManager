@@ -77,7 +77,7 @@ body { background: transparent; }
 .sortable-row.drop-before::before { top: 0; }
 .sortable-row.drop-after::after { bottom: 0; }
 .catalog-row { width: 100%; display: flex; align-items: center; gap: 7px; min-height: 30px; padding: 3px 8px; color: var(--avm-ink); background: transparent; border: 0; border-left: 2px solid transparent; border-bottom: 1px solid var(--avm-line); text-align: left; }
-.catalog-row:hover:not(:disabled), .part-row:hover { background: var(--avm-panel); }
+.catalog-row[aria-pressed='false']:hover:not(:disabled), .part-row:hover { background: var(--avm-panel); }
 .catalog-row[aria-pressed='true'] { color: var(--avm-accent); background: var(--avm-active); border-left-color: var(--avm-accent); }
 .catalog-row:disabled { opacity: .55; }
 .row-name { overflow-wrap: anywhere; min-width: 0; }
