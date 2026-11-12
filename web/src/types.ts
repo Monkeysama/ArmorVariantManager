@@ -1,3 +1,4 @@
+export type PanelTheme = 'custom' | 'reff' | 'white' | 'black' | 'glass';
 export interface Material { name: string; enabled: boolean; hidden: boolean; groups: string[]; owner?: string; editable?: boolean }
 export interface Part { index: number; label: string; available: boolean; enabled: boolean; meshLocked: boolean; materials: Material[] }
 export interface ConditionTarget { index: number; group: string; preset: string }
@@ -40,7 +41,7 @@ export interface Snapshot {
   backupPending: boolean; canImport: boolean;
   groups: { name: string; label: string; global: boolean }[]; group: string;
   presets: { name: string; default: boolean; active: boolean }[]; selectedPreset: string;
-  parts: Part[]; theme: 'custom' | 'reff'; language: string; selectionMode: boolean;
+  parts: Part[]; theme: PanelTheme; language: string; selectionMode: boolean;
   pending: Record<string, Record<string, boolean>>;
   conditions: Conditions | null;
   settings?: Settings;
@@ -55,7 +56,7 @@ export interface ConditionAction {
 export type Action =
   | ConditionAction
   | { kind: 'mode'; weapon: boolean }
-  | { kind: 'theme'; value: 'custom' | 'reff' }
+  | { kind: 'theme'; value: PanelTheme }
   | { kind: 'setting'; id: string; value?: SettingValue }
   | { kind: 'reorder-preset' | 'reorder-group'; name: string; offset: -1 | 1 }
   | { kind: 'reorder-preset' | 'reorder-group'; name: string; target: string; after: boolean; group: string; weapon: boolean }

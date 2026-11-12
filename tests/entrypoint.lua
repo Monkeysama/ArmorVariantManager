@@ -318,6 +318,10 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
             assert(not pcall(send,"condition",{op="enabled",value=false}),"Wilds has no added total switch")
             assert(not pcall(send,"condition",{op="test_hp",value=50}),"menu actor cannot receive live HP writes")
         end
+        for _,theme in ipairs({"white", "black", "glass"}) do
+            current=send("theme",{value=theme})
+            assert(current.theme==theme and data["ArmorVariantManager/GlobalSettings.json"].reff_theme==theme)
+        end
         current=send("theme",{value="reff"})
         assert(current.theme=="reff" and data["ArmorVariantManager/GlobalSettings.json"].reff_theme=="reff")
         write_failed=true

@@ -2,7 +2,7 @@
 import { computed } from 'vue';
 import { ElRadio, ElRadioGroup } from '@reff/ui';
 import SettingControl from './SettingControl.vue';
-import type { Perform, Snapshot } from './types';
+import type { PanelTheme, Perform, Snapshot } from './types';
 import type { Translate } from './i18n';
 
 const props = defineProps<{ snapshot: Snapshot; busy: boolean; perform: Perform; t: Translate }>();
@@ -17,7 +17,10 @@ const sections = computed(() => (props.snapshot.settings?.sections ?? []).filter
     <h2>{{ t('settings') }}</h2>
     <section class="settings-section theme-settings" :aria-label="t('theme')">
       <h3>{{ t('theme') }}</h3>
-      <ElRadioGroup :model-value="snapshot.theme" :disabled="busy" @change="(value: string | number | boolean | undefined) => perform({ kind: 'theme', value: value as 'custom' | 'reff' })">
+      <ElRadioGroup :model-value="snapshot.theme" :disabled="busy" @change="(value: string | number | boolean | undefined) => perform({ kind: 'theme', value: value as PanelTheme })">
+        <ElRadio value="white">{{ t('classicWhite') }}</ElRadio>
+        <ElRadio value="black">{{ t('classicBlack') }}</ElRadio>
+        <ElRadio value="glass">{{ t('glass') }}</ElRadio>
         <ElRadio value="custom">{{ t('custom') }}</ElRadio><ElRadio value="reff">{{ t('follow') }}</ElRadio>
       </ElRadioGroup>
       <p class="setting-note">{{ t('themeHelp') }} {{ t('scope') }}</p>

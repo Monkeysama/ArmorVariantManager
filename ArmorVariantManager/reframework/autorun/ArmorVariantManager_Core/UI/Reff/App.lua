@@ -168,7 +168,8 @@ function ReffApp.new(app)
     }
     -- 启动时固定帮助依赖，REFF 回调期间宿主可能已恢复默认模块搜索路径。
     local reff_help = require("ArmorVariantManager_Core.UI.Reff.Help")
-    local controller = require("ArmorVariantManager_Core.UI.Reff.Controller").new({
+    local Controller = require("ArmorVariantManager_Core.UI.Reff.Controller")
+    local controller = Controller.new({
         game=game.name,version=version,context=context,parts=reff_parts.snapshot,conditions=conditions,settings=settings,
         main_label=function() return T("main_list") end,
         language=function() return global_config.language end,
@@ -178,7 +179,7 @@ function ReffApp.new(app)
         documentation=function()
             return reff_help.snapshot(global_config.language,game.name)
         end,
-        theme=function() return global_config.reff_theme == "reff" and "reff" or "custom" end,
+        theme=function() return Controller.theme(global_config.reff_theme) end,
         set_theme=function(value)
             local previous = global_config.reff_theme
             global_config.reff_theme = value

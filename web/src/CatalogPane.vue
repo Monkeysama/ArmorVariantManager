@@ -91,7 +91,7 @@ async function remove() {
       </button>
       </div>
     </div>
-    <div class="pane-actions">
+    <div class="pane-actions"><strong class="action-heading">{{ t('groupActions') }}</strong>
       <ElButton v-if="!snapshot.selectionMode" class="new-group-button" :disabled="disabled" @click="startGroup">{{ t('newGroup') }}</ElButton>
       <template v-else>
         <p class="field-note">{{ t('selected') }} {{ selectionCount }} · {{ t('selectionHelp') }}</p>
@@ -111,8 +111,8 @@ async function remove() {
     </div>
   </section>
   <section class="pane presets-pane" :aria-label="t('presets')">
-    <div class="pane-heading"><h2>{{ t('presets') }}</h2><span class="count">{{ snapshot.presets.length }}</span></div>
-    <div class="group-caption">{{ group?.label ?? t('main') }}</div>
+    <div class="pane-heading"><h2>{{ group?.label ?? t('main') }} · {{ t('presets') }}</h2><span class="count">{{ snapshot.presets.length }}</span></div>
+
     <div class="catalog-list" @dragstart.prevent>
       <div v-for="item in snapshot.presets" :key="item.name" class="sortable-row" :class="rowClass('preset', item.name)"
         data-sort-list="preset" :data-sort-name="item.name">
@@ -142,8 +142,9 @@ async function remove() {
         <p>{{ t('confirmDelete') }}「{{ confirmation.name }}」？</p>
         <div class="button-pair"><ElButton @click="confirmation = null">{{ t('cancel') }}</ElButton><ElButton :disabled="disabled" @click="remove">{{ t('confirm') }}</ElButton></div>
       </div>
-      <ElButton :disabled="disabled" @click="perform({ kind: 'find' })">{{ t('find') }}</ElButton>
+
     </form>
-    <ImportPresetPane v-if="snapshot.game === 'Rise' && snapshot.canImport" :snapshot="snapshot" :busy="busy" :perform="perform" :load-imports="loadImports" :t="t" @imported="presetName = ''" />
+    <Teleport to="#file-tools"><ImportPresetPane v-if="snapshot.game === 'Rise' && snapshot.canImport" :snapshot="snapshot" :busy="busy" :perform="perform" :load-imports="loadImports" :t="t" @imported="presetName = ''" />
+<ElButton :disabled="disabled" @click="perform({ kind: 'find' })">{{ t('find') }}</ElButton></Teleport>
   </section>
 </template>
