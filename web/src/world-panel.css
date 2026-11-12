@@ -3,6 +3,8 @@
   --world-signal: var(--avm-accent);
   --world-on-signal: var(--avm-on-accent);
   --world-selection-text: var(--avm-ink);
+  --world-row-hover: color-mix(in srgb, var(--avm-panel), var(--avm-ink) 14%);
+  --world-selected-hover: color-mix(in srgb, var(--avm-active), var(--world-selection-text) 15%);
   --world-title: var(--avm-panel);
   --world-title-text: var(--avm-ink);
   --world-rule: var(--avm-line);
@@ -22,6 +24,8 @@
   --world-signal: #fff500;
   --world-on-signal: #161616;
   --world-selection-text: #fff;
+  --world-row-hover: #d7d7d2;
+  --world-selected-hover: #3a3a36;
   --world-title: #161616;
   --world-title-text: #fff;
   --world-rule: #161616;
@@ -40,6 +44,8 @@
   --avm-accent: #b8ff3d;
   --avm-on-accent: #151614;
   --avm-active: #383a35;
+  --world-row-hover: #45473f;
+  --world-selected-hover: #53564b;
   --world-title: #101110;
   --world-title-text: #f5f6ed;
   --world-rule: #696b62;
@@ -59,6 +65,8 @@
   --avm-on-accent: #fff;
   --avm-active: #bddaf6;
   --world-selection-text: #153b69;
+  --world-row-hover: #cbdff2;
+  --world-selected-hover: linear-gradient(#e5f4ff, #a4ccef);
   --world-title: linear-gradient(100deg, #e7f2ff, #f6f3ef);
   --world-title-text: #213e5e;
   --world-rule: #adc4d9;
@@ -202,6 +210,12 @@
   color: var(--world-selection-text);
   border: 0;
   background: var(--avm-active);
+}
+.catalog-row[aria-pressed='false']:enabled:hover {
+  background: var(--world-row-hover);
+}
+.avm .catalog-row[aria-pressed='true']:enabled:hover {
+  background: var(--world-selected-hover);
 }
 .avm[data-theme='white'] .catalog-row[aria-pressed='true'] .active-dot {
   background: var(--world-signal);
