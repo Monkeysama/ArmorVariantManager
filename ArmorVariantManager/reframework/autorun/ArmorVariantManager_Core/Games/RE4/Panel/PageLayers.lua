@@ -458,8 +458,27 @@ function Page.draw(ctx, x, y, w)
                     while cols > 1 and (mw - gap * (cols - 1)) / cols < tri_w + 90 do cols = cols - 1 end
                     local col_w = (mw - gap * (cols - 1)) / cols
                     for _, sec in ipairs(secs) do
-                        D.text_mid(sec.label, mx0, cy, 22, sec.id == "" and C.error or C.muted, W.bold())
-                        cy = cy + 22
+                        local lw = D.text_mid(sec.label, mx0, cy, 24, sec.id == "" and C.error or C.muted, W.bold())
+                        -- 这一段的批量设置:全部 — / 关 / 开、反选(整套造型没有「—」)
+                        if W.visible(cy, 24) then
+                            local bx = mx0 + lw + 12
+                            local ops = card.is_base and { "off", "on", "invert" } or { "none", "off", "on", "invert" }
+                            local KEY = { none = "bulkNone", off = "bulkOff", on = "bulkOn", invert = "bulkInvert" }
+                            for _, op in ipairs(ops) do
+                                local tip = (op == "invert" and not card.is_base) and t("bulkInvertHint") or nil
+                                local clicked, bw = W.tbutton(t(KEY[op]), bx, cy + 1, { tip = tip })
+                                if clicked then
+                                    local items = {}
+                                    for _, k in ipairs(sec.keys) do
+                                        local s2, m2 = U.split_key(k)
+                                        items[#items + 1] = { slot = s2, material = m2 }
+                                    end
+                                    ctx.act({ kind = "material-bulk", layer = card.is_base and "base" or card.name, option = opt.name, items = items, op = op })
+                                end
+                                bx = bx + bw + 4
+                            end
+                        end
+                        cy = cy + 24
                         for i, key in ipairs(sec.keys) do
                             local col = (i - 1) % cols
                             local rx = mx0 + col * (col_w + gap)

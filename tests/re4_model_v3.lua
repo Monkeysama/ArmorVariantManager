@@ -375,4 +375,32 @@ do
     assert(not OpsV3.set_state_weapons(hcfg, 9, "all"), "bad index")
 end
 
+-- ============================================================ 部位批量设置
+do
+    local cfg = M3.new_config()
+    cfg.base.presets.A = {body = {materials = {a = true, b = false}}}
+    cfg.groups = {{name = "G", options = {O = {body = {materials = {a = true, b = false}}}}, order = {"O"}, active = "O"}}
+    local items = {{slot = "body", material = "a"}, {slot = "body", material = "b"}, {slot = "body", material = "c"}}
+    local base = cfg.base.presets.A.body.materials
+    -- 整套造型:反选时没存的按开算;没有「—」
+    assert(OpsV3.bulk_materials(cfg, "base", "A", items, "invert"))
+    assert(base.a == false and base.b == true and base.c == false, "base invert, unset counts as on")
+    assert(not OpsV3.bulk_materials(cfg, "base", "A", items, "none"), "base has no none")
+    assert(OpsV3.bulk_materials(cfg, "base", "A", items, "on") and base.a and base.b and base.c)
+    assert(not OpsV3.bulk_materials(cfg, "base", "A", items, "on"), "nothing changed")
+    assert(OpsV3.bulk_materials(cfg, "base", "A", items, "off") and base.a == false and base.b == false and base.c == false)
+    -- 状态组:反选只翻开 / 关,「—」不动
+    local opt = cfg.groups[1].options.O
+    assert(OpsV3.bulk_materials(cfg, "G", "O", items, "invert"))
+    assert(opt.body.materials.a == false and opt.body.materials.b == true and opt.body.materials.c == nil, "group invert keeps none")
+    assert(OpsV3.bulk_materials(cfg, "G", "O", items, "on") and opt.body.materials.c == true)
+    assert(OpsV3.bulk_materials(cfg, "G", "O", items, "none") and opt.body == nil, "all none drops the slot")
+    assert(not OpsV3.bulk_materials(cfg, "G", "O", items, "invert"), "inverting nothing changes nothing")
+    -- 只动给出的材质
+    opt.head = {materials = {h = true}}
+    assert(OpsV3.bulk_materials(cfg, "G", "O", {{slot = "body", material = "a"}}, "off"))
+    assert(opt.head.materials.h == true and opt.body.materials.a == false)
+    assert(not OpsV3.bulk_materials(cfg, "G", "Nope", items, "on") and not OpsV3.bulk_materials(cfg, "G", "O", items, "flip"))
+end
+
 print("PASS: v3 normalize, v2 migration equivalence (16 condition combinations, picks and final materials), overlapping groups, claims / partial / exclusive / broken / paused, hold, HP chains and OpsV3 edits")

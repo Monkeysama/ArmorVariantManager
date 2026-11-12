@@ -754,6 +754,10 @@ function Reff.new(deps)
         ["option-material"] = function(p, cfg)
             return OpsV3.set_option_material(cfg, p.group, p.option, p.slot, p.material, p.value)
         end,
+        -- 一个部位的材质批量设置(全部 — / 关 / 开、反选):layer = "base" 或状态组名,items = { { slot, material } }
+        ["material-bulk"] = function(p, cfg)
+            return OpsV3.bulk_materials(cfg, str(p.layer), str(p.option), type(p.items) == "table" and p.items or nil, str(p.op))
+        end,
 
         -- 条件状态
         ["state-new"] = function(p, cfg) return OpsV3.new_state(cfg, str(p.name)) end,

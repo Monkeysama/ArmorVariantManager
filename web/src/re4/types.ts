@@ -222,6 +222,8 @@ export type Re4Action =
   | C & { kind: 'option-rename'; group: string; option: string; name: string }
   | C & { kind: 'option-move'; group: string; option: string; offset: number }
   | C & { kind: 'option-material'; group: string; option: string; slot: string; material: string; value: 'none' | 'off' | 'on' }
+  // 一个部位的材质批量设置;layer = 'base' 或状态组名。整套造型没有 'none'
+  | C & { kind: 'material-bulk'; layer: string; option: string; items: { slot: string; material: string }[]; op: 'none' | 'off' | 'on' | 'invert' }
   | C & { kind: 'state-new'; name: string }
   | C & { kind: 'state-delete'; index: number }
   | C & { kind: 'state-move'; from: number; to: number }

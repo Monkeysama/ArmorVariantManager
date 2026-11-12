@@ -149,6 +149,11 @@ function setMaterial(card: Card, option: string, key: string, value: 'none' | 'o
   if (card.isBase) return props.perform({ kind: 'base-material', ...c(), preset: option, slot, material, value: value === 'on' });
   return props.perform({ kind: 'option-material', ...c(), group: card.name, option, slot, material, value });
 }
+// 一个部位(一段)的材质批量设置:全部 — / 关 / 开、反选
+function bulk(card: Card, option: string, keys: string[], op: 'none' | 'off' | 'on' | 'invert') {
+  const items = keys.map(k => { const [slot, material] = splitKey(k); return { slot, material }; });
+  return props.perform({ kind: 'material-bulk', ...c(), layer: card.isBase ? 'base' : card.name, option, items, op });
+}
 const valueOf = (values: Re4Values, key: string) => values[key] === true ? 'on' : values[key] === false ? 'off' : 'none';
 
 // 整套造型预设 / 状态组选项的行内改名;失败(重名 / 非法)就把输入框恢复成原名。展开状态按名字记,改名后跟着搬
@@ -414,7 +419,13 @@ function nameTitle(card: Card, key: string) {
               </div>
               <span v-if="!sections(card, opt.values).length" class="re4-muted re4-small">{{ t('noMaterials') }}</span>
               <template v-for="sec in sections(card, opt.values)" :key="sec.id">
-                <div class="re4-mslot" :class="{ missing: !sec.id }">{{ sec.label }}</div>
+                <div class="re4-mslot" :class="{ missing: !sec.id }"><span>{{ sec.label }}</span>
+                  <span class="re4-mbulk">
+                    <button v-if="!card.isBase" class="re4-link" :disabled="busy" @click="bulk(card, opt.name, sec.keys, 'none')">{{ t('bulkNone') }}</button>
+                    <button class="re4-link" :disabled="busy" @click="bulk(card, opt.name, sec.keys, 'off')">{{ t('bulkOff') }}</button>
+                    <button class="re4-link" :disabled="busy" @click="bulk(card, opt.name, sec.keys, 'on')">{{ t('bulkOn') }}</button>
+                    <button class="re4-link" :disabled="busy" :title="card.isBase ? undefined : t('bulkInvertHint')" @click="bulk(card, opt.name, sec.keys, 'invert')">{{ t('bulkInvert') }}</button>
+                  </span></div>
                 <div class="re4-mlist" :class="{ notes }">
                   <div v-for="key in sec.keys" :key="key" class="re4-mrow">
                     <span class="re4-tri" role="group" :aria-label="key">
@@ -486,7 +497,8 @@ function nameTitle(card: Card, key: string) {
 .re4-mlist-wrap { padding: 6px 12px 8px 3.2em; background: var(--re4-soft); border-top: 1px dashed var(--avm-line); display: grid; gap: 6px; }
 @media (max-width: 640px) { .re4-mlist-wrap { padding-left: 12px; } }
 /* 材质三列排列(窄屏退到两列 / 一列);备注模式一行要放输入框和定位按钮,按宽度自动排 */
-.re4-mslot { font-size: 12px; font-weight: 600; color: var(--avm-muted); padding-top: 2px; }
+.re4-mslot { font-size: 12px; font-weight: 600; color: var(--avm-muted); padding-top: 2px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; }
+.re4-mbulk { display: inline-flex; flex-wrap: wrap; gap: 2px 10px; font-weight: 400; }
 .re4-mslot.missing { color: var(--re4-bad); }
 .re4-mlist { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 2px 16px; }
 @media (max-width: 900px) { .re4-mlist { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

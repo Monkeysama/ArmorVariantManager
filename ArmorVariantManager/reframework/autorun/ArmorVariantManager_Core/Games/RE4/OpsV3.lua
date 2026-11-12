@@ -317,6 +317,53 @@ function OpsV3.set_option_material(cfg, group, option, slot, mat, value)
     return true, true
 end
 
+-- 一个部位的材质批量设置。layer = "base" 或状态组名;items = { { slot, material }, ... }(界面上这一段列出的材质);
+-- op:none(全部「—」,只有状态组)/ off / on / invert。
+-- 反选:开 ↔ 关;整套造型没存的按开算(和显示一致),状态组的「—」保持不动。
+-- 一次只存一次盘、只重新应用一次。返回 changed, reapply
+function OpsV3.bulk_materials(cfg, layer, option, items, op)
+    local holder, is_base
+    if layer == "base" then
+        holder, is_base = cfg.base.presets[option], true
+    else
+        local g = M3.find_group(cfg, layer)
+        holder = g and g.options[option]
+    end
+    if type(holder) ~= "table" or type(items) ~= "table" then return false end
+    if op ~= "off" and op ~= "on" and op ~= "invert" and not (op == "none" and not is_base) then return false end
+    local changed, touched = false, {}
+    local TRI = { [true] = "on", [false] = "off" }
+    for _, it in ipairs(items) do
+        local slot = type(it) == "table" and it.slot or nil
+        local mat = type(it) == "table" and it.material or nil
+        if type(slot) == "string" and type(mat) == "string" then
+            local data = holder[slot]
+            local cur = nil    -- 没有这个部位 / 没存这个材质 = nil(不能用 and 链,部位不存在时会得到 false)
+            if type(data) == "table" and type(data.materials) == "table" then
+                local v = data.materials[mat]
+                if v == true or v == false then cur = v end
+            end
+            local want
+            if op == "on" then want = true
+            elseif op == "off" then want = false
+            elseif op == "invert" then
+                if is_base then want = cur == false
+                elseif cur ~= nil then want = not cur end    -- 「—」保持不动(want 留 nil)
+            end
+            if cur ~= want then
+                if is_base then Ops.set_material(holder, slot, mat, want, true)
+                else Ops.set_material(holder, slot, mat, want == nil and "none" or TRI[want], false); touched[slot] = true end
+                changed = true
+            end
+        end
+    end
+    for slot in pairs(touched) do
+        local data = holder[slot]
+        if data and next(data.materials) == nil then holder[slot] = nil end
+    end
+    return changed, changed
+end
+
 -- ============================================================ 模型高度
 -- layer:"base" 或状态组名;option:预设 / 选项名;cm = nil 清除(这一层不管高度)。
 -- 改了要重写:高度每帧由应用循环按解算结果交给 HeightFix

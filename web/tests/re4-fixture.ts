@@ -496,6 +496,18 @@ export function installRe4Fixture() {
         delete g.options[a.option]; g.order.splice(g.order.indexOf(a.option), 1); if (g.active === a.option) g.active = ''; break; }
       case 'option-material': { const g = groupOf(a.group) ?? fail(); const o = g.options[a.option] ?? fail(); const key = `${a.slot}/${a.material}`;
         if (a.value === 'none') delete o[key]; else o[key] = a.value === 'on'; break; }
+      // 和 OpsV3.bulk_materials 同规则:整套造型没存的按开算、没有 none;状态组反选时「—」不动
+      case 'material-bulk': {
+        const base = a.layer === 'base';
+        const vals = base ? (config.base.presets[a.option] ?? fail()) : ((groupOf(a.layer) ?? fail()).options[a.option] ?? fail());
+        if (base && a.op === 'none') fail();
+        for (const { slot, material } of a.items) {
+          const key = `${slot}/${material}`; const cur = vals[key];
+          if (a.op === 'none') delete vals[key];
+          else if (a.op === 'invert') { if (base) vals[key] = cur === false; else if (cur !== undefined) vals[key] = !cur; }
+          else vals[key] = a.op === 'on';
+        }
+        break; }
       case 'state-new': config.states.push({ name: a.name, enabled: true, exclusive: false, logic: 'AND', hold: 0, fade_in: 0, fade_out: 0, targets: [], conditions: [] }); break;
       case 'state-delete': stateAt(a.index); config.states.splice(a.index - 1, 1); break;
       case 'state-move': { stateAt(a.from); if (a.to < 1 || a.to > config.states.length) fail(); config.states.splice(a.to - 1, 0, config.states.splice(a.from - 1, 1)[0]); break; }

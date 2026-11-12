@@ -400,6 +400,12 @@ snap = act({kind = "option-material", character = "Leon", group = "Face", option
 assert(snap.groups[2].options[1].values["hair/Hair"] == true, "a material another group writes can be set too")
 snap = act({kind = "option-material", character = "Leon", group = "Face", option = "1", slot = "hair", material = "Hair", value = "none"})
 assert(snap.groups[2].options[1].values["hair/Hair"] == nil)
+snap = act({kind = "material-bulk", character = "Leon", layer = "Face", option = "1", op = "on",
+    items = {{slot = "head", material = "Face"}, {slot = "hair", material = "Hair"}}})
+assert(snap.groups[2].options[1].values["head/Face"] == true and snap.groups[2].options[1].values["hair/Hair"] == true, "bulk on")
+snap = act({kind = "material-bulk", character = "Leon", layer = "Face", option = "1", op = "none", items = {{slot = "hair", material = "Hair"}}})
+assert(snap.groups[2].options[1].values["hair/Hair"] == nil and snap.groups[2].options[1].values["head/Face"] == true, "bulk none only touches listed")
+snap = act({kind = "option-material", character = "Leon", group = "Face", option = "1", slot = "head", material = "Face", value = "off"})
 snap = act({kind = "state-target", character = "Leon", index = 1, group = "Face", option = "1"})
 snap = act({kind = "group-rename", character = "Leon", group = "Face", name = "Expression"})
 assert(snap.groups[2].name == "Expression" and snap.states[1].targets[2].group == "Expression")
