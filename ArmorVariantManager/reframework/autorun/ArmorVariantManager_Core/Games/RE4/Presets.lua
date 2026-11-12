@@ -4,10 +4,12 @@
 -- 一个预设一个文件,只是"套用"的来源。套用是复制:当前配置先进自动保存,再被预设的内容覆盖。
 -- **从不自动切换**:模型变了时只提醒有没有更合适的预设,换不换由用户决定。
 --
---   ArmorVariantManager/presets/<id>.json   = { version = 3, name, source = "user"|"mod", character, updated, config }
+--   ArmorVariantManager/presets/<id>.json   = { version = 3, name, name_en?, source = "user"|"mod", character, updated, config }
 --   ArmorVariantManager/autosave/<角色名>.json = { entries = { { name, time, config }, ... } }   最近 5 份,新的在前
 --
 -- 文件名用 ASCII 编号(p0001...),显示名放在文件里:改名不用动文件,也避开非 ASCII 路径。
+-- 双语:name 是默认名(一般写中文);可选的 name_en 是英文名,界面语言是英文且有 name_en 时显示它,
+-- 其他情况都显示 name。只管预设名;预设里的状态组 / 选项 / 整套造型名是引用键,不在这里翻译。
 -- json 接口删不了文件,删除 = 把文件写成墓碑 { deleted = true },列表跳过,新建时复用。
 -- mod 作者随 mod 发布的预设也放在这个目录(source = "mod"),文件名随意。
 -- mod 预设的「覆盖至」:不改 mod 的文件(mod 更新时会被换掉),而是另存一份自己的预设,
@@ -109,8 +111,18 @@ Presets.RANK = RANK
 
 -- ============================================================ 预设库
 -- io = { load(path) -> table|nil, dump(path, table), glob(pattern) -> { path... } | nil, now() -> 秒 }
+-- 预设的显示名:英文界面且有 name_en 时用它,否则用 name
+function Presets.label(e, lang)
+    if not e then return "" end
+    if lang == "en" and type(e.name_en) == "string" and e.name_en ~= "" then return e.name_en end
+    return e.name
+end
+
+-- io = { ..., lang() -> "zh"|"en" }(可选,决定 lib.label 和列表排序用哪种名字)
 function Presets.library(io)
     local lib = {}
+    local function lang() return io.lang and io.lang() or "zh" end
+    function lib.label(e) return Presets.label(e, lang()) end
     local cache = nil     -- { [id] = 条目 },按需从磁盘读一次
 
     local function file_of(id) return Presets.DIR .. id .. ".json" end
@@ -121,6 +133,7 @@ function Presets.library(io)
             cache[id] = {
                 id = id,
                 name = (type(data.name) == "string" and data.name ~= "") and data.name or id,
+                name_en = (type(data.name_en) == "string" and data.name_en ~= "") and data.name_en or nil,
                 source = data.source == "mod" and "mod" or "user",
                 character = type(data.character) == "string" and data.character or nil,
                 updated = tonumber(data.updated) or 0,
@@ -194,7 +207,7 @@ function Presets.library(io)
             end
         end
         for id, e in pairs(cache) do if e and not hidden[id] then out[#out + 1] = e end end
-        table.sort(out, function(a, b) return a.name < b.name end)
+        table.sort(out, function(a, b) return lib.label(a) < lib.label(b) end)
         return out
     end
 
@@ -226,7 +239,7 @@ function Presets.library(io)
     end
 
     local function write(e)
-        io.dump(file_of(e.id), { version = 3, name = e.name, source = e.source, character = e.character,
+        io.dump(file_of(e.id), { version = 3, name = e.name, name_en = e.name_en, source = e.source, character = e.character,
             updated = e.updated, config = e.config, overrides = e.overrides })
     end
 
@@ -251,7 +264,7 @@ function Presets.library(io)
         if e.source == "mod" then
             local ov = lib.override_of(id)
             if not ov then
-                ov = { id = next_id(), name = e.name, source = "user", character = e.character, overrides = id }
+                ov = { id = next_id(), name = e.name, name_en = e.name_en, source = "user", character = e.character, overrides = id }
                 cache[ov.id] = ov
             end
             e = ov
@@ -274,12 +287,13 @@ function Presets.library(io)
         return true, e.overrides
     end
 
+    -- 改的是界面上看到的那个名字:英文界面且有 name_en 时改 name_en,否则改 name
     function lib.rename(id, name)
         local e = lib.get(id)
         -- 覆盖 mod 预设的那份沿用 mod 预设的名字,不改名
         local m = e and e.overrides and cache[e.overrides]
-        if not e or e.source ~= "user" or (m and m.source == "mod") or type(name) ~= "string" or name == "" or e.name == name then return false end
-        e.name = name
+        if not e or e.source ~= "user" or (m and m.source == "mod") or type(name) ~= "string" or name == "" or lib.label(e) == name then return false end
+        if lang() == "en" and e.name_en then e.name_en = name else e.name = name end
         write(e)
         return true
     end
@@ -341,7 +355,9 @@ function Presets.ranked(lib, live_sets)
     end
     table.sort(out, function(a, b)
         if RANK[a.match] ~= RANK[b.match] then return RANK[a.match] < RANK[b.match] end
-        return a.entry.name < b.entry.name
+        local la = lib.label and lib.label(a.entry) or a.entry.name
+        local lb = lib.label and lib.label(b.entry) or b.entry.name
+        return la < lb
     end)
     return out
 end

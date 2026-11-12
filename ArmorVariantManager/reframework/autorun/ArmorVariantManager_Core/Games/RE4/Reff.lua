@@ -452,13 +452,13 @@ function Reff.new(deps)
 
         local view = deps.preset_view(cur.kind_id, source)
         local p = { current = view.current, dismissed = view.dismissed == true, dirty = view.dirty == true, list = {}, better = {}, autosaves = {} }
-        if view.source then p.source = { id = view.source.id, name = view.source.name, own = view.source.source == "user" } end
+        if view.source then p.source = { id = view.source.id, name = deps.preset_lib.label(view.source), own = view.source.source == "user" } end
         for _, r in ipairs(view.presets) do
             -- override:这份是覆盖某个 mod 预设的自己的副本(界面归在模组自带一类,可恢复原版)
-            p.list[#p.list + 1] = { id = r.entry.id, name = r.entry.name, source = r.entry.source, match = r.match,
+            p.list[#p.list + 1] = { id = r.entry.id, name = deps.preset_lib.label(r.entry), source = r.entry.source, match = r.match,
                 override = r.entry.override_of ~= nil or nil }
         end
-        for _, e in ipairs(view.better) do p.better[#p.better + 1] = { id = e.id, name = e.name } end
+        for _, e in ipairs(view.better) do p.better[#p.better + 1] = { id = e.id, name = deps.preset_lib.label(e) } end
         for k, a in ipairs(view.autosaves) do p.autosaves[k] = { name = a.name, time = a.time } end
         snapshot.presets = p
         snapshot.backups = { hasBackup = deps.has_backup(cur.kind_id) == true,

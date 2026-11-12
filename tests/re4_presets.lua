@@ -160,4 +160,53 @@ do
     assert(#list == 1 and list[1].source == "user" and list[1].override_of == nil, "orphaned copy is a plain user preset")
 end
 
-print("PASS: preset fingerprint matching (full / partial / none, missing armor), preset files (ids, tombstone reuse, read-only mod presets, deep copies), mod preset overwrite / restore, ranking and 5-entry auto-save")
+-- ============================================================ 双语预设名
+do
+    local fs, lang = {}, "zh"
+    local io3 = {
+        load = function(p) return fs[p] and Presets.deep_copy(fs[p]) or nil end,
+        dump = function(p, t) fs[p] = Presets.deep_copy(t) end,
+        glob = function()
+            local out = {}
+            for p in pairs(fs) do if p:find("^ArmorVariantManager/presets/") then out[#out + 1] = p end end
+            return out
+        end,
+        now = function() return 1 end,
+        lang = function() return lang end,
+    }
+    fs["ArmorVariantManager/presets/m.json"] = {version = 3, name = "B 作者推荐", name_en = "0 Author pick", source = "mod",
+        config = cfg_with({a = true}, {h = true})}
+    fs["ArmorVariantManager/presets/n.json"] = {version = 3, name = "A 只有中文", name_en = "", source = "mod",
+        config = cfg_with({a = true}, {h = true})}
+    local lib = Presets.library(io3)
+    local m, n = lib.get("m"), lib.get("n")
+    assert(lib.label(m) == "B 作者推荐" and lib.label(n) == "A 只有中文", "zh shows name")
+    assert(n.name_en == nil, "empty name_en is ignored")
+    lang = "en"
+    assert(lib.label(m) == "0 Author pick" and lib.label(n) == "A 只有中文", "en shows name_en, falls back to name")
+    assert(Presets.label(m, "zh") == "B 作者推荐" and Presets.label(nil, "en") == "")
+    assert(lib.list()[1].id == "m", "en sorts by English label")
+    lang = "zh"
+    assert(lib.list()[1].id == "n", "zh sorts by default name")
+    -- 覆盖至:副本带上英文名
+    lib.update("m", cfg_with({a = false}, {h = true}))
+    local copy = fs["ArmorVariantManager/presets/p0001.json"]
+    assert(copy.name == "B 作者推荐" and copy.name_en == "0 Author pick", "overwrite copy keeps both names")
+    -- 改名:改界面上看到的那个名字
+    fs["ArmorVariantManager/presets/p0005.json"] = {version = 3, name = "日常", name_en = "Daily", source = "user",
+        config = cfg_with({a = true}, {h = true})}
+    lib.refresh()
+    lang = "en"
+    assert(lib.rename("p0005", "Everyday"))
+    assert(fs["ArmorVariantManager/presets/p0005.json"].name == "日常" and fs["ArmorVariantManager/presets/p0005.json"].name_en == "Everyday")
+    assert(not lib.rename("p0005", "Everyday"), "same label is a no-op")
+    lang = "zh"
+    assert(lib.rename("p0005", "平时") and lib.get("p0005").name == "平时" and lib.get("p0005").name_en == "Everyday")
+    -- 没有英文名的自定义预设,英文界面改名改的是 name,不凭空加 name_en
+    local id = lib.save_new("战斗", cfg_with({a = true}, {h = true}), "Leon")
+    lang = "en"
+    assert(lib.rename(id, "Combat") and lib.get(id).name == "Combat" and lib.get(id).name_en == nil)
+    assert(fs["ArmorVariantManager/presets/" .. id .. ".json"].name_en == nil)
+end
+
+print("PASS: preset fingerprint matching (full / partial / none, missing armor), preset files (ids, tombstone reuse, read-only mod presets, deep copies), mod preset overwrite / restore, ranking and 5-entry auto-save, bilingual preset names")

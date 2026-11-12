@@ -1100,6 +1100,7 @@ function Main.start(ctx)
         dump = function(path, t) return json.dump_file(path, t) end,
         glob = (fs and fs.glob) and function(pattern) return fs.glob(pattern) end or nil,
         now = os.time,
+        lang = function() return global_config.language == "zh" and "zh" or "en" end,
     })
     -- "不用了"按模型记:[配置键] = 当时的材质签名;模型再变就重新提醒
     local preset_dismissed = {}
@@ -1178,7 +1179,7 @@ function Main.start(ctx)
         local key = cfg_key(kind_id)
         local cfg, e = loaded_configs[key], preset_lib.get(id)
         if not cfg or not e or not ModelV3.is_v3(cfg) then return false end
-        preset_lib.autosave_push(key, string.format(T("autosave_before_apply"), e.name), cfg)
+        preset_lib.autosave_push(key, string.format(T("autosave_before_apply"), preset_lib.label(e)), cfg)
         local new = deep_copy(e.config)
         new.version = ModelV3.VERSION
         replace_config(cfg, new)
@@ -1226,7 +1227,7 @@ function Main.start(ctx)
         id = id or (cfg and cfg.source_preset)
         local e = id and preset_lib.effective(id)
         if not cfg or not e or not ModelV3.is_v3(cfg) then return false end
-        preset_lib.autosave_push(key, string.format(T("autosave_before_overwrite"), e.name), e.config)
+        preset_lib.autosave_push(key, string.format(T("autosave_before_overwrite"), preset_lib.label(e)), e.config)
         local ok, written = preset_lib.update(e.id, cfg)
         if not ok then return false end
         written = written or e.id
@@ -2939,7 +2940,7 @@ function Main.start(ctx)
                 TM = TransformManager, ui = ui_state.v3,
                 commit = function(changed, reapply) return commit(kind_id, changed, reapply) end,
                 ui_tree = ui_tree, ui_tree_pop = ui_tree_pop, ui_w = ui_w,
-                preset_view = preset_view, apply_preset = apply_preset, save_current_as_preset = save_current_as_preset,
+                preset_view = preset_view, preset_label = preset_lib.label, apply_preset = apply_preset, save_current_as_preset = save_current_as_preset,
                 dismiss_preset_hint = dismiss_preset_hint, restore_autosave = restore_autosave,
                 -- 提示里只列真的有的编辑入口:独立面板画得出来才给它的快捷键,REFF 加载了才提 Home
                 panel_key = Main.panel and Main.panel.available() and Main.panel.hotkey_text() or nil,

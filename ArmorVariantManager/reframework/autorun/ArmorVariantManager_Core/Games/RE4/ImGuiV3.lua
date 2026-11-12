@@ -102,18 +102,18 @@ function ImGuiV3.draw(d)
     -- 预设
     if d.ui_tree(T("v3_presets") .. "###v3_presets") then
         local view = d.preset_view(d.kind_id, d.source)
-        local line = view.source and string.format(T("v3_from_preset"), view.source.name) or T("v3_no_source")
+        local line = view.source and string.format(T("v3_from_preset"), d.preset_label(view.source)) or T("v3_no_source")
         if view.current then line = line .. "  [" .. T(FIT[view.current]) .. "]" end
         imgui.text(T("v3_current") .. ": " .. line)
         if #view.better > 0 and not view.dismissed then
             local names = {}
-            for _, e in ipairs(view.better) do names[#names + 1] = e.name end
+            for _, e in ipairs(view.better) do names[#names + 1] = d.preset_label(e) end
             colored(string.format(T("v3_better"), table.concat(names, ", ")), GREEN)
             if imgui.button(T("v3_dismiss") .. "###v3_dismiss") then d.dismiss_preset_hint(d.kind_id, d.source) end
         end
         for _, r in ipairs(view.presets) do
             local e = r.entry
-            imgui.text(string.format("%s  [%s]", e.name, T(FIT[r.match])))
+            imgui.text(string.format("%s  [%s]", d.preset_label(e), T(FIT[r.match])))
             if r.match ~= "none" then
                 imgui.same_line()
                 if ui.apply_pending == e.id then
