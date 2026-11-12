@@ -409,7 +409,7 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
         for index=before_writes+1,#writes do
             assert(writes[index]~="ArmorVariantManager/GlobalSettings.json","same-value retry does not rewrite global JSON")
         end
-        if game=="mhwilds" then
+        do
             assert(field("ground_clipping_height_cm").min==-10)
             before_writes=#writes
             send("setting",{id="ground_clipping_enabled",value=true})
@@ -424,7 +424,7 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
             send("save",{name="HeightZero"})
             local height=data["ArmorVariantManager/armor.json"].presets.HeightZero.ground_clipping_fix
             assert(height.enabled and height.height_cm==0,"preset capture persists checked zero height")
-        else assert(not field("ground_clipping_height_cm"),"Rise does not expose Wilds height") end
+        end
         -- 忽略后保存会更新备份，手动恢复使用此刻的磁盘备份。
         local latest_backup=S.copy(data["ArmorVariantManager/backup/armor.json"])
         current=send("restore")

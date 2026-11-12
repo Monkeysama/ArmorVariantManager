@@ -152,7 +152,7 @@ function ReffApp.new(app)
         end or nil,
     })
     local global_options = app.settings
-    local height_options = game.wilds and require(game.prefix .. "HeightSettings").new({
+    local height_options = app.height and require("ArmorVariantManager_Core.UI.Reff.HeightSettings").new({
         translate=T,get=get_ground_clipping_settings,set=set_ground_clipping_settings,status=get_ground_clipping_status,
     })
     local settings = {

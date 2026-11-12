@@ -101,8 +101,8 @@ local app = require("ArmorVariantManager_Core.App").new({
     game=game, backend=application, session=config_session, schema=GameConfig, rules=TransformManager,
     global_settings=global_settings, translate=T, version=version, author=author,
 })
+app.height = require(game.prefix .. "HeightEditor").new(app)
 if game.wilds then
-    app.height = require(game.prefix .. "HeightEditor").new(app)
     app.portrait, app.preview = require(game.prefix .. "Portrait").connect(global_config, {
         suspended=runtime.is_suspended,
     })
