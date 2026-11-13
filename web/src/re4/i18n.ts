@@ -3,7 +3,7 @@ import type { Re4Snapshot } from './types';
 
 // RE4 页面文案。用词：整套造型 / 状态组 / 选项 / 条件状态 / 预设。不用口语化描述（如"被压过"）。
 const zh = {
-  title: '差分管理器', loading: '正在连接 REFF…', wait: '等待角色', retry: '重试连接', saving: '正在应用…', dismiss: '关闭',
+  title: '差分管理器', loading: '正在连接 REFF…', wait: '等待角色', retry: '重试连接', saving: '正在应用…', dismiss: '关闭', switchLanguage: '切换界面语言',
   character: '角色', onField: '场上', noCharacter: '未找到当前控制角色。进入游戏后会自动显示。', noConfig: '未配置',
   tabQuick: '快速切换', tabBase: '整套造型', tabGroups: '状态组', tabStates: '条件状态', tabPresets: '预设', tabMisc: '杂项',
   tabPalette: '调色', paletteMaterials: '材质', paletteClear: '清空选择', paletteOnly: '只选这一个', paletteSameKind: '选中同类材质',
@@ -126,7 +126,7 @@ const zh = {
   paletteRef: '调色方案', paletteRefNone: '（不调色）', paletteRefBroken: '方案不存在',
 };
 const en: Record<keyof typeof zh, string> = {
-  title: 'Armor Variant Manager', loading: 'Connecting to REFF…', wait: 'Waiting for a character', retry: 'Retry', saving: 'Applying…', dismiss: 'Dismiss',
+  title: 'Armor Variant Manager', loading: 'Connecting to REFF…', wait: 'Waiting for a character', retry: 'Retry', saving: 'Applying…', dismiss: 'Dismiss', switchLanguage: 'Switch interface language',
   character: 'Character', onField: 'On field', noCharacter: 'No controllable character found. It will appear once you are in game.', noConfig: 'not configured',
   tabQuick: 'Quick switch', tabBase: 'Full outfit', tabGroups: 'State groups', tabStates: 'Condition states', tabPresets: 'Presets', tabMisc: 'Misc',
   tabPalette: 'Colours', paletteMaterials: 'Materials', paletteClear: 'Clear selection', paletteOnly: 'Select only this', paletteSameKind: 'Select materials of this kind',

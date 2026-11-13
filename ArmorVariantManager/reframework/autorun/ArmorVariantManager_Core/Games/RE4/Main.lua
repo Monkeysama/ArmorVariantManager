@@ -39,6 +39,8 @@ function Main.start(ctx)
         local loaded = json.load_file(global_config_path)
         if not loaded then return end
         if loaded.language then global_config.language = loaded.language end
+        -- 上次跟随过的 REFF 语言(见 Ops.follow_reff_language):REFF 改语言时才跟着改,手动切换不会被冲掉
+        if loaded.reff_language == "zh" or loaded.reff_language == "en" then global_config.reff_language = loaded.reff_language end
         -- 已知角色登记表也必须读回来,否则重载一次就全忘了(只读 language 是早期的漏)
         if type(loaded.known) == "table" then global_config.known = loaded.known end
         if type(loaded.aliases) == "table" then global_config.aliases = loaded.aliases end

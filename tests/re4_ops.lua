@@ -101,6 +101,14 @@ assert(#l.rules == 0 and not Ops.delete_rule(l, 1))
 local g = {language = "en"}
 assert(Ops.set_global(g, "language", "zh") and g.language == "zh")
 assert(not Ops.set_global(g, "language", "fr") and g.language == "zh")
+do -- 跟随 REFF 语言:第一次跟、同一个值不再改(手动切换保留)、REFF 改了再跟、不认识的语言忽略
+    local r = { language = "zh" }
+    assert(Ops.follow_reff_language(r, "en-US") and r.language == "en" and r.reff_language == "en")
+    r.language = "zh"
+    assert(not Ops.follow_reff_language(r, "en-US") and r.language == "zh", "same REFF language keeps manual choice")
+    assert(Ops.follow_reff_language(r, "zh-CN") and r.language == "zh" and r.reff_language == "zh")
+    assert(not Ops.follow_reff_language(r, "fr-FR") and not Ops.follow_reff_language(r, nil) and r.reff_language == "zh")
+end
 assert(Ops.set_global(g, "weapon_hide_storage", true) and g.weapon_hide_storage == true)
 assert(Ops.set_global(g, "ui_dissolve_enabled", false) and g.ui_dissolve_enabled == false)
 assert(Ops.set_global(g, "ui_dissolve_time", 1.26) and g.ui_dissolve_time == 1.3)

@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onErrorCaptured, onMounted, shallowRef, watch, watchEffect } from 'vue';
 import { ElButton, ElConfigProvider, ElOption, ElSelect, ElSwitch, REFF_ELEMENT_LOCALES } from '@reff/ui';
 import { useAvmState } from '../avm';
+import { reffLanguage } from '../reffPreferences';
 
 // REFF 是 WebView2 离屏渲染，宿主没有接系统级拖放：任何原生拖动（拖选中的文字、图片、链接）都会进入
 // 宿主的原生拖拽循环并卡死整个页面。从游戏外按住左键拖进来时，页面会收到"按住移动"而开始选字，
@@ -83,6 +84,15 @@ async function setPreview(value: unknown) {
 }
 const PREVIEW_KEYS = new Set(['preview', 'previewLive', 'previewWaiting', 'previewWaitingForHost', 'previewUnavailable', 'previewSdr']);
 const previewText = ((key: string) => PREVIEW_KEYS.has(key) ? t(key as Re4Key) : key) as unknown as Translate;
+// 界面语言跟随 REFF:连上 Lua 后把 REFF 的语言发过去,Lua 只在 REFF 的语言变了时才改(见 Ops.follow_reff_language),
+// 所以顶栏按钮手动切换的语言不会在下次打开页面时被冲掉。同一个值只发一次
+let sentReffLanguage = '';
+watch([reffLanguage, () => !!snapshot.value], ([language, connected]) => {
+  if (!language || !connected || language === sentReffLanguage) return;
+  sentReffLanguage = language;
+  void perform({ kind: 'reff-language', value: language });
+}, { immediate: true });
+const toggleLanguage = () => perform({ kind: 'setting', id: 'language', value: english.value ? 'zh' : 'en' });
 // 一次性提示（迁移结果）：快照只带一次，留到用户关掉
 const notice = shallowRef<Re4Notice | null>(null);
 watch(() => snapshot.value?.notice, value => { if (value) notice.value = value; });
@@ -106,6 +116,9 @@ watch(() => snapshot.value?.notice, value => { if (value) notice.value = value; 
         <label v-if="snapshot?.preview && hasCharacter" class="re4-preview-toggle">
           <ElSwitch :model-value="previewIntent ?? previewOpen" :disabled="busy" size="small" @change="setPreview" />{{ t('preview') }}
         </label>
+        <!-- 按钮上写的是要切换到的语言,用那种语言自己的写法 -->
+        <ElButton v-if="snapshot" class="re4-language" :class="{ 'push-right': !(snapshot.preview && hasCharacter) }" size="small" :disabled="busy"
+          :aria-label="t('switchLanguage')" @click="toggleLanguage">{{ english ? '中文' : 'English' }}</ElButton>
         <div class="game-identity"><span>RE4</span><span class="version">{{ snapshot?.version }}</span></div>
       </header>
       <div class="avm-body">
@@ -186,6 +199,8 @@ watch(() => snapshot.value?.notice, value => { if (value) notice.value = value; 
 /* 预览列比荒野宽一些:RE4 人物是竖长全身,窗口越大预览越大 */
 @media (min-width: 761px) { .avm.re4 .portrait-pane { flex-basis: clamp(220px, 30%, 560px); } }
 .re4-preview-toggle { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; margin-right: 12px; cursor: pointer; }
+.re4-language { margin-right: 12px; }
+.re4-language.push-right { margin-left: auto; }
 .re4-panel { border: 1px solid var(--avm-line); border-radius: 8px; background: var(--el-bg-color, transparent); min-width: 0; }
 .re4-panel-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 7px 12px; }
 .re4-panel-head + * { border-top: 1px solid var(--avm-line); }

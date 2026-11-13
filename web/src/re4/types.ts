@@ -175,6 +175,8 @@ export type Re4Action =
   | { kind: 'dissolve-preset-delete'; preset: string }
   | { kind: 'dissolve-preset-shape'; preset: string; shape: string }
   | { kind: 'dissolve-default'; preset: string }
+  | { kind: 'setting'; id: 'language'; value: 'zh' | 'en' }
+  | { kind: 'reff-language'; value: string }
   | { kind: 'setting'; id: 'weapon_hide_storage' | 'ui_dissolve_enabled' | 'ui_dissolve_time' | 'portrait_enabled' | 'portrait_distance' | 'portrait_height' | 'block_game_mouse' | 'height_enabled' | 'new_features'; value: boolean | number }
   | C & { kind: 'migrate' }
   | C & { kind: 'manual'; layer: string; option: string }

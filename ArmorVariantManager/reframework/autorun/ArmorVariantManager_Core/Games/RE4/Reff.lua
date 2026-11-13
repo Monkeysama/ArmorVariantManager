@@ -827,6 +827,11 @@ function Reff.new(deps)
             deps.save_global_settings()
             return controller.snapshot()
         end
+        -- 网页收到 REFF 的语言偏好时发来;和上次跟随的一样就什么都不改
+        if p.kind == "reff-language" then
+            if Ops.follow_reff_language(deps.global_config, p.value) then deps.save_global_settings() end
+            return controller.snapshot()
+        end
         -- 溶解预设库(全局,不需要当前角色)
         local dissolve_ops = {
             ["dissolve-preset-new"] = function(lib) return DissolveStyles.preset_new(lib, p.name, type(p.from) == "string" and p.from or nil) end,

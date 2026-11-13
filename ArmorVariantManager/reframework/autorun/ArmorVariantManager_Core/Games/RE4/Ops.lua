@@ -175,6 +175,17 @@ end
 -- 独立面板可选的快捷键。F10(Windows 菜单栏)、F12(Steam 截图)不给;默认 F8
 Ops.PANEL_KEYS = { "F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F11" }
 
+-- 跟随 REFF 的语言偏好(zh-CN / en-US)。只在 REFF 的语言和上次跟随时不同才改界面语言,
+-- 所以每次打开页面都会收到的那份偏好不会冲掉用户在 AVM 里手动切换的语言。返回 true = 改了,要存盘
+function Ops.follow_reff_language(global_config, reff)
+    reff = type(reff) == "string" and reff:lower() or ""
+    local lang = reff:sub(1, 2) == "zh" and "zh" or reff:sub(1, 2) == "en" and "en" or nil
+    if not lang or global_config.reff_language == lang then return false end
+    global_config.reff_language = lang
+    global_config.language = lang
+    return true
+end
+
 function Ops.set_global(global_config, id, value)
     if id == "language" then
         if value ~= "zh" and value ~= "en" then return false end

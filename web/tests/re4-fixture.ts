@@ -242,8 +242,11 @@ export function installRe4Fixture() {
     return { claims, status, results };
   }
 
+  // 界面语言(同 Lua 的 Ops.follow_reff_language:REFF 的语言变了才跟)
+  let language: 'zh' | 'en' = 'zh';
+  let reffLanguage = '';
   function snapshot(): Re4Snapshot {
-    const base: Re4Snapshot = { game: 'RE4', version: '4.3.4', language: 'zh', settings: { ...settings },
+    const base: Re4Snapshot = { game: 'RE4', version: '4.3.4', language, settings: { ...settings },
       characters: params.has('re4-empty') ? [] : [{ id: 'Leon', label: '里昂', configured: true, targets: ['玩家', '过场傀儡'] }, { id: 'Ada', label: '艾达', configured: false, targets: ['过场傀儡'] }],
       character: params.has('re4-empty') ? '' : character, notice,
       preview: params.has('preview') ? { available: true, enabled: previewEnabled, status: 'preview_live' }
@@ -375,7 +378,9 @@ export function installRe4Fixture() {
       }
       return;
     }
+    if (a.kind === 'reff-language') { const l = a.value.slice(0, 2).toLowerCase(); if ((l === 'zh' || l === 'en') && l !== reffLanguage) { reffLanguage = l; language = l; } return; }
     if (a.kind === 'setting') {
+      if (a.id === 'language') { language = a.value; return; }
       if (a.id === 'weapon_hide_storage') settings.weaponHideStorage = a.value === true;
       else if (a.id === 'block_game_mouse') settings.blockGameMouse = a.value === true;
       else if (a.id === 'height_enabled') settings.heightEnabled = a.value === true;
