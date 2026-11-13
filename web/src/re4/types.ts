@@ -34,8 +34,9 @@ export interface Re4StateCondition {
   type: string; op?: Re4Op; value: number | string | boolean; label: string; known: boolean; valueLabel?: string; met?: boolean;
 }
 export interface Re4StateTarget { group: string; option: string; result?: Re4Result }
+// label：显示名（双语，英文界面且设了英文名时才有，见 Lua ModelV3 的 *_label）；没有就显示 name。动作里一律用 name
 export interface Re4State {
-  name: string; enabled: boolean; exclusive: boolean; logic: 'AND' | 'OR'; hold: number; fadeIn: number; fadeOut: number;
+  name: string; label?: string; enabled: boolean; exclusive: boolean; logic: 'AND' | 'OR'; hold: number; fadeIn: number; fadeOut: number;
   hp?: { upper: number; lower: number; invert: boolean };
   base?: string; baseResult?: Re4Result; targets: Re4StateTarget[]; conditions: Re4StateCondition[];
   kind: Re4StateKind; by?: number; holding: boolean;
@@ -53,10 +54,10 @@ export interface Re4Match { status: 'ok' | 'partial' | 'mismatch'; skipped: stri
 // palette:选中这个预设 / 选项时叠加的调色方案（可能指向已删除的方案）
 // sks:ShapeKeySystem 键组引用 { 键组名: 选项名 | 0 }(0 = 不选任何选项);没写的键组 SKS 里保持原样
 export type Re4SksRefs = Record<string, string | 0>;
-export interface Re4BasePreset { name: string; values: Re4Values; match: Re4Match; height?: number; palette?: string; dissolve?: string; sks?: Re4SksRefs }
+export interface Re4BasePreset { name: string; label?: string; values: Re4Values; match: Re4Match; height?: number; palette?: string; dissolve?: string; sks?: Re4SksRefs }
 export interface Re4Base { active: string; effective?: string; fromState?: number; presets: Re4BasePreset[] }
 // on / effective / fromState 只在复选组里出现:手动打开、这一帧生效、被哪个条件状态接管
-export interface Re4Option { name: string; values: Re4Values; height?: number; palette?: string; dissolve?: string; sks?: Re4SksRefs;
+export interface Re4Option { name: string; label?: string; values: Re4Values; height?: number; palette?: string; dissolve?: string; sks?: Re4SksRefs;
   on?: boolean; effective?: boolean; fromState?: number }
 // ShapeKeySystem 联动(没装 SKS 1.1+ 时整个字段不出现)。actor 为空 = SKS 不驱动这个角色。
 // groups:当前 SKS 配置的键组 + 这个角色所有 SKS 配置里键组的并集;inCurrent = 当前配置里有;value = 当前生效的选项
@@ -67,7 +68,7 @@ export interface Re4Sks {
   groups?: Re4SksGroup[] | Record<string, never>; errors?: Record<string, string>; want?: Re4SksRefs;
 }
 // bases:造型归属(整套造型预设名;没有 = 全部);shown:当前生效的整套造型下,快速切换页显示不显示
-export interface Re4Group { name: string; active: string; effective?: string; fromState?: number; options: Re4Option[];
+export interface Re4Group { name: string; label?: string; active: string; effective?: string; fromState?: number; options: Re4Option[];
   bases?: string[] | Record<string, never>; shown?: boolean;
   // multi:复选组(各选项各自开关);actives:手动打开的选项。复选组的 fromState 是各选项里优先级最高的接管
   multi?: boolean; actives?: string[] | Record<string, never> }

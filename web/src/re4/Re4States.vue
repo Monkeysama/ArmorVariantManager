@@ -4,7 +4,7 @@ import { computed, reactive, shallowRef } from 'vue';
 import { ElButton, ElOption, ElSelect, ElSwitch } from '@reff/ui';
 import type { Re4Key, Re4Translate } from './i18n';
 import type { Re4Category, Re4ConditionDef, Re4ConditionInput, Re4Op, Re4Perform, Re4Snapshot, Re4State, Re4StateCondition } from './types';
-import { conditionSentence, currentValueText, kindText, resultText, targetSentence } from './util';
+import { baseLabel, conditionSentence, currentValueText, kindText, labelOf, optionLabel, resultText, targetSentence } from './util';
 import { usePointerReorder } from './reorder';
 
 // 条件状态页。从上往下是优先级(拖 ⠿ 调整;拖动用 pointer 事件,见 reorder.ts)。
@@ -104,13 +104,14 @@ const { from: dragFrom, drop: dropAt, start: startDrag } = usePointerReorder('.r
         <button class="re4-caret" :aria-expanded="open.has(k + 1)" @click="toggle(k + 1)">{{ open.has(k + 1) ? '▾' : '▸' }}</button>
         <span class="re4-sdot" :title="kindText(st, states, t)"></span>
         <template v-if="!open.has(k + 1)">
-          <span class="re4-sname">{{ st.name }}</span>
+          <span class="re4-sname">{{ labelOf(st) }}</span>
           <span v-if="st.exclusive" class="re4-excl">{{ t('exclusive') }}</span>
-          <span class="re4-ssum">{{ conditionSentence(st, t) }}　→　{{ targetSentence(st, t) }}</span>
+          <span class="re4-ssum">{{ conditionSentence(st, t) }}　→　{{ targetSentence(st, t, snapshot) }}</span>
         </template>
         <template v-else>
-          <input class="re4-sname re4-sname-input" :value="st.name" :aria-label="t('stateName')"
-            @change="e => perform({ kind: 'state-rename', ...c(), index: k + 1, name: (e.target as HTMLInputElement).value.trim() })">
+          <!-- 框里是显示名:英文界面且有英文名时改的是英文名(Lua OpsV3.rename_state) -->
+          <input class="re4-sname re4-sname-input" :value="labelOf(st)" :aria-label="t('stateName')"
+            @change="e => { const v = (e.target as HTMLInputElement).value.trim(); if (v && v !== labelOf(st)) perform({ kind: 'state-rename', ...c(), index: k + 1, name: v }); }">
           <button class="re4-xbtn" :aria-pressed="st.exclusive" :disabled="busy" :title="t('exclusiveHint')" @click="field(k + 1, 'exclusive', !st.exclusive)">{{ t('exclusive') }}</button>
           <span class="re4-fade" :class="{ 're4-nf-lock': nfOff }" :inert="nfOff">
             <label>{{ t('fadeIn') }}<Re4Num :value="st.fadeIn" :min="0" :max="30" @change="v => v !== undefined && numField(k + 1, 'fade_in', String(v))" /></label>
@@ -123,7 +124,7 @@ const { from: dragFrom, drop: dropAt, start: startDrag } = usePointerReorder('.r
         <ElButton v-if="open.has(k + 1)" size="small" type="danger" plain :disabled="busy" @click="confirming = k + 1">{{ t('delete') }}</ElButton>
       </div>
       <div v-if="confirming === k + 1" class="re4-confirm">
-        <span>{{ t('delete') }}「{{ st.name }}」？</span>
+        <span>{{ t('delete') }}「{{ labelOf(st) }}」？</span>
         <ElButton size="small" type="danger" @click="confirming = 0; perform({ kind: 'state-delete', ...c(), index: k + 1 })">{{ t('confirmDelete') }}</ElButton>
         <ElButton size="small" @click="confirming = 0">{{ t('cancel') }}</ElButton>
       </div>
@@ -190,7 +191,7 @@ const { from: dragFrom, drop: dropAt, start: startDrag } = usePointerReorder('.r
             <ElSelect class="re4-sel-target" :model-value="st.base ?? ''" :empty-values="[null, undefined]" :disabled="busy" size="small" @change="v => perform({ kind: 'state-base', ...c(), index: k + 1, preset: String(v ?? '') || undefined })">
               <ElOption value="" :label="t('noSwitch')" />
               <ElOption v-if="st.base && !basePresets.includes(st.base)" :value="st.base" :label="st.base + ' · ' + t('moved')" />
-              <ElOption v-for="name in basePresets" :key="name" :value="name" :label="name" />
+              <ElOption v-for="name in basePresets" :key="name" :value="name" :label="baseLabel(snapshot, name)" />
             </ElSelect>
             <span class="re4-res" :class="st.baseResult?.kind">{{ resultText(st.baseResult, states, t) }}</span>
           </div>
@@ -230,12 +231,12 @@ const { from: dragFrom, drop: dropAt, start: startDrag } = usePointerReorder('.r
           <div v-for="(tg, ti) in st.targets" :key="tg.group" class="re4-target">
             <ElSelect class="re4-sel-target" :model-value="tg.group" :disabled="busy" size="small" @change="v => perform({ kind: 'state-target-group', ...c(), index: k + 1, target: ti + 1, group: String(v) })">
               <ElOption v-if="!groups.some(g => g.name === tg.group)" :value="tg.group" :label="tg.group + ' · ' + t('moved')" />
-              <ElOption v-for="g in groups" :key="g.name" :value="g.name" :label="g.name" />
+              <ElOption v-for="g in groups" :key="g.name" :value="g.name" :label="labelOf(g)" />
             </ElSelect>
             <span class="re4-muted">→</span>
             <ElSelect class="re4-sel-target" :model-value="tg.option" :disabled="busy" size="small" @change="v => perform({ kind: 'state-target', ...c(), index: k + 1, group: tg.group, option: String(v) })">
               <ElOption v-if="!optionsOf(tg.group).includes(tg.option)" :value="tg.option" :label="tg.option + ' · ' + t('moved')" />
-              <ElOption v-for="o in optionsOf(tg.group)" :key="o" :value="o" :label="o" />
+              <ElOption v-for="o in optionsOf(tg.group)" :key="o" :value="o" :label="optionLabel(snapshot, tg.group, o)" />
             </ElSelect>
             <span class="re4-res" :class="tg.result?.kind">{{ resultText(tg.result, states, t) }}</span>
             <button class="re4-x" :disabled="busy" :aria-label="t('delete')" @click="perform({ kind: 'state-target-remove', ...c(), index: k + 1, target: ti + 1 })">×</button>

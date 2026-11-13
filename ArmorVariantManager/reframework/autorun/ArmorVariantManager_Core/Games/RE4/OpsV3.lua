@@ -148,8 +148,22 @@ function OpsV3.set_hotkey_skip(cfg, structure, item, included)
     return false
 end
 
+-- ============================================================ 改名与英文显示名
+-- 改的是界面上看到的那个名字(同预设库 Presets.library 的 rename):界面是英文、这一项有英文名时只改英文名
+-- (不动引用键);其他情况改名字本身。返回 nil = 不走英文名,交给原来的改名
+local function rename_en(holder, key, new, lang)
+    if lang ~= "en" or type(holder) ~= "table" or not M3.en_of(holder[key]) then return nil end
+    if not valid_name(new) or holder[key] == new then return false end
+    holder[key] = new
+    return true
+end
+
 -- ============================================================ 整套造型(只补牵动引用的)
-function OpsV3.rename_base(cfg, old, new)
+function OpsV3.rename_base(cfg, old, new, lang)
+    if cfg.base.presets[old] then
+        local r = rename_en(cfg.base.names_en, old, new, lang)
+        if r ~= nil then return r, false end
+    end
     local ok = Ops.rename_preset(cfg.base, old, new)
     if not ok then return false end
     for _, st in ipairs(cfg.conditions.states) do
@@ -180,7 +194,9 @@ function OpsV3.new_group(cfg, name)
     return true, false
 end
 
-function OpsV3.rename_group(cfg, old, new)
+function OpsV3.rename_group(cfg, old, new, lang)
+    local r = rename_en(M3.find_group(cfg, old), "name_en", new, lang)
+    if r ~= nil then return r, false end
     if not valid_name(new) or old == new or M3.find_group(cfg, new) then return false end
     local g = M3.find_group(cfg, old)
     if not g then return false end
@@ -272,7 +288,12 @@ function OpsV3.duplicate_option(cfg, group, name)
     return ok, reapply, newn
 end
 
-function OpsV3.rename_option(cfg, group, old, new)
+function OpsV3.rename_option(cfg, group, old, new, lang)
+    local og = M3.find_group(cfg, group)
+    if og and og.options[old] then
+        local r = rename_en(og.names_en, old, new, lang)
+        if r ~= nil then return r, false end
+    end
     local _, layer = group_layer(cfg, group)
     if not layer or not Ops.rename_preset(layer, old, new) then return false end
     local g = M3.find_group(cfg, group)
@@ -621,8 +642,10 @@ function OpsV3.move_state(cfg, from, to)
     return true, true
 end
 
-function OpsV3.rename_state(cfg, i, name)
+function OpsV3.rename_state(cfg, i, name, lang)
     local st = state_at(cfg, i)
+    local r = rename_en(st, "name_en", name, lang)
+    if r ~= nil then return r, false end
     if not st or not valid_name(name) or st.name == name then return false end
     st.name = name
     return true, false

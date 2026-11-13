@@ -69,7 +69,7 @@ local function derive(snap)
             if i ~= j then
                 local n = 0
                 for k in pairs(d.writes[g.name]) do if clash(g.name, h.name, k) then n = n + 1 end end
-                if n > 0 then table.insert(j > i and below or above, { name = h.name, n = n }) end
+                if n > 0 then table.insert(j > i and below or above, { name = h.name, label = h.label, n = n }) end
             end
         end
         d.overlaps[g.name] = { below = below, above = above }
@@ -140,7 +140,7 @@ local function cards_of(snap, t, mode, d)
     end
     local out = {}
     for _, g in ipairs(snap.groups or {}) do
-        out[#out + 1] = { id = "g:" .. g.name, is_base = false, name = g.name, active = g.active, effective = g.effective,
+        out[#out + 1] = { id = "g:" .. g.name, is_base = false, name = g.name, label = g.label, active = g.active, effective = g.effective,
             from_state = g.fromState, options = g.options, multi = g.multi == true,
             bases = type(g.bases) == "table" and g.bases or {} }
     end
@@ -177,7 +177,7 @@ function Page.draw(ctx, x, y, w)
     local open = st.open
     local d = derive(snap)
     local cards = cards_of(snap, t, mode, d)
-    local function state_name(i) return i and (snap.states[i] or {}).name or "" end
+    local function state_name(i) return U.state_label(snap.states or {}, i) or "" end
     local function act(card, kind, extra)
         local a = { kind = kind }
         if not card.is_base then a.group = card.name end
@@ -223,10 +223,11 @@ function Page.draw(ctx, x, y, w)
         local F = W.flow(hx, cy + 4, ax - hx - 8, 8, ROW)
         if not card.is_base and is_open then
             local nx, ny = F:place(min(200, F:remaining()), ROW)
-            W.commit_box(st.drafts, "gname:" .. card.name, nx, ny + 1, min(200, ax - nx), 24, card.name, t("groupName"), function(name)
+            -- 框里是显示名(英文界面且有英文名时改的是英文名,引用键不变,见 OpsV3.rename_group)
+            W.commit_box(st.drafts, "gname:" .. card.name, nx, ny + 1, min(200, ax - nx), 24, U.label(card), t("groupName"), function(name)
                 name = trim(name)
-                if name == "" or name == card.name then return end
-                if ctx.act({ kind = "group-rename", group = card.name, name = name }) then
+                if name == "" or name == U.label(card) then return end
+                if ctx.act({ kind = "group-rename", group = card.name, name = name }) and not card.label then
                     -- 展开状态按名字记,改名后跟着搬
                     local from, to = card.id, "g:" .. name
                     local moved = {}
@@ -238,15 +239,15 @@ function Page.draw(ctx, x, y, w)
                 end
             end)
         else
-            F:text(card.name, C.text, W.bold())
+            F:text(U.label(card), C.text, W.bold())
         end
         -- 状态组的选项数、材质数不占标题栏(窄时挤掉名字);整套造型照旧显示预设数
         if card.is_base then F:text(t("baseCount", #card.options)) end
         if card.from_state then F:tag(t("takenOverBy", state_name(card.from_state)), C.ok) end
         if not card.is_base then
             local ov = d.overlaps[card.name] or { below = {}, above = {} }
-            for _, o in ipairs(ov.below) do F:tag(t("overriddenBy", o.name, o.n), C.error) end
-            for _, o in ipairs(ov.above) do F:tag(t("overrides", o.name, o.n)) end
+            for _, o in ipairs(ov.below) do F:tag(t("overriddenBy", U.label(o), o.n), C.error) end
+            for _, o in ipairs(ov.above) do F:tag(t("overrides", U.label(o), o.n)) end
         end
         local bx = ax
         if mode_items then
@@ -267,7 +268,7 @@ function Page.draw(ctx, x, y, w)
 
         if st.confirming == card.id then
             local u = users(card)
-            local msg = t("delete") .. "「" .. card.name .. "」？" .. (#u > 0 and t("deleteWarnUsed", U.names(u)) or "") .. t("backupFirst")
+            local msg = t("delete") .. "「" .. U.label(card) .. "」？" .. (#u > 0 and t("deleteWarnUsed", U.names(u)) or "") .. t("backupFirst")
             local r, h = W.confirm(x + 10, cy, w - 20, msg, t("confirmDelete"), t("cancel"), "danger", C.error)
             if r then st.confirming = nil end
             if r == "yes" then ctx.act({ kind = "group-delete", group = card.name }) end
@@ -286,7 +287,9 @@ function Page.draw(ctx, x, y, w)
                     -- 造型归属:按钮显示当前归属,点开后每个整套造型一个勾选框;全不勾 = 全部
                     local names = {}
                     for _, p in ipairs((snap.base and snap.base.presets) or {}) do names[#names + 1] = p.name end
-                    local label = #card.bases == 0 and t("groupBasesAll") or table.concat(card.bases, "、")
+                    local shown = {}
+                    for i, n in ipairs(card.bases) do shown[i] = U.base_label(snap, n) end
+                    local label = #card.bases == 0 and t("groupBasesAll") or table.concat(shown, "、")
                     st.bases_open = st.bases_open or {}
                     if SF:button(t("groupBases") .. "：" .. label, { tip = t("groupBasesHint") }) then
                         st.bases_open[card.id] = (not st.bases_open[card.id]) or nil
@@ -297,7 +300,7 @@ function Page.draw(ctx, x, y, w)
                         local chosen = {}
                         for _, n in ipairs(card.bases) do chosen[n] = true end
                         for _, n in ipairs(names) do
-                            local ch, v = SF:checkbox(n, chosen[n] == true)
+                            local ch, v = SF:checkbox(U.base_label(snap, n), chosen[n] == true)
                             if ch then
                                 local list = {}
                                 for _, m in ipairs(names) do
@@ -350,13 +353,14 @@ function Page.draw(ctx, x, y, w)
                     elseif radio("", rx, ry, card.active == opt.name, false, eff and C.ok or nil) then
                         ctx.act({ kind = "manual", layer = card.is_base and "base" or card.name, option = opt.name })
                     end
-                    W.commit_box(st.drafts, "oname:" .. oid, rx + 18, ry + 1, 160, 24, opt.name, t("rename"), function(name)
+                    W.commit_box(st.drafts, "oname:" .. oid, rx + 18, ry + 1, 160, 24, U.label(opt), t("rename"), function(name)
                         name = trim(name)
-                        if name == "" or name == opt.name then return end
+                        if name == "" or name == U.label(opt) then return end
                         local ok
                         if card.is_base then ok = ctx.act({ kind = "base-rename", preset = opt.name, name = name })
                         else ok = ctx.act({ kind = "option-rename", group = card.name, option = opt.name, name = name }) end
-                        if ok and open[oid] then
+                        -- 改的是英文名时引用键不变,展开状态不用搬
+                        if ok and open[oid] and not opt.label then
                             open[oid] = nil
                             open[card.id .. "|" .. name] = true
                         end
@@ -386,7 +390,7 @@ function Page.draw(ctx, x, y, w)
                 cy = cy + max(ROW, OF:height()) + 4
 
                 if st.confirming == oid then
-                    local msg = t("delete") .. "「" .. opt.name .. "」？" .. (#u > 0 and t("deleteWarnUsed", U.names(u)) or "") .. t("backupFirst")
+                    local msg = t("delete") .. "「" .. U.label(opt) .. "」？" .. (#u > 0 and t("deleteWarnUsed", U.names(u)) or "") .. t("backupFirst")
                     local r, h = W.confirm(ox + 22, cy, ow - 22, msg, t("confirmDelete"), t("cancel"), "danger", C.error)
                     if r then st.confirming = nil end
                     if r == "yes" then

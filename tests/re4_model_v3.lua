@@ -403,4 +403,59 @@ do
     assert(not OpsV3.bulk_materials(cfg, "G", "Nope", items, "on") and not OpsV3.bulk_materials(cfg, "G", "O", items, "flip"))
 end
 
-print("PASS: v3 normalize, v2 migration equivalence (16 condition combinations, picks and final materials), overlapping groups, claims / partial / exclusive / broken / paused, hold, HP chains and OpsV3 edits")
+-- ============================================================ 双语显示名
+do
+    local Ops = require("ArmorVariantManager_Core.Games.RE4.Ops")
+    local cfg = M3.normalize({
+        version = 3,
+        base = {presets = {["日常"] = {}, ["战斗"] = {}}, order = {"日常", "战斗"}, active = "日常",
+            names_en = {["日常"] = "Daily", ["不存在"] = "Ghost", ["战斗"] = ""}},
+        groups = {{name = "头发", name_en = "Hair", options = {["长"] = {}, ["短"] = {}}, order = {"长", "短"}, active = "长",
+            names_en = {["长"] = "Long", ["没有"] = "x", ["短"] = 3}}},
+        conditions = {states = {{name = "受伤", name_en = "Hurt", conditions = {}, targets = {}},
+            {name = "无英文", name_en = "", conditions = {}, targets = {}}}},
+    })
+    local g = cfg.groups[1]
+    -- 清洗:只留指向现有项的非空字符串
+    assert(cfg.base.names_en["日常"] == "Daily" and cfg.base.names_en["不存在"] == nil and cfg.base.names_en["战斗"] == nil)
+    assert(g.name_en == "Hair" and g.names_en["长"] == "Long" and g.names_en["没有"] == nil and g.names_en["短"] == nil)
+    assert(cfg.conditions.states[1].name_en == "Hurt" and cfg.conditions.states[2].name_en == nil)
+    -- 显示:英文界面有英文名才用,其他情况用名字
+    assert(M3.base_label(cfg, "日常", "en") == "Daily" and M3.base_label(cfg, "日常", "zh") == "日常")
+    assert(M3.base_label(cfg, "战斗", "en") == "战斗")
+    assert(M3.group_label(g, "en") == "Hair" and M3.group_label(g, "zh") == "头发")
+    assert(M3.option_label(g, "长", "en") == "Long" and M3.option_label(g, "短", "en") == "短")
+    assert(M3.group_label_of(cfg, "头发", "en") == "Hair" and M3.group_label_of(cfg, "没这组", "en") == "没这组")
+    assert(M3.option_label_of(cfg, "头发", "长", "en") == "Long" and M3.option_label_of(cfg, "没这组", "长", "en") == "长")
+    assert(M3.state_label(cfg.conditions.states[1], "en") == "Hurt" and M3.state_label(cfg.conditions.states[2], "en") == "无英文")
+    -- 英文名表全空时不留字段
+    local bare = M3.normalize({version = 3, base = {presets = {A = {}}, order = {"A"}, names_en = {}}})
+    assert(bare.base.names_en == nil)
+
+    -- 改名:英文界面且有英文名 → 只改英文名,引用键不动
+    cfg.conditions.states[1].targets = {{group = "头发", option = "长"}}
+    cfg.conditions.states[1].base = "日常"
+    assert(OpsV3.rename_base(cfg, "日常", "Everyday", "en"))
+    assert(cfg.base.presets["日常"] and cfg.base.names_en["日常"] == "Everyday" and cfg.conditions.states[1].base == "日常")
+    assert(not OpsV3.rename_base(cfg, "日常", "Everyday", "en"), "same English name is a no-op")
+    assert(OpsV3.rename_group(cfg, "头发", "Hairstyle", "en") and g.name == "头发" and g.name_en == "Hairstyle")
+    assert(OpsV3.rename_option(cfg, "头发", "长", "Longer", "en") and g.options["长"] and g.names_en["长"] == "Longer")
+    assert(OpsV3.rename_state(cfg, 1, "Injured", "en") and cfg.conditions.states[1].name == "受伤"
+        and cfg.conditions.states[1].name_en == "Injured")
+    -- 没有英文名的项,英文界面改的是名字本身,不凭空加英文名
+    assert(OpsV3.rename_option(cfg, "头发", "短", "Short", "en") and g.options.Short and g.names_en.Short == nil)
+    assert(OpsV3.rename_state(cfg, 2, "Plain", "en") and cfg.conditions.states[2].name == "Plain" and cfg.conditions.states[2].name_en == nil)
+    -- 中文界面改名字本身,英文名跟着键走
+    assert(OpsV3.rename_base(cfg, "日常", "平时", "zh") and cfg.base.names_en["平时"] == "Everyday" and cfg.base.names_en["日常"] == nil)
+    assert(cfg.conditions.states[1].base == "平时")
+    assert(OpsV3.rename_option(cfg, "头发", "长", "长发", "zh") and g.names_en["长发"] == "Longer" and g.names_en["长"] == nil)
+    assert(cfg.conditions.states[1].targets[1].option == "长发")
+    assert(OpsV3.rename_group(cfg, "头发", "发型") and g.name == "发型" and g.name_en == "Hairstyle")
+    -- 复制:副本的英文名带同样的后缀;删除:英文名一起去掉
+    assert(Ops.duplicate_preset(cfg.base, "平时") and cfg.base.names_en["平时_1"] == "Everyday_1")
+    assert(OpsV3.duplicate_option(cfg, "发型", "Short") and g.names_en.Short_1 == nil, "no English name, none copied")
+    assert(OpsV3.delete_option(cfg, "发型", "长发") and g.names_en["长发"] == nil)
+    assert(OpsV3.delete_base(cfg, "平时") and cfg.base.names_en["平时"] == nil and cfg.base.names_en["平时_1"] == "Everyday_1")
+end
+
+print("PASS: v3 normalize, v2 migration equivalence (16 condition combinations, picks and final materials), overlapping groups, claims / partial / exclusive / broken / paused, hold, HP chains, OpsV3 edits and bilingual display names")

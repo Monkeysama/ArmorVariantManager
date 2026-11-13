@@ -122,6 +122,44 @@ function M.find_group(cfg, name)
     return nil
 end
 
+-- ============================================================ 双语显示名
+-- 名字是引用键(条件状态、快捷键、调色 / 高度 / SKS 引用都按名字找),只有一种。英文名是可选的显示名,
+-- 界面语言是英文且有英文名时显示它,其他情况显示名字本身(同预设库的 name_en,见 Presets.label):
+--   整套造型 base.names_en = { [预设名] = 英文名 }
+--   状态组   groups[i].name_en = 英文名,选项 groups[i].names_en = { [选项名] = 英文名 }
+--   条件状态 states[i].name_en = 英文名
+-- 英文名只是显示用,可以重名,也不参与引用。
+local function en_of(v) return (type(v) == "string" and v ~= "") and v or nil end
+local function pick(name, en, lang) return (lang == "en" and en_of(en)) or name end
+function M.base_label(cfg, name, lang)
+    local map = is_tbl(cfg) and is_tbl(cfg.base) and cfg.base.names_en
+    return pick(name, is_tbl(map) and map[name], lang)
+end
+function M.group_label(g, lang) return is_tbl(g) and pick(g.name, g.name_en, lang) or "" end
+function M.option_label(g, name, lang)
+    local map = is_tbl(g) and g.names_en
+    return pick(name, is_tbl(map) and map[name], lang)
+end
+function M.state_label(st, lang) return is_tbl(st) and pick(st.name, st.name_en, lang) or "" end
+-- 按名字找的版本(引用处只有名字):找不到的组照样返回名字本身
+function M.group_label_of(cfg, name, lang)
+    local g = M.find_group(cfg, name)
+    return g and M.group_label(g, lang) or name
+end
+function M.option_label_of(cfg, group, name, lang)
+    return M.option_label(M.find_group(cfg, group), name, lang)
+end
+
+-- 英文名表 { [名] = 英文名 }:只留指向现有项的非空字符串;空表返回 nil
+local function clean_names_en(map, names)
+    local out = {}
+    for n, v in pairs(is_tbl(map) and map or {}) do
+        if names[n] ~= nil and en_of(v) then out[n] = v end
+    end
+    return next(out) and out or nil
+end
+M.en_of = en_of
+
 -- 一个状态组的选项里写到过的材质键(任一选项写了开或关就算)
 function M.group_keys(g)
     local set = {}
@@ -438,6 +476,7 @@ end
 M.WEAPON_MODES = { stowed = true, all = true }
 function M.normalize_state(st)
     st.name = (type(st.name) == "string" and st.name ~= "") and st.name or "?"
+    st.name_en = en_of(st.name_en)
     st.enabled = st.enabled ~= false
     st.exclusive = st.exclusive == true
     st.logic = st.logic == "OR" and "OR" or "AND"
@@ -491,6 +530,7 @@ function M.normalize(cfg)
     -- 溶解预设引用:{ [预设名] = 溶解预设名 },形态同调色方案引用(溶解预设是全局的,不存在时解算退回默认)
     base.dissolves = clean_palette_refs(base.dissolves, presets)
     base.sks = M.clean_sks_refs(base.sks, presets)
+    base.names_en = clean_names_en(base.names_en, presets)
     cfg.base = base
 
     local groups, names = {}, {}
@@ -505,7 +545,8 @@ function M.normalize(cfg)
             restore_empty(options, g.order)
             local multi = g.multi == true
             local row = {
-                name = g.name, options = options, multi = multi or nil,
+                name = g.name, name_en = en_of(g.name_en), names_en = clean_names_en(g.names_en, options),
+                options = options, multi = multi or nil,
                 order = M.reconcile_order(g.order, options),
                 active = (not multi and type(g.active) == "string" and options[g.active]) and g.active or "",
                 heights = clean_heights(g.heights, options),

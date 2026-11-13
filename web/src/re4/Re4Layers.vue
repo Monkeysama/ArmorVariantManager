@@ -6,7 +6,7 @@ import { computed, reactive, ref, shallowRef } from 'vue';
 import { ElButton, ElInput, ElOption, ElSelect, ElSwitch } from '@reff/ui';
 import type { Re4Translate } from './i18n';
 import type { Re4Perform, Re4SksRefs, Re4Snapshot, Re4Values } from './types';
-import { keyOf, shortSlot, splitKey, usersOf } from './util';
+import { baseLabel, keyOf, labelOf, shortSlot, splitKey, stateLabel, usersOf } from './util';
 import { usePointerReorder } from './reorder';
 
 // 整套造型 / 状态组的编辑页（两个页签共用）。可折叠的栏默认收起。
@@ -64,14 +64,15 @@ function clash(a: string, b: string, key: string) {
 const groupIndex = computed(() => new Map((props.snapshot.groups ?? []).map((g, i) => [g.name, i])));
 // 组和组之间取值不同的重叠:below = 被下面的组覆盖,above = 覆盖上面的组
 const overlaps = computed(() => {
-  const out: Record<string, { below: { name: string; n: number }[]; above: { name: string; n: number }[] }> = {};
+  type Overlap = { name: string; label?: string; n: number };
+  const out: Record<string, { below: Overlap[]; above: Overlap[] }> = {};
   const gs = props.snapshot.groups ?? [];
   for (const [i, g] of gs.entries()) {
-    const below: { name: string; n: number }[] = [], above: { name: string; n: number }[] = [];
+    const below: Overlap[] = [], above: Overlap[] = [];
     for (const [j, h] of gs.entries()) {
       if (i === j) continue;
       const n = Object.keys(writes.value[g.name] ?? {}).filter(k => clash(g.name, h.name, k)).length;
-      if (n) (j > i ? below : above).push({ name: h.name, n });
+      if (n) (j > i ? below : above).push({ name: h.name, label: h.label, n });
     }
     out[g.name] = { below, above };
   }
@@ -90,12 +91,12 @@ const { from: dragFrom, drop: dropAt, start: startDrag } = usePointerReorder('.r
   const g = props.snapshot.groups?.[from];
   if (g && !props.busy) return props.perform({ kind: 'group-move', ...c(), group: g.name, offset: to - from });
 });
-const stateName = (i?: number) => i ? props.snapshot.states?.[i - 1]?.name ?? '' : '';
+const stateName = (i?: number) => stateLabel(props.snapshot.states ?? [], i);
 
 interface Card {
-  id: string; isBase: boolean; name: string; active: string; effective?: string; fromState?: number; bases?: string[];
+  id: string; isBase: boolean; name: string; label?: string; active: string; effective?: string; fromState?: number; bases?: string[];
   multi?: boolean; actives?: string[];
-  options: { name: string; values: Re4Values; match?: { status: string; skipped: string[] }; height?: number; palette?: string; dissolve?: string; sks?: Re4SksRefs;
+  options: { name: string; label?: string; values: Re4Values; match?: { status: string; skipped: string[] }; height?: number; palette?: string; dissolve?: string; sks?: Re4SksRefs;
     on?: boolean; effective?: boolean; fromState?: number }[];
 }
 const cards = computed<Card[]>(() => {
@@ -104,7 +105,7 @@ const cards = computed<Card[]>(() => {
     return [{ id: 'base', isBase: true, name: props.t('tabBase'), active: b.active, effective: b.effective, fromState: b.fromState,
       options: b.presets }];
   }
-  return (props.snapshot.groups ?? []).map(g => ({ id: 'g:' + g.name, isBase: false, name: g.name, active: g.active,
+  return (props.snapshot.groups ?? []).map(g => ({ id: 'g:' + g.name, isBase: false, name: g.name, label: g.label, active: g.active,
     effective: g.effective, fromState: g.fromState, options: g.options, bases: Array.isArray(g.bases) ? g.bases : [],
     multi: g.multi === true, actives: Array.isArray(g.actives) ? g.actives : [] }));
 });
@@ -156,14 +157,17 @@ function bulk(card: Card, option: string, keys: string[], op: 'none' | 'off' | '
 }
 const valueOf = (values: Re4Values, key: string) => values[key] === true ? 'on' : values[key] === false ? 'off' : 'none';
 
-// 整套造型预设 / 状态组选项的行内改名;失败(重名 / 非法)就把输入框恢复成原名。展开状态按名字记,改名后跟着搬
-async function renameOption(card: Card, old: string, input: HTMLInputElement) {
+// 整套造型预设 / 状态组选项的行内改名;失败(重名 / 非法)就把输入框恢复成原名。展开状态按名字记,改名后跟着搬。
+// 框里是显示名:英文界面且有英文名时改的是英文名,名字(引用键)不变,展开状态也不用搬(Lua OpsV3.rename_base / rename_option)
+async function renameOption(card: Card, opt: Card['options'][number], input: HTMLInputElement) {
+  const old = opt.name, shown = labelOf(opt);
   const name = input.value.trim();
-  if (!name || name === old) { input.value = old; return; }
+  if (!name || name === shown) { input.value = shown; return; }
   const ok = card.isBase
     ? await props.perform({ kind: 'base-rename', ...c(), preset: old, name })
     : await props.perform({ kind: 'option-rename', ...c(), group: card.name, option: old, name });
-  if (!ok) { input.value = old; return; }
+  if (!ok) { input.value = shown; return; }
+  if (opt.label !== undefined) return;
   const from = card.id + '|' + old;
   if (open.delete(from)) open.add(card.id + '|' + name);
 }
@@ -221,10 +225,12 @@ const itemKey = (card: Card, option: string) => hotkeyFor(props.snapshot, itemTa
 // 结构绑了轮换键:每一行外面直接给「参与轮换」开关(不用展开);没绑时单项选键在展开的工具栏里
 // 卡片按名字做键，改名后展开状态要跟着搬到新名字上，否则改完就收起了
 async function renameGroup(card: Card, input: HTMLInputElement) {
+  const shown = labelOf(card);
   const name = input.value.trim();
-  if (!name || name === card.name) { input.value = card.name; return; }
+  if (!name || name === shown) { input.value = shown; return; }
   const ok = await props.perform({ kind: 'group-rename', ...c(), group: card.name, name });
-  if (!ok) { input.value = card.name; return; }
+  if (!ok) { input.value = shown; return; }
+  if (card.label !== undefined) return;   // 改的是英文名,卡片的键不变
   const from = card.id, to = 'g:' + name;
   for (const k of [...open]) {
     if (k === from) { open.delete(k); open.add(to); } else if (k.startsWith(from + '|')) { open.delete(k); open.add(to + k.slice(from.length)); }
@@ -272,17 +278,17 @@ function nameTitle(card: Card, key: string) {
         <!-- 整套造型只有这一栏,不折叠 -->
         <button v-if="!card.isBase" class="re4-caret" :aria-expanded="open.has(card.id)" @click="toggle(open, card.id)">{{ open.has(card.id) ? '▾' : '▸' }}</button>
         <!-- 同条件状态：展开时名字就是输入框，回车或离开即改名 -->
-        <input v-if="!card.isBase && open.has(card.id)" class="re4-sname-input" :value="card.name" :aria-label="t('groupName')" :disabled="busy"
+        <input v-if="!card.isBase && open.has(card.id)" class="re4-sname-input" :value="labelOf(card)" :aria-label="t('groupName')" :disabled="busy"
           @change="e => renameGroup(card, e.target as HTMLInputElement)">
-        <span v-else class="re4-panel-title" :title="card.isBase ? undefined : t('optionsCount', card.options.length) + ' · ' + t('materialsCount', setCount(card))">{{ card.name }}</span>
+        <span v-else class="re4-panel-title" :title="card.isBase ? undefined : t('optionsCount', card.options.length) + ' · ' + t('materialsCount', setCount(card))">{{ labelOf(card) }}</span>
         <!-- 信息区可收缩，操作按钮固定在右侧同一行 -->
         <span class="re4-gmeta">
           <!-- 状态组的选项数、材质数不占标题栏(窄屏时挤掉名字),放在名字的悬停提示里 -->
           <span v-if="card.isBase" class="re4-muted re4-small">{{ t('baseCount', card.options.length) }}</span>
           <span v-if="card.fromState" class="re4-tag ok">{{ t('takenOverBy', stateName(card.fromState)) }}</span>
           <template v-if="!card.isBase">
-            <span v-for="o in overlaps[card.name]?.below ?? []" :key="'b' + o.name" class="re4-tag bad" :title="t('overlapHint')">{{ t('overriddenBy', o.name, o.n) }}</span>
-            <span v-for="o in overlaps[card.name]?.above ?? []" :key="'a' + o.name" class="re4-tag" :title="t('overlapHint')">{{ t('overrides', o.name, o.n) }}</span>
+            <span v-for="o in overlaps[card.name]?.below ?? []" :key="'b' + o.name" class="re4-tag bad" :title="t('overlapHint')">{{ t('overriddenBy', labelOf(o), o.n) }}</span>
+            <span v-for="o in overlaps[card.name]?.above ?? []" :key="'a' + o.name" class="re4-tag" :title="t('overlapHint')">{{ t('overrides', labelOf(o), o.n) }}</span>
           </template>
         </span>
         <span class="re4-gacts">
@@ -297,7 +303,7 @@ function nameTitle(card: Card, key: string) {
             <ElSelect :model-value="card.bases" multiple collapse-tags collapse-tags-tooltip size="small" style="width:10em" :disabled="busy"
               :placeholder="t('groupBasesAll')" :aria-label="t('groupBases')"
               @change="v => perform({ kind: 'group-bases', ...c(), group: card.name, bases: (v as string[]) ?? [] })">
-              <ElOption v-for="n in baseNames" :key="n" :value="n" :label="n" />
+              <ElOption v-for="n in baseNames" :key="n" :value="n" :label="baseLabel(snapshot, n)" />
             </ElSelect></label>
           <Re4HotkeyPick v-if="!card.multi" :snapshot="snapshot" :busy="busy" :perform="perform" :t="t" :target="cycleTarget(card)" :label="t('hotkeyCycleRef')" />
           <ElButton v-if="card.isBase" size="small" :disabled="busy" @click="perform({ kind: 'base-new', ...c() }).then(ok => ok && open.add(card.id))">{{ t('newBase') }}</ElButton>
@@ -305,7 +311,7 @@ function nameTitle(card: Card, key: string) {
         </span>
       </div>
       <div v-if="confirming === card.id" class="re4-confirm">
-        <span>{{ t('delete') }}「{{ card.name }}」？<template v-if="users(card).length">{{ t('deleteWarnUsed', users(card).map(s => s.name).join('」「')) }}</template>{{ t('backupFirst') }}</span>
+        <span>{{ t('delete') }}「{{ labelOf(card) }}」？<template v-if="users(card).length">{{ t('deleteWarnUsed', users(card).map(labelOf).join('」「')) }}</template>{{ t('backupFirst') }}</span>
         <ElButton size="small" type="danger" @click="remove(card)">{{ t('confirmDelete') }}</ElButton><ElButton size="small" @click="confirming = ''">{{ t('cancel') }}</ElButton>
       </div>
 
@@ -323,13 +329,13 @@ function nameTitle(card: Card, key: string) {
               <button class="re4-caret" :aria-expanded="open.has(card.id + '|' + opt.name)" @click="toggle(open, card.id + '|' + opt.name)">{{ open.has(card.id + '|' + opt.name) ? '▾' : '▸' }}</button>
               <!-- 整套造型的预设 / 状态组的选项:名字就是输入框,点上就能改,回车或离开即改名,Esc 放弃 -->
               <span class="re4-oname">
-                <input v-if="card.multi" type="checkbox" :checked="opt.on === true" :disabled="busy" :aria-label="opt.name"
+                <input v-if="card.multi" type="checkbox" :checked="opt.on === true" :disabled="busy" :aria-label="labelOf(opt)"
                   @change="e => setOn(card, opt.name, (e.target as HTMLInputElement).checked)">
-                <input v-else type="radio" :name="card.id" :checked="card.active === opt.name" :disabled="busy" :aria-label="opt.name" @change="pick(card, opt.name)">
-                <input class="re4-oname-input" :value="opt.name" :aria-label="t('rename')" :disabled="busy"
-                  @change="e => renameOption(card, opt.name, e.target as HTMLInputElement)"
+                <input v-else type="radio" :name="card.id" :checked="card.active === opt.name" :disabled="busy" :aria-label="labelOf(opt)" @change="pick(card, opt.name)">
+                <input class="re4-oname-input" :value="labelOf(opt)" :aria-label="t('rename')" :disabled="busy"
+                  @change="e => renameOption(card, opt, e.target as HTMLInputElement)"
                   @keydown.enter="e => (e.target as HTMLInputElement).blur()"
-                  @keydown.esc="e => { const el = e.target as HTMLInputElement; el.value = opt.name; el.blur(); }">
+                  @keydown.esc="e => { const el = e.target as HTMLInputElement; el.value = labelOf(opt); el.blur(); }">
               </span>
               <span class="re4-oinfo">
                 <button class="re4-sum" @click="toggle(open, card.id + '|' + opt.name)">
@@ -337,7 +343,7 @@ function nameTitle(card: Card, key: string) {
                 </button>
                 <span v-if="opt.match?.status === 'mismatch'" class="re4-res broken">{{ t('mismatch') }}</span>
                 <span v-else-if="opt.match?.status === 'partial'" class="re4-res broken">{{ t('partialSlots', opt.match.skipped.join('、')) }}</span>
-                <span v-if="users(card, opt.name).length" class="re4-used">{{ t('usedBy', users(card, opt.name).map(s => s.name).join('」「')) }}</span>
+                <span v-if="users(card, opt.name).length" class="re4-used">{{ t('usedBy', users(card, opt.name).map(labelOf).join('」「')) }}</span>
                 <span v-if="opt.height !== undefined" class="re4-tag" :title="t('heightHint')">{{ t('heightTag', cmText(opt.height)) }}</span>
                 <span v-if="itemKey(card, opt.name) !== undefined" class="re4-tag" :title="t('hotkeyHint')">Alt+{{ itemKey(card, opt.name) }}</span>
                 <span v-if="opt.palette" class="re4-tag" :class="{ 're4-res broken': schemeMissing(opt.palette) }"
@@ -353,7 +359,7 @@ function nameTitle(card: Card, key: string) {
               </span>
             </div>
             <div v-if="confirming === card.id + '|' + opt.name" class="re4-confirm">
-              <span>{{ t('delete') }}「{{ opt.name }}」？<template v-if="users(card, opt.name).length">{{ t('deleteWarnUsed', users(card, opt.name).map(s => s.name).join('」「')) }}</template>{{ t('backupFirst') }}</span>
+              <span>{{ t('delete') }}「{{ labelOf(opt) }}」？<template v-if="users(card, opt.name).length">{{ t('deleteWarnUsed', users(card, opt.name).map(labelOf).join('」「')) }}</template>{{ t('backupFirst') }}</span>
               <ElButton size="small" type="danger" @click="remove(card, opt.name)">{{ t('confirmDelete') }}</ElButton><ElButton size="small" @click="confirming = ''">{{ t('cancel') }}</ElButton>
             </div>
             <div v-if="open.has(card.id + '|' + opt.name)" class="re4-mlist-wrap">

@@ -22,13 +22,36 @@ function M.slot_label(snap, id)
     return id
 end
 
+-- ---------------------------------------------------------------- 显示名(双语)
+-- 名字是引用键,发动作一律用 name;显示用 label(快照里只在和名字不同时才有,见 Reff.lua 的 label_if)。
+-- 对应 web/src/re4/util.ts 的 labelOf / baseLabel / groupLabel / optionLabel / stateLabel
+function M.label(x) return x and (x.label or x.name) or "" end
+function M.base_label(snap, name)
+    for _, p in ipairs((snap.base and snap.base.presets) or {}) do if p.name == name then return M.label(p) end end
+    return name
+end
+local function group_of(snap, name)
+    for _, g in ipairs(snap.groups or {}) do if g.name == name then return g end end
+end
+function M.group_label(snap, name)
+    local g = group_of(snap, name)
+    return g and M.label(g) or name
+end
+function M.option_label(snap, group, name)
+    local g = group_of(snap, group)
+    for _, o in ipairs(g and g.options or {}) do if o.name == name then return M.label(o) end end
+    return name
+end
+-- 第 i 个条件状态的显示名;states 省略时取 snap.states
+function M.state_label(states, i) return states[i or 0] and M.label(states[i]) or nil end
+
 local KIND_KEY = { active = "kindActive", partial = "kindPartial", outranked = "kindOutranked", idle = "kindIdle",
     off = "kindOff", paused = "kindPaused" }
 M.KIND_KEY = KIND_KEY
 
 function M.kind_text(st, states, t)
     local text = t(KIND_KEY[st.kind] or "kindIdle")
-    if st.kind == "outranked" and st.by and states[st.by] then text = text .. "，" .. t("coveredBy", states[st.by].name) end
+    if st.kind == "outranked" and st.by and states[st.by] then text = text .. "，" .. t("coveredBy", M.label(states[st.by])) end
     if st.holding and (st.kind == "active" or st.kind == "partial") then text = text .. "，" .. t("holding") end
     return text
 end
@@ -38,7 +61,7 @@ function M.result_text(r, states, t)
     if not r then return "", nil end
     if r.kind == "broken" then return t("broken"), "broken" end
     if r.kind == "win" then return t("win"), "ok" end
-    return t("coveredBy", (states[r.by or 0] or {}).name or "?"), "bad"
+    return t("coveredBy", M.state_label(states, r.by) or "?"), "bad"
 end
 
 local OP_TEXT = { ["<="] = "≤", ["<"] = "<", [">="] = "≥", [">"] = ">", ["=="] = "=", ["~="] = "≠" }
@@ -68,10 +91,13 @@ function M.condition_sentence(st, t)
     return t("sentenceWhen", joined) .. ((st.hold or 0) > 0 and t("sentenceHold", num_text(st.hold)) or "")
 end
 
-function M.target_sentence(st, t)
+function M.target_sentence(st, t, snap)
     local parts = {}
-    if st.base then parts[#parts + 1] = t("targetPair", t("baseTarget"), st.base) end
-    for _, tg in ipairs(st.targets) do parts[#parts + 1] = t("targetPair", tg.group, tg.option) end
+    if st.base then parts[#parts + 1] = t("targetPair", t("baseTarget"), snap and M.base_label(snap, st.base) or st.base) end
+    for _, tg in ipairs(st.targets) do
+        parts[#parts + 1] = t("targetPair", snap and M.group_label(snap, tg.group) or tg.group,
+            snap and M.option_label(snap, tg.group, tg.option) or tg.option)
+    end
     if st.weapons then
         parts[#parts + 1] = t("targetPair", t("weaponsTarget"), t(st.weapons == "all" and "weaponsAll" or "weaponsStowed"))
     end
@@ -110,7 +136,7 @@ end
 
 function M.names(list, sep)
     local out = {}
-    for i, s in ipairs(list) do out[i] = s.name end
+    for i, s in ipairs(list) do out[i] = M.label(s) end
     return table.concat(out, sep or "」「")
 end
 

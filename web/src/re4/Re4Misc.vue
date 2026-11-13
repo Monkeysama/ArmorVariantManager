@@ -4,7 +4,8 @@ import { computed, shallowRef } from 'vue';
 import { ElButton, ElSwitch } from '@reff/ui';
 import type { Documentation } from '../types';
 import type { Re4Translate } from './i18n';
-import type { Re4Perform, Re4Snapshot } from './types';
+import type { Re4Hotkey, Re4Perform, Re4Snapshot } from './types';
+import { baseLabel, optionLabel } from './util';
 import { describe } from './hotkeys';
 
 // 杂项:旧配置迁移(只有检测到旧配置时按钮才能点)、设置、帮助(默认收起)。溶解相关的设置在「溶解」页。
@@ -16,7 +17,9 @@ const helpOpen = shallowRef(false);
 const old = () => props.snapshot.configVersion === 2;
 // 快捷键总览:十个键各自绑的是什么(只在 v3 配置时有)
 const hotkeys = () => props.snapshot.hotkeys ?? [];
-const skipText = (skip: string[], kind: string) => skip.map(n => n === '' ? (kind === 'palette' ? props.t('paletteAlways') : props.t('none')) : n).join('、');
+// 跳过的项用显示名(双语)
+const skipText = (h: Re4Hotkey) => h.skip.map(n => n === '' ? (h.kind === 'palette' ? props.t('paletteAlways') : props.t('none'))
+  : h.kind === 'base' ? baseLabel(props.snapshot, n) : h.kind === 'group' ? optionLabel(props.snapshot, h.group ?? '', n) : n).join('、');
 const setting = (id:'weapon_hide_storage' | 'portrait_distance' | 'portrait_height' | 'block_game_mouse' | 'height_enabled' | 'new_features', value: boolean | number) =>
   props.perform({ kind: 'setting', id, value });
 </script>
@@ -29,8 +32,8 @@ const setting = (id:'weapon_hide_storage' | 'portrait_distance' | 'portrait_heig
       <span v-if="!hotkeys().length" class="re4-muted re4-small">{{ t('hotkeyEmpty') }}</span>
       <div v-for="h in hotkeys()" :key="h.digit" class="re4-row re4-hkrow">
         <span class="re4-tag">Alt+{{ h.digit }}</span>
-        <span>{{ describe(h, t) }}</span>
-        <span v-if="h.cycle && h.skip.length" class="re4-muted re4-small">{{ t('hotkeySkipped', skipText(h.skip, h.kind)) }}</span>
+        <span>{{ describe(snapshot, h, t) }}</span>
+        <span v-if="h.cycle && h.skip.length" class="re4-muted re4-small">{{ t('hotkeySkipped', skipText(h)) }}</span>
         <span class="re4-spacer"></span>
         <button class="re4-link" :disabled="busy" @click="perform({ kind: 'hotkey-clear', character: snapshot.character, digit: h.digit })">{{ t('heightClear') }}</button>
       </div>

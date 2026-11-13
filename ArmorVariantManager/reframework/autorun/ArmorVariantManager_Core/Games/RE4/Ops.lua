@@ -271,6 +271,10 @@ function Ops.duplicate_preset(layer, name)
         for g, v in pairs(layer.sks[name]) do m[g] = v end
         layer.sks[newn] = m
     end
+    -- v3 的英文显示名:副本带同样的 "_N" 后缀,英文界面里也看得出是哪个的副本
+    if type(layer.names_en) == "table" and type(layer.names_en[name]) == "string" then
+        layer.names_en[newn] = layer.names_en[name] .. newn:sub(#name + 1)
+    end
     local at =(order_index(layer, name) or #layer.order) + 1
     table.insert(layer.order, at, newn)
     layer.active = newn
@@ -288,6 +292,8 @@ function Ops.rename_preset(layer, old, new)
     if type(layer.palettes) == "table" then layer.palettes[new], layer.palettes[old] = layer.palettes[old], nil end
     if type(layer.dissolves) == "table" then layer.dissolves[new], layer.dissolves[old] = layer.dissolves[old], nil end
     if type(layer.sks) == "table" then layer.sks[new], layer.sks[old] = layer.sks[old], nil end
+    -- v3 的英文显示名(base.names_en / groups[i].names_en)跟着键走
+    if type(layer.names_en) == "table" then layer.names_en[new], layer.names_en[old] = layer.names_en[old], nil end
     local i = order_index(layer, old)
     if i then layer.order[i] = new end
     if layer.active == old then layer.active = new end
@@ -306,6 +312,7 @@ function Ops.delete_preset(layer, name)
     if type(layer.palettes) == "table" then layer.palettes[name] = nil end
     if type(layer.dissolves) == "table" then layer.dissolves[name] = nil end
     if type(layer.sks) == "table" then layer.sks[name] = nil end
+    if type(layer.names_en) == "table" then layer.names_en[name] = nil end
     local i = order_index(layer, name)
     if i then table.remove(layer.order, i) end
     if layer.active == name then layer.active = "" end

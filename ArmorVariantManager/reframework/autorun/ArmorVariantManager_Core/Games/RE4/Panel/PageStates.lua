@@ -172,7 +172,7 @@ local function draw_targets(ctx, k, st, x, y, w)
     local names = {}
     for _, p in ipairs(snap.base.presets) do names[p.name] = true end
     if st.base and not names[st.base] then bl[#bl + 1] = st.base .. " · " .. t("moved"); bv[#bv + 1] = st.base end
-    for _, p in ipairs(snap.base.presets) do bl[#bl + 1] = p.name; bv[#bv + 1] = p.name end
+    for _, p in ipairs(snap.base.presets) do bl[#bl + 1] = U.label(p); bv[#bv + 1] = p.name end
     local bx = x + sel_w + 6
     select_values("sbase:" .. k, bx, cy + 1, sel_w, bl, bv, st.base or "", nil, function(val)
         ctx.act({ kind = "state-base", index = k, preset = val ~= "" and val or nil })
@@ -217,7 +217,7 @@ local function draw_targets(ctx, k, st, x, y, w)
         local found
         for _, g in ipairs(groups) do if g.name == tg.group then found = g end end
         if not found then gl[#gl + 1] = tg.group .. " · " .. t("moved"); gv[#gv + 1] = tg.group end
-        for _, g in ipairs(groups) do gl[#gl + 1] = g.name; gv[#gv + 1] = g.name end
+        for _, g in ipairs(groups) do gl[#gl + 1] = U.label(g); gv[#gv + 1] = g.name end
         select_values("tgroup:" .. k .. ":" .. ti, x, cy + 1, sel_w, gl, gv, tg.group, nil, function(val)
             ctx.act({ kind = "state-target-group", index = k, target = ti, group = val })
         end)
@@ -225,7 +225,7 @@ local function draw_targets(ctx, k, st, x, y, w)
         local ol, ov = {}, {}
         local has = false
         for _, o in ipairs(found and found.options or {}) do
-            ol[#ol + 1] = o.name; ov[#ov + 1] = o.name
+            ol[#ol + 1] = U.label(o); ov[#ov + 1] = o.name
             if o.name == tg.option then has = true end
         end
         if not has then table.insert(ol, 1, tg.option .. " · " .. t("moved")); table.insert(ov, 1, tg.option) end
@@ -316,19 +316,19 @@ function Page.draw(ctx, x, y, w)
         if c2 then ctx.act({ kind = "state-field", index = k, field = "enabled", value = en }) end
         right = right - tw - 10
         if not is_open then
-            local nw = D.text_mid(st.name, hx, cy + 4, ROW, st.enabled and C.text or C.muted, W.bold(), 200)
+            local nw = D.text_mid(U.label(st), hx, cy + 4, ROW, st.enabled and C.text or C.muted, W.bold(), 200)
             local sx = hx + nw + 10
             if st.exclusive then sx = sx + W.tag(t("exclusive"), sx, cy + 7, C.brass) + 8 end
-            local sum = U.condition_sentence(st, t) .. "　→　" .. U.target_sentence(st, t)
+            local sum = U.condition_sentence(st, t) .. "　→　" .. U.target_sentence(st, t, snap)
             local sw = D.text_mid(sum, sx, cy + 4, ROW, C.muted, W.small(), max(0, right - sx))
             W.tooltip(sum, sx, cy + 4, sw, ROW)
             cy = cy + ROW + 8
         else
             local HF = W.flow(hx, cy + 4, right - hx, 8, ROW)
             local nx, ny = HF:place(min(200, HF:remaining()), ROW)
-            W.commit_box(ps.drafts, "sname:" .. k, nx, ny + 1, min(200, right - nx), 24, st.name, t("stateName"), function(name)
+            W.commit_box(ps.drafts, "sname:" .. k, nx, ny + 1, min(200, right - nx), 24, U.label(st), t("stateName"), function(name)
                 name = name:gsub("^%s+", ""):gsub("%s+$", "")
-                if name ~= "" and name ~= st.name then ctx.act({ kind = "state-rename", index = k, name = name }) end
+                if name ~= "" and name ~= U.label(st) then ctx.act({ kind = "state-rename", index = k, name = name }) end
             end)
             local ew = W.tbutton_w(t("exclusive"))
             local ex, ey = HF:place(ew, ROW)
@@ -351,7 +351,7 @@ function Page.draw(ctx, x, y, w)
         end
 
         if ps.confirming == k then
-            local r, h = W.confirm(x + 10, cy, w - 20, t("delete") .. "「" .. st.name .. "」？", t("confirmDelete"), t("cancel"), "danger", C.error)
+            local r, h = W.confirm(x + 10, cy, w - 20, t("delete") .. "「" .. U.label(st) .. "」？", t("confirmDelete"), t("cancel"), "danger", C.error)
             if r then ps.confirming = nil end
             if r == "yes" then
                 if ctx.act({ kind = "state-delete", index = k }) then

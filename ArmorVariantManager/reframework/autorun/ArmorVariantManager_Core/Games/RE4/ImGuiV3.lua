@@ -23,7 +23,7 @@ end
 
 -- d = { T, config, kind_id, target, context, source, TM, commit(changed, reapply), ui(持久表),
 --       ui_tree(label), ui_tree_pop(), ui_w(), preset_view, apply_preset, save_current_as_preset,
---       dismiss_preset_hint, restore_autosave, panel_key(独立面板快捷键文字,不可用时 nil), reff(是否加载了 REFF) }
+--       dismiss_preset_hint, restore_autosave, lang("zh" / "en",显示名用), panel_key(独立面板快捷键文字,不可用时 nil), reff(是否加载了 REFF) }
 function ImGuiV3.draw(d)
     local T, cfg, ui = d.T, d.config, d.ui
     local states = cfg.conditions.states
@@ -40,17 +40,21 @@ function ImGuiV3.draw(d)
         imgui.text(T("v3_imgui_hint_none"))
     end
 
-    local function state_name(i) return (states[i] or {}).name or "?" end
-    local function layer_combo(label, key, layer, options, active, with_none, claimed)
+    -- 显示名(双语,见 ModelV3 的 *_label);d.lang 没给时按中文
+    local lang = d.lang or "zh"
+    local function state_name(i) return states[i] and M3.state_label(states[i], lang) or "?" end
+    -- lab(名字) -> 显示名
+    local function layer_combo(label, key, layer, options, active, with_none, claimed, lab)
         if claimed then
-            colored(string.format("%s: %s  (%s)", label, tostring(v3.picks[key] or T("v3_none")),
+            local pick = v3.picks[key]
+            colored(string.format("%s: %s  (%s)", label, pick and pick ~= "" and lab(pick) or T("v3_none"),
                 string.format(T("v3_taken_by"), state_name(claimed))), GREEN)
             return
         end
         local labels, cur = {}, 1
         if with_none then labels[1] = T("v3_none") end
         for _, n in ipairs(options) do
-            labels[#labels + 1] = n
+            labels[#labels + 1] = lab(n)
             if n == active then cur = #labels end
         end
         if #labels == 0 then imgui.text(label .. ": " .. T("v3_none")); return end
@@ -62,26 +66,28 @@ function ImGuiV3.draw(d)
         end
     end
 
-    layer_combo(T("base_layer"), "base", "base", cfg.base.order, cfg.base.active, false, (info.layers.base or {}).prio)
+    layer_combo(T("base_layer"), "base", "base", cfg.base.order, cfg.base.active, false, (info.layers.base or {}).prio,
+        function(n) return M3.base_label(cfg, n, lang) end)
     for _, g in ipairs(cfg.groups) do
         if M3.is_multi(g) then
             -- 复选组:每个选项一个勾选框;被条件状态接管的选项只显示
-            imgui.text(g.name)
+            imgui.text(M3.group_label(g, lang))
             for _, opt in ipairs(g.order) do
                 local okey = M3.option_key(g.name, opt)
                 local by = (info.layers[okey] or {}).prio
                 imgui.same_line()
                 if by then
-                    colored(string.format("[%s] %s (%s)", v3.picks[okey] and "x" or " ", opt,
+                    colored(string.format("[%s] %s (%s)", v3.picks[okey] and "x" or " ", M3.option_label(g, opt, lang),
                         string.format(T("v3_taken_by"), state_name(by))), GREEN)
                 else
-                    local ch, on = imgui.checkbox(opt .. "###v3m_" .. okey, M3.is_on(g, opt))
+                    local ch, on = imgui.checkbox(M3.option_label(g, opt, lang) .. "###v3m_" .. okey, M3.is_on(g, opt))
                     if ch then d.commit(OpsV3.set_option_on(cfg, g.name, opt, on)) end
                 end
             end
         else
             local key = M3.layer_key(g.name)
-            layer_combo(g.name, key, g.name, g.order, g.active, true, (info.layers[key] or {}).prio)
+            layer_combo(M3.group_label(g, lang), key, g.name, g.order, g.active, true, (info.layers[key] or {}).prio,
+                function(n) return M3.option_label(g, n, lang) end)
         end
     end
 
@@ -94,7 +100,7 @@ function ImGuiV3.draw(d)
         imgui.same_line()
         local s = v3.status[i] or { kind = "idle" }
         local k = KIND[s.kind] or KIND.idle
-        local text = st.name .. "  -  " .. T(k[1])
+        local text = M3.state_label(st, lang) .. "  -  " .. T(k[1])
         if s.kind == "outranked" and s.by then text = text .. " (" .. string.format(T("v3_covered_by"), state_name(s.by)) .. ")" end
         colored(text, k[2])
     end

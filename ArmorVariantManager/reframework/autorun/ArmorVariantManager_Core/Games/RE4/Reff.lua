@@ -130,10 +130,13 @@ function Reff.new(deps)
         return { kind = r.kind, by = r.by }
     end
 
+    -- 显示名(双语,见 ModelV3 的 *_label):和名字一样时不发,界面上没有 label 就显示 name
+    local function label_if(name, label) if label ~= name then return label end end
+
     local function state_row(st, i, v3, context)
         local s = v3.status[i] or { kind = "idle" }
         local t = v3.targets[i] or {}
-        local row = { name = st.name, enabled = st.enabled, exclusive = st.exclusive, logic = st.logic,
+        local row = { name = st.name, label = label_if(st.name, M3.state_label(st, language())), enabled = st.enabled, exclusive = st.exclusive, logic = st.logic,
             hold = st.hold, fadeIn = st.fade_in, fadeOut = st.fade_out, base = st.base,
             baseResult = result_of(t.base), kind = s.kind, by = s.by, holding = s.holding == true,
             hp = st.hp and { upper = st.hp.upper, lower = st.hp.lower, invert = st.hp.invert } or nil,
@@ -370,7 +373,8 @@ function Reff.new(deps)
         local base_layer = info.layers.base or {}
         snapshot.base = { active = base.active, effective = v3.picks.base, fromState = base_layer.prio, presets = {} }
         for _, name in ipairs(base.order) do
-            snapshot.base.presets[#snapshot.base.presets + 1] = { name = name, values = values_of(base.presets[name]),
+            snapshot.base.presets[#snapshot.base.presets + 1] = { name = name, label = label_if(name, M3.base_label(config, name, language())),
+                values = values_of(base.presets[name]),
                 match = base_match(source, base.presets[name]), height = (base.heights or {})[name],
                 palette = (base.palettes or {})[name], dissolve = (base.dissolves or {})[name], sks = (base.sks or {})[name] }
         end
@@ -379,11 +383,11 @@ function Reff.new(deps)
         for _, g in ipairs(config.groups) do
             local key = M3.layer_key(g.name)
             local multi = M3.is_multi(g)
-            local row = { name = g.name, active = g.active, effective = (not multi) and v3.picks[key] or nil,
+            local row = { name = g.name, label = label_if(g.name, M3.group_label(g, language())), active = g.active, effective = (not multi) and v3.picks[key] or nil,
                 fromState = (not multi) and (info.layers[key] or {}).prio or nil, options = {}, bases = g.bases,
                 shown = M3.group_shown_for(g, v3.picks.base), multi = multi, actives = multi and (g.actives or {}) or nil }
             for _, name in ipairs(g.order) do
-                local o = { name = name, values = values_of(g.options[name]), height = (g.heights or {})[name],
+                local o = { name = name, label = label_if(name, M3.option_label(g, name, language())), values = values_of(g.options[name]), height = (g.heights or {})[name],
                     palette = (g.palettes or {})[name], dissolve = (g.dissolves or {})[name], sks = (g.sks or {})[name] }
                 if multi then
                     -- 复选组:每个选项各自的手动开关、这一帧是否生效、被哪个条件状态接管
@@ -560,7 +564,7 @@ function Reff.new(deps)
         -- 整套造型。新建 = 抓当前外观;删除和重新抓取不可逆,先留还原点
         ["base-new"] = function(_, cfg, cur) return Ops.new_preset(cfg.base, Utils.capture_current_as_preset(cur.target.source)) end,
         ["base-duplicate"] = function(p, cfg) return Ops.duplicate_preset(cfg.base, p.preset) end,
-        ["base-rename"] = function(p, cfg) return OpsV3.rename_base(cfg, p.preset, p.name) end,
+        ["base-rename"] = function(p, cfg) return OpsV3.rename_base(cfg, p.preset, p.name, language()) end,
         ["base-move"] = function(p, cfg) return Ops.move_preset(cfg.base, p.preset, integer(p.offset)) end,
         ["base-delete"] = function(p, cfg, cur)
             if not cfg.base.presets[p.preset] then return false end
@@ -728,7 +732,7 @@ function Reff.new(deps)
 
         -- 状态组
         ["group-new"] = function(p, cfg) return OpsV3.new_group(cfg, str(p.name)) end,
-        ["group-rename"] = function(p, cfg) return OpsV3.rename_group(cfg, p.group, str(p.name)) end,
+        ["group-rename"] = function(p, cfg) return OpsV3.rename_group(cfg, p.group, str(p.name), language()) end,
         ["group-move"] = function(p, cfg) return OpsV3.move_group(cfg, p.group, integer(p.offset)) end,
         -- 造型归属:bases = 整套造型预设名的列表,空 = 全部
         ["group-bases"] = function(p, cfg)
@@ -743,7 +747,7 @@ function Reff.new(deps)
         end,
         ["option-new"] = function(p, cfg) return OpsV3.new_option(cfg, p.group, str(p.name)) end,
         ["option-duplicate"] = function(p, cfg) return OpsV3.duplicate_option(cfg, p.group, p.option) end,
-        ["option-rename"] = function(p, cfg) return OpsV3.rename_option(cfg, p.group, p.option, str(p.name)) end,
+        ["option-rename"] = function(p, cfg) return OpsV3.rename_option(cfg, p.group, p.option, str(p.name), language()) end,
         ["option-move"] = function(p, cfg) return OpsV3.move_option(cfg, p.group, p.option, integer(p.offset)) end,
         ["option-delete"] = function(p, cfg, cur)
             local g = M3.find_group(cfg, p.group)
@@ -763,7 +767,7 @@ function Reff.new(deps)
         ["state-new"] = function(p, cfg) return OpsV3.new_state(cfg, str(p.name)) end,
         ["state-delete"] = function(p, cfg) return OpsV3.delete_state(cfg, integer(p.index)) end,
         ["state-move"] = function(p, cfg) return OpsV3.move_state(cfg, integer(p.from), integer(p.to)) end,
-        ["state-rename"] = function(p, cfg) return OpsV3.rename_state(cfg, integer(p.index), str(p.name)) end,
+        ["state-rename"] = function(p, cfg) return OpsV3.rename_state(cfg, integer(p.index), str(p.name), language()) end,
         ["state-field"] = function(p, cfg) return OpsV3.set_state_field(cfg, integer(p.index), p.field, p.value) end,
         ["state-hp"] = function(p, cfg)
             return OpsV3.set_state_hp(cfg, integer(p.index), type(p.hp) == "table" and p.hp or nil)

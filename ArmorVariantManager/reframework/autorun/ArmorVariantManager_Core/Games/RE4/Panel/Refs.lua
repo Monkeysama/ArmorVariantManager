@@ -5,6 +5,7 @@
 local T = require("ArmorVariantManager_Core.Games.RE4.Panel.Theme")
 local D = require("ArmorVariantManager_Core.Games.RE4.Panel.Draw")
 local W = require("ArmorVariantManager_Core.Games.RE4.Panel.Widgets")
+local U = require("ArmorVariantManager_Core.Games.RE4.Panel.Common")
 
 local C = T.c
 local R = {}
@@ -28,16 +29,18 @@ function R.cycle_of(snap, target)
         if h.cycle and structure_of(h) == structure_of(target) then return h end
     end
 end
-local function describe(h, t)
-    local where = h.kind == "base" and t("tabBase") or (h.kind == "group" and t("hotkeyGroup", h.group or "") or t("hotkeyPalette"))
+local function describe(snap, h, t)
+    local where = h.kind == "base" and t("tabBase") or (h.kind == "group" and t("hotkeyGroup", U.group_label(snap, h.group or "")) or t("hotkeyPalette"))
     if is_cycle(h) then return where .. " · " .. t("hotkeyCycle") end
     local item = item_of(h) or ""
-    if item == "" then item = h.kind == "palette" and t("paletteAlways") or t("none") end
+    if item == "" then item = h.kind == "palette" and t("paletteAlways") or t("none")
+    elseif h.kind == "base" then item = U.base_label(snap, item)
+    elseif h.kind == "group" then item = U.option_label(snap, h.group, item) end
     return where .. " · " .. item
 end
 local function digit_label(snap, d, self, t)
     for _, h in ipairs(snap.hotkeys or {}) do
-        if h.digit == d and not same_target(h, self) then return t("hotkeyUsedBy", "Alt+" .. d, describe(h, t)) end
+        if h.digit == d and not same_target(h, self) then return t("hotkeyUsedBy", "Alt+" .. d, describe(snap, h, t)) end
     end
     return "Alt+" .. d
 end

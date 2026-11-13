@@ -2942,6 +2942,7 @@ function Main.start(ctx)
                 TM = TransformManager, ui = ui_state.v3,
                 commit = function(changed, reapply) return commit(kind_id, changed, reapply) end,
                 ui_tree = ui_tree, ui_tree_pop = ui_tree_pop, ui_w = ui_w,
+                lang = global_config.language == "zh" and "zh" or "en",
                 preset_view = preset_view, preset_label = preset_lib.label, apply_preset = apply_preset, save_current_as_preset = save_current_as_preset,
                 dismiss_preset_hint = dismiss_preset_hint, restore_autosave = restore_autosave,
                 -- 提示里只列真的有的编辑入口:独立面板画得出来才给它的快捷键,REFF 加载了才提 Home
@@ -3302,6 +3303,7 @@ function Main.start(ctx)
             return out
         end
         local zh = function() return global_config.language == "zh" end
+        local lang = function() return zh() and "zh" or "en" end
         hotkey_logic = Hotkeys.new({
             key_down = key_down,
             alt_down = function() return key_down(Hotkeys.ALT_VK) end,
@@ -3317,7 +3319,7 @@ function Main.start(ctx)
                 elseif b.kind == "palette" then target = b.scheme
                 else target = b.option end
                 local where = b.kind == "base" and (zh() and "整套造型" or "Full outfit")
-                    or b.kind == "group" and ((zh() and "状态组「" or "State group \"") .. b.group .. (zh() and "」" or "\""))
+                    or b.kind == "group" and ((zh() and "状态组「" or "State group \"") .. ModelV3.group_label_of(cfg, b.group, lang()) .. (zh() and "」" or "\""))
                     or (zh() and "调色" or "Colours")
                 local suffix = "  (Alt+" .. digit .. ")"
                 if target == nil then
@@ -3340,8 +3342,10 @@ function Main.start(ctx)
                 else
                     commit(ctx.kind_id, OpsV3.set_palette_active(cfg, target))
                 end
-                local label = target
-                if on_label then label = target .. (zh() and "：" or ": ") .. on_label end
+                -- 显示名(双语):调色方案没有英文名
+                local label = b.kind == "base" and ModelV3.base_label(cfg, target, lang())
+                    or b.kind == "group" and ModelV3.option_label_of(cfg, b.group, target, lang()) or target
+                if on_label then label = label .. (zh() and "：" or ": ") .. on_label end
                 if target == "" then
                     label = b.kind == "palette" and (zh() and "初始" or "Original") or (zh() and "（无）" or "(none)")
                 end
@@ -3350,8 +3354,9 @@ function Main.start(ctx)
                 local by = layer_key and ctx.layers and ctx.layers[layer_key] and ctx.layers[layer_key].prio
                 local st = by and cfg.conditions.states[by]
                 if st then
-                    lines[2] = zh() and ("条件「" .. st.name .. "」接管中，结束后生效")
-                        or ("Condition \"" .. st.name .. "\" is in control; applies when it ends")
+                    local sn = ModelV3.state_label(st, lang())
+                    lines[2] = zh() and ("条件「" .. sn .. "」接管中，结束后生效")
+                        or ("Condition \"" .. sn .. "\" is in control; applies when it ends")
                 end
                 Hotkeys.toast(lines)
             end,

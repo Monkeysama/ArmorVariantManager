@@ -244,6 +244,10 @@ export function installRe4Fixture() {
 
   // 界面语言(同 Lua 的 Ops.follow_reff_language:REFF 的语言变了才跟)
   let language: 'zh' | 'en' = 'zh';
+  // 英文显示名(Lua 是 base.names_en / groups[i].name_en / names_en / states[i].name_en;夹具从简按名字查,
+  // 只设一部分,没设的照样显示中文名)。英文界面且有英文名时快照才带 label
+  const EN: Record<string, string> = { '原版': 'Original', '面部': 'Face', '干净': 'Clean', '血迹重': 'Bloody', '濒死': 'Near death', '外套': 'Jacket', '破损': 'Torn' };
+  const lab = (name: string) => language === 'en' && EN[name] ? EN[name] : undefined;
   let reffLanguage = '';
   function snapshot(): Re4Snapshot {
     const base: Re4Snapshot = { game: 'RE4', version: '4.3.4', language, settings: { ...settings },
@@ -285,7 +289,7 @@ export function installRe4Fixture() {
     const used = (n: string) => Object.values(palRefs).filter(v => v === n).length + config.states.filter(st => st.palette === n).length;
     const states: Re4State[] = config.states.map((st, k) => ({
       palette: st.palette, paletteResult: r.results[k].palette, dissolve: st.dissolve,
-      name: st.name, enabled: st.enabled, exclusive: st.exclusive, logic: st.logic, hold: st.hold, fadeIn: st.fade_in, fadeOut: st.fade_out,
+      name: st.name, label: lab(st.name), enabled: st.enabled, exclusive: st.exclusive, logic: st.logic, hold: st.hold, fadeIn: st.fade_in, fadeOut: st.fade_out,
       hp: st.hp, base: st.base, baseResult: r.results[k].base, kind: r.status[k].kind, by: r.status[k].by, holding: false,
       targets: st.targets.map((t, j) => ({ ...t, result: r.results[k].targets[j] })),
       conditions: st.conditions.map(c => {
@@ -301,9 +305,9 @@ export function installRe4Fixture() {
       slots: Object.entries(catalog).map(([id, mats]) => ({ id, label: labels[id], mirrored: false, materials: mats.map(name => ({ name, note: config.notes[`${id}/${name}`] })) })),
       look: allKeys.map(k => { const [slot, material] = k.split('/'); return { slot, material, on: look[k] !== false }; }),
       base: { active: config.base.active, effective: effBase, fromState: r.claims.base?.i,
-        presets: config.base.order.map(name => ({ name, values: config.base.presets[name], match: { status: 'ok', skipped: [] }, height: heights['base|' + name], palette: palRefs['base|' + name], dissolve: disRefs['base|' + name] })) },
-      groups: config.groups.map(g => ({ name: g.name, active: g.active, effective: pick('g:' + g.name, g.active),
-        fromState: r.claims['g:' + g.name]?.i, options: g.order.map(name => ({ name, values: g.options[name], height: heights[`g:${g.name}|${name}`], palette: palRefs[`g:${g.name}|${name}`], dissolve: disRefs[`g:${g.name}|${name}`] })) })),
+        presets: config.base.order.map(name => ({ name, label: lab(name), values: config.base.presets[name], match: { status: 'ok', skipped: [] }, height: heights['base|' + name], palette: palRefs['base|' + name], dissolve: disRefs['base|' + name] })) },
+      groups: config.groups.map(g => ({ name: g.name, label: lab(g.name), active: g.active, effective: pick('g:' + g.name, g.active),
+        fromState: r.claims['g:' + g.name]?.i, options: g.order.map(name => ({ name, label: lab(name), values: g.options[name], height: heights[`g:${g.name}|${name}`], palette: palRefs[`g:${g.name}|${name}`], dissolve: disRefs[`g:${g.name}|${name}`] })) })),
       states, locating, ...(solo ? { solo: true } : {}), height, heightSource, heightOverride: { ...heightOverride },
       palette: paletteOpen ? paletteSnapshot() : undefined,
       hotkeys: Object.values(hotkeys).sort((x, y) => x.digit - y.digit).map(h => ({ ...h, skip: [...h.skip] })),

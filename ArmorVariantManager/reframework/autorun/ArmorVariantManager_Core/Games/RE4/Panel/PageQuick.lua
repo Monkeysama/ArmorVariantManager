@@ -10,14 +10,14 @@ local C = T.c
 local max = math.max
 local Page = {}
 
-local function owner(snap, i) return i and (snap.states[i] or {}).name or "" end
+local function owner(snap, i) return U.state_label(snap.states or {}, i) or "" end
 
 -- 复选组的一行:左边名字;右边先是「（无）」按钮(框同分段按钮,点一下关掉全部),
 -- 后面各选项用勾选框紧凑排列,按各自的接管锁定。返回高度
 local function multi_row(ctx, x, y, w, g)
     local snap, t = ctx.snap, ctx.t
     local name_w = math.min(180, w * 0.28)
-    D.text_mid(g.name, x, y, 26, C.text, W.body(), name_w - 8)
+    D.text_mid(U.label(g), x, y, 26, C.text, W.body(), name_w - 8)
     local any = false
     for _, o in ipairs(g.options) do if o.on then any = true end end
     local F = W.flow(x + name_w, y, w - name_w, 10, 26)
@@ -30,24 +30,24 @@ local function multi_row(ctx, x, y, w, g)
         local locked = o.fromState
         local on
         if locked then on = o.effective == true else on = o.on == true end
-        local cw = 16 + 8 + D.measure(W.body(), o.name) + 6
+        local cw = 16 + 8 + D.measure(W.body(), U.label(o)) + 6
         local bx, by = F:place(cw, 26)
         local ch = W.checkbox("", bx, by, on, { h = 26, disabled = locked ~= nil })
         if ch then ctx.act({ kind = "option-on", group = g.name, option = o.name, on = not o.on }) end
-        D.text_mid(o.name, bx + 22, by, 26, (locked and on) and C.ok or (locked and C.muted or C.text), W.body())
+        D.text_mid(U.label(o), bx + 22, by, 26, (locked and on) and C.ok or (locked and C.muted or C.text), W.body())
         if locked then W.tooltip(t("lockedBy", owner(snap, locked)), bx, by, cw, 26) end
     end
     return max(26, F:height())
 end
 
--- 一行:左边名字,右边分段按钮。返回高度
+-- 一行:左边名字,右边分段按钮。options = 快照里的预设 / 选项行(按 name 发动作,显示 label)。返回高度
 local function layer_row(ctx, x, y, w, label, layer, active, effective, locked, options, with_none)
     local snap, t = ctx.snap, ctx.t
     local name_w = math.min(180, w * 0.28)
     D.text_mid(label, x, y, 26, locked and C.muted or C.text, W.body(), name_w - 8)
     local items = {}
     if with_none then items[#items + 1] = { t("none"), "" } end
-    for _, n in ipairs(options) do items[#items + 1] = { n, n, eff = locked and effective == n or nil } end
+    for _, o in ipairs(options) do items[#items + 1] = { U.label(o), o.name, eff = locked and effective == o.name or nil } end
     local tip = locked and t("lockedBy", owner(snap, locked)) or nil
     local picked, h = W.segments(x + name_w, y, w - name_w, items, active, { disabled = locked ~= nil, tip = tip })
     if picked ~= nil then ctx.act({ kind = "manual", layer = layer, option = picked }) end
@@ -128,11 +128,9 @@ function Page.draw(ctx, x, y, w)
     -- 整套造型
     cy = cy + 4
     local b = snap.base
-    local names = {}
-    for i, p in ipairs(b.presets) do names[i] = p.name end
     W.separator(x, cy, w)
     cy = cy + 8
-    local h = layer_row(ctx, x, cy, w, t("tabBase"), "base", b.active, b.effective, b.fromState, names, false)
+    local h = layer_row(ctx, x, cy, w, t("tabBase"), "base", b.active, b.effective, b.fromState, b.presets, false)
     cy = cy + h + 8
     W.separator(x, cy, w)
     cy = cy + 10
@@ -156,9 +154,7 @@ function Page.draw(ctx, x, y, w)
                 elseif g.multi then
                     cy = cy + multi_row(ctx, x + 12, cy, w - 24, g) + 6
                 else
-                    local opts = {}
-                    for i, o in ipairs(g.options) do opts[i] = o.name end
-                    local rh = layer_row(ctx, x + 12, cy, w - 24, g.name, g.name, g.active, g.effective, g.fromState, opts, true)
+                    local rh = layer_row(ctx, x + 12, cy, w - 24, U.label(g), g.name, g.active, g.effective, g.fromState, g.options, true)
                     cy = cy + rh + 6
                 end
             end
@@ -176,8 +172,9 @@ function Page.draw(ctx, x, y, w)
                     locked = g.fromState
                     on = (locked and g.effective or g.active) == opt
                 end
-                local label = g.name
-                local extra = opt ~= g.name and opt or nil
+                local label = U.label(g)
+                local olabel = U.label(g.options[1])
+                local extra = olabel ~= label and olabel or nil
                 local cw = 16 + 8 + D.measure(W.body(), label) + (extra and (8 + D.measure(W.small(), extra)) or 0) + 6
                 local bx, by = F:place(cw, 26)
                 local ch, v2 = W.checkbox("", bx, by, on, { h = 26, disabled = locked ~= nil })
@@ -205,14 +202,14 @@ function Page.draw(ctx, x, y, w)
     else
         local F = W.flow(x + 12, cy, w - 24, 10, 26)
         for i, s in ipairs(states) do
-            local label = s.name
+            local label = U.label(s)
             local cw = 16 + 16 + D.measure(W.body(), label) + 6
             local bx, by = F:place(cw, 26)
             local ch, on = W.checkbox("", bx, by, s.enabled, { h = 26 })
             if ch then ctx.act({ kind = "state-field", index = i, field = "enabled", value = on }) end
             W.status_dot(s.kind, bx + 24, by + 13, 5)
             D.text_mid(label, bx + 34, by, 26, s.enabled and C.text or C.muted, W.body())
-            W.tooltip(U.kind_text(s, states, t) .. "\n" .. U.condition_sentence(s, t) .. " → " .. U.target_sentence(s, t),
+            W.tooltip(U.kind_text(s, states, t) .. "\n" .. U.condition_sentence(s, t) .. " → " .. U.target_sentence(s, t, snap),
                 bx + 18, by, cw - 18, 26)
         end
         cy = cy + F:height() + 8
@@ -247,8 +244,8 @@ function Page.draw(ctx, x, y, w)
     local from
     if not src then from = t("heightNoSource")
     elseif src.layer == "override" then from = t("heightFromOverride")
-    elseif src.layer == "base" then from = t("heightFromBase", src.option or "")
-    else from = t("heightFromGroup", src.layer, src.option or "") end
+    elseif src.layer == "base" then from = t("heightFromBase", U.base_label(snap, src.option or ""))
+    else from = t("heightFromGroup", U.group_label(snap, src.layer), U.option_label(snap, src.layer, src.option or "")) end
     local F = W.flow(x + 140, cy, w - 140, 10, 26)
     F:text(hnow, snap.settings.heightEnabled == false and C.muted or C.text, W.bold())
     F:text(from)
