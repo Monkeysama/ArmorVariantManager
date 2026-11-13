@@ -30,6 +30,7 @@ assert(shoe.heights.Heel == 12.3, "heights are rounded to 0.1 cm")
 assert(shoe.heights.Flat == 0 and shoe.heights.Gone == nil, "0 is a valid explicit height; dangling names dropped")
 assert(kneel.heights.Down == M3.HEIGHT_MAX, "heights are clamped")
 assert(M3.clamp_height(-99) == M3.HEIGHT_MIN and M3.clamp_height("abc") == nil and M3.clamp_height(0 / 0) == nil)
+assert(M3.HEIGHT_MIN == -20 and M3.clamp_height(-15) == -15 and M3.clamp_height(-25) == -20, "lower bound is -20 cm")
 assert(next(M3.normalize({}).base.heights) == nil, "configs without heights get an empty table")
 
 -- ---------------------------------------------------------------- 解算:整套造型先写,状态组按顺序覆盖

@@ -259,7 +259,7 @@ function Page.draw(ctx, x, y, w)
     changed, v = W.toggle("", x + 140, cy, ov.enabled, { disabled = nf_off })
     if changed then ctx.act({ kind = "height-override", enabled = v }) end
     st.drafts = st.drafts or {}
-    W.num_box(st.drafts, "q_height", x + 180, cy + 1, 70, ov.cm, { min = -10, max = 50, disabled = nf_off }, function(n)
+    W.num_box(st.drafts, "q_height", x + 180, cy + 1, 70, ov.cm, { min = -20, max = 50, disabled = nf_off }, function(n)
         ctx.act({ kind = "height-override", cm = n })
     end)
     D.text_mid("cm", x + 256, cy, 26, C.muted, W.small())

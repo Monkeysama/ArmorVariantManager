@@ -168,7 +168,7 @@ async function renameOption(card: Card, old: string, input: HTMLInputElement) {
   if (open.delete(from)) open.add(card.id + '|' + name);
 }
 // 模型高度(厘米,同 Lua 的 ModelV3.HEIGHT_MIN / MAX)。value = undefined(数值框清空 / 点清除)→ 清除
-const HEIGHT_MIN = -10, HEIGHT_MAX = 50;
+const HEIGHT_MIN = -20, HEIGHT_MAX = 50;
 const cmText = (v: number) => (v > 0 ? '+' : '') + v;
 function setHeight(card: Card, option: string, value: number | undefined) {
   const cm = value === undefined ? undefined : Math.round(value * 10) / 10;

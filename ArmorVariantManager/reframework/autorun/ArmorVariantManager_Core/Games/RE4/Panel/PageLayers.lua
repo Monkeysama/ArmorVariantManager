@@ -14,7 +14,7 @@ local C = T.c
 local max, min = math.max, math.min
 local Page = {}
 
-local HEIGHT_MIN, HEIGHT_MAX = -10, 50
+local HEIGHT_MIN, HEIGHT_MAX = -20, 50
 local ROW = 26
 
 local function trim(s) return (tostring(s or ""):gsub("^%s+", ""):gsub("%s+$", "")) end

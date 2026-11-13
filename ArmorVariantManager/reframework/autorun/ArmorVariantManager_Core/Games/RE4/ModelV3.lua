@@ -201,7 +201,7 @@ local function num(v, default, lo, hi)
 end
 
 -- 模型高度(厘米):范围同 Wilds 的陷地修复,0.1 厘米取整
-M.HEIGHT_MIN, M.HEIGHT_MAX = -10, 50
+M.HEIGHT_MIN, M.HEIGHT_MAX = -20, 50
 function M.clamp_height(v)
     v = tonumber(v)
     if not v or v ~= v or v == math.huge or v == -math.huge then return nil end

@@ -170,7 +170,7 @@ const cycleKey = (layer: string) => cycleOf(props.snapshot, layerTarget(layer))?
         <span class="re4-hctl" :class="{ dim: !override.enabled }">
           <ElSwitch :model-value="override.enabled" :disabled="busy" size="small" :aria-label="t('heightOverride')"
             @change="v => perform({ kind: 'height-override', ...c(), enabled: v === true })" />
-          <Re4Num :value="override.cm" :min="-10" :max="50" :disabled="busy" :aria-label="t('heightOverride')"
+          <Re4Num :value="override.cm" :min="-20" :max="50" :disabled="busy" :aria-label="t('heightOverride')"
             @change="v => v !== undefined && perform({ kind: 'height-override', ...c(), cm: v })" />cm
           <span class="re4-muted re4-small">{{ t('heightOverrideHint') }}</span>
         </span>
