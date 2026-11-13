@@ -55,6 +55,20 @@ local function set(settings, id, value, context)
     return settings.action({ kind = "setting", id = id, value = value, bodyId = "stale equipment" }, context)
 end
 
+test("panel scaling is opt-in and survives reopening either game", function()
+    for _, game in ipairs({ { "Rise", Rise }, { "Wilds", Wilds } }) do
+        local global, disk = session(game[1], {})
+        local settings = new(global, game[2].new({ config = global.value }))
+        assert(fields(settings.snapshot()).reff_scale_with_panel.value == false)
+        assert(set(settings, "reff_scale_with_panel", true))
+        local reopened = session(game[1], disk.saved)
+        local restored = new(reopened, game[2].new({ config = reopened.value }))
+        assert(fields(restored.snapshot()).reff_scale_with_panel.value == true)
+        assert(set(restored, "reff_scale_with_panel", false))
+        assert(reopened.value.reff_scale_with_panel == false)
+    end
+end)
+
 test("both game defaults, legacy fields and global permission", function()
     for _, item in ipairs({ { "Wilds", Wilds, 200 }, { "Rise", Rise, 100 } }) do
         local global, disk = session(item[1], { extension = { enabled = true }, new_ui_key = 91,

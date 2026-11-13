@@ -9,6 +9,8 @@ function Settings.sections(defaults)
                     { value = "en", label = "d2d_language_english" } } },
             { id = "auto_set_selected_preset_as_default", label = "auto_set_selected_preset_as_default",
                 type = "boolean", default = defaults.auto_set_selected_preset_as_default },
+            { id = "reff_scale_with_panel", label = "reff_scale_with_panel", type = "boolean",
+                default = defaults.reff_scale_with_panel },
         } },
     }
 end

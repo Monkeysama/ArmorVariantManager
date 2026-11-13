@@ -13,6 +13,23 @@ import { useText } from './i18n';
 const tab = shallowRef<'parts' | 'conditions' | 'settings' | 'help'>('parts');
 const { client, snapshot, busy, loading, error, notice, perform, connect, documentation, documentationLoading, documentationError, retryDocumentation, loadImports } = useAvm(computed(() => tab.value === 'help'));
 const { t, english } = useText(snapshot);
+const scaleWithPanel = computed(() => snapshot.value?.settings?.sections
+  .find(section => section.id === 'general')?.fields.find(field => field.id === 'reff_scale_with_panel')?.value === true);
+const panelScale = shallowRef(1);
+watch(scaleWithPanel, (enabled, _, onCleanup) => {
+  panelScale.value = 1;
+  if (!enabled) return;
+  // 观察未缩放的插件容器，避免字体和控件的尺寸变化反过来触发缩放。
+  const host = document.getElementById('app')!;
+  const resize = () => {
+    const { clientWidth: width, clientHeight: height } = host;
+    if (width && height) panelScale.value = Math.max(.75, Math.sqrt((width / 1050) * (height / 620)));
+  };
+  resize();
+  const observer = new ResizeObserver(resize);
+  observer.observe(host);
+  onCleanup(() => observer.disconnect());
+});
 const disabled = computed(() => busy.value || !snapshot.value?.bodyId);
 const backupWarning = computed(() => !!snapshot.value?.bodyId && snapshot.value.backupPending);
 const previewOpen = computed(() => snapshot.value?.game === 'Wilds' && snapshot.value.preview?.enabled === true);
@@ -35,7 +52,7 @@ async function dismissBackup() {
 
 <template>
   <ElConfigProvider :locale="REFF_ELEMENT_LOCALES[english ? 'en-US' : 'zh-CN']">
-    <main class="avm" :class="{ 'help-open': tab === 'help', 'preview-open': previewOpen }" :data-theme="snapshot?.theme ?? 'custom'" :aria-busy="busy || loading">
+    <main class="avm" :style="scaleWithPanel ? { zoom: panelScale } : undefined" :class="{ 'help-open': tab === 'help', 'preview-open': previewOpen }" :data-theme="snapshot?.theme ?? 'custom'" :aria-busy="busy || loading">
       <header class="avm-header"><div class="identity"><span class="signal-bar"></span><h1>{{ t('title') }}</h1></div><div class="game-identity"><strong>{{ snapshot?.game === 'Rise' ? (english ? 'RISE' : '崛起') : snapshot?.game === 'Wilds' ? (english ? 'WILDS' : '荒野') : 'REFF' }}</strong><span class="version">v{{ snapshot?.version }}</span></div></header>
       <div class="context-strip"><div class="mode-switch" :aria-label="t('armor') + ' / ' + t('weapon')">
           <ElButton :class="{ selected: !snapshot?.weapon }" :disabled="busy || !snapshot" :aria-pressed="!snapshot?.weapon" @click="perform({ kind: 'mode', weapon: false })">{{ t('armor') }}</ElButton>

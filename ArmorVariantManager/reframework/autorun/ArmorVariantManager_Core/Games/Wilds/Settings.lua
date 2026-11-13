@@ -4,6 +4,7 @@ local Settings = {}
 function Settings.new()
     return {
         language = "zh",
+        reff_scale_with_panel = false,
         scan_interval = 0.5,
         body_id_ttl = 1.0,
         scanner_batch_size = 200,
@@ -15,6 +16,7 @@ end
 
 -- 保留旧配置的可选读取、布尔含义和数值范围。
 function Settings.apply(global_config, loaded)
+    if loaded.reff_scale_with_panel ~= nil then global_config.reff_scale_with_panel = loaded.reff_scale_with_panel == true end
     if loaded.language then global_config.language = loaded.language end
     if loaded.scan_interval then global_config.scan_interval = loaded.scan_interval end
     if loaded.body_id_ttl then global_config.body_id_ttl = loaded.body_id_ttl end

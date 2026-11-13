@@ -4,6 +4,7 @@ export function settingsFor(game: 'Wilds' | 'Rise'): Settings {
   const english = game === 'Rise';
   const number = (id: string, label: string, value: number, min: number, max: number, step: number): SettingField => ({ id, label, type: 'number', value, min, max, step });
   const shared: SettingField[] = [
+    { id: 'reff_scale_with_panel', label: english ? 'Scale text and controls with panel size' : '文字和控件随面板大小缩放', type: 'boolean', value: false },
     { id: 'language', label: english ? 'Language' : '界面语言', type: 'select', value: english ? 'en' : 'zh', options: [{ value: 'zh', label: '简体中文' }, { value: 'en', label: 'English' }] },
     { id: 'auto_set_selected_preset_as_default', label: english ? 'Automatically set selected preset as default' : '选中预设时自动设为默认', type: 'boolean', value: false },
   ];
