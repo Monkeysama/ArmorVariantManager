@@ -178,7 +178,7 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
         local documentation=handlers["monkeysama.avm.documentation"]
         local current=snapshot()
         assert(current.game==(game=="mhrise" and "Rise" or "Wilds") and current.bodyId=="armor")
-        assert(current.theme=="custom" and current.parts[1].materials[1].name=="cloth")
+        assert(current.theme=="white" and current.parts[1].materials[1].name=="cloth")
         assert(current.parts[1].materials[1].editable and current.parts[1].materials[1].owner==nil)
         local function send(kind,args)
             args=args or {}; args.kind=kind; args.bodyId="armor"

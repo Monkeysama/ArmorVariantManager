@@ -60,9 +60,9 @@ test("panel scaling remembers each supported theme in either game", function()
         local id = "reff_scale_with_panel"
         local global, disk = session(game[1], { reff_scale_with_panel = false })
         local settings = new(global, game[2].new({ config = global.value }))
-        assert(fields(settings.snapshot())[id].value == false and set(settings, id, true))
-        global.value.reff_theme = "custom"
         assert(fields(settings.snapshot())[id].value == true)
+        global.value.reff_theme = "custom"
+        assert(fields(settings.snapshot())[id].value == false and set(settings, id, true))
         global.value.reff_theme = "reff"
         assert(fields(settings.snapshot())[id].value == false)
         for _, theme in ipairs({ "white", "black", "glass" }) do
@@ -74,6 +74,7 @@ test("panel scaling remembers each supported theme in either game", function()
         disk.result = true
         assert(set(settings, id, false))
         local reopened = session(game[1], disk.saved)
+        assert(Settings.panel_theme(reopened.value.reff_theme) == "glass")
         local restored = new(reopened, game[2].new({ config = reopened.value }))
         reopened.value.reff_theme = "custom"
         assert(fields(restored.snapshot())[id].value == true)

@@ -1,9 +1,13 @@
 local Settings = {}
 
 local scale_defaults = { white = true, black = true, glass = true, custom = false, reff = false }
+function Settings.panel_theme(value)
+    if scale_defaults[value] ~= nil then return value end
+    return "white"
+end
+
 local function panel_scale_path(config)
-    local theme = config.reff_theme
-    if scale_defaults[theme] == nil then theme = "custom" end
+    local theme = Settings.panel_theme(config.reff_theme)
     return { "reff_panel_scale_by_theme", theme }, scale_defaults[theme]
 end
 
