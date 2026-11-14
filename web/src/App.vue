@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, shallowRef, watch } from 'vue';
+import { computed, onBeforeUnmount, shallowRef, watch } from 'vue';
 import { ElButton, ElCheckbox, ElConfigProvider, REFF_ELEMENT_LOCALES } from '@reff/ui';
 import CatalogPane from './CatalogPane.vue';
 import MaterialsPane from './MaterialsPane.vue';
@@ -18,6 +18,19 @@ const worldTheme = computed(() => ['white', 'black', 'glass'].includes(theme.val
 const scaleWithPanel = computed(() => snapshot.value?.settings?.sections
   .find(section => section.id === 'general')?.fields.find(field => field.id === 'reff_scale_with_panel')?.value === true);
 const panelScale = shallowRef(1);
+const clientHeight = shallowRef(0);
+function updateDisplay(event: Event) {
+  const height = (event as CustomEvent).detail?.display?.clientHeightInViewportPixels;
+  clientHeight.value = Number.isFinite(height) && height > 0 ? height : 0;
+}
+window.addEventListener('reff:preferences-changed', updateDisplay);
+onBeforeUnmount(() => window.removeEventListener('reff:preferences-changed', updateDisplay));
+const panelZoom = computed(() => {
+  if (!worldTheme.value || !clientHeight.value) return panelScale.value;
+  // 以 4K 下的两倍字号为上限，按游戏客户区高度换算；小面板仍按其实际面积缩放。
+  const maximum = Math.max(.75, clientHeight.value / 1080);
+  return Math.min(panelScale.value, maximum);
+});
 watch(scaleWithPanel, (enabled, _, onCleanup) => {
   panelScale.value = 1;
   if (!enabled) return;
@@ -54,7 +67,7 @@ async function dismissBackup() {
 
 <template>
   <ElConfigProvider :locale="REFF_ELEMENT_LOCALES[english ? 'en-US' : 'zh-CN']">
-    <main class="avm" :style="scaleWithPanel ? { zoom: panelScale } : undefined" :class="{ 'world-theme': worldTheme, 'help-open': tab === 'help', 'preview-open': previewOpen }" :data-theme="theme" :aria-busy="busy || loading">
+    <main class="avm" :style="scaleWithPanel ? { zoom: panelZoom } : undefined" :class="{ 'world-theme': worldTheme, 'help-open': tab === 'help', 'preview-open': previewOpen }" :data-theme="theme" :aria-busy="busy || loading">
       <header class="avm-header"><div class="identity"><span class="signal-bar"></span><h1>{{ t('title') }}</h1></div><div class="game-identity"><strong>{{ snapshot?.game === 'Rise' ? (english ? 'RISE' : '崛起') : snapshot?.game === 'Wilds' ? (english ? 'WILDS' : '荒野') : 'REFF' }}</strong><span class="version">v{{ snapshot?.version }}</span></div></header>
       <div class="context-strip"><div class="mode-switch" :aria-label="t('armor') + ' / ' + t('weapon')">
           <ElButton :class="{ selected: !snapshot?.weapon }" :disabled="busy || !snapshot" :aria-pressed="!snapshot?.weapon" @click="perform({ kind: 'mode', weapon: false })">{{ t('armor') }}</ElButton>
