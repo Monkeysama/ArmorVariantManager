@@ -30,8 +30,8 @@ export interface SettingsSection {
   id: string; label: string; description?: string; scope: 'global' | 'equipment'; fields: SettingField[];
 }
 export interface Settings { sections: SettingsSection[] }
-export interface DocumentationEntry { title: string; paragraphs: string[] }
-export interface DocumentationSection { id: string; title: string; entries: DocumentationEntry[] }
+export interface DocumentationEntry { title: string; groupTitle?: string; paragraphs: string[] }
+export interface DocumentationSection { id: string; title: string; heading?: string; entries: DocumentationEntry[] }
 export interface Documentation { sections: DocumentationSection[] }
 export interface ImportFile { path: string; name: string }
 export interface Imports { bodyId: string; files: ImportFile[] }

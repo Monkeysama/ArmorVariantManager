@@ -168,6 +168,7 @@ body { background: transparent; }
 .help-content { min-height: 0; overflow: auto; padding-right: 20px; overscroll-behavior: contain; scrollbar-color: var(--avm-line) transparent; }
 .help-content:focus-visible { outline: 1px solid var(--avm-accent); outline-offset: 4px; }
 .help-content h2 { margin-bottom: 26px; }
+.help-entry .history-heading { border-top: 1px solid var(--avm-line); padding-top: 18px; margin-bottom: 15px; }
 .help-entry { max-width: 760px; margin-bottom: 28px; }
 .help-entry h3 { font-size: inherit; font-weight: 600; margin: 0 0 10px; }
 .help-entry p { white-space: pre-line; overflow-wrap: anywhere; margin: 8px 0; }

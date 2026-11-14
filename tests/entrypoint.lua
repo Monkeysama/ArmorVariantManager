@@ -187,7 +187,8 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
         assert(current.backupPending and not current.documentation,"backup warning is live; long help is not polled")
         local help=documentation()
         assert(#help.sections==3 and help.sections[1].id=="configure" and help.sections[1].title=="How to Configure")
-        assert(#help.sections[3].entries==22,"complete historical help is available on demand")
+        assert(#help.sections[3].entries==23 and help.sections[3].entries[1].title=="V4.4.0",
+            "current and historical release notes are available on demand")
         local protected_backup=S.copy(data["ArmorVariantManager/backup/armor.json"])
         local restore_writes=#writes
         write_failed=true
