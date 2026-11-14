@@ -5,11 +5,11 @@ import SettingControl from './SettingControl.vue';
 import type { PanelTheme, Perform, Snapshot } from './types';
 import type { Translate } from './i18n';
 
-const props = defineProps<{ worldTheme: boolean; snapshot: Snapshot; busy: boolean; perform: Perform; t: Translate }>();
+const props = defineProps<{ snapshot: Snapshot; busy: boolean; perform: Perform; t: Translate }>();
 const sections = computed(() => (props.snapshot.settings?.sections ?? []).filter(section => section.id !== 'ground_clipping').map(section => {
-  const fields = props.worldTheme ? section.fields : section.fields.filter(field => field.id !== 'reff_scale_with_panel');
+  const fields = section.fields;
   const reason = fields[0]?.reason;
-  return { ...section, fields, sharedReason: reason && fields.every(field => field.disabled && field.reason === reason) ? reason : undefined };
+  return { ...section, sharedReason: reason && fields.every(field => field.disabled && field.reason === reason) ? reason : undefined };
 }));
 </script>
 
@@ -31,7 +31,7 @@ const sections = computed(() => (props.snapshot.settings?.sections ?? []).filter
       <p v-if="section.description" class="settings-section-description">{{ section.description }}</p>
       <p v-if="section.sharedReason" :id="'settings-' + section.id + '-reason'" class="settings-section-description setting-reason">{{ section.sharedReason }}</p>
       <div class="settings-fields">
-        <SettingControl v-for="field in section.fields" :key="field.id + (section.scope === 'equipment' ? ':' + snapshot.bodyId : '')" :field="section.sharedReason ? { ...field, reason: undefined } : field" :disabled="busy || !!field.disabled || (section.scope === 'equipment' && !snapshot.bodyId)" :save="value => perform({ kind: 'setting', id: field.id, ...(value !== undefined ? { value } : {}) })" :t="t" />
+        <SettingControl v-for="field in section.fields" :key="field.id + (field.id === 'reff_scale_with_panel' ? ':' + snapshot.theme : section.scope === 'equipment' ? ':' + snapshot.bodyId : '')" :field="section.sharedReason ? { ...field, reason: undefined } : field" :disabled="busy || !!field.disabled || (section.scope === 'equipment' && !snapshot.bodyId)" :save="value => perform({ kind: 'setting', id: field.id, ...(value !== undefined ? { value } : {}) })" :t="t" />
       </div>
     </section>
   </section>

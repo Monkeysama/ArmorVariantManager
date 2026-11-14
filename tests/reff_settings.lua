@@ -60,27 +60,33 @@ test("panel scaling remembers each supported theme in either game", function()
         local id = "reff_scale_with_panel"
         local global, disk = session(game[1], { reff_scale_with_panel = false })
         local settings = new(global, game[2].new({ config = global.value }))
-        for _, theme in ipairs({ "custom", "reff" }) do
-            global.value.reff_theme = theme
-            assert(fields(settings.snapshot())[id].value == false and not set(settings, id, true))
-        end
+        assert(fields(settings.snapshot())[id].value == false and set(settings, id, true))
+        global.value.reff_theme = "custom"
+        assert(fields(settings.snapshot())[id].value == true)
+        global.value.reff_theme = "reff"
+        assert(fields(settings.snapshot())[id].value == false)
         for _, theme in ipairs({ "white", "black", "glass" }) do
             global.value.reff_theme = theme
             assert(fields(settings.snapshot())[id].value == true)
         end
         disk.result = false
-        assert(not set(settings, id, false) and global.value.reff_panel_scale_by_theme == nil)
+        assert(not set(settings, id, false) and global.value.reff_panel_scale_by_theme.glass == nil)
         disk.result = true
         assert(set(settings, id, false))
         local reopened = session(game[1], disk.saved)
         local restored = new(reopened, game[2].new({ config = reopened.value }))
+        reopened.value.reff_theme = "custom"
+        assert(fields(restored.snapshot())[id].value == true)
         reopened.value.reff_theme = "white"
         assert(fields(restored.snapshot())[id].value == true)
         reopened.value.reff_theme = "reff"
         assert(fields(restored.snapshot())[id].value == false)
+        assert(set(restored, id, true))
         reopened.value.reff_theme = "glass"
         assert(fields(restored.snapshot())[id].value == false)
         assert(set(restored, id, true) and fields(restored.snapshot())[id].value == true)
+        reopened.value.reff_theme = "reff"
+        assert(fields(restored.snapshot())[id].value == true)
     end
 end)
 

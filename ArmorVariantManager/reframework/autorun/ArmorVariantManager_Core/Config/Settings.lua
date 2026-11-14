@@ -1,11 +1,10 @@
 local Settings = {}
 
+local scale_defaults = { white = true, black = true, glass = true, custom = false, reff = false }
 local function panel_scale_path(config)
     local theme = config.reff_theme
-    if theme == "white" or theme == "black" or theme == "glass" then
-        -- 旧版会自动写入全局 false，只有新版的逐主题记录代表明确的手动选择。
-        return { "reff_panel_scale_by_theme", theme }
-    end
+    if scale_defaults[theme] == nil then theme = "custom" end
+    return { "reff_panel_scale_by_theme", theme }, scale_defaults[theme]
 end
 
 -- 两款游戏都有运行消费者的全局选项；专属设置由游戏模型补充。
@@ -18,26 +17,25 @@ function Settings.sections(defaults)
             { id = "auto_set_selected_preset_as_default", label = "auto_set_selected_preset_as_default",
                 type = "boolean", default = defaults.auto_set_selected_preset_as_default },
             { id = "reff_scale_with_panel", label = "reff_scale_with_panel", type = "boolean",
-                path = panel_scale_path, default = true },
+                path = panel_scale_path },
         } },
     }
 end
 
 local function field_path(config, field)
     if type(field.path) == "function" then return field.path(config) end
-    return field.path or { field.id }
+    return field.path or { field.id }, field.default
 end
 
 local function read(config, field)
     if field.read then return field.read() end
     local owner = field.owner or config
-    local path = field_path(config, field)
-    if not path then return false end
+    local path, default = field_path(config, field)
     for _, key in ipairs(path) do
-        if type(owner) ~= "table" then return field.default end
+        if type(owner) ~= "table" then return default end
         owner = owner[key]
     end
-    if owner == nil then return field.default end
+    if owner == nil then return default end
     return owner
 end
 
@@ -125,7 +123,6 @@ function Settings.new(deps)
         end
         local ok, reason = pcall(function()
             local path = field_path(config, field)
-            assert(path, "当前主题不支持此设置")
             for index = 1, #path - 1 do
                 local key = path[index]
                 if owner[key] == nil then set(owner, key, {}) end

@@ -14,7 +14,7 @@ const tab = shallowRef<'parts' | 'conditions' | 'settings' | 'help'>('parts');
 const { client, snapshot, busy, loading, error, notice, perform, connect, documentation, documentationLoading, documentationError, retryDocumentation, loadImports } = useAvm(computed(() => tab.value === 'help'));
 const { t, english } = useText(snapshot);
 const worldTheme = computed(() => ['white', 'black', 'glass'].includes(snapshot.value?.theme ?? ''));
-const scaleWithPanel = computed(() => worldTheme.value && snapshot.value?.settings?.sections
+const scaleWithPanel = computed(() => snapshot.value?.settings?.sections
   .find(section => section.id === 'general')?.fields.find(field => field.id === 'reff_scale_with_panel')?.value === true);
 const panelScale = shallowRef(1);
 watch(scaleWithPanel, (enabled, _, onCleanup) => {
@@ -80,7 +80,7 @@ async function dismissBackup() {
           <button v-for="item in (['parts', 'conditions', 'settings', 'help'] as const)" :key="item" :aria-current="tab === item ? 'page' : undefined" @click="tab = item">{{ t(item) }}</button>
         </nav><MaterialsPane v-show="tab === 'parts'" :snapshot="snapshot" :busy="busy" :perform="perform" :t="t" />
         <ConditionsPane v-show="tab === 'conditions'" :key="snapshot.bodyId" :world-theme="worldTheme" :conditions="snapshot.conditions" :busy="busy" :perform="perform" :t="t" />
-        <SettingsPane :world-theme="worldTheme" v-show="tab === 'settings'" :snapshot="snapshot" :busy="busy" :perform="perform" :t="t" />
+        <SettingsPane v-show="tab === 'settings'" :snapshot="snapshot" :busy="busy" :perform="perform" :t="t" />
         <HelpPane v-show="tab === 'help'" :documentation="documentation" :loading="documentationLoading" :error="documentationError" :t="t" @retry="retryDocumentation" />
         </div></div>
       </template>
