@@ -7,15 +7,16 @@ import ConditionTargets from './ConditionTargets.vue';
 import type { ConditionAction, ConditionField, Conditions, Perform } from './types';
 import type { Translate } from './i18n';
 
-const props = defineProps<{ conditions: Conditions | null; busy: boolean; perform: Perform; t: Translate }>();
+const props = defineProps<{ worldTheme: boolean; conditions: Conditions | null; busy: boolean; perform: Perform; t: Translate }>();
 const selectedId = shallowRef(props.conditions?.selected ?? '');
 const pickerOpen = shallowRef(false);
+watch(() => props.worldTheme, () => { pickerOpen.value = false; });
 const pickerToggle = useTemplateRef<HTMLButtonElement>('pickerToggle');
 function splitLabel(label: string) {
   const match = /^(.+?)\s*(?:\(([^()]+)\)|（([^（）]+)）)\s*$/.exec(label);
   return match ? { name: match[1].trim(), qualifier: match[2] ?? match[3] } : { name: label };
 }
-const choices = computed(() => props.conditions?.definitions.map(item => ({ ...item, ...splitLabel(item.label) })) ?? []);
+const choices = computed(() => props.conditions?.definitions.map(item => ({ ...item, ...(props.worldTheme ? splitLabel(item.label) : { name: item.label, qualifier: undefined }) })) ?? []);
 const ruleIndex = shallowRef(1);
 const deletingRule = shallowRef(false);
 const ruleRevision = shallowRef(0);
@@ -66,10 +67,10 @@ async function deleteNode(index: number) {
 </script>
 
 <template>
-  <section class="conditions-workspace" :aria-label="t('conditions')">
+  <section class="conditions-workspace" :class="{ 'adaptive-conditions': worldTheme }" :aria-label="t('conditions')">
     <template v-if="conditions">
       <aside class="conditions-sidebar">
-        <button ref="pickerToggle" class="condition-picker-toggle" type="button" :aria-expanded="pickerOpen" aria-controls="avm-condition-options" @click="pickerOpen = !pickerOpen">
+        <button v-if="worldTheme" ref="pickerToggle" class="condition-picker-toggle" type="button" :aria-expanded="pickerOpen" aria-controls="avm-condition-options" @click="pickerOpen = !pickerOpen">
           <span>{{ t('conditions') }}</span><strong>{{ definition?.name ?? t('noConditions') }}</strong>
           <span aria-hidden="true">{{ pickerOpen ? '▴' : '▾' }}</span>
         </button>
@@ -82,9 +83,11 @@ async function deleteNode(index: number) {
           <div class="catalog-list condition-list">
             <div v-for="item in choices" :key="item.id" class="condition-list-row">
               <ElCheckbox v-if="conditions.parallel" :model-value="item.enabled" :disabled="busy" :aria-label="t('enableCondition') + ' ' + item.label" @change="value => action('setting', { condition: item.id, field: 'enabled', value: !!value })" />
-              <button class="catalog-row" :disabled="busy" :aria-label="item.label" :aria-pressed="selectedId === item.id" @click="selectCondition(item.id)">
-                <span class="row-name"><span class="condition-name">{{ item.name }}</span><span v-if="item.qualifier" class="condition-qualifier">{{ item.qualifier }}</span></span>
+              <button class="catalog-row" :disabled="busy" :aria-label="worldTheme ? item.label : undefined" :aria-pressed="selectedId === item.id" @click="selectCondition(item.id)">
+                <span v-if="worldTheme" class="row-name"><span class="condition-name">{{ item.name }}</span><span v-if="item.qualifier" class="condition-qualifier">{{ item.qualifier }}</span></span>
+                <span v-else class="row-name">{{ item.label }}</span>
                 <span v-if="conditions.parallel" class="row-tag">{{ item.priority }}</span>
+                <span v-if="!worldTheme" class="row-arrow" aria-hidden="true">›</span>
               </button>
             </div>
           </div>
@@ -95,7 +98,7 @@ async function deleteNode(index: number) {
         </div>
       </aside>
       <div v-if="definition" class="condition-detail">
-        <header class="condition-heading"><h2 :title="definition.label">{{ definition.name }}</h2><span v-if="definition.stateLabel" class="condition-state">{{ definition.stateLabel }}</span></header>
+        <header class="condition-heading"><h2 :title="worldTheme ? definition.label : undefined">{{ definition.name }}</h2><span v-if="definition.stateLabel" class="condition-state">{{ definition.stateLabel }}</span></header>
         <p v-if="definition.warning" class="condition-warning" role="status">{{ definition.warning }}</p>
         <div class="rule-toolbar">
           <nav class="rule-tabs" :aria-label="t('rules')"><button v-for="item in definition.rules" :key="item.index" :disabled="busy" :aria-current="ruleIndex === item.index ? 'page' : undefined" @click="ruleIndex = item.index">{{ item.label }}{{ definition.canAdd ? ' ' + item.index : '' }}</button></nav>

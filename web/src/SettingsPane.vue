@@ -5,10 +5,11 @@ import SettingControl from './SettingControl.vue';
 import type { PanelTheme, Perform, Snapshot } from './types';
 import type { Translate } from './i18n';
 
-const props = defineProps<{ snapshot: Snapshot; busy: boolean; perform: Perform; t: Translate }>();
+const props = defineProps<{ worldTheme: boolean; snapshot: Snapshot; busy: boolean; perform: Perform; t: Translate }>();
 const sections = computed(() => (props.snapshot.settings?.sections ?? []).filter(section => section.id !== 'ground_clipping').map(section => {
-  const reason = section.fields[0]?.reason;
-  return { ...section, sharedReason: reason && section.fields.every(field => field.disabled && field.reason === reason) ? reason : undefined };
+  const fields = props.worldTheme ? section.fields : section.fields.filter(field => field.id !== 'reff_scale_with_panel');
+  const reason = fields[0]?.reason;
+  return { ...section, fields, sharedReason: reason && fields.every(field => field.disabled && field.reason === reason) ? reason : undefined };
 }));
 </script>
 
