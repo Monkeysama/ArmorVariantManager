@@ -353,7 +353,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Build an Armor Variant Manager distribution package.")
     versions = parser.add_mutually_exclusive_group()
     versions.add_argument("--version", default=None, help="Package version. Defaults to the Lua script version.")
-    versions.add_argument("--tag", help="Git tag, for example v4.4.0. Requires matching CHANGELOG.md notes.")
+    versions.add_argument("--tag", help="Git tag, for example v5.0.0. Requires matching CHANGELOG.md notes.")
     parser.add_argument("--release-notes", type=Path, help="Write the matching changelog section outside the package.")
     parser.add_argument("--game", choices=("universal", *GAMES, "all"), default="universal",
                         help="Defaults to one universal package. Explicit wilds/rise/all retain legacy build targets.")

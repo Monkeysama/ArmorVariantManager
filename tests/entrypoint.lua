@@ -178,6 +178,7 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
         local documentation=handlers["monkeysama.avm.documentation"]
         local current=snapshot()
         assert(current.game==(game=="mhrise" and "Rise" or "Wilds") and current.bodyId=="armor")
+        assert(current.version=="5.0.0", "both games expose the finalized release version")
         assert(current.theme=="white" and current.parts[1].materials[1].name=="cloth")
         assert(current.parts[1].materials[1].editable and current.parts[1].materials[1].owner==nil)
         local function send(kind,args)
@@ -187,7 +188,7 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
         assert(current.backupPending and not current.documentation,"backup warning is live; long help is not polled")
         local help=documentation()
         assert(#help.sections==3 and help.sections[1].id=="configure" and help.sections[1].title=="How to Configure")
-        assert(#help.sections[3].entries==23 and help.sections[3].entries[1].title=="V4.4.0",
+        assert(#help.sections[3].entries==23 and help.sections[3].entries[1].title=="V5.0.0",
             "current and historical release notes are available on demand")
         local protected_backup=S.copy(data["ArmorVariantManager/backup/armor.json"])
         local restore_writes=#writes

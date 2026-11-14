@@ -102,20 +102,20 @@ Copy-Item release/build/portrait/Release/ArmorVariantManager_Portrait.dll ArmorV
 
 `dev` 与 `main` 都保存完整源码，不再将去注释产物反向覆盖到 `main`。发布脚本不会替你构建 DLL 或网页；原生或网页变化时，先提交对应的已构建产物。
 
-发布前，将 `CHANGELOG.md` 的“未发布”内容归入实际版本，例如 `## V4.4.0`。推送 `v4.4.0` tag 后，原有 Release 工作流会检出该 tag，生成通用包，并只截取对应版本标题下的正文作为发布日志；缺少或空的版本段会中止。Release 标题保持 `ArmorVariantManager v4.4.0`，附件保持 `ArmorVariantManager-v4.4.0.zip`。手动运行工作流时同样填写已存在的 tag。
+发布前，将 `CHANGELOG.md` 的“未发布”内容归入实际版本，例如 `## V5.0.0`。推送 `v5.0.0` tag 后，原有 Release 工作流会检出该 tag，生成通用包，并只截取对应版本标题下的正文作为发布日志；缺少或空的版本段会中止。Release 标题保持 `ArmorVariantManager v5.0.0`，附件保持 `ArmorVariantManager-v5.0.0.zip`。手动运行工作流时同样填写已存在的 tag。
 
 本地检查同一打包路径，不会创建 tag 或发布 Release：
 
 ```powershell
 npm --prefix web ci
-python build_release.py --tag v4.4.0 --output-dir release/candidate --release-notes release/release-notes.md
+python build_release.py --tag v5.0.0 --output-dir release/candidate --release-notes release/release-notes.md
 ```
 
 上例生成：
 
 ```text
-release/candidate/ArmorVariantManager_v4.4.0/
-release/candidate/差分管理器_v4.4.0.zip
+release/candidate/ArmorVariantManager_v5.0.0/
+release/candidate/差分管理器_v5.0.0.zip
 release/release-notes.md
 ```
 

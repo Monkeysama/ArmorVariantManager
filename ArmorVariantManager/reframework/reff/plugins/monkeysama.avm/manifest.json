@@ -4,7 +4,7 @@
   "name": "Armor Variant Manager",
   "localizedName": { "zh-CN": "差分管理器", "en-US": "Armor Variant Manager" },
   "author": "MK,Moon,AZUSA,Ensicht",
-  "version": "4.4.0",
+  "version": "5.0.0",
   "reffApi": ">=1.0.0 <2.0.0",
   "games": ["MHWILDS", "MHRISE"],
   "ui": { "kind": "page", "mode": "isolated-page", "entry": "ui/dist/index.html" },

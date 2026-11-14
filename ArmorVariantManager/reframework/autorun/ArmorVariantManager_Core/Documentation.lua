@@ -207,7 +207,7 @@ return {
         heading = "更新日志（《荒野》与《崛起》通用版）",
         entries = {
             {
-                title = "V4.4.0",
+                title = "V5.0.0",
                 paragraphs = {
                     "1. 《荒野》和《崛起》共用一个安装包，原有装备配置和预设可继续使用。",
                     "2. 两款游戏均可通过 REFF 打开差分管理器，也可继续使用 REFramework 原生菜单。",
@@ -374,7 +374,7 @@ return {
             heading = "Changelog (Wilds and Rise)",
             entries = {
                 {
-                    title = "V4.4.0",
+                    title = "V5.0.0",
                     paragraphs = {
                         "1. Wilds and Rise now share one installation package. Existing equipment configurations and presets carry over.",
                         "2. In both games, open Armor Variant Manager through REFF or continue using the native REFramework menu.",

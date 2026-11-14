@@ -74,7 +74,7 @@ for _, language in ipairs({ "zh", "en" }) do
             local history = snapshot.sections[3]
             assert(history.title == (language == "zh" and "更新日志" or "Changelog"))
             assert(history.heading == (language == "zh" and "更新日志（《荒野》与《崛起》通用版）" or "Changelog (Wilds and Rise)"))
-            assert(history.entries[1].title == "V4.4.0" and #history.entries[1].paragraphs == 4)
+            assert(history.entries[1].title == "V5.0.0" and #history.entries[1].paragraphs == 4)
             assert(history.entries[2].groupTitle == (language == "zh" and "更新日志（原《荒野》版本历史）" or "Changelog (Original Wilds Version History)"))
             assert(#history.entries == #versions + 1)
             for index, version in ipairs(versions) do
