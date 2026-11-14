@@ -204,8 +204,19 @@ return {
     },
     {
         title = "更新日志",
+        heading = "更新日志（《荒野》与《崛起》通用版）",
         entries = {
             {
+                title = "V5.0.0",
+                paragraphs = {
+                    "1. 《荒野》和《崛起》共用一个安装包，原有装备配置和预设可继续使用。",
+                    "2. 两款游戏均可通过 REFF 打开差分管理器，也可继续使用 REFramework 原生菜单。",
+                    "3. REFF 面板新增经典白、经典黑和玻璃态，首次打开默认使用经典白。各主题独立记住缩放设置，下次打开会沿用上次选择的主题。",
+                    "4. 《崛起》新增本地猎人的防具陷地修复，可随预设切换高度；《荒野》的 REFF 面板支持全身预览，可调整镜头和光照。"
+                }
+            },
+            {
+                groupTitle = "更新日志（原《荒野》版本历史）",
                 title = "V4.3.4",
                 paragraphs = {
                     "1. 调整陷地修复的多分组控制逻辑：只有勾选的预设参与高度控制，未勾选的预设不再覆盖当前高度。",
@@ -360,8 +371,19 @@ return {
         },
         en = {
             title = "Changelog",
+            heading = "Changelog (Wilds and Rise)",
             entries = {
                 {
+                    title = "V5.0.0",
+                    paragraphs = {
+                        "1. Wilds and Rise now share one installation package. Existing equipment configurations and presets carry over.",
+                        "2. In both games, open Armor Variant Manager through REFF or continue using the native REFramework menu.",
+                        "3. The REFF panel adds Classic White, Classic Black and Glass. Classic White is the default on first use. Each theme remembers its own panel scaling setting, and the panel reopens with the last theme selected.",
+                        "4. In Rise, armor presets can now adjust the local hunter’s height to correct ground clipping. In Wilds, the REFF panel offers a full-body preview with camera and lighting controls."
+                    }
+                },
+                {
+                    groupTitle = "Changelog (Original Wilds Version History)",
                     title = "V4.3.4",
                     paragraphs = {
                         "1. Only checked Ground Clipping Fix presets now control height across groups; unchecked presets no longer override the current height.",

@@ -60,14 +60,15 @@ function riseConditions(): Conditions {
 
 // Browser-only fixture. It is not an entry in the production build.
 const initial: Snapshot = {
-  game: 'Wilds', version: '4.3.4', bodyId: 'ch03_001_0000', weapon: false, suspended: false, backupPending: false, canImport: false,
+  game: 'Wilds', version: '5.0.0', bodyId: 'ch03_001_0000', weapon: false, suspended: false, backupPending: false, canImport: false,
   groups: [{ name: '', label: '主预设', global: false }, { name: '上身', label: '上身', global: false }, { name: '腰部装饰', label: '腰部装饰', global: false }, { name: '全局隐藏', label: '全局隐藏', global: true }],
   group: '上身', presets: [{ name: '完整上装', default: true, active: false }, { name: '无外套', default: false, active: true }, { name: '内衬', default: false, active: false }], selectedPreset: '无外套',
   parts: ['头部', '身体', '手臂', '腰部', '腿部', '附加部件'].map((label, index) => ({ index, label, available: index !== 5, enabled: true, meshLocked: index === 0,
     materials: index === 5 ? [] : ['body_leather', 'body_lining', 'cape_outer', 'metal_trim', 'guild_emblem'].map((name, material) => ({ name: index === 1 ? name : `${['head', 'body', 'arm', 'waist', 'leg'][index]}_${name}`, enabled: material !== 2, hidden: material === 4, owner: material < 2 ? '上身' : undefined, groups: material === 4 ? ['全局隐藏'] : [] })),
-  })), theme: 'custom', language: 'zh-CN', selectionMode: false, pending: {}, conditions: wildsConditions(), settings: settingsFor('Wilds'),
+  })), theme: 'white', language: 'zh-CN', selectionMode: false, pending: {}, conditions: wildsConditions(), settings: settingsFor('Wilds'),
 };
 let state = structuredClone(initial);
+const scalePreferences = new Map<string, boolean>();
 const previewFixture = new URLSearchParams(location.search).has('preview');
 const previewSeam = new URLSearchParams(location.search).has('preview-seam');
 if (previewFixture) state.preview = { available: true, enabled: true, status: previewSeam ? 'preview_live' : 'preview_waiting' };
@@ -149,6 +150,8 @@ for (const [type, counter] of [['dragstart', 'nativeDragStarts'], ['gotpointerca
 const wait = (delay = 120) => new Promise(resolve => setTimeout(resolve, delay));
 function snapshot() {
   const value = structuredClone(state);
+  const scale = value.settings!.sections.flatMap(section => section.fields).find(field => field.id === 'reff_scale_with_panel')!;
+  scale.value = scalePreferences.get(value.game + ':' + value.theme) ?? ['white', 'black', 'glass'].includes(value.theme);
   if (catalogFixture) {
     const global = state.groups.find(group => group.name === state.group)?.global;
     for (const part of value.parts) {
@@ -244,6 +247,7 @@ function applyCondition(request: ConditionAction) {
         section.fields.find(item => item.id === 'ground_clipping_enabled')!.value = true;
         section.fields.find(item => item.id === 'ground_clipping_height_cm')!.value = 0;
       } else field.value = params.value as typeof field.value;
+      if (field.id === 'reff_scale_with_panel') scalePreferences.set(state.game + ':' + state.theme, field.value === true);
       if (field.id === 'language') state.language = field.value === 'en' ? 'en-US' : 'zh-CN';
       if (field.id === 'portrait_enabled' && state.preview) state.preview.enabled = field.value === true;
     } else if (kind === 'reorder-group' || kind === 'reorder-preset') {

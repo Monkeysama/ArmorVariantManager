@@ -23,7 +23,10 @@ export function documentationFor(game: Snapshot['game'], language: string): Docu
       title: en ? 'Backups' : '备份',
       paragraphs: [en ? 'Back up your equipment JSON before restoring or importing a configuration.' : '恢复或导入配置前，备份装备 JSON。'],
     }] },
-    { id: 'changelog', title: en ? 'Changelog' : '更新日志', entries: [{
+    { id: 'changelog', title: en ? 'Changelog' : '更新日志', heading: en ? 'Changelog (Wilds and Rise)' : '更新日志（《荒野》与《崛起》通用版）', entries: [{
+      title: 'V5.0.0', paragraphs: [en ? 'Wilds and Rise now share one installation package.' : '《荒野》和《崛起》共用一个安装包。'],
+    }, {
+      groupTitle: en ? 'Changelog (Original Wilds Version History)' : '更新日志（原《荒野》版本历史）',
       title: 'V4.3.4', paragraphs: [en ? 'Example entry for checking the version list.' : '用于检查版本列表的示例条目。'],
     }] },
   ] };

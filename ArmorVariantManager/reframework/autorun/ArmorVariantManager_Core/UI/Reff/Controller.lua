@@ -1,6 +1,9 @@
+local Settings = require("ArmorVariantManager_Core.Config.Settings")
 local Controller = {}
 
 -- 网页与原生界面共用上下文和操作，只向桥接返回值类型。
+Controller.theme = Settings.panel_theme
+
 function Controller.new(deps)
     local controller = {}
     function controller.snapshot()
@@ -65,7 +68,7 @@ function Controller.new(deps)
         assert(type(request) == "table", "操作参数无效")
         local kind = request.kind
         if kind == "theme" then
-            assert(request.value == "custom" or request.value == "reff", "主题选项无效")
+            assert(Controller.theme(request.value) == request.value, "主题选项无效")
             assert(deps.set_theme(request.value), "主题保存失败")
         elseif kind == "mode" then
             assert(type(request.weapon) == "boolean", "装备模式无效")

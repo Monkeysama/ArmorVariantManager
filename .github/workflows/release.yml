@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: '已存在的 Git tag（例如 v4.4.0）'
+        description: '已存在的 Git tag（例如 v5.0.0）'
         required: true
 
 jobs:

@@ -291,7 +291,7 @@ function Presets.new(app, view)
             draw_manual_import(body_id)
 
             -- 陷地修复放在预设、分组及自动查找按钮和结果提示下方。
-            if game.wilds and not state.weapon then
+            if app.height and not state.weapon then
                 imgui.separator()
                 local settings = get_ground_clipping_settings()
                 local changed, value = imgui.checkbox(T("heel_title"), settings.enabled)

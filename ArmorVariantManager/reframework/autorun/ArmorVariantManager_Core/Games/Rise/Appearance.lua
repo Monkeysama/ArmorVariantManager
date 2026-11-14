@@ -5,11 +5,12 @@ local Selection = require("ArmorVariantManager_Core.Presets.Selection")
 local Visibility = require("ArmorVariantManager_Core.Presets.Visibility")
 local Presets = require("ArmorVariantManager_Core.Games.Rise.Presets")
 local Rules = require("ArmorVariantManager_Core.Games.Rise.Rules")
+local Height = require("ArmorVariantManager_Core.Presets.Height")
 local Appearance = {}
 
 -- 共享表只存手动意图；规则结果保存在角色/槽位上下文中。
 function Appearance.new(load_config)
-    local app = {overrides = {}, groups = {}, state = State.new()}
+    local app = {overrides = {}, groups = {}, state = State.new(), height = Height.new_preset_state()}
     local edited_outputs = {}
 
     function app.defaults(id, config)
@@ -19,6 +20,9 @@ function Appearance.new(load_config)
         normal = Rules.set_model_base(id, normal, selected)
         app.overrides[id] = Defaults.globals(config, Presets, normal, selected, Presets.default_global)
         app.groups[id] = selected
+        app.height.reset(id)
+        local height = Height.default_settings(config, Presets.default_global)
+        if height.enabled then app.overrides[id].ground_clipping_fix = height end
         for name, group in pairs(config.groups or {}) do
             if group.is_global and selected[name] then
                 Rules.update_base_preset(id, config, name, selected[name], Presets.merge)
@@ -31,8 +35,11 @@ function Appearance.new(load_config)
         local owner = group_name == "" and config or config.groups and config.groups[group_name]
         if not (owner and owner.presets and owner.presets[preset_name]) then return false end
         if not app.overrides[id] then app.defaults(id, config) end
+        local last_height = app.overrides[id].ground_clipping_fix
         app.overrides[id] = Selection.apply(config, app.groups[id], Presets.merge(app.overrides[id], {}),
             group_name, preset_name, Presets)
+        app.height.reset(id, group_name)
+        app.overrides[id].ground_clipping_fix = Height.participating_settings(owner.presets[preset_name], config) or last_height
         Rules.update_base_preset(id, config, group_name, preset_name, Presets.merge)
         edited_outputs[id] = nil
         return true
@@ -83,6 +90,15 @@ function Appearance.new(load_config)
             end
             local groups = Selection.resolve_groups(config, app.groups[id], targets, targeted)
             for name, preset in pairs(targets or {}) do groups[name] = preset end
+            if slot == "armor" and entry.is_local and entry.player and not actor.is_event then
+                local settings = app.overrides[id].ground_clipping_fix
+                if targets and next(targets) and result and result.ground_clipping_fix then
+                    settings = result.ground_clipping_fix
+                end
+                if settings and settings.enabled and settings.height_cm ~= 0 then
+                    app.height_actor, app.height_cm = entry.obj, settings.height_cm
+                end
+            end
             local changed = context.overrides ~= result
             if changed then context.version = (context.version or 0) + 1 end
             context.overrides, context.groups = result, groups
@@ -99,11 +115,15 @@ function Appearance.new(load_config)
 
     -- 与 Runtime 的回调直接对接；清场不丢配置和手动选择。
     function app.process(entry, is_event, runtime)
+        if entry.is_local then app.height_actor, app.height_cm = nil, nil end
         local seen = process({entry = entry, is_event = is_event, runtime = runtime})
         app.state:retain_actor(tostring(entry.obj), seen)
     end
 
-    function app.reset() app.state:clear() end
+    function app.reset()
+        app.height_actor, app.height_cm = nil, nil
+        app.state:clear()
+    end
     function app.forget_actor(object) app.state:forget(tostring(object)) end
     return app
 end

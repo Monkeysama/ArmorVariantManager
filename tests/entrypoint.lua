@@ -178,7 +178,8 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
         local documentation=handlers["monkeysama.avm.documentation"]
         local current=snapshot()
         assert(current.game==(game=="mhrise" and "Rise" or "Wilds") and current.bodyId=="armor")
-        assert(current.theme=="custom" and current.parts[1].materials[1].name=="cloth")
+        assert(current.version=="5.0.0", "both games expose the finalized release version")
+        assert(current.theme=="white" and current.parts[1].materials[1].name=="cloth")
         assert(current.parts[1].materials[1].editable and current.parts[1].materials[1].owner==nil)
         local function send(kind,args)
             args=args or {}; args.kind=kind; args.bodyId="armor"
@@ -187,7 +188,8 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
         assert(current.backupPending and not current.documentation,"backup warning is live; long help is not polled")
         local help=documentation()
         assert(#help.sections==3 and help.sections[1].id=="configure" and help.sections[1].title=="How to Configure")
-        assert(#help.sections[3].entries==22,"complete historical help is available on demand")
+        assert(#help.sections[3].entries==23 and help.sections[3].entries[1].title=="V5.0.0",
+            "current and historical release notes are available on demand")
         local protected_backup=S.copy(data["ArmorVariantManager/backup/armor.json"])
         local restore_writes=#writes
         write_failed=true
@@ -318,6 +320,10 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
             assert(not pcall(send,"condition",{op="enabled",value=false}),"Wilds has no added total switch")
             assert(not pcall(send,"condition",{op="test_hp",value=50}),"menu actor cannot receive live HP writes")
         end
+        for _,theme in ipairs({"white", "black", "glass"}) do
+            current=send("theme",{value=theme})
+            assert(current.theme==theme and data["ArmorVariantManager/GlobalSettings.json"].reff_theme==theme)
+        end
         current=send("theme",{value="reff"})
         assert(current.theme=="reff" and data["ArmorVariantManager/GlobalSettings.json"].reff_theme=="reff")
         write_failed=true
@@ -409,7 +415,7 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
         for index=before_writes+1,#writes do
             assert(writes[index]~="ArmorVariantManager/GlobalSettings.json","same-value retry does not rewrite global JSON")
         end
-        if game=="mhwilds" then
+        do
             assert(field("ground_clipping_height_cm").min==-10)
             before_writes=#writes
             send("setting",{id="ground_clipping_enabled",value=true})
@@ -424,7 +430,7 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
             send("save",{name="HeightZero"})
             local height=data["ArmorVariantManager/armor.json"].presets.HeightZero.ground_clipping_fix
             assert(height.enabled and height.height_cm==0,"preset capture persists checked zero height")
-        else assert(not field("ground_clipping_height_cm"),"Rise does not expose Wilds height") end
+        end
         -- 忽略后保存会更新备份，手动恢复使用此刻的磁盘备份。
         local latest_backup=S.copy(data["ArmorVariantManager/backup/armor.json"])
         current=send("restore")

@@ -59,16 +59,12 @@ for _, language in ipairs({ "zh", "en" }) do
             assert(#snapshot.sections == 3)
             for index, section in ipairs(snapshot.sections) do
                 local source = language == "en" and Documentation[index].en or Documentation[index]
-                local title = source.title
-                if index == 3 then
-                    title = title .. (language == "zh" and "（原《荒野》版本历史）" or " (Original Wilds Version History)")
-                end
-                assert(section.id == section_ids[index] and section.title == title)
+                assert(section.id == section_ids[index] and section.title == source.title and section.heading == source.heading)
                 assert(section.en == nil and section.game == nil)
                 local expected = {}
                 for _, entry in ipairs(source.entries) do
                     if not entry.game or entry.game == game then
-                        expected[#expected + 1] = { title = entry.title, paragraphs = S.copy(entry.paragraphs) }
+                        expected[#expected + 1] = { title = entry.title, groupTitle = entry.groupTitle, paragraphs = S.copy(entry.paragraphs) }
                     end
                 end
                 S.equal(section.entries, expected)
@@ -76,12 +72,16 @@ for _, language in ipairs({ "zh", "en" }) do
             assert(#snapshot.sections[1].entries == (game == "Wilds" and 8 or 7))
             assert(#snapshot.sections[2].entries == 4)
             local history = snapshot.sections[3]
-            assert(#history.entries == #versions)
-            for index, entry in ipairs(history.entries) do
-                assert(entry.title == versions[index])
+            assert(history.title == (language == "zh" and "更新日志" or "Changelog"))
+            assert(history.heading == (language == "zh" and "更新日志（《荒野》与《崛起》通用版）" or "Changelog (Wilds and Rise)"))
+            assert(history.entries[1].title == "V5.0.0" and #history.entries[1].paragraphs == 4)
+            assert(history.entries[2].groupTitle == (language == "zh" and "更新日志（原《荒野》版本历史）" or "Changelog (Original Wilds Version History)"))
+            assert(#history.entries == #versions + 1)
+            for index, version in ipairs(versions) do
+                local entry = history.entries[index + 1]
+                assert(entry.title == version)
                 assert(#entry.paragraphs == paragraph_counts[index])
             end
-            assert(history.title:find(language == "zh" and "荒野" or "Wilds", 1, true))
         end)
 
         test(game .. " " .. language .. " current saving and performance guidance", function()
@@ -119,6 +119,8 @@ end
 test("historical literals and numbers are unchanged", function()
     local zh = Help.snapshot("zh", "Rise").sections[3].entries
     local en = Help.snapshot("en", "Rise").sections[3].entries
+    table.remove(zh, 1)
+    table.remove(en, 1)
     assert(zh[1].paragraphs[2] == "2. 支持在勾选的 +10 cm 与 0 cm 预设之间切换；归零按钮会勾选并设为 0 cm。")
     assert(en[1].paragraphs[2] == "2. Switch between checked +10 cm and 0 cm presets to raise or reset height. Reset now checks the option and sets 0 cm.")
     assert(zh[12].paragraphs[1] == "1. 新增独立 UI 面板，默认使用 Home 键打开。")

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, shallowRef, watch } from 'vue';
+import { computed, shallowRef, useTemplateRef, watch } from 'vue';
 import { ElButton, ElCheckbox, ElInput, ElRadio, ElRadioGroup } from '@reff/ui';
 import ConditionNumber from './ConditionNumber.vue';
 import ConditionSelect from './ConditionSelect.vue';
@@ -7,8 +7,16 @@ import ConditionTargets from './ConditionTargets.vue';
 import type { ConditionAction, ConditionField, Conditions, Perform } from './types';
 import type { Translate } from './i18n';
 
-const props = defineProps<{ conditions: Conditions | null; busy: boolean; perform: Perform; t: Translate }>();
+const props = defineProps<{ worldTheme: boolean; conditions: Conditions | null; busy: boolean; perform: Perform; t: Translate }>();
 const selectedId = shallowRef(props.conditions?.selected ?? '');
+const pickerOpen = shallowRef(false);
+watch(() => props.worldTheme, () => { pickerOpen.value = false; });
+const pickerToggle = useTemplateRef<HTMLButtonElement>('pickerToggle');
+function splitLabel(label: string) {
+  const match = /^(.+?)\s*(?:\(([^()]+)\)|（([^（）]+)）)\s*$/.exec(label);
+  return match ? { name: match[1].trim(), qualifier: match[2] ?? match[3] } : { name: label };
+}
+const choices = computed(() => props.conditions?.definitions.map(item => ({ ...item, ...(props.worldTheme ? splitLabel(item.label) : { name: item.label, qualifier: undefined }) })) ?? []);
 const ruleIndex = shallowRef(1);
 const deletingRule = shallowRef(false);
 const ruleRevision = shallowRef(0);
@@ -16,7 +24,7 @@ const nodeKeys = shallowRef<Record<number, number>>({});
 let nodeRevision = 0;
 const hpTest = shallowRef('50');
 const validHpTest = computed(() => hpTest.value.trim() && Number.isFinite(Number(hpTest.value)) && Number(hpTest.value) >= 0 && Number(hpTest.value) <= 100);
-const definition = computed(() => props.conditions?.definitions.find(item => item.id === selectedId.value));
+const definition = computed(() => choices.value.find(item => item.id === selectedId.value));
 const rule = computed(() => definition.value?.rules.find(item => item.index === ruleIndex.value));
 const fields = computed(() => definition.value?.fields.filter(field => !field.modes || field.modes.includes(Number(rule.value?.mode))) ?? []);
 const chained = computed(() => Number(rule.value?.mode) === 3 && rule.value?.chain_nodes !== undefined);
@@ -33,7 +41,12 @@ function action(op: ConditionAction['op'], extra: Partial<ConditionAction> = {})
   return props.perform({ kind: 'condition', op, condition: selectedId.value, rule: ruleIndex.value, ...extra });
 }
 async function selectCondition(id: string) {
-  if (props.conditions?.parallel || await action('select', { value: id })) selectedId.value = id;
+  if (!props.conditions?.parallel && !await action('select', { value: id })) return;
+  selectedId.value = id;
+  if (pickerOpen.value) {
+    pickerOpen.value = false;
+    if (pickerToggle.value?.getClientRects().length) pickerToggle.value.focus({ preventScroll: true });
+  }
 }
 function fieldValue(field: ConditionField) {
   const value = rule.value?.[field.key];
@@ -54,27 +67,38 @@ async function deleteNode(index: number) {
 </script>
 
 <template>
-  <section class="conditions-workspace" :aria-label="t('conditions')">
+  <section class="conditions-workspace" :class="{ 'adaptive-conditions': worldTheme }" :aria-label="t('conditions')">
     <template v-if="conditions">
       <aside class="conditions-sidebar">
-        <div class="pane-heading"><h2>{{ t('conditions') }}</h2><span class="count">{{ conditions.definitions.length }}</span></div>
-        <ElCheckbox v-if="conditions.canEnable" :model-value="conditions.enabled" :disabled="busy" @change="value => action('enabled', { value: !!value })">{{ t('enableConditions') }}</ElCheckbox>
-        <ElRadioGroup class="conditions-mode" :model-value="conditions.parallel" :disabled="busy" :aria-label="t('conditionMode')" @change="value => action('parallel', { value: !!value })">
-          <ElRadio :value="false">{{ t('singleCondition') }}</ElRadio><ElRadio :value="true">{{ t('parallelConditions') }}</ElRadio>
-        </ElRadioGroup>
-        <div class="catalog-list condition-list">
-          <div v-for="item in conditions.definitions" :key="item.id" class="condition-list-row">
-            <ElCheckbox v-if="conditions.parallel" :model-value="item.enabled" :disabled="busy" :aria-label="t('enableCondition') + ' ' + item.label" @change="value => action('setting', { condition: item.id, field: 'enabled', value: !!value })" />
-            <button class="catalog-row" :disabled="busy" :aria-pressed="selectedId === item.id" @click="selectCondition(item.id)"><span class="row-name">{{ item.label }}</span><span v-if="conditions.parallel" class="row-tag">{{ item.priority }}</span><span class="row-arrow" aria-hidden="true">›</span></button>
+        <button v-if="worldTheme" ref="pickerToggle" class="condition-picker-toggle" type="button" :aria-expanded="pickerOpen" aria-controls="avm-condition-options" @click="pickerOpen = !pickerOpen">
+          <span>{{ t('conditions') }}</span><strong>{{ definition?.name ?? t('noConditions') }}</strong>
+          <span aria-hidden="true">{{ pickerOpen ? '▴' : '▾' }}</span>
+        </button>
+        <div id="avm-condition-options" class="condition-options" :class="{ 'picker-open': pickerOpen }">
+          <div class="pane-heading"><h2>{{ t('conditions') }}</h2><span class="count">{{ conditions.definitions.length }}</span></div>
+          <ElCheckbox v-if="conditions.canEnable" :model-value="conditions.enabled" :disabled="busy" @change="value => action('enabled', { value: !!value })">{{ t('enableConditions') }}</ElCheckbox>
+          <ElRadioGroup class="conditions-mode" :model-value="conditions.parallel" :disabled="busy" :aria-label="t('conditionMode')" @change="value => action('parallel', { value: !!value })">
+            <ElRadio :value="false">{{ t('singleCondition') }}</ElRadio><ElRadio :value="true">{{ t('parallelConditions') }}</ElRadio>
+          </ElRadioGroup>
+          <div class="catalog-list condition-list">
+            <div v-for="item in choices" :key="item.id" class="condition-list-row">
+              <ElCheckbox v-if="conditions.parallel" :model-value="item.enabled" :disabled="busy" :aria-label="t('enableCondition') + ' ' + item.label" @change="value => action('setting', { condition: item.id, field: 'enabled', value: !!value })" />
+              <button class="catalog-row" :disabled="busy" :aria-label="worldTheme ? item.label : undefined" :aria-pressed="selectedId === item.id" @click="selectCondition(item.id)">
+                <span v-if="worldTheme" class="row-name"><span class="condition-name">{{ item.name }}</span><span v-if="item.qualifier" class="condition-qualifier">{{ item.qualifier }}</span></span>
+                <span v-else class="row-name">{{ item.label }}</span>
+                <span v-if="conditions.parallel" class="row-tag">{{ item.priority }}</span>
+                <span v-if="!worldTheme" class="row-arrow" aria-hidden="true">›</span>
+              </button>
+            </div>
           </div>
-        </div>
-        <div v-if="definition && conditions.parallel" :key="definition.id" class="condition-priority">
-          <ConditionNumber :id="'priority-' + definition.id" :value="definition.priority" :label="t('priority') + ' · ' + definition.label" :disabled="busy" :save="value => action('setting', { field: 'priority', value })" :t="t" />
-          <p class="condition-note">{{ t('priorityHelp') }}</p>
+          <div v-if="definition && conditions.parallel" :key="definition.id" class="condition-priority">
+            <ConditionNumber :id="'priority-' + definition.id" :value="definition.priority" :label="t('priority') + ' · ' + definition.label" :disabled="busy" :save="value => action('setting', { field: 'priority', value })" :t="t" />
+            <p class="condition-note">{{ t('priorityHelp') }}</p>
+          </div>
         </div>
       </aside>
       <div v-if="definition" class="condition-detail">
-        <header class="condition-heading"><h2>{{ definition.label }}</h2><span v-if="definition.stateLabel" class="condition-state">{{ definition.stateLabel }}</span></header>
+        <header class="condition-heading"><h2 :title="worldTheme ? definition.label : undefined">{{ definition.name }}</h2><span v-if="definition.stateLabel" class="condition-state">{{ definition.stateLabel }}</span></header>
         <p v-if="definition.warning" class="condition-warning" role="status">{{ definition.warning }}</p>
         <div class="rule-toolbar">
           <nav class="rule-tabs" :aria-label="t('rules')"><button v-for="item in definition.rules" :key="item.index" :disabled="busy" :aria-current="ruleIndex === item.index ? 'page' : undefined" @click="ruleIndex = item.index">{{ item.label }}{{ definition.canAdd ? ' ' + item.index : '' }}</button></nav>

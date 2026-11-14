@@ -34,8 +34,9 @@ function moveTab(event: KeyboardEvent) {
         <button v-for="item in documentation.sections" :id="`help-tab-${item.id}`" :key="item.id" role="tab" :aria-selected="selected === item.id" :aria-controls="`help-panel-${item.id}`" :tabindex="selected === item.id ? 0 : -1" @click="selected = item.id">{{ item.title }}</button>
       </div>
       <article v-if="section" :id="`help-panel-${section.id}`" ref="content" class="help-content" role="tabpanel" :aria-labelledby="`help-tab-${section.id}`" tabindex="0">
-        <h2>{{ section.title }}</h2>
+        <h2>{{ section.heading ?? section.title }}</h2>
         <section v-for="(entry, index) in section.entries" :key="index" class="help-entry">
+          <h2 v-if="entry.groupTitle" class="history-heading">{{ entry.groupTitle }}</h2>
           <h3 v-if="entry.title">{{ entry.title }}</h3>
           <p v-for="(paragraph, paragraphIndex) in entry.paragraphs" :key="paragraphIndex">{{ paragraph }}</p>
         </section>

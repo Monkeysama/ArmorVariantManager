@@ -1,6 +1,7 @@
 -- TransformManager.lua
 local TransformManager = {}
 local RuleEngine = require("ArmorVariantManager_Core.Rules.Engine")
+local Height = require("ArmorVariantManager_Core.Presets.Height")
 local Presets = require("ArmorVariantManager_Core.Games.Rise.Presets")
 local RulePlan = require("ArmorVariantManager_Core.Games.Rise.RulePlan")
 local Utils = require("ArmorVariantManager_Core.Games.Rise.Signals")
@@ -261,9 +262,15 @@ local function apply_transform_rules_impl(char_addr, context_id, config, charact
         last_state_cache[key]=cached
         return cached.output,active_overrides~=cached.output,cached.targets,all_groups
     end
-    local output, targets = RuleEngine.apply_targets(config, rules, copy(base.normal),
+    local material_base = copy(base.normal)
+    -- The live manual offset remains the fallback whenever no matching rule supplies one.
+    material_base.ground_clipping_fix = nil
+    local output, targets = RuleEngine.apply_targets(config, rules, material_base,
         function(result, preset, owner)
             if owner == config or not owner.is_global then Presets.merge_into(result, preset) end
+            if preset.ground_clipping_fix then
+                result.ground_clipping_fix = Height.participating_settings(preset) or result.ground_clipping_fix
+            end
             return result
         end, false)
     -- 全局组最后只锁隐藏；手动选择与默认值仍属于普通基础意图。
