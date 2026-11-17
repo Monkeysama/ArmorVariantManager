@@ -45,10 +45,10 @@ local function plain_detached(value, forbidden)
     assert(numbers == #value, "array has a hole")
 end
 
-local versions = { "V5.0.0", "V4.3.4", "V4.3.3", "V4.3.2", "V4.3.1", "V4.3.0", "V4.2.2", "V4.2.1", "V4.2.0",
+local versions = { "V5.0.1", "V5.0.0", "V4.3.4", "V4.3.3", "V4.3.2", "V4.3.1", "V4.3.0", "V4.2.2", "V4.2.1", "V4.2.0",
     "V4.1.2", "V4.1.1", "V4.1.0", "V4.0.0", "V3.3.0", "V3.2.0", "V3.1.0", "V3.0.0", "V2.1.1",
     "V2.0.0", "V1.2.1", "V1.2.0", "V1.1.0", "V1.0.0" }
-local paragraph_counts = { 4, 3, 2, 3, 3, 3, 1, 3, 3, 1, 1, 1, 4, 1, 3, 1, 1, 1, 3, 1, 1, 1, 1 }
+local paragraph_counts = { 1, 4, 3, 2, 3, 3, 3, 1, 3, 3, 1, 1, 1, 4, 1, 3, 1, 1, 1, 3, 1, 1, 1, 1 }
 local section_ids = { "configure", "usage", "changelog" }
 
 for _, language in ipairs({ "zh", "en" }) do
@@ -74,8 +74,8 @@ for _, language in ipairs({ "zh", "en" }) do
             local history = snapshot.sections[3]
             assert(history.title == (language == "zh" and "更新日志" or "Changelog"))
             assert(history.heading == (language == "zh" and "更新日志（《荒野》与《崛起》通用版）" or "Changelog (Wilds and Rise)"))
-            assert(history.entries[1].title == "V5.0.1" and #history.entries[1].paragraphs == 1)
-            assert(history.entries[3].groupTitle == (language == "zh" and "更新日志（原《荒野》版本历史）" or "Changelog (Original Wilds Version History)"))
+            assert(history.entries[1].title == "V5.0.2" and #history.entries[1].paragraphs == 4)
+            assert(history.entries[4].groupTitle == (language == "zh" and "更新日志（原《荒野》版本历史）" or "Changelog (Original Wilds Version History)"))
             assert(#history.entries == #versions + 1)
             for index, version in ipairs(versions) do
                 local entry = history.entries[index + 1]
@@ -119,13 +119,13 @@ end
 test("historical literals and numbers are unchanged", function()
     local zh = Help.snapshot("zh", "Rise").sections[3].entries
     local en = Help.snapshot("en", "Rise").sections[3].entries
-    assert(zh[3].paragraphs[2] == "2. 支持在勾选的 +10 cm 与 0 cm 预设之间切换；归零按钮会勾选并设为 0 cm。")
-    assert(en[3].paragraphs[2] == "2. Switch between checked +10 cm and 0 cm presets to raise or reset height. Reset now checks the option and sets 0 cm.")
-    assert(zh[14].paragraphs[1] == "1. 新增独立 UI 面板，默认使用 Home 键打开。")
-    assert(en[14].paragraphs[1] == "1. Added an independent UI panel, opened with the Home key by default.")
-    assert(zh[14].paragraphs[3] == "3. 新增自动保存预设功能，默认启用。")
-    assert(en[14].paragraphs[3] == "3. Added automatic preset saving, enabled by default.")
-    assert(zh[24].paragraphs[1] == "发布。" and en[24].paragraphs[1] == "Initial release.")
+    assert(zh[4].paragraphs[2] == "2. 支持在勾选的 +10 cm 与 0 cm 预设之间切换；归零按钮会勾选并设为 0 cm。")
+    assert(en[4].paragraphs[2] == "2. Switch between checked +10 cm and 0 cm presets to raise or reset height. Reset now checks the option and sets 0 cm.")
+    assert(zh[15].paragraphs[1] == "1. 新增独立 UI 面板，默认使用 Home 键打开。")
+    assert(en[15].paragraphs[1] == "1. Added an independent UI panel, opened with the Home key by default.")
+    assert(zh[15].paragraphs[3] == "3. 新增自动保存预设功能，默认启用。")
+    assert(en[15].paragraphs[3] == "3. Added automatic preset saving, enabled by default.")
+    assert(zh[25].paragraphs[1] == "发布。" and en[25].paragraphs[1] == "Initial release.")
 end)
 
 test("snapshots cannot modify the source or later reads", function()

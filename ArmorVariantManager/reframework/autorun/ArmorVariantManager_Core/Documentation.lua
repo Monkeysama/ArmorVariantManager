@@ -207,6 +207,15 @@ return {
         heading = "更新日志（《荒野》与《崛起》通用版）",
         entries = {
             {
+                title = "V5.0.2",
+                paragraphs = {
+                    "加快 REFF 面板的预设切换和材质显隐，避免后台刷新拖慢操作。",
+                    "修复勾选时控件闪烁和页脚挤动内容的问题，较慢的操作仍会显示等待提示。",
+                    "修复经典白、经典黑和玻璃态的大面板缩放上限。REFF 未提供游戏画面高度时，差分管理器会从 REFramework 获取高度。",
+                    "修正字号缩放后的材质勾选框、文字和网格控制对齐，并将部件分类文字居中。"
+                }
+            },
+            {
                 title = "V5.0.1",
                 paragraphs = {
                     "修复 REFF 大面板缩放过大的问题。REFF 提供游戏画面高度时，经典白、经典黑和玻璃态主题会据此限制面板缩放。"
@@ -379,6 +388,15 @@ return {
             title = "Changelog",
             heading = "Changelog (Wilds and Rise)",
             entries = {
+                {
+                    title = "V5.0.2",
+                    paragraphs = {
+                        "Improved REFF panel responsiveness by sending preset and material visibility actions during background refreshes.",
+                        "Fixed control flicker and footer layout shifts during checkbox changes. Longer operations still show a status message.",
+                        "Fixed the large-panel scaling cap in Classic White, Classic Black and Glass. The panel can obtain the game window height from REFramework when REFF does not provide it.",
+                        "Aligned material checkboxes, labels and mesh controls at larger text sizes, and centered the equipment filter labels."
+                    }
+                },
                 {
                     title = "V5.0.1",
                     paragraphs = {
