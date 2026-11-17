@@ -177,7 +177,15 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
         local snapshot=handlers["monkeysama.avm.snapshot"]
         local dispatch=handlers["monkeysama.avm.action"]
         local documentation=handlers["monkeysama.avm.documentation"]
+        local display_height=1080
+        imgui.get_display_size=function() return {x=1920, y=display_height} end
         local current=snapshot()
+        assert(current.gameDisplayHeight==1080,"REFF snapshot exposes the game display height")
+        display_height=1440
+        assert(snapshot().gameDisplayHeight==1440,"window changes are reflected in the next snapshot")
+        display_height=0
+        assert(snapshot().gameDisplayHeight==nil,"display size can be unavailable during initialization")
+        imgui.get_display_size=nil
         assert(current.game==(game=="mhrise" and "Rise" or "Wilds") and current.bodyId=="armor")
         assert(current.version=="5.0.1", "both games expose the finalized release version")
         assert(current.theme=="white" and current.parts[1].materials[1].name=="cloth")

@@ -171,6 +171,10 @@ function ReffApp.new(app)
     local Controller = require("ArmorVariantManager_Core.UI.Reff.Controller")
     local controller = Controller.new({
         game=game.name,version=version,context=context,conditions=conditions,settings=settings,
+        display_height=function()
+            local size = imgui.get_display_size and imgui.get_display_size()
+            return size and size.y > 0 and size.y or nil
+        end,
         parts=function(current)
             return reff_parts.snapshot(current,workspace.get_effective_group_presets(current.id,current.character))
         end,

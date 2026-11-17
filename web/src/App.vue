@@ -18,17 +18,18 @@ const worldTheme = computed(() => ['white', 'black', 'glass'].includes(theme.val
 const scaleWithPanel = computed(() => snapshot.value?.settings?.sections
   .find(section => section.id === 'general')?.fields.find(field => field.id === 'reff_scale_with_panel')?.value === true);
 const panelScale = shallowRef(1);
-const clientHeight = shallowRef(0);
+const hostClientHeight = shallowRef(0);
 function updateDisplay(event: Event) {
   const height = (event as CustomEvent).detail?.display?.clientHeightInViewportPixels;
-  clientHeight.value = Number.isFinite(height) && height > 0 ? height : 0;
+  hostClientHeight.value = Number.isFinite(height) && height > 0 ? height : 0;
 }
 window.addEventListener('reff:preferences-changed', updateDisplay);
 onBeforeUnmount(() => window.removeEventListener('reff:preferences-changed', updateDisplay));
 const panelZoom = computed(() => {
-  if (!worldTheme.value || !clientHeight.value) return panelScale.value;
+  const height = hostClientHeight.value || snapshot.value?.gameDisplayHeight || 0;
+  if (!worldTheme.value || height <= 0) return panelScale.value;
   // 以 4K 下的两倍字号为上限，按游戏客户区高度换算；小面板仍按其实际面积缩放。
-  const maximum = Math.max(.75, clientHeight.value / 1080);
+  const maximum = Math.max(.75, height / 1080);
   return Math.min(panelScale.value, maximum);
 });
 watch(scaleWithPanel, (enabled, _, onCleanup) => {
