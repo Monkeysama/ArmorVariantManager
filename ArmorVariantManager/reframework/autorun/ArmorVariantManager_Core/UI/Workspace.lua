@@ -18,8 +18,8 @@ function Workspace.new(game, backend, config_session, GameConfig)
     end
 
     -- 界面展示本地角色的条件结果；编辑基线仍按装备共享。
-    function workspace.get_effective_group_presets(body_id)
-        local character = runtime.actors.local_player()
+    function workspace.get_effective_group_presets(body_id, character)
+        character = character or runtime.actors.local_player()
         local slot = (game.wilds and backend.is_weapon_id(body_id) or not game.wilds and state.weapon) and "weapon" or "armor"
         local context = character and actor_runtime:peek(tostring(character), slot, body_id, loaded_configs[body_id])
         return context and context.groups or active_group_presets[body_id] or {}
@@ -158,7 +158,7 @@ function Workspace.new(game, backend, config_session, GameConfig)
     -- 辅助函数：判断某材质是否被全局分组的当前预设锁定为隐藏
     -- 返回 true 表示被全局隐藏，此时不允许将其显示出来
     -- 注意：当前上下文本身就是全局分组时不做限制，允许在其内部自由编辑
-    function workspace.is_globally_hidden(part_index, mat_name)
+    function workspace.is_globally_hidden(part_index, mat_name, active_saved)
         -- 在全局分组上下文内操作时，不施加任何限制
         if state.group ~= "" and workspace.config.groups
             and workspace.config.groups[state.group]
@@ -167,11 +167,13 @@ function Workspace.new(game, backend, config_session, GameConfig)
         end
         if not workspace.config.groups then return false end
         local s_idx = tostring(part_index)
-        local body_id = workspace.get_body_id()
-        local active_saved = body_id and workspace.get_effective_group_presets(body_id) or {}
         for g_name, g_data in pairs(workspace.config.groups) do
             if g_data.is_global and g_data.mask and g_data.mask[s_idx]
                 and g_data.mask[s_idx][mat_name] == true then
+                if not active_saved then
+                    local body_id = workspace.get_body_id()
+                    active_saved = body_id and workspace.get_effective_group_presets(body_id) or {}
+                end
                 -- 优先用用户当前选中的预设，fallback 到默认预设
                 local pname = active_saved[g_name]
                 if not pname or pname == "" then pname = g_data.default_preset end

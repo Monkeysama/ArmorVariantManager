@@ -23,13 +23,14 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
     local weapon_id, applied_weapons = nil, {}
     local handlers, unregistered, write_failed, write_failed_path
     local enabled, visible = true, true
+    local material_count, body_id_reads = 2, 0
     local td = {get_method=function() return nil end}
     local mesh = {get_type_definition=function() return td end}
     function mesh:call(method, offset, value)
         if method=="get_Enabled" then return enabled end
         if method=="set_Enabled" then enabled=offset end
-        if method=="get_MaterialNum" then return 2 end
-        if method=="getMaterialName" then return offset==0 and "cloth" or "metal" end
+        if method=="get_MaterialNum" then return material_count end
+        if method=="getMaterialName" then return offset==0 and "cloth" or offset==1 and "metal" or "extra_"..offset end
         if method=="getMaterialsEnable" then return visible end
         if method=="setMaterialsEnable" then visible=value end
     end
@@ -73,7 +74,7 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
                 local runtime={
                     actors={local_player=function() return object end,all=function() return {object} end,
                         get=function() return {entries={entry},local_entry=entry} end,can_transform=function() return false end},
-                    equipment={body_id=function() return "armor" end,weapon_id=function() return weapon_id end,
+                    equipment={body_id=function() body_id_reads=body_id_reads+1; return "armor" end,weapon_id=function() return weapon_id end,
                         weapons=function() return {} end,clear=function() end},
                     meshes={first=function() return mesh end,part_meshes=function() return {mesh} end},
                     scene_object={game_object=function(o) return o end},
@@ -352,6 +353,14 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
         assert(owned.owner=="Cape" and not owned.editable,"main lists group-owned materials without editing them")
         S.equal(owned.groups,{"Layer","Overlay"})
         assert(current.parts[1].materials[2].owner=="Trim" and not current.parts[1].materials[2].editable)
+        local reads_before=body_id_reads
+        snapshot()
+        local reads_for_two=body_id_reads-reads_before
+        material_count,reads_before=32,body_id_reads
+        local expanded=snapshot()
+        material_count=2
+        assert(#expanded.parts[1].materials==32)
+        assert(body_id_reads-reads_before==reads_for_two,"more materials must not trigger more equipment ID reads")
         local material_applied=#applied
         local edited,edit_reason=pcall(send,"material",{part=0,name="cloth",enabled=true})
         assert(not edited and edit_reason:find("材质不属于当前分组",1,true) and #applied==material_applied)
