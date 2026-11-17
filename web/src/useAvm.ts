@@ -19,6 +19,7 @@ export function useAvm(helpOpen: Readonly<Ref<boolean>>) {
   const documentationCache = new Map<string, Documentation>();
   let disposed = false;
   let ready = false;
+  let actionRevision = 0;
   let read: Promise<void> | undefined;
   let documentationRead: Promise<void> | undefined;
   let importsRead: Promise<Imports> | undefined;
@@ -26,9 +27,12 @@ export function useAvm(helpOpen: Readonly<Ref<boolean>>) {
 
   function refresh() {
     if (disposed || busy.value || read || documentationRead || importsRead || document.hidden || !ready) return;
+    const revision = actionRevision;
     read = client.call<Snapshot>('monkeysama.avm.snapshot').then(value => {
-      if (!disposed) snapshot.value = normalizeSnapshot(value);
-    }).catch(reason => { if (!disposed) error.value = reason instanceof Error ? reason.message : String(reason); })
+      if (!disposed && revision === actionRevision) snapshot.value = normalizeSnapshot(value);
+    }).catch(reason => {
+      if (!disposed && revision === actionRevision) error.value = reason instanceof Error ? reason.message : String(reason);
+    })
       .finally(() => { read = undefined; loading.value = false; });
     return read;
   }
@@ -78,14 +82,14 @@ export function useAvm(helpOpen: Readonly<Ref<boolean>>) {
     } catch (reason) { error.value = reason instanceof Error ? reason.message : String(reason); }
     finally { loading.value = false; }
   }
-  // Polls, on-demand reads and writes share one lane; older reads cannot overwrite action results.
+  // Action replies carry a fresh snapshot, so an in-flight poll need not delay a write.
   const perform: Perform = async actions => {
     if (busy.value || !ready || disposed) return false;
     const bodyId = snapshot.value?.bodyId ?? '';
     busy.value = true;
+    actionRevision += 1;
     notice.value = '';
     try {
-      await read;
       await documentationRead;
       // The picker displays list-read errors; they must not block unrelated writes.
       await importsRead?.catch(() => undefined);
