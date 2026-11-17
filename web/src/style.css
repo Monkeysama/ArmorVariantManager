@@ -147,12 +147,14 @@ body { background: transparent; }
 }
 .selection-hint { display: flex; align-items: center; gap: 7px; margin-top: 8px; color: var(--avm-accent); font-size: var(--reff-font-size-xs, 12px); }
 .empty-note { color: var(--avm-muted); padding: 18px 5px; margin: 0; }
-.avm-footer { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; background: var(--avm-panel); border-top: 1px solid var(--avm-line); padding: 6px 16px; }
+.avm-footer { display: flex; align-items: center; gap: 12px; background: var(--avm-panel); border-top: 1px solid var(--avm-line); padding: 6px 16px; }
+.avm-footer > .equipment-id { height: 1lh; max-width: 50%; }
+.avm-footer > .equipment-id, .status-text { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .avm .restore-button { background: transparent; }
 .restore-confirm { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
 .restore-confirm p { margin: 0; }
 .restore-confirm .el-button { flex: none; white-space: nowrap; }
-.status { display: flex; gap: 7px; align-items: center; min-width: 0; font-size: var(--reff-font-size-xs, 12px); color: var(--avm-accent); overflow-wrap: anywhere; }
+.status { display: flex; flex: 1; gap: 7px; align-items: center; min-width: 0; height: 1lh; font-size: var(--reff-font-size-xs, 12px); color: var(--avm-accent); }
 .footer-tabs { display: flex; flex-wrap: wrap; max-width: 100%; gap: 5px; margin-left: auto; }
 .footer-tabs button { color: var(--avm-muted); border: 0; border-bottom: 2px solid transparent; padding: 5px 9px; background: transparent; white-space: nowrap; }
 .footer-tabs button[aria-current='page'] { color: var(--avm-accent); border-color: var(--avm-accent); }

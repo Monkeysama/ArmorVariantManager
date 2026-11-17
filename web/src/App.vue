@@ -13,6 +13,16 @@ import { useText } from './i18n';
 const tab = shallowRef<'parts' | 'conditions' | 'settings' | 'help'>('parts');
 const { client, snapshot, busy, loading, error, notice, perform, connect, documentation, documentationLoading, documentationError, retryDocumentation, loadImports } = useAvm(computed(() => tab.value === 'help'));
 const { t, english } = useText(snapshot);
+const showApplying = shallowRef(false);
+watch(busy, (applying, _, onCleanup) => {
+  if (!applying) {
+    showApplying.value = false;
+    return;
+  }
+  const timer = window.setTimeout(() => { showApplying.value = true; }, 200);
+  onCleanup(() => window.clearTimeout(timer));
+});
+const footerStatus = computed(() => showApplying.value ? t('saving') : notice.value || (snapshot.value?.suspended ? t('suspended') : ''));
 const theme = computed(() => snapshot.value?.theme ?? 'white');
 const worldTheme = computed(() => ['white', 'black', 'glass'].includes(theme.value));
 const scaleWithPanel = computed(() => snapshot.value?.settings?.sections
@@ -102,8 +112,11 @@ async function dismissBackup() {
       </div>
       </div>
       <footer class="avm-footer">
-        <div class="status" role="status"><span v-if="busy" class="active-dot"></span>{{ busy ? t('saving') : notice || (snapshot?.suspended ? t('suspended') : '') }}</div>
-        <span class="equipment-id">{{ snapshot?.selectedPreset }}</span>
+        <div class="status" role="status">
+          <span v-if="showApplying" class="active-dot" aria-hidden="true"></span>
+          <span class="status-text" :title="footerStatus">{{ footerStatus }}</span>
+        </div>
+        <span class="equipment-id" :title="snapshot?.selectedPreset">{{ snapshot?.selectedPreset }}</span>
       </footer>
     </main>
   </ElConfigProvider>
