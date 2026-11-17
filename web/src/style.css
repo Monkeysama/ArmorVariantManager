@@ -47,6 +47,16 @@ body { background: transparent; }
 .avm .el-checkbox__input.is-checked .el-checkbox__inner::after { border-color: var(--avm-on-accent); }
 .avm .el-checkbox__input.is-disabled .el-checkbox__inner { opacity: .5; }
 .avm .el-radio { color: var(--avm-ink); margin-right: 26px; }
+/* Controls lock immediately. Brief requests keep their previous colors until the status appears. */
+.avm[aria-busy='true'] :is(:disabled, .is-disabled) { --avm-disabled-delay: 200ms; }
+.avm :is(.catalog-row, .rule-tabs button, .el-button, .el-checkbox__inner, .el-checkbox__label,
+  .el-radio__inner, .el-radio__label, .el-input__inner, .el-input__wrapper, .el-select__wrapper,
+  .el-slider__runway, .el-slider__bar, .el-slider__button),
+.avm :is(.el-checkbox__inner, .el-radio__inner)::after {
+  transition-property: opacity, color, background-color, border-color, box-shadow, -webkit-text-fill-color;
+  transition-duration: 120ms;
+  transition-delay: var(--avm-disabled-delay, 0s);
+}
 .avm-header { display: flex; align-items: center; gap: 18px; margin: 0 14px; padding: 8px 2px; border-bottom: 1px solid var(--avm-line); }
 .identity { min-width: 0; }
 .identity h1 { margin: 0; font-size: calc(19px * var(--reff-text-scale, 1)); font-weight: 500; letter-spacing: .08em; }
@@ -305,4 +315,4 @@ body { background: transparent; }
   .condition-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 3px 12px; }
   .condition-priority { max-width: 260px; margin-top: 15px; }
 }
-@media (prefers-reduced-motion: reduce) { .avm *, .avm *::before, .avm *::after { transition: none !important; animation: none !important; } }
+@media (prefers-reduced-motion: reduce) { .avm *, .avm *::before, .avm *::after { transition-duration: 0s !important; animation: none !important; } }
