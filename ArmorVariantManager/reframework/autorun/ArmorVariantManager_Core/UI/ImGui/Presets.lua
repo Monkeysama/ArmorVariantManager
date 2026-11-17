@@ -114,9 +114,7 @@ function Presets.new(app, view)
                 imgui.set_next_item_width(-1)
                 local changed_g, g_idx = imgui.combo("##group_selector", current_group_combo_index, full_group_list)
                 if changed_g then
-                    state.group = (g_idx == 1) and "" or state.groups[g_idx - 1]
-                    state.group_index = g_idx
-                    workspace.update_preset_names_list()
+                    workspace.select_group((g_idx == 1) and "" or state.groups[g_idx - 1])
                 end
 
                 -- 第三行

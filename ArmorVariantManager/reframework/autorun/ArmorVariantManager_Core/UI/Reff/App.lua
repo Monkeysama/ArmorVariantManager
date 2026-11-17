@@ -2,12 +2,11 @@ local ReffApp = {}
 
 function ReffApp.new(app)
     local game, backend, runtime = app.game, app.backend, app.runtime
-    local appearance, config_session, global_config = app.appearance, app.session, app.global_config
+    local config_session, global_config = app.session, app.global_config
     local workspace = app.workspace
     local state = workspace.state
     local T, version = app.translate, app.version
     local TransformManager = app.rules
-    local active_overrides = appearance.overrides
     local manual_import = app.manual_import
     local get_ground_clipping_settings = app.height and app.height.get
     local set_ground_clipping_settings = app.height and app.height.set
@@ -28,11 +27,11 @@ function ReffApp.new(app)
         return {id=id,config=workspace.config,character=character,player=backend.player_handle(character),
             weapon=state.weapon,suspended=suspended,group=state.group,group_names=state.groups,
             preset_names=state.presets,selected=state.presets[state.preset_index],
-            selecting=state.selecting,pending=state.pending,baseline=id and active_overrides[id]}
+            selecting=state.selecting,pending=state.pending,baseline=id and workspace.material_overrides()[id]}
     end
     local select_group = workspace.select_group
     local editor = require("ArmorVariantManager_Core.Runtime.Visibility").new({
-        edit=function(id,part,material,enabled) return appearance.edit(id,part,material,enabled,workspace.config) end,
+        edit=workspace.edit_visibility,
         valid=access.valid,call=access.call,hidden=workspace.is_globally_hidden,
     })
     local function edit(request, current, material)

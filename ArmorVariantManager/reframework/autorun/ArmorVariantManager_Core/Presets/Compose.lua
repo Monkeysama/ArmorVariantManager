@@ -33,7 +33,7 @@ end
 -- 全局组只覆盖材质，不覆盖网格开关；荒野还需补齐没有下层状态的显示项。
 function Compose.merge_global_into(target, preset, fill_missing, metadata_key)
     for part, data in pairs(preset or {}) do
-        if part ~= metadata_key and data.materials then
+        if part ~= metadata_key and type(data) == "table" and data.materials then
             if not target[part] then target[part] = { materials = {} } end
             if not target[part].materials then target[part].materials = {} end
             for material, enabled in pairs(data.materials) do

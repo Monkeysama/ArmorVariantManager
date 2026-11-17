@@ -12,7 +12,7 @@ function Visibility.new(deps)
     end
 
     function editor.material(id, part, meshes, name, enabled)
-        if not deps.edit(id, part, name, enabled) then return false end
+        if not deps.edit(id, part, name, enabled, meshes and meshes[1]) then return false end
         local rendered = enabled
         if enabled and deps.hidden(part, name) then rendered = false end
         for _, mesh in ipairs(meshes or {}) do

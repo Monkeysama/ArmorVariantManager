@@ -89,10 +89,10 @@ function Materials.new(deps)
                                     else
                                         render_val = target_val
                                     end
-                                    call(mesh_component, "setMaterialsEnable", k, render_val)
                                     if body_id then
-                                        deps.edit(body_id, part_index, mn, target_val)
+                                        deps.edit(body_id, part_index, mn, target_val, mesh_component)
                                     end
+                                    call(mesh_component, "setMaterialsEnable", k, render_val)
                                 end
                             end
                         end
@@ -119,10 +119,10 @@ function Materials.new(deps)
                                     else
                                         render_val = nv
                                     end
-                                    call(mesh_component, "setMaterialsEnable", k, render_val)
                                     if body_id then
-                                        deps.edit(body_id, part_index, mn, nv)
+                                        deps.edit(body_id, part_index, mn, nv, mesh_component)
                                     end
+                                    call(mesh_component, "setMaterialsEnable", k, render_val)
                                 end
                             end
                         end
@@ -198,7 +198,7 @@ function Materials.new(deps)
                                         if mat_changed then
                                             -- 记录用户意图值到 context.overrides（全局锁不影响存储的意图）
                                             if body_id and part_index then
-                                                deps.edit(body_id, part_index, mat_name, mat_new_val)
+                                                deps.edit(body_id, part_index, mat_name, mat_new_val, mesh_component)
                                             end
                                             -- 实际渲染时应用全局锁：被全局隐藏的材质始终保持隐藏
                                             local render_val

@@ -22,7 +22,7 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
     local checkbox_labels = {}
     local weapon_id, applied_weapons = nil, {}
     local handlers, unregistered, write_failed, write_failed_path
-    local enabled, visible = true, true
+    local enabled, visible, metal_visible = true, true, true
     local td = {get_method=function() return nil end}
     local mesh = {get_type_definition=function() return td end}
     function mesh:call(method, offset, value)
@@ -30,8 +30,13 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
         if method=="set_Enabled" then enabled=offset end
         if method=="get_MaterialNum" then return 2 end
         if method=="getMaterialName" then return offset==0 and "cloth" or "metal" end
-        if method=="getMaterialsEnable" then return visible end
-        if method=="setMaterialsEnable" then visible=value end
+        if method=="getMaterialsEnable" then
+            if offset==0 then return visible end
+            return metal_visible
+        end
+        if method=="setMaterialsEnable" then
+            if offset==0 then visible=value else metal_visible=value end
+        end
     end
     local object = {get_type_definition=function() return td end,call=function(_,method)
         if method=="get_Name" then return "actor" end
@@ -92,6 +97,21 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
                     end,
                     is_suspended=function() return false end,
                 }
+                if game=="mhrise" then
+                    local rise = "ArmorVariantManager_Core.Games.Rise."
+                    runtime.equipment.parts = function() return {[0]=object,sig="armor"} end
+                    runtime.equipment.mesh = function() return mesh end
+                    local bindings = require(rise.."Materials").new(runtime.equipment, require(rise.."Rules").capture_mesh)
+                    local capture = require(rise.."Capture").new(runtime.equipment)
+                    runtime.materials.armor = function(actor, result, options)
+                        applied[#applied+1] = S.copy(result)
+                        bindings.armor(actor, result, options)
+                    end
+                    runtime.capture = function(...)
+                        captures = captures + 1
+                        return capture(...)
+                    end
+                end
                 function runtime.install_hooks() re.on_script_reset(callbacks.reset) end
                 function runtime.refresh() callbacks.process(entry,false,runtime); return true end
                 function runtime.tick(ui)
@@ -131,6 +151,7 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
     end}
     _G.imgui = setmetatable({tree_node=function() return true end, checkbox=function(label,v)
             checkbox_labels[label]=true
+            if action==label then action=nil; return true, not v end
             return false,v
         end,
         text_colored=function(message) assert(not tostring(message):find("Error:"),message) end},
@@ -204,6 +225,41 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
         assert(not current.backupPending and #writes==restore_writes,"dismiss is session-only even when writes fail")
         S.equal(data["ArmorVariantManager/backup/armor.json"],protected_backup)
         write_failed=false
+        if game=="mhrise" then
+            -- 通过两个实际面板编写同一组的稀疏预设，并跨帧验证网格和保存的数据。
+            send("selection",{enabled=true})
+            for _,name in ipairs({"cloth","metal"}) do send("select-material",{part=0,name=name,enabled=true}) end
+            send("create-group",{name="Edit",global=true})
+            send("material",{part=0,name="cloth",enabled=false})
+            send("material",{part=0,name="metal",enabled=true})
+            send("save",{name="First"})
+            local function frames_match(cloth, metal)
+                for i=1,12 do
+                    for _,fn in ipairs(frames) do fn() end
+                    assert(visible==cloth and metal_visible==metal, "Rise global edit reverted on frame "..i)
+                end
+            end
+            frames_match(false,true)
+            action="[0] cloth"; draws[1](); assert(action==nil)
+            send("material",{part=0,name="metal",enabled=false})
+            frames_match(true,false)
+            write_failed=true; assert(not pcall(send,"save",{name="Second"})); write_failed=false
+            frames_match(true,false)
+            send("save",{name="Second"})
+            local saved=data["ArmorVariantManager/armor.json"].groups.Edit
+            S.equal(saved.presets.First["0"].materials,{cloth=false})
+            S.equal(saved.presets.Second["0"].materials,{metal=false})
+            send("preset",{name="Second"}); frames_match(true,false)
+            send("preset",{name="First"}); frames_match(false,true)
+            send("material",{part=0,name="cloth",enabled=true})
+            send("save",{name="Visible"})
+            assert(data["ArmorVariantManager/armor.json"].groups.Edit.presets.Visible._empty)
+            send("preset",{name="Visible"}); frames_match(true,true)
+            send("preset",{name="First"})
+            send("material",{part=0,name="cloth",enabled=true})
+            send("group",{name=""}); frames_match(false,true)
+            send("delete-group",{name="Edit"})
+        end
         local function names(items)
             local result={}
             for index,item in ipairs(items) do result[index]=item.name end

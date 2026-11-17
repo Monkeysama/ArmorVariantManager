@@ -302,3 +302,22 @@ app.overrides.fresh=nil
 assert(app.edit("fresh",0,"ribbon",true))
 assert(app.groups.fresh[""] == "Base" and app.overrides.fresh["0"].materials.ribbon)
 print("PASS: Rise visibility edits update rollback, isolated outputs, global locks and stable versions")
+
+-- 开启条件后，预览只覆盖本地猎人正在编辑的字段；同装备队友仍用自己的规则结果。
+config.enable_transform = true
+assert(app.select("armor", config, "", "Manual"))
+assert(app.select("armor", config, "Lock", "Hide"))
+a.weapon = "weapon"
+pa.drawn, pb.drawn = true, false
+tick(a,pa,true); tick(b,pb,false)
+assert(not outputs[a].armor["0"].materials.cloth and not outputs[b].armor["0"].materials.cloth)
+assert(app.preview_material("armor",0,"cloth",true,config,{}))
+tick(a,pa,true); tick(b,pb,false)
+local preview_version = versions[a].armor
+for i=1,20 do tick(a,pa,true) end
+assert(outputs[a].armor["0"].materials.cloth and not outputs[b].armor["0"].materials.cloth)
+assert(versions[a].armor == preview_version and not outputs[a].weapon["0"].materials.cloth)
+assert(app.end_material_preview())
+tick(a,pa,true)
+assert(not outputs[a].armor["0"].materials.cloth and versions[a].armor > preview_version)
+print("PASS: Rise global preview with active rules, same-model teammate isolation and stable versions")

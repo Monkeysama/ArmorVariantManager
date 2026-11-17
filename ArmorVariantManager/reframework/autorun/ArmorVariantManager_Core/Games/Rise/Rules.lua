@@ -75,6 +75,15 @@ function TransformManager.set_model_base(body_id, normal, selected)
         revision = (previous and previous.revision or 0) + 1 }
     return copy(restored)
 end
+-- 稀疏全局预设解除隐藏时，恢复普通层或首次写入前采到的材质值。
+function TransformManager.with_model_base(body_id, output)
+    local base = model_bases[body_id]
+    local result = Presets.merge(base and base.normal or {}, {})
+    Presets.merge_into(result, output)
+    result.ground_clipping_fix = output.ground_clipping_fix
+    return result
+end
+
 function TransformManager.update_base_preset(body_id, config, group, preset, merge)
     local base = model_bases[body_id]
     if not base then return end

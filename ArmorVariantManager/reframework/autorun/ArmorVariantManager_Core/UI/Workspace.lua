@@ -138,9 +138,35 @@ function Workspace.new(game, backend, config_session, GameConfig)
         return PresetGroups.global_names(workspace.config, part_index, mat_name)
     end
 
+    local function editing_global_materials()
+        local group = workspace.config.groups and workspace.config.groups[state.group]
+        return appearance.preview_material and group and group.is_global
+    end
+
+    -- 崛起全局组面板读取网格的当前显隐（含溶解目标），用于预览和保存同一套状态。
+    local no_overrides = {}
+    function workspace.material_overrides()
+        if editing_global_materials() then return no_overrides end
+        return active_overrides
+    end
+
+    function workspace.edit_visibility(id, part, name, enabled, mesh)
+        if name and editing_global_materials() then
+            return appearance.preview_material(id, part, name, enabled, workspace.config, mesh)
+        end
+        return appearance.edit(id, part, name, enabled, workspace.config)
+    end
+
+    local function end_material_preview()
+        if appearance.end_material_preview and appearance.end_material_preview() then
+            runtime.refresh()
+        end
+    end
+
     -- 切换防具/武器模式前保存当前配置的分组，下一帧加载目标配置后再恢复对应分组。
     function workspace.switch_variant_mode(weapon_mode)
         if state.weapon == weapon_mode then return end
+        end_material_preview()
         if state.body_id then state.mode_groups[state.body_id] = state.group end
         state.weapon = weapon_mode
         state.body_id = nil
@@ -224,6 +250,7 @@ function Workspace.new(game, backend, config_session, GameConfig)
     end
     function workspace.select_group(name)
         if name ~= "" and not workspace.config.groups[name] then return false end
+        if state.group ~= name then end_material_preview() end
         state.group, state.group_index = name, 1
         for index, value in ipairs(state.groups) do
             if value == name then state.group_index = index+1; break end
@@ -237,6 +264,7 @@ function Workspace.new(game, backend, config_session, GameConfig)
         local local_body_id = workspace.get_body_id()
         if local_body_id then
             if local_body_id ~= state.body_id then
+                if appearance.end_material_preview then appearance.end_material_preview() end
                 state.body_id = local_body_id
                 -- 切换装备后分组属于新的 Body，必须回到默认分组，避免沿用上一件装备的分组名称。
                 state.group = ""

@@ -20,16 +20,14 @@ function Main.new(app)
     local draw_presets = require("ArmorVariantManager_Core.UI.ImGui.Presets").new(app, view)
     local draw_material_panel = require("ArmorVariantManager_Core.UI.ImGui.Materials").new({
         access = require(game.prefix .. "MaterialView").new(),
-        translate = T, edit = function(id, part, material, enabled)
-            return appearance.edit(id, part, material, enabled, workspace.config)
-        end,
+        translate = T, edit = workspace.edit_visibility,
         owner = workspace.get_material_group_owner, global_groups = workspace.get_material_global_groups,
         in_context = workspace.is_material_in_current_context, hidden = workspace.is_globally_hidden,
         body_id = workspace.get_body_id, selected = workspace.get_effective_group_presets,
         context = function()
             return {filters = view.filters, pending = state.pending,
                 selecting = state.selecting, new_global = view.new_group_is_global,
-                overrides = active_overrides, config = workspace.config,
+                overrides = workspace.material_overrides(), config = workspace.config,
                 group = state.group, weapon = state.weapon}
         end,
     })

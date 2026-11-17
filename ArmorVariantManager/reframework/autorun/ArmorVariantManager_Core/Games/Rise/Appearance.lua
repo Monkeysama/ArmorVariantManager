@@ -6,14 +6,41 @@ local Visibility = require("ArmorVariantManager_Core.Presets.Visibility")
 local Presets = require("ArmorVariantManager_Core.Games.Rise.Presets")
 local Rules = require("ArmorVariantManager_Core.Games.Rise.Rules")
 local Height = require("ArmorVariantManager_Core.Presets.Height")
+local SceneObject = require("ArmorVariantManager_Core.Games.Rise.SceneObject")
 local Appearance = {}
 
 -- 共享表只存手动意图；规则结果保存在角色/槽位上下文中。
 function Appearance.new(load_config)
     local app = {overrides = {}, groups = {}, state = State.new(), height = Height.new_preset_state()}
     local edited_outputs = {}
+    local preview
+
+    function app.end_material_preview()
+        if not preview then return false end
+        local id = preview.id
+        preview = nil
+        app.overrides[id] = Rules.with_model_base(id, app.overrides[id])
+        if edited_outputs[id] then
+            edited_outputs[id] = Rules.with_model_base(id, edited_outputs[id])
+        end
+        return true
+    end
+
+    -- 全局组的勾选只预览在本地猎人上，不改已选预设或规则的回滚基础。
+    function app.preview_material(id, part, name, enabled, config, mesh)
+        if not app.overrides[id] then app.defaults(id, config) end
+        if not preview or preview.id ~= id then
+            app.end_material_preview()
+            preview = {id=id, fields={}}
+        end
+        Rules.capture_mesh(id, part, mesh, {materials={[name]=enabled}}, SceneObject.call)
+        Visibility.set(preview.fields, part, name, enabled)
+        preview.base = nil
+        return true
+    end
 
     function app.defaults(id, config)
+        if preview and preview.id == id then preview = nil end
         edited_outputs[id] = nil
         local selected = {}
         local normal = Defaults.normal(config, Presets, {}, selected)
@@ -35,9 +62,13 @@ function Appearance.new(load_config)
         local owner = group_name == "" and config or config.groups and config.groups[group_name]
         if not (owner and owner.presets and owner.presets[preset_name]) then return false end
         if not app.overrides[id] then app.defaults(id, config) end
+        if preview and preview.id == id then app.end_material_preview() end
         local last_height = app.overrides[id].ground_clipping_fix
         app.overrides[id] = Selection.apply(config, app.groups[id], Presets.merge(app.overrides[id], {}),
             group_name, preset_name, Presets)
+        if owner.is_global then
+            app.overrides[id] = Rules.with_model_base(id, app.overrides[id])
+        end
         app.height.reset(id, group_name)
         app.overrides[id].ground_clipping_fix = Height.participating_settings(owner.presets[preset_name], config) or last_height
         Rules.update_base_preset(id, config, group_name, preset_name, Presets.merge)
@@ -99,6 +130,13 @@ function Appearance.new(load_config)
                     app.height_actor, app.height_cm = entry.obj, settings.height_cm
                 end
             end
+            if preview and preview.id == id and entry.is_local and not actor.is_event then
+                if preview.base ~= result then
+                    preview.base = result
+                    preview.output = Presets.merge(result, preview.fields)
+                end
+                result = preview.output
+            end
             local changed = context.overrides ~= result
             if changed then context.version = (context.version or 0) + 1 end
             context.overrides, context.groups = result, groups
@@ -121,6 +159,7 @@ function Appearance.new(load_config)
     end
 
     function app.reset()
+        app.end_material_preview()
         app.height_actor, app.height_cm = nil, nil
         app.state:clear()
     end
