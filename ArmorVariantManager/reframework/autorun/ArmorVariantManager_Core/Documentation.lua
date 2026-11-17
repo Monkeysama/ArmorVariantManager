@@ -207,6 +207,12 @@ return {
         heading = "更新日志（《荒野》与《崛起》通用版）",
         entries = {
             {
+                title = "V5.0.1",
+                paragraphs = {
+                    "修复 REFF 大面板缩放过大的问题。REFF 提供游戏画面高度时，经典白、经典黑和玻璃态主题会据此限制面板缩放。"
+                }
+            },
+            {
                 title = "V5.0.0",
                 paragraphs = {
                     "1. 《荒野》和《崛起》共用一个安装包，原有装备配置和预设可继续使用。",
@@ -373,6 +379,12 @@ return {
             title = "Changelog",
             heading = "Changelog (Wilds and Rise)",
             entries = {
+                {
+                    title = "V5.0.1",
+                    paragraphs = {
+                        "Fixed excessive scaling in large REFF panels. Classic White, Classic Black and Glass now cap scaling when REFF reports the game window height."
+                    }
+                },
                 {
                     title = "V5.0.0",
                     paragraphs = {
