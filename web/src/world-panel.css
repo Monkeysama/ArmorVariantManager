@@ -302,24 +302,12 @@
   font-size: var(--reff-font-size-xs, 12px);
   overflow-wrap: anywhere;
 }
-.mesh-line {
-  float: right;
-  gap: 6px;
-  min-height: 26px;
-  margin: 2px 0;
-}
-.bulk-actions {
-  align-items: center;
-  min-height: 26px;
-  margin: 2px 0;
-}
 .avm .bulk-actions .el-button {
   background: var(--avm-raised);
   color: var(--avm-ink);
   padding: 3px 7px;
 }
 .material-list {
-  clear: both;
   overflow: visible;
   max-height: none;
 }

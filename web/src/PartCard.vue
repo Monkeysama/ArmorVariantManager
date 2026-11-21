@@ -59,27 +59,28 @@ function partId(label: string) {
       ><span class="id-tag">{{ partId(part.label) }}</span>
     </button>
     <div v-show="!collapsed">
-      <div class="mesh-line">
-        <ElCheckbox
-          :model-value="part.enabled"
-          :disabled="disabled || part.meshLocked || snapshot.selectionMode"
-          @change="(value: boolean | string | number) => perform({ kind: 'mesh', part: part.index, enabled: !!value })"
-          >{{ t('mesh') }}</ElCheckbox
-        >
-        <span v-if="part.meshLocked" class="count">{{ t('locked') }}</span>
-        <span v-else class="count"
-          >{{ snapshot.selectionMode ? t('selected') : t('visibleCount') }}
-          {{ snapshot.selectionMode ? selectedCount : visibleCount }}/{{ part.materials.length }}</span
-        >
-      </div>
-
-      <div class="bulk-actions">
-        <ElButton text :disabled="disabled || !materials.length" @click="bulk(true)">{{
-          snapshot.selectionMode ? t('all') : t('showAll')
-        }}</ElButton>
-        <ElButton text :disabled="disabled || !materials.length" @click="bulk(false)">{{
-          snapshot.selectionMode ? t('clear') : t('hideAll')
-        }}</ElButton>
+      <div class="part-controls">
+        <div class="bulk-actions">
+          <ElButton text :disabled="disabled || !materials.length" @click="bulk(true)">{{
+            snapshot.selectionMode ? t('all') : t('showAll')
+          }}</ElButton>
+          <ElButton text :disabled="disabled || !materials.length" @click="bulk(false)">{{
+            snapshot.selectionMode ? t('clear') : t('hideAll')
+          }}</ElButton>
+        </div>
+        <div class="mesh-line">
+          <ElCheckbox
+            :model-value="part.enabled"
+            :disabled="disabled || part.meshLocked || snapshot.selectionMode"
+            @change="(value: boolean | string | number) => perform({ kind: 'mesh', part: part.index, enabled: !!value })"
+            >{{ t('mesh') }}</ElCheckbox
+          >
+          <span v-if="part.meshLocked" class="count">{{ t('locked') }}</span>
+          <span v-else class="count"
+            >{{ snapshot.selectionMode ? t('selected') : t('visibleCount') }}
+            {{ snapshot.selectionMode ? selectedCount : visibleCount }}/{{ part.materials.length }}</span
+          >
+        </div>
       </div>
       <div class="material-list">
         <div

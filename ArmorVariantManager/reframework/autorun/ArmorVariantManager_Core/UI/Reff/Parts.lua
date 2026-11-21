@@ -14,7 +14,7 @@ function Parts.new(deps)
             end
         end
     end
-    function parts.snapshot(context)
+    function parts.snapshot(context, active_groups)
         local output = {}
         for _, row in ipairs(parts.rows(context)) do
             local index = tonumber(row.index)
@@ -37,7 +37,7 @@ function Parts.new(deps)
                         if enabled == nil then enabled = deps.access.call(mesh,"getMaterialsEnable",offset) end
                         result.materials[#result.materials+1] = {name=name,
                             enabled=enabled == true,editable=in_context,owner=deps.owner(index,name),
-                            hidden=deps.hidden(index,name) == true,groups=deps.global_names(index,name)}
+                            hidden=deps.hidden(index,name,active_groups) == true,groups=deps.global_names(index,name)}
                     end
                 end
             end

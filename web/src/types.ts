@@ -38,6 +38,7 @@ export interface Imports { bodyId: string; files: ImportFile[] }
 export interface Preview { available: boolean; enabled: boolean; status: string; error?: string }
 export interface Snapshot {
   game: 'Wilds' | 'Rise'; version: string; bodyId: string; weapon: boolean; suspended: boolean;
+  gameDisplayHeight?: number;
   backupPending: boolean; canImport: boolean;
   groups: { name: string; label: string; global: boolean }[]; group: string;
   presets: { name: string; default: boolean; active: boolean }[]; selectedPreset: string;

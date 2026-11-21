@@ -10,6 +10,7 @@ function Controller.new(deps)
         local context = deps.context()
         local snapshot = {
             game=deps.game, version=deps.version, bodyId=context.id or "", weapon=context.weapon,
+            gameDisplayHeight=deps.display_height and deps.display_height(),
             suspended=context.suspended, groups={}, group=context.group or "", presets={},
             selectedPreset=context.selected or "", parts={}, theme=deps.theme(), language=deps.language(),
             selectionMode=context.selecting, pending={}, backupPending=false, canImport=deps.imports ~= nil,
