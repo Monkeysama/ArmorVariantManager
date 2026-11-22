@@ -24,6 +24,8 @@ export function documentationFor(game: Snapshot['game'], language: string): Docu
       paragraphs: [en ? 'Back up your equipment JSON before restoring or importing a configuration.' : '恢复或导入配置前，备份装备 JSON。'],
     }] },
     { id: 'changelog', title: en ? 'Changelog' : '更新日志', heading: en ? 'Changelog (Wilds and Rise)' : '更新日志（《荒野》与《崛起》通用版）', entries: [{
+      title: 'V5.0.3', paragraphs: [en ? 'Select all or invert the material selection in REFF.' : 'REFF 材质面板支持全选和反选。'],
+    }, {
       title: 'V5.0.2', paragraphs: [en ? 'Improved preset and material visibility responsiveness in REFF.' : '加快 REFF 面板的预设切换和材质显隐。'],
     }, {
       title: 'V5.0.1', paragraphs: [en ? 'Fixed excessive scaling in large REFF panels.' : '修复 REFF 大面板缩放过大的问题。'],

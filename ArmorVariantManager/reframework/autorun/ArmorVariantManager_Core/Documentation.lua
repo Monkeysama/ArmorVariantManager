@@ -207,6 +207,16 @@ return {
         heading = "更新日志（《荒野》与《崛起》通用版）",
         entries = {
             {
+                title = "V5.0.3",
+                paragraphs = {
+                    "REFF 材质面板改用「全选 / 反选」，一次更新当前筛选范围内的可编辑材质。",
+                    "被全局组隐藏的材质仍可在所属普通组或默认组勾选并保存到预设，游戏中继续保持隐藏。",
+                    "新增普通组时，已归属其他普通组的材质不可选。新增全局组可复用这些材质，支持单选、全选和反选。",
+                    "《荒野》修复全局配色和普通组显隐相互覆盖的问题。切换上衣等普通组时保留其他材质的颜色，换色时保留普通组的显隐。",
+                    "《崛起》修复全局分组的显隐预览、预设编辑和切换。"
+                }
+            },
+            {
                 title = "V5.0.2",
                 paragraphs = {
                     "加快 REFF 面板的预设切换和材质显隐，避免后台刷新拖慢操作。",
@@ -388,6 +398,16 @@ return {
             title = "Changelog",
             heading = "Changelog (Wilds and Rise)",
             entries = {
+                {
+                    title = "V5.0.3",
+                    paragraphs = {
+                        "The REFF material panel now uses Select All and Invert Selection to update editable materials in the current filtered list together.",
+                        "You can check and save materials covered by a global hide in their normal group or in Main Presets. They remain hidden in the game while the global hide is active.",
+                        "Materials assigned to a normal group are unavailable when creating another normal group. New global groups can reuse them through individual selection, Select All or Invert Selection.",
+                        "In Wilds, switching a normal group such as a top preserves the colors of other materials. Switching a global color preset preserves the visibility set by normal groups.",
+                        "In Rise, fixed visibility previews, preset editing and preset switching for global groups."
+                    }
+                },
                 {
                     title = "V5.0.2",
                     paragraphs = {
