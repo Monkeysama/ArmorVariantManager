@@ -58,7 +58,8 @@ function Appearance.new(deps)
         local selected = app.groups[id] or {}
         app.groups[id] = selected
         Defaults.normal(config, Presets, app.overrides[id], selected)
-        Defaults.globals(config, Presets, app.overrides[id], selected)
+        local layer = Defaults.globals(config, Presets, {}, selected)
+        Presets.apply_global_layer(config, app.overrides[id], layer)
     end
 
     -- 无目标时不读取角色地址；菜单外观不读取战斗信号。
@@ -105,9 +106,8 @@ function Appearance.new(deps)
         app.groups[id] = selected
         app.overrides[id] = Selection.apply(config, selected, app.overrides[id], group, preset, Presets)
         if owner.is_global then
-            -- 手动选择全局预设时应用其显示项，随后仍由所有全局组的隐藏项最终裁决。
-            Presets.merge_global_into(app.overrides[id], data, true)
-            Selection.merge_globals(config, selected, app.overrides[id], Presets)
+            local layer = Selection.merge_globals(config, selected, {}, Presets)
+            Presets.apply_global_layer(config, app.overrides[id], layer)
         end
         app.height.reset(id, group)
         if not deps.is_weapon_id(id) then

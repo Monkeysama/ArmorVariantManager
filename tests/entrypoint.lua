@@ -595,6 +595,9 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
             assert(data["ArmorVariantManager/armor.json"].presets["Checked metal"]["0"].materials.metal==true,
                 "a masked checkbox must save the checked intent in the main group")
             if game=="mhwilds" then
+                send("material",{part=0,name="metal",enabled=false})
+                send("save",{name="Metal off"})
+                send("default",{name="Metal off"})
                 send("group",{name="Ordinary"})
                 send("material",{part=0,name="cloth",enabled=false})
                 send("save",{name="Cloth off"})
@@ -609,20 +612,22 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
                 assert(not visible and not snapshot().parts[1].materials[1].enabled,
                     "leaving the global editor must restore the ordinary draft and active mask")
                 send("group",{name="Global Mask"})
-                send("materials",{part=0,group="Global Mask",selectionMode=false,changes={cloth=true,metal=false}})
+                send("materials",{part=0,group="Global Mask",selectionMode=false,changes={cloth=true,metal=true}})
                 frames[1]()
                 send("save",{name="Mixed"})
                 S.equal(data["ArmorVariantManager/armor.json"].groups["Global Mask"].presets.Mixed["0"].materials,
-                    {cloth=true,metal=false},"global capture uses the previewed visibility")
+                    {cloth=true,metal=true},"global capture uses the previewed visibility")
                 send("group",{name="Ordinary"})
                 send("preset",{name="Cloth off"})
                 send("group",{name="Global Mask"})
                 send("preset",{name="Mixed"})
                 for i=1,4 do frames[1]() end
-                assert(visible and not metal_visible,"a manually selected Wilds global preset must show its checked materials")
+                assert(not visible and metal_visible,"global color selection supersedes the main fallback and respects the ordinary group")
                 send("group",{name="Ordinary"})
+                send("preset",{name="Checked cloth"})
+                assert(visible and metal_visible,"showing the ordinary group retains the global material")
                 send("preset",{name="Cloth off"})
-                assert(not visible and not metal_visible,"the ordinary group can still hide a globally enabled material")
+                assert(not visible and metal_visible,"hiding the ordinary group retains the global material")
             end
         end
         local armor_after_material_tests=S.copy(data["ArmorVariantManager/armor.json"])

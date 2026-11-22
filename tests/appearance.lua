@@ -106,6 +106,38 @@ do
 end
 print("PASS: Wilds entry appearance wiring, actor eligibility and reset ownership")
 
+-- 默认组保存的是另一配色。颜色组负责换色，普通组只控制归属自己的上衣。
+do
+    local cfg = {default_preset="Base", presets={Base={["0"]={materials={white=false,black=true}}}}, groups={
+        Color={is_global=true,default_preset="White",presets={
+            White={["0"]={materials={white=true,black=false,cloth=true}}},
+            Black={["0"]={materials={white=false,black=true,cloth=true}}},
+        }},
+        Shirt={mask={["0"]={cloth=true}},default_preset="Show",presets={Show=preset(true),Hide=preset(false)}},
+    }}
+    local app=require(prefix .. "Games.Wilds.Appearance").new({
+        rules={has_configured_rules=function() return false end}, is_weapon_id=function() return false end,
+    })
+    local actor = {}
+    local function expect(white, black, cloth)
+        local resolved=app.resolve("armor",cfg,actor,"armor")
+        S.equal(resolved["0"].materials,{white=white,black=black,cloth=cloth})
+    end
+    app.defaults("armor",cfg)
+    expect(true,false,true)
+    assert(app.select("armor",cfg,"Shirt","Hide"))
+    expect(true,false,false)
+    assert(app.select("armor",cfg,"Color","Black"))
+    expect(false,true,false)
+    assert(app.select("armor",cfg,"Color","White"))
+    expect(true,false,false)
+    assert(app.select("armor",cfg,"Shirt","Show"))
+    expect(true,false,true)
+    assert(app.edit("armor",0,"white",false))
+    expect(false,false,true)
+end
+print("PASS: Wilds default and manual colors preserve independent ordinary group visibility")
+
 -- 执行真实崛起规则、共享处理器和角色状态；只替换引擎信号读取。
 local loaded, samples = {}, 0
 local signals = {sample_condition=function(_, handler, actor, player) return handler.get_state(actor, player) end}

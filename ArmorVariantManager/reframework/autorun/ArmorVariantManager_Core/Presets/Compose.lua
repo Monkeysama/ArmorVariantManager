@@ -31,13 +31,13 @@ function Compose.merge(base, added, metadata_key)
 end
 
 -- 全局组只覆盖材质，不覆盖网格开关；荒野还需补齐没有下层状态的显示项。
-function Compose.merge_global_into(target, preset, fill_missing, metadata_key, force_show)
+function Compose.merge_global_into(target, preset, fill_missing, metadata_key)
     for part, data in pairs(preset or {}) do
         if part ~= metadata_key and type(data) == "table" and data.materials then
             if not target[part] then target[part] = { materials = {} } end
             if not target[part].materials then target[part].materials = {} end
             for material, enabled in pairs(data.materials) do
-                if enabled == false or (enabled == true and (force_show or fill_missing and target[part].materials[material] == nil)) then
+                if enabled == false or (fill_missing and enabled == true and target[part].materials[material] == nil) then
                     target[part].materials[material] = enabled
                 end
             end
