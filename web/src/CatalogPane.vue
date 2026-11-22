@@ -9,7 +9,6 @@ import { useCatalogSort, type CatalogList } from './useCatalogSort';
 const props = defineProps<{ snapshot: Snapshot; active: boolean; busy: boolean; perform: Perform; loadImports: () => Promise<Imports>; t: Translate }>();
 const emit = defineEmits<{ notice: [message: string] }>();
 const groupName = shallowRef('');
-const global = shallowRef(false);
 const presetName = shallowRef(props.snapshot.selectedPreset);
 const confirmation = shallowRef<{ kind: 'delete-group' | 'delete-preset'; name: string } | null>(null);
 const disabled = computed(() => props.busy || !props.snapshot.bodyId);
@@ -22,14 +21,13 @@ const customGroups = computed(() => groups.value.filter(item => item.name !== ''
 const group = computed(() => props.snapshot.groups.find(item => item.name === props.snapshot.group));
 const selected = computed(() => props.snapshot.presets.find(item => item.name === props.snapshot.selectedPreset));
 const selectionCount = computed(() => Object.values(props.snapshot.pending).reduce((total, part) => total + Object.values(part).filter(Boolean).length, 0));
-const requiresGlobal = computed(() => !global.value && props.snapshot.parts.some(part => {
-  const pending = props.snapshot.pending[String(part.index)];
-  return pending && part.materials.some(material => material.owner && pending[material.name]);
-}));
-const canCreate = computed(() => !disabled.value && !!groupName.value.trim() && !requiresGlobal.value);
+const showGlobalHint = computed(() => !props.snapshot.selectionGlobal && props.snapshot.parts.some(part =>
+  part.materials.some(material => material.owner),
+));
+const canCreate = computed(() => !disabled.value && !!groupName.value.trim());
 watch([() => props.snapshot.bodyId, () => props.snapshot.group], () => { confirmation.value = null; });
 watch([() => props.snapshot.game, () => props.snapshot.bodyId, () => props.snapshot.weapon, () => props.snapshot.selectionMode], () => {
-  groupName.value = ''; global.value = false;
+  groupName.value = '';
 });
 
 function sortable(list: CatalogList, name: string) {
@@ -65,7 +63,7 @@ async function choosePreset(name: string) {
 async function create() {
   if (!canCreate.value) return;
   const name = groupName.value.trim();
-  if (await props.perform({ kind: 'create-group', name, global: global.value })) {
+  if (await props.perform({ kind: 'create-group', name, global: props.snapshot.selectionGlobal })) {
     groupName.value = ''; emit('notice', `${props.t('created')} · ${name}`);
   }
 }
@@ -100,10 +98,11 @@ async function remove() {
     <div class="pane-actions"><strong class="action-heading">{{ t('groupActions') }}</strong>
       <ElButton v-if="!snapshot.selectionMode" class="new-group-button" :disabled="disabled" @click="startGroup">{{ t('newGroup') }}</ElButton>
       <template v-else>
-        <p class="field-note">{{ t('selected') }} {{ selectionCount }} · {{ t(requiresGlobal ? 'selectionNeedsGlobal' : 'selectionHelp') }}</p>
+        <p class="field-note">{{ t('selected') }} {{ selectionCount }} · {{ t(showGlobalHint ? 'selectionNeedsGlobal' : 'selectionHelp') }}</p>
         <label for="group-name" class="field-label">{{ t('groupName') }}</label>
         <ElInput id="group-name" v-model="groupName" :disabled="disabled" @keyup.enter="create" />
-        <ElCheckbox v-model="global" class="global-group-toggle" :disabled="disabled">{{ t('global') }}</ElCheckbox>
+        <ElCheckbox class="global-group-toggle" :model-value="snapshot.selectionGlobal" :disabled="disabled"
+          @change="(value: boolean | string | number) => perform({ kind: 'selection-global', enabled: !!value })">{{ t('global') }}</ElCheckbox>
         <div class="button-pair">
           <ElButton class="create-group-button" :disabled="!canCreate" @click="create">{{ t('create') }}</ElButton>
           <ElButton class="cancel-group-button" :disabled="disabled" @click="perform({ kind: 'selection', enabled: false })">{{ t('cancel') }}</ElButton>

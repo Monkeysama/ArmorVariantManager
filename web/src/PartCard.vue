@@ -20,7 +20,7 @@ function checked(material: Material) {
   return props.snapshot.selectionMode ? !!props.snapshot.pending[String(props.part.index)]?.[material.name] : material.enabled;
 }
 function editable(material: Material) {
-  return props.snapshot.selectionMode || material.editable !== false;
+  return material.editable !== false;
 }
 function toggle(material: Material, enabled: boolean) {
   void props.perform({

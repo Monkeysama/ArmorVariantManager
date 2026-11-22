@@ -72,8 +72,7 @@ function App.new(options)
             if TransformManager.refresh_config_rules then TransformManager.refresh_config_rules(workspace.config) end
             return false
         end
-        state.pending = {}
-        state.selecting = false
+        workspace.set_selecting(false)
         workspace.update_group_names_list()
         return true
     end
@@ -196,7 +195,7 @@ function App.new(options)
         workspace.config = data
         state.group, state.group_index = "", 1
         state.mode_groups[body_id] = ""
-        state.selecting, state.pending = false, {}
+        workspace.set_selecting(false)
         workspace.imported = workspace.config
         workspace.update_group_names_list()
         workspace.update_preset_names_list()

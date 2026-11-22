@@ -65,7 +65,7 @@ const initial: Snapshot = {
   group: '上身', presets: [{ name: '完整上装', default: true, active: false }, { name: '无外套', default: false, active: true }, { name: '内衬', default: false, active: false }], selectedPreset: '无外套',
   parts: ['头部', '身体', '手臂', '腰部', '腿部', '附加部件'].map((label, index) => ({ index, label, available: index !== 5, enabled: true, meshLocked: index === 0,
     materials: index === 5 ? [] : ['body_leather', 'body_lining', 'cape_outer', 'metal_trim', 'guild_emblem'].map((name, material) => ({ name: index === 1 ? name : `${['head', 'body', 'arm', 'waist', 'leg'][index]}_${name}`, enabled: material !== 2, hidden: material === 4, owner: material < 2 ? '上身' : undefined, groups: material === 4 ? ['全局隐藏'] : [] })),
-  })), theme: 'white', language: 'zh-CN', selectionMode: false, pending: {}, conditions: wildsConditions(), settings: settingsFor('Wilds'),
+  })), theme: 'white', language: 'zh-CN', selectionMode: false, selectionGlobal: false, pending: {}, conditions: wildsConditions(), settings: settingsFor('Wilds'),
 };
 let state = structuredClone(initial);
 const scalePreferences = new Map<string, boolean>();
@@ -165,6 +165,11 @@ function snapshot() {
         if (global) material.hidden = false;
       }
       if (state.group !== '' && !state.selectionMode) part.materials = part.materials.filter(material => material.editable);
+    }
+  }
+  if (state.selectionMode) {
+    for (const part of value.parts) {
+      for (const material of part.materials) material.editable = state.selectionGlobal || !material.owner;
     }
   }
   if (!state.bodyId) value.conditions = null;
@@ -279,9 +284,19 @@ function applyCondition(request: ConditionAction) {
     else if (kind === 'create-group') {
       if (!state.selectionMode) throw new Error('请先进入选择分组材质模式');
       if (state.game === 'Wilds' && !Object.values(state.pending).some(part => Object.values(part).some(Boolean))) throw new Error('请选择材质');
-      state.groups.push({ name: String(params.name), label: String(params.name), global: !!params.global }); state.group = String(params.name); state.selectionMode = false; state.pending = {};
+      state.groups.push({ name: String(params.name), label: String(params.name), global: !!params.global }); state.group = String(params.name); state.selectionMode = false; state.selectionGlobal = false; state.pending = {};
     }
-    else if (kind === 'selection') { state.selectionMode = !!params.enabled; if (!state.selectionMode) state.pending = {}; }
+    else if (kind === 'selection') { state.selectionMode = !!params.enabled; state.selectionGlobal = false; state.pending = {}; }
+    else if (kind === 'selection-global') {
+      state.selectionGlobal = !!params.enabled;
+      if (!state.selectionGlobal) {
+        for (const part of state.parts) {
+          const pending = state.pending[String(part.index)];
+          if (!pending) continue;
+          for (const material of part.materials) if (material.owner) delete pending[material.name];
+        }
+      }
+    }
     else if (kind === 'mesh') { const part = state.parts.find(item => item.index === params.part); if (part) part.enabled = !!params.enabled; }
     else if (kind === 'material' || kind === 'select-material' || kind === 'materials') {
       if (kind === 'materials' && (params.group !== state.group || params.selectionMode !== state.selectionMode)) throw new Error('分组或选择模式已变化');
@@ -291,7 +306,7 @@ function applyCondition(request: ConditionAction) {
       const projected = snapshot().parts.find(item => item.index === params.part);
       for (const [name, enabled] of Object.entries(changes)) {
         const material = projected?.materials.find(item => item.name === name);
-        if (!material || (!selecting && material.editable === false)) throw new Error('材质不属于当前分组');
+        if (!material || (material.editable === false && (!selecting || enabled))) throw new Error('材质不属于当前分组');
         if (selecting) {
           const pending = state.pending[String(params.part)] ??= {};
           if (enabled) pending[name] = true;

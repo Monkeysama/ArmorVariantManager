@@ -192,8 +192,7 @@ function Presets.new(app, view)
                 -- 分组操作
                 if not state.selecting then
                     if imgui.button(T("start_selection") .. "##right") then
-                        state.selecting = true
-                        state.pending = {}
+                        workspace.set_selecting(true)
                     end
                     if state.group ~= "" then
                         imgui.same_line()
@@ -225,35 +224,23 @@ function Presets.new(app, view)
                     local cg, gtext = imgui.input_text(T("name") .. "##gn", view.new_group_name)
                     if cg then view.new_group_name = gtext end
                     -- 全局分组勾选框
-                    local cg_global, new_is_global = imgui.checkbox(T("is_global_group") .. "##gisgl", view.new_group_is_global)
-                    if cg_global then
-                        view.new_group_is_global = new_is_global
-                        if not new_is_global then
-                            for part, materials in pairs(state.pending) do
-                                for name in pairs(materials) do
-                                    if workspace.get_material_group_owner(part,name) then materials[name] = nil end
-                                end
-                            end
-                        end
-                    end
-                    if view.new_group_is_global then
+                    local cg_global, new_is_global = imgui.checkbox(T("is_global_group") .. "##gisgl", state.selection_global)
+                    if cg_global then workspace.set_selection_global(new_is_global) end
+                    if state.selection_global then
                         imgui.same_line()
                         imgui.text_colored(T("is_global_group_desc"), 0xFF80FFFF)
                     end
                     if imgui.button(T("confirm_creation") .. "##gconfirm") then
-                        if view.new_group_name ~= "" and app.create_new_group(view.new_group_name, body_id, view.new_group_is_global) then
+                        if view.new_group_name ~= "" and app.create_new_group(view.new_group_name, body_id, state.selection_global) then
                             state.group = view.new_group_name
                             view.new_group_name = ""
-                            view.new_group_is_global = false
-                            state.selecting = false
                             workspace.update_group_names_list()
                             workspace.update_preset_names_list()
                         end
                     end
                     imgui.same_line()
                     if imgui.button(T("cancel") .. "##gcancel") then
-                        state.selecting = false
-                        view.new_group_is_global = false
+                        workspace.set_selecting(false)
                     end
                 end
                 imgui.end_table()

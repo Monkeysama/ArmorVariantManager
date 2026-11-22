@@ -7,7 +7,7 @@ function Workspace.new(game, backend, config_session, GameConfig)
     local active_overrides, active_group_presets, actor_runtime = appearance.overrides, appearance.groups, appearance.state
     local equipment = runtime.equipment
     local state = {weapon=false, group="", group_index=1, preset_index=1, presets={}, groups={},
-        selecting=false, pending={}, mode_groups={}, restore_group=false}
+        selecting=false, selection_global=false, pending={}, mode_groups={}, restore_group=false}
     local workspace = {state=state, config=GameConfig.new(), applied={}}
     function workspace.get_body_id()
         if state.weapon then
@@ -131,6 +131,21 @@ function Workspace.new(game, backend, config_session, GameConfig)
     end
     function workspace.get_material_group_owner(part_index, mat_name)
         return PresetGroups.owner(workspace.config, part_index, mat_name)
+    end
+
+    function workspace.set_selecting(enabled)
+        state.selecting, state.selection_global, state.pending = enabled, false, {}
+    end
+
+    function workspace.set_selection_global(enabled)
+        state.selection_global = enabled
+        if enabled then return end
+        for part, materials in pairs(state.pending) do
+            for name in pairs(materials) do
+                if workspace.get_material_group_owner(part,name) then materials[name] = nil end
+            end
+            if not next(materials) then state.pending[part] = nil end
+        end
     end
 
     -- 辅助函数：检测材质被哪些全局分组的 mask 覆盖（用于 UI 提示）
@@ -268,6 +283,7 @@ function Workspace.new(game, backend, config_session, GameConfig)
         if local_body_id then
             if local_body_id ~= state.body_id then
                 if appearance.end_material_preview then appearance.end_material_preview() end
+                if state.selecting then workspace.set_selecting(false) end
                 state.body_id = local_body_id
                 -- 切换装备后分组属于新的 Body，必须回到默认分组，避免沿用上一件装备的分组名称。
                 state.group = ""

@@ -42,7 +42,7 @@ export interface Snapshot {
   backupPending: boolean; canImport: boolean;
   groups: { name: string; label: string; global: boolean }[]; group: string;
   presets: { name: string; default: boolean; active: boolean }[]; selectedPreset: string;
-  parts: Part[]; theme: PanelTheme; language: string; selectionMode: boolean;
+  parts: Part[]; theme: PanelTheme; language: string; selectionMode: boolean; selectionGlobal: boolean;
   pending: Record<string, Record<string, boolean>>;
   conditions: Conditions | null;
   settings?: Settings;
@@ -66,7 +66,7 @@ export type Action =
   | { kind: 'mesh'; part: number; enabled: boolean }
   | { kind: 'material' | 'select-material'; part: number; name: string; enabled: boolean }
   | { kind: 'materials'; part: number; group: string; selectionMode: boolean; changes: Record<string, boolean> }
-  | { kind: 'selection'; enabled: boolean }
+  | { kind: 'selection' | 'selection-global'; enabled: boolean }
   | { kind: 'import-preset'; path: string }
   | { kind: 'find' | 'restore' | 'dismiss-backup' };
 export type Perform = (action: Action) => Promise<boolean>;

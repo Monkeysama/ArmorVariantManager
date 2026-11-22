@@ -35,8 +35,11 @@ function Parts.new(deps)
                         seen[name] = true
                         local enabled = intents[name]
                         if enabled == nil then enabled = deps.access.call(mesh,"getMaterialsEnable",offset) end
+                        local owner = deps.owner(index,name)
+                        local editable = in_context
+                        if context.selecting then editable = context.selection_global or owner == nil end
                         result.materials[#result.materials+1] = {name=name,
-                            enabled=enabled == true,editable=in_context,owner=deps.owner(index,name),
+                            enabled=enabled == true,editable=editable,owner=owner,
                             hidden=deps.hidden(index,name,active_groups) == true,groups=deps.global_names(index,name)}
                     end
                 end

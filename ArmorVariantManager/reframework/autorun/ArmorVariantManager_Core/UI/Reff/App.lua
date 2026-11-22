@@ -27,7 +27,8 @@ function ReffApp.new(app)
         return {id=id,config=workspace.config,character=character,player=backend.player_handle(character),
             weapon=state.weapon,suspended=suspended,group=state.group,group_names=state.groups,
             preset_names=state.presets,selected=state.presets[state.preset_index],
-            selecting=state.selecting,pending=state.pending,baseline=id and workspace.material_overrides()[id],
+            selecting=state.selecting,selection_global=state.selection_global,
+            pending=state.pending,baseline=id and workspace.material_overrides()[id],
             mesh_baseline=id and app.appearance.overrides[id]}
     end
     local select_group = workspace.select_group
@@ -48,7 +49,11 @@ function ReffApp.new(app)
         local missing = {}
         for name, enabled in pairs(changes) do
             if type(name) ~= "string" or type(enabled) ~= "boolean" then return false, "显隐参数无效" end
-            if not selecting and not workspace.is_material_in_current_context(part,name) then
+            if selecting then
+                if enabled and not current.selection_global and workspace.get_material_group_owner(part,name) then
+                    return false, "普通分组不能重复占用材质"
+                end
+            elseif not workspace.is_material_in_current_context(part,name) then
                 return false, "材质不属于当前分组"
             end
             missing[name] = true
@@ -251,8 +256,12 @@ function ReffApp.new(app)
             end,
             selection=function(request)
                 if type(request.enabled) ~= "boolean" then return false end
-                state.selecting = request.enabled
-                if not request.enabled then state.pending = {} end
+                if state.selecting ~= request.enabled then workspace.set_selecting(request.enabled) end
+                return true
+            end,
+            ["selection-global"]=function(request,current)
+                if not current.selecting or type(request.enabled) ~= "boolean" then return false end
+                workspace.set_selection_global(request.enabled)
                 return true
             end,
             ["select-material"]=function(request,current)

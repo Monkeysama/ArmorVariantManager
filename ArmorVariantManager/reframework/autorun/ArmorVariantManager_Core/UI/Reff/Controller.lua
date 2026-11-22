@@ -13,7 +13,8 @@ function Controller.new(deps)
             gameDisplayHeight=deps.display_height and deps.display_height(),
             suspended=context.suspended, groups={}, group=context.group or "", presets={},
             selectedPreset=context.selected or "", parts={}, theme=deps.theme(), language=deps.language(),
-            selectionMode=context.selecting, pending={}, backupPending=false, canImport=deps.imports ~= nil,
+            selectionMode=context.selecting, selectionGlobal=context.selection_global == true,
+            pending={}, backupPending=false, canImport=deps.imports ~= nil,
         }
         if deps.settings then snapshot.settings = deps.settings.snapshot(context) end
         if deps.preview then snapshot.preview = deps.preview.snapshot() end

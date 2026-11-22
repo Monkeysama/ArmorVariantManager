@@ -8,7 +8,7 @@ function Main.new(app)
     local T, version, author = app.translate, app.version, app.author
     local TransformManager = app.rules
     local active_overrides = appearance.overrides
-    local view = {new_preset_name="", new_group_name="", new_group_is_global=false,
+    local view = {new_preset_name="", new_group_name="",
         filters={}, sort_temp_list={}, sort_selected_index=1, auto_find_log=""}
     local show_debug_window = false
     local game_options = app.game_options
@@ -26,7 +26,7 @@ function Main.new(app)
         body_id = workspace.get_body_id, selected = workspace.get_effective_group_presets,
         context = function()
             return {filters = view.filters, pending = state.pending,
-                selecting = state.selecting, new_global = view.new_group_is_global,
+                selecting = state.selecting, new_global = state.selection_global,
                 overrides = workspace.material_overrides(), config = workspace.config,
                 group = state.group, weapon = state.weapon}
         end,
