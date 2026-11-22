@@ -4,7 +4,7 @@ local Parts = {}
 function Parts.new(deps)
     local parts = {}
     function parts.rows(context)
-        return deps.collect(context.character, context.player, context.weapon, context.baseline, deps.translate)
+        return deps.collect(context.character, context.player, context.weapon, context.mesh_baseline or context.baseline, deps.translate)
     end
     function parts.find(context, index)
         for _, row in ipairs(parts.rows(context)) do

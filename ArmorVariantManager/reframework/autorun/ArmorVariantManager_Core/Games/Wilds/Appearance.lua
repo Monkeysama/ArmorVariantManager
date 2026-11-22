@@ -9,10 +9,50 @@ local Appearance = {}
 -- 手动意图按装备共享；条件结果与高度快照按角色保存。
 function Appearance.new(deps)
     local app = {overrides={}, groups={}, state=State.new(), height=Height.new_preset_state()}
+    local preview
+
+    function app.end_material_preview(id)
+        if not preview or (id and preview.equipment ~= id) then return false end
+        preview.material_preview = nil
+        preview = nil
+        return true
+    end
+
+    -- 全局组草稿只预览在当前角色上。缺少预设值的材质退出预览时恢复网格原值。
+    function app.preview_material(id, part, name, enabled, config, mesh)
+        local character = deps.local_player()
+        if not character or not mesh then return false end
+        local slot = deps.is_weapon_id(id) and "weapon" or "armor"
+        local context = app.state:get(tostring(character), slot, id, config)
+        if preview ~= context then
+            app.end_material_preview()
+            preview = context
+        end
+        local changes = type(name) == "table" and name or {[name]=enabled}
+        context.material_preview = context.material_preview or {}
+        local key = tostring(part)
+        local originals = context.preview_originals or {}
+        local part_originals = originals[key] or {materials={}}
+        local baseline = context.overrides and context.overrides[key]
+        baseline = baseline and baseline.materials or {}
+        for index = 0, mesh:call("get_MaterialNum") - 1 do
+            local material = mesh:call("getMaterialName", index)
+            if changes[material] ~= nil and baseline[material] == nil and part_originals.materials[material] == nil then
+                part_originals.materials[material] = mesh:call("getMaterialsEnable", index)
+            end
+        end
+        if next(part_originals.materials) then
+            originals[key] = part_originals
+            context.preview_originals = originals
+        end
+        Visibility.set(context.material_preview, part, changes)
+        return true
+    end
 
     function app.defaults(id, config)
         config = config or deps.load(id)
         if not config then return end
+        app.end_material_preview(id)
         app.overrides[id] = {ground_clipping_fix=Height.default_settings(config)}
         app.height.reset(id)
         local selected = app.groups[id] or {}
@@ -47,6 +87,8 @@ function Appearance.new(deps)
             if result == app.overrides[id] then result = Presets.merge(result, {}) end
             Selection.merge_globals(config, selected, result, Presets)
         end
+        if context.preview_originals then result = Presets.merge(context.preview_originals, result) end
+        if context.material_preview then result = Presets.merge(result, context.material_preview) end
         context.groups, context.overrides = selected, result
         app.height.set_runtime(character, config, result and result.ground_clipping_fix)
         return result, changed or first_apply
@@ -57,10 +99,16 @@ function Appearance.new(deps)
         local owner = group == "" and config or config.groups and config.groups[group]
         local data = owner and owner.presets and owner.presets[preset]
         if not data then return false end
+        app.end_material_preview(id)
         local previous_height = app.overrides[id] and app.overrides[id].ground_clipping_fix
         local selected = app.groups[id] or {}
         app.groups[id] = selected
         app.overrides[id] = Selection.apply(config, selected, app.overrides[id], group, preset, Presets)
+        if owner.is_global then
+            -- 手动选择全局预设时应用其显示项，随后仍由所有全局组的隐藏项最终裁决。
+            Presets.merge_global_into(app.overrides[id], data, true)
+            Selection.merge_globals(config, selected, app.overrides[id], Presets)
+        end
         app.height.reset(id, group)
         if not deps.is_weapon_id(id) then
             app.overrides[id].ground_clipping_fix = Height.participating_settings(data, config)
@@ -79,6 +127,7 @@ function Appearance.new(deps)
 
     -- 场景重置不清配置或手动意图。
     function app.reset()
+        app.end_material_preview()
         app.state:clear()
         deps.rules.clear_last_state_cache()
     end

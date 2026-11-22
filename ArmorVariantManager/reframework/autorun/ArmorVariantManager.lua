@@ -90,6 +90,7 @@ appearance = require("ArmorVariantManager_Core.Games.Wilds.Appearance").new({
     load = config_session.load,
     rules = TransformManager,
     can_transform = can_use_transform,
+    local_player = actors.local_player,
     game_object = safe_get_game_object,
     is_weapon_id = is_weapon_id,
 })

@@ -20,8 +20,10 @@ function Adapter.new(meshes, equipment)
         return Capture.read(parts, function(mesh, method, ...) return mesh:call(method, ...) end, accepts,
             function(index, name, mesh, offset, call)
                 local part = baseline and baseline[tostring(index)]
-                local intent = part and part.materials and part.materials[name]
-                return (intent ~= nil) and intent or call(mesh, "getMaterialsEnable", offset)
+                if not global and part and part.materials and part.materials[name] ~= nil then
+                    return part.materials[name]
+                end
+                return call(mesh, "getMaterialsEnable", offset)
             end, not global, group == "")
     end
 end

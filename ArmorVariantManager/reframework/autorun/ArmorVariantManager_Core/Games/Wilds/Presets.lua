@@ -17,8 +17,8 @@ function Presets.merge(base, added)
     return result
 end
 
-function Presets.merge_global_into(target, preset)
-    return Compose.merge_global_into(target, preset, true, "ground_clipping_fix")
+function Presets.merge_global_into(target, preset, force_show)
+    return Compose.merge_global_into(target, preset, true, "ground_clipping_fix", force_show)
 end
 
 return Presets

@@ -143,7 +143,7 @@ function Workspace.new(game, backend, config_session, GameConfig)
         return appearance.preview_material and group and group.is_global
     end
 
-    -- 崛起全局组面板读取网格的当前显隐（含溶解目标），用于预览和保存同一套状态。
+    -- 全局组面板读取网格的当前显隐（含崛起溶解目标），与预设捕获一致。
     local no_overrides = {}
     function workspace.material_overrides()
         if editing_global_materials() then return no_overrides end
@@ -159,7 +159,8 @@ function Workspace.new(game, backend, config_session, GameConfig)
 
     local function end_material_preview()
         if appearance.end_material_preview and appearance.end_material_preview() then
-            runtime.refresh()
+            if game.wilds then backend.refresh(state.body_id)
+            else runtime.refresh() end
         end
     end
 

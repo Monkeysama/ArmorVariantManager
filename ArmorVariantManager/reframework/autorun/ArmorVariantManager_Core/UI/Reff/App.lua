@@ -27,7 +27,8 @@ function ReffApp.new(app)
         return {id=id,config=workspace.config,character=character,player=backend.player_handle(character),
             weapon=state.weapon,suspended=suspended,group=state.group,group_names=state.groups,
             preset_names=state.presets,selected=state.presets[state.preset_index],
-            selecting=state.selecting,pending=state.pending,baseline=id and workspace.material_overrides()[id]}
+            selecting=state.selecting,pending=state.pending,baseline=id and workspace.material_overrides()[id],
+            mesh_baseline=id and app.appearance.overrides[id]}
     end
     local select_group = workspace.select_group
     local editor = require("ArmorVariantManager_Core.Runtime.Visibility").new({
@@ -36,7 +37,7 @@ function ReffApp.new(app)
     })
     local function targets(current, part, mesh)
         if game.wilds and not current.weapon then
-            return get_character_part_meshes(current.character,part,current.baseline and current.baseline[tostring(part)])
+            return get_character_part_meshes(current.character,part,current.mesh_baseline and current.mesh_baseline[tostring(part)])
         end
         return {mesh}
     end

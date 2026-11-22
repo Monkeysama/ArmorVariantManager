@@ -67,7 +67,7 @@ do
     local weapon=function(id) return id and (id:match("^wp%d%d") or id:match("^it%d%d%d%d")) end
     local app=require(prefix .. "Games.Wilds.Appearance").new({load=env.config_session.load,
         rules=env.TransformManager, can_transform=env.actors.can_transform,
-        game_object=env.safe_get_game_object, is_weapon_id=weapon})
+        local_player=function() return character end, game_object=env.safe_get_game_object, is_weapon_id=weapon})
     local overrides, groups, state, height, transform = app.overrides, app.groups, app.state, app.height, app.transform
     app.defaults("armor")
     local baseline = overrides.armor
@@ -83,6 +83,26 @@ do
     app.reset()
     assert(resets == 1 and state:peek(tostring(character), "armor", "armor", cfg) == nil)
     assert(overrides.armor == baseline and groups.armor == selected, "Scene reset preserves manual intent")
+
+    local mesh = {call=function(_, method)
+        if method == "get_MaterialNum" then return 1 end
+        if method == "getMaterialName" then return "unsaved" end
+        if method == "getMaterialsEnable" then return false end
+    end}
+    assert(app.preview_material("armor", 0, "unsaved", true, cfg, mesh))
+    local preview = app.resolve("armor", cfg, character, "armor")
+    local teammate = app.resolve("armor", cfg, {}, "armor")
+    assert(preview["0"].materials.unsaved == true and teammate["0"].materials.unsaved == nil)
+    assert(overrides.armor["0"].materials.unsaved == nil, "Global preview leaves ordinary intent untouched")
+    assert(app.end_material_preview())
+    local restored = app.resolve("armor", cfg, character, "armor")
+    assert(restored["0"].materials.unsaved == false, "Closing preview restores an original value absent from presets")
+
+    cfg.groups.Color = {is_global=true, presets={Light=preset(true)}}
+    cfg.groups.Mask = {is_global=true, default_preset="Hidden", presets={Hidden=preset(false)}}
+    assert(app.select("armor", cfg, "Color", "Light"))
+    local masked = app.resolve("armor", cfg, character, "armor")
+    assert(masked["0"].materials.cloth == false, "An overlapping global hide still wins after a manual selection")
 end
 print("PASS: Wilds entry appearance wiring, actor eligibility and reset ownership")
 
