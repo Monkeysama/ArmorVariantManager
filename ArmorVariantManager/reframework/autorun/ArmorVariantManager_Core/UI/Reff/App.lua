@@ -34,26 +34,42 @@ function ReffApp.new(app)
         edit=workspace.edit_visibility,
         valid=access.valid,call=access.call,hidden=workspace.is_globally_hidden,
     })
-    local function edit(request, current, material)
-        if type(request.part) ~= "number" or type(request.enabled) ~= "boolean" then return false, "显隐参数无效" end
-        local mesh = reff_parts.find(current,request.part)
+    local function targets(current, part, mesh)
+        if game.wilds and not current.weapon then
+            return get_character_part_meshes(current.character,part,current.baseline and current.baseline[tostring(part)])
+        end
+        return {mesh}
+    end
+    local function edit_materials(current, part, changes, selecting)
+        if type(part) ~= "number" then return false, "显隐参数无效" end
+        local mesh = reff_parts.find(current,part)
         if not mesh then return false, "部件已不可用" end
-        if material then
-            if type(request.name) ~= "string" or not workspace.is_material_in_current_context(request.part,request.name) then
+        local missing = {}
+        for name, enabled in pairs(changes) do
+            if type(name) ~= "string" or type(enabled) ~= "boolean" then return false, "显隐参数无效" end
+            if not selecting and not workspace.is_material_in_current_context(part,name) then
                 return false, "材质不属于当前分组"
             end
-            local found = false
-            for index=0,access.call(mesh,"get_MaterialNum")-1 do
-                if access.call(mesh,"getMaterialName",index) == request.name then found = true; break end
-            end
-            if not found then return false, "材质已不可用" end
-        elseif current.weapon and access.weapon_mesh_locked then return false, "此游戏的武器网格保持启用" end
-        local targets = {mesh}
-        if game.wilds and not current.weapon then
-            targets = get_character_part_meshes(current.character,request.part,current.baseline and current.baseline[tostring(request.part)])
+            missing[name] = true
         end
-        if material then return editor.material(current.id,request.part,targets,request.name,request.enabled) end
-        return editor.mesh(current.id,request.part,targets,request.enabled)
+        for index=0,access.call(mesh,"get_MaterialNum")-1 do
+            local name = access.call(mesh,"getMaterialName",index)
+            if name then missing[name] = nil end
+            if not next(missing) then break end
+        end
+        if next(missing) then return false, "材质已不可用" end
+        if selecting then
+            local key = tostring(part)
+            state.pending[key] = state.pending[key] or {}
+            for name, enabled in pairs(changes) do state.pending[key][name] = enabled or nil end
+            return true
+        end
+        local groups = workspace.get_effective_group_presets(current.id,current.character)
+        return editor.materials(current.id,part,targets(current,part,mesh),changes,groups)
+    end
+    local function edit_material(request, current, selecting)
+        if type(request.name) ~= "string" or type(request.enabled) ~= "boolean" then return false, "显隐参数无效" end
+        return edit_materials(current,request.part,{[request.name]=request.enabled},selecting)
     end
     local function preset_name(request)
         return type(request.name) == "string" and request.name ~= "" and request.name
@@ -202,13 +218,36 @@ function ReffApp.new(app)
                 for index,name in ipairs(state.presets) do if name == request.name then state.preset_index=index; break end end
                 return true
             end,
-            save=function(request,current) return preset_name(request) and app.save_preset(request.name,current.id) end,
+            save=function(request,current)
+                if not preset_name(request) then return false end
+                local groups = workspace.get_effective_group_presets(current.id,current.character)
+                -- 崛起按网格捕获；全局隐藏盖住的材质仍须保存面板上的勾选意图。
+                return app.save_preset(request.name,current.id,function(part,name)
+                    local baseline = current.baseline and current.baseline[tostring(part)]
+                    if baseline and baseline.materials and workspace.is_globally_hidden(part,name,groups) then
+                        return baseline.materials[name]
+                    end
+                end)
+            end,
             ["delete-preset"]=function(request,current) return preset_name(request) and app.delete_preset(request.name,current.id) end,
             default=function(request,current) return preset_name(request) and app.set_preset_as_default(request.name,current.id) end,
             ["reorder-preset"]=function(request,current) return reorder(request,current,false) end,
             ["reorder-group"]=function(request,current) return reorder(request,current,true) end,
-            mesh=function(request,current) return edit(request,current,false) end,
-            material=function(request,current) return edit(request,current,true) end,
+            mesh=function(request,current)
+                if type(request.part) ~= "number" or type(request.enabled) ~= "boolean" then return false, "显隐参数无效" end
+                if current.weapon and access.weapon_mesh_locked then return false, "此游戏的武器网格保持启用" end
+                local mesh = reff_parts.find(current,request.part)
+                if not mesh then return false, "部件已不可用" end
+                return editor.mesh(current.id,request.part,targets(current,request.part,mesh),request.enabled)
+            end,
+            material=function(request,current) return edit_material(request,current,false) end,
+            materials=function(request,current)
+                if request.group ~= current.group or request.selectionMode ~= current.selecting then
+                    return false, "分组或选择模式已变化，请重新操作"
+                end
+                if type(request.changes) ~= "table" or not next(request.changes) then return false, "显隐参数无效" end
+                return edit_materials(current,request.part,request.changes,current.selecting)
+            end,
             selection=function(request)
                 if type(request.enabled) ~= "boolean" then return false end
                 state.selecting = request.enabled
@@ -216,18 +255,8 @@ function ReffApp.new(app)
                 return true
             end,
             ["select-material"]=function(request,current)
-                if not current.selecting or type(request.enabled) ~= "boolean" then return false end
-                local mesh = reff_parts.find(current,request.part)
-                if not mesh then return false end
-                for index=0,access.call(mesh,"get_MaterialNum")-1 do
-                    if access.call(mesh,"getMaterialName",index) == request.name then
-                        local part = tostring(request.part)
-                        state.pending[part] = state.pending[part] or {}
-                        state.pending[part][request.name] = request.enabled or nil
-                        return true
-                    end
-                end
-                return false
+                if not current.selecting then return false end
+                return edit_material(request,current,true)
             end,
             ["create-group"]=function(request,current)
                 if not preset_name(request) or not current.selecting then return false end

@@ -11,16 +11,19 @@ function Visibility.new(deps)
         return true
     end
 
-    function editor.material(id, part, meshes, name, enabled)
-        if not deps.edit(id, part, name, enabled, meshes and meshes[1]) then return false end
-        local rendered = enabled
-        if enabled and deps.hidden(part, name) then rendered = false end
+    function editor.materials(id, part, meshes, changes, active_groups)
+        if not deps.edit(id, part, changes, nil, meshes and meshes[1]) then return false end
+        local rendered = {}
+        for name, enabled in pairs(changes) do
+            rendered[name] = enabled and not deps.hidden(part, name, active_groups)
+        end
         for _, mesh in ipairs(meshes or {}) do
             if deps.valid(mesh) then
                 local count = deps.call(mesh, "get_MaterialNum") or 0
                 for index = 0, count - 1 do
-                    if deps.call(mesh, "getMaterialName", index) == name then
-                        deps.call(mesh, "setMaterialsEnable", index, rendered)
+                    local value = rendered[deps.call(mesh, "getMaterialName", index)]
+                    if value ~= nil and deps.call(mesh, "getMaterialsEnable", index) ~= value then
+                        deps.call(mesh, "setMaterialsEnable", index, value)
                     end
                 end
             end

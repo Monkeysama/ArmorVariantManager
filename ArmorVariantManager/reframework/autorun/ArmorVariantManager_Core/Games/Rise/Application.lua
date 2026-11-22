@@ -47,12 +47,12 @@ function Application.new(settings, session)
     end
 
     local type_mesh
-    function app.capture(config, group, id, weapon, contains, selected)
+    function app.capture(config, group, id, weapon, contains, selected, material_intent)
         local character = app.runtime.actors.local_player()
         if not character then return nil end
         type_mesh = type_mesh or sdk.find_type_definition("via.render.Mesh")
         if not type_mesh then return nil end
-        local data = app.runtime.capture(character, app.player_handle(character), config, group, weapon, contains)
+        local data = app.runtime.capture(character, app.player_handle(character), config, group, weapon, contains, material_intent)
         if data and not weapon then
             local owner = group == "" and config or config.groups[group]
             data.ground_clipping_fix = app.appearance.height.get_editor(config, id, group,

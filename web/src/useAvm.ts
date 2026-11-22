@@ -83,7 +83,7 @@ export function useAvm(helpOpen: Readonly<Ref<boolean>>) {
     finally { loading.value = false; }
   }
   // Action replies carry a fresh snapshot, so an in-flight poll need not delay a write.
-  const perform: Perform = async actions => {
+  const perform: Perform = async action => {
     if (busy.value || !ready || disposed) return false;
     const bodyId = snapshot.value?.bodyId ?? '';
     busy.value = true;
@@ -93,12 +93,10 @@ export function useAvm(helpOpen: Readonly<Ref<boolean>>) {
       await documentationRead;
       // The picker displays list-read errors; they must not block unrelated writes.
       await importsRead?.catch(() => undefined);
-      for (const action of Array.isArray(actions) ? actions : [actions]) {
-        const params = action.kind === 'mode' || action.kind === 'theme' ? action : { ...action, bodyId };
-        const value = await client.call<Snapshot>('monkeysama.avm.action', params);
-        if (disposed) return false;
-        snapshot.value = normalizeSnapshot(value);
-      }
+      const params = action.kind === 'mode' || action.kind === 'theme' ? action : { ...action, bodyId };
+      const value = await client.call<Snapshot>('monkeysama.avm.action', params);
+      if (disposed) return false;
+      snapshot.value = normalizeSnapshot(value);
       error.value = '';
       return true;
     } catch (reason) {

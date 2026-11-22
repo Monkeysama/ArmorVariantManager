@@ -166,11 +166,11 @@ function App.new(options)
         return true
     end
 
-    function app.save_preset(preset_name, body_id)
+    function app.save_preset(preset_name, body_id, material_intent)
         body_id = body_id or workspace.get_body_id()
         if not body_id then return false end
         local data = backend.capture(workspace.config, state.group, body_id, state.weapon,
-            workspace.is_material_in_current_context, workspace.get_effective_group_presets(body_id))
+            workspace.is_material_in_current_context, workspace.get_effective_group_presets(body_id), material_intent)
         if not data then return false end
         local saved, reason = PresetEditor.write(workspace.config, state.group, preset_name, data, function(preserve)
             return app.save_current_config_to_file(body_id, preserve)

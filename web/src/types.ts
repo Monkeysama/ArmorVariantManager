@@ -65,7 +65,8 @@ export type Action =
   | { kind: 'create-group'; name: string; global: boolean }
   | { kind: 'mesh'; part: number; enabled: boolean }
   | { kind: 'material' | 'select-material'; part: number; name: string; enabled: boolean }
+  | { kind: 'materials'; part: number; group: string; selectionMode: boolean; changes: Record<string, boolean> }
   | { kind: 'selection'; enabled: boolean }
   | { kind: 'import-preset'; path: string }
   | { kind: 'find' | 'restore' | 'dismiss-backup' };
-export type Perform = (actions: Action | Action[]) => Promise<boolean>;
+export type Perform = (action: Action) => Promise<boolean>;

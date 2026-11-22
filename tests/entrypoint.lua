@@ -23,7 +23,7 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
     local weapon_id, applied_weapons = nil, {}
     local handlers, unregistered, write_failed, write_failed_path
     local enabled, visible, metal_visible = true, true, true
-    local material_count, body_id_reads = 2, 0
+    local material_count, body_id_reads, part_views = 2, 0, 0
     local td = {get_method=function() return nil end}
     local mesh = {get_type_definition=function() return td end}
     function mesh:call(method, offset, value)
@@ -81,21 +81,18 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
                         get=function() return {entries={entry},local_entry=entry} end,can_transform=function() return false end},
                     equipment={body_id=function() body_id_reads=body_id_reads+1; return "armor" end,weapon_id=function() return weapon_id end,
                         weapons=function() return {} end,clear=function() end},
-                    meshes={first=function() return mesh end,part_meshes=function() return {mesh} end},
+                    meshes={first=function() return mesh end,part_meshes=function(_, part) return part == 0 and {mesh} or {} end},
                     scene_object={game_object=function(o) return o end},
                     guard={suspended=false,get_scene=function() end},
-                    materials={armor=function(_,result) applied[#applied+1]=S.copy(result) end,
+                    materials={armor=function(_,result)
+                            applied[#applied+1]=S.copy(result)
+                            local materials = result["0"] and result["0"].materials or {}
+                            if materials.cloth ~= nil then visible = materials.cloth end
+                            if materials.metal ~= nil then metal_visible = materials.metal end
+                        end,
                         weapon=function(_,_,result) applied_weapons[#applied_weapons+1]=S.copy(result) end,invalidate=function() end},
                     transition={draw_ui=function() end},
-                    part_view=function() return {{index=0,label="Body",object=object}} end,
-                    capture=function(actor,...)
-                        assert(actor==object)
-                        local args={...}
-                        if game=="mhrise" then assert(args[1]==player and args[4]==false)
-                        else assert(args[2]=="" and args[4]==false) end
-                        captures=captures+1
-                        return {["0"]={materials={cloth=false}}}
-                    end,
+                    part_view=function() part_views=part_views+1; return {{index=0,label="Body",object=object}} end,
                     is_suspended=function() return false end,
                 }
                 if game=="mhrise" then
@@ -108,6 +105,12 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
                         applied[#applied+1] = S.copy(result)
                         bindings.armor(actor, result, options)
                     end
+                    runtime.capture = function(...)
+                        captures = captures + 1
+                        return capture(...)
+                    end
+                else
+                    local capture = require("ArmorVariantManager_Core.Games.Wilds.Capture").new(runtime.meshes, runtime.equipment)
                     runtime.capture = function(...)
                         captures = captures + 1
                         return capture(...)
@@ -555,6 +558,44 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
             current=snapshot()
             S.equal(data["ArmorVariantManager/armor.json"],latest_backup,"native and REFF use the same backup file transaction")
         else assert(#file_list.files==0,"Wilds does not gain Rise-only import") end
+        do
+            send("selection",{enabled=true})
+            local views_before=part_views
+            current=send("materials",{part=0,group="",selectionMode=true,changes={cloth=true,metal=true}})
+            assert(part_views-views_before==2,"one mesh lookup and one resulting snapshot for a batch")
+            S.equal(current.pending["0"],{cloth=true,metal=true})
+            current=send("materials",{part=0,group="",selectionMode=true,changes={cloth=true,metal=false}})
+            S.equal(current.pending["0"],{cloth=true})
+            send("select-material",{part=0,name="metal",enabled=true})
+            send("create-group",{name="Global Mask",global=true})
+            current=send("materials",{part=0,group="Global Mask",selectionMode=false,changes={cloth=false,metal=false}})
+            assert(not visible and not metal_visible and not current.parts[1].materials[1].enabled)
+            send("save",{name="Masked"})
+            send("preset",{name="Masked"})
+            send("selection",{enabled=true})
+            send("select-material",{part=0,name="cloth",enabled=true})
+            send("create-group",{name="Ordinary",global=false})
+            current=send("materials",{part=0,group="Ordinary",selectionMode=false,changes={cloth=true}})
+            local cloth=current.parts[1].materials[1]
+            assert(cloth.enabled and cloth.hidden and cloth.editable and not visible)
+            frames[1]()
+            assert(not visible and snapshot().parts[1].materials[1].enabled)
+            send("save",{name="Checked cloth"})
+            assert(data["ArmorVariantManager/armor.json"].groups.Ordinary.presets["Checked cloth"]["0"].materials.cloth==true,
+                "a masked checkbox must save the checked intent in its ordinary group")
+            send("group",{name=""})
+            local before_batch=snapshot()
+            assert(not pcall(send,"materials",{part=0,group="Ordinary",selectionMode=false,changes={metal=true}}))
+            assert(not pcall(send,"materials",{part=0,group="",selectionMode=false,changes={cloth=true,metal=true}}))
+            S.equal(snapshot(),before_batch,"stale or out-of-group requests leave the entire batch unapplied")
+            current=send("material",{part=0,name="metal",enabled=true})
+            local metal=current.parts[1].materials[2]
+            assert(metal.enabled and metal.hidden and metal.editable and not metal_visible)
+            send("save",{name="Checked metal"})
+            assert(data["ArmorVariantManager/armor.json"].presets["Checked metal"]["0"].materials.metal==true,
+                "a masked checkbox must save the checked intent in the main group")
+        end
+        local armor_after_material_tests=S.copy(data["ArmorVariantManager/armor.json"])
         send("mode",{weapon=true})
         assert(snapshot().bodyId=="","mode transition never pairs old config with new equipment")
         assert(not snapshot().backupPending and #documentation().sections==3,"empty equipment can read help without stale warning")
@@ -577,7 +618,7 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
             assert(current.selectedPreset=="Imported" and current.weapon)
             assert(data["ArmorVariantManager/wp_sword.json"].foreign.keep=="source")
             assert(applied_weapons[#applied_weapons]["0"].materials.cloth==false,"manual weapon import applies through its own slot")
-            S.equal(data["ArmorVariantManager/armor.json"],latest_backup,"weapon import leaves armor configuration intact")
+            S.equal(data["ArmorVariantManager/armor.json"],armor_after_material_tests,"weapon import leaves armor configuration intact")
         end
     else assert(not handlers,"native core still starts without REFF") end
     for _, fn in ipairs(resets) do fn() end

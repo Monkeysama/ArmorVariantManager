@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, shallowRef } from 'vue';
 import { ElButton, ElCheckbox, ElTag } from '@reff/ui';
-import type { Action, Part, Material, Perform, Snapshot } from './types';
+import type { Part, Material, Perform, Snapshot } from './types';
 import type { Translate } from './i18n';
 
 const props = defineProps<{ snapshot: Snapshot; busy: boolean; perform: Perform; t: Translate; part: Part; query: string }>();
@@ -11,6 +11,7 @@ const disabled = computed(() => props.busy || !props.snapshot.bodyId || !props.p
 const materials = computed(
   () => props.part.materials.filter((item) => item.name.toLowerCase().includes(props.query.trim().toLowerCase())) ?? [],
 );
+const editableMaterials = computed(() => materials.value.filter(editable));
 const visibleCount = computed(() => props.part.materials.filter((item) => item.enabled && !item.hidden).length ?? 0);
 const selectedCount = computed(
   () => Object.values(props.snapshot.pending[String(props.part.index)] ?? {}).filter(Boolean).length,
@@ -19,7 +20,7 @@ function checked(material: Material) {
   return props.snapshot.selectionMode ? !!props.snapshot.pending[String(props.part.index)]?.[material.name] : material.enabled;
 }
 function editable(material: Material) {
-  return props.snapshot.selectionMode || (material.editable !== false && !material.hidden);
+  return props.snapshot.selectionMode || material.editable !== false;
 }
 function toggle(material: Material, enabled: boolean) {
   void props.perform({
@@ -29,18 +30,14 @@ function toggle(material: Material, enabled: boolean) {
     enabled,
   });
 }
-function bulk(enabled: boolean) {
-  const index = props.part.index;
-  const actions: Action[] = materials.value
-    .filter(editable)
-    .filter((item) => checked(item) !== enabled)
-    .map((item) => ({
-      kind: props.snapshot.selectionMode ? 'select-material' : 'material',
-      part: index,
-      name: item.name,
-      enabled,
-    }));
-  if (actions.length) void props.perform(actions);
+function bulk(invert: boolean) {
+  const changes = Object.fromEntries(editableMaterials.value
+    .filter((item) => invert || !checked(item))
+    .map((item) => [item.name, invert ? !checked(item) : true]));
+  if (Object.keys(changes).length) void props.perform({
+    kind: 'materials', part: props.part.index, group: props.snapshot.group,
+    selectionMode: props.snapshot.selectionMode, changes,
+  });
 }
 function groupLabel(name: string) {
   return props.snapshot.groups.find((item) => item.name === name)?.label ?? name;
@@ -61,12 +58,8 @@ function partId(label: string) {
     <div v-show="!collapsed">
       <div class="part-controls">
         <div class="bulk-actions">
-          <ElButton text :disabled="disabled || !materials.length" @click="bulk(true)">{{
-            snapshot.selectionMode ? t('all') : t('showAll')
-          }}</ElButton>
-          <ElButton text :disabled="disabled || !materials.length" @click="bulk(false)">{{
-            snapshot.selectionMode ? t('clear') : t('hideAll')
-          }}</ElButton>
+          <ElButton text :disabled="disabled || !editableMaterials.length" @click="bulk(false)">{{ t('all') }}</ElButton>
+          <ElButton text :disabled="disabled || !editableMaterials.length" @click="bulk(true)">{{ t('invert') }}</ElButton>
         </div>
         <div class="mesh-line">
           <ElCheckbox

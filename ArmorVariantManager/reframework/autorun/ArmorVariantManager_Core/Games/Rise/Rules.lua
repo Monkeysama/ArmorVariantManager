@@ -3,6 +3,7 @@ local TransformManager = {}
 local RuleEngine = require("ArmorVariantManager_Core.Rules.Engine")
 local Height = require("ArmorVariantManager_Core.Presets.Height")
 local Presets = require("ArmorVariantManager_Core.Games.Rise.Presets")
+local Visibility = require("ArmorVariantManager_Core.Presets.Visibility")
 local RulePlan = require("ArmorVariantManager_Core.Games.Rise.RulePlan")
 local Utils = require("ArmorVariantManager_Core.Games.Rise.Signals")
 
@@ -98,12 +99,7 @@ end
 function TransformManager.edit_base_field(body_id, part, material, value)
     local base = model_bases[body_id]
     if not base then return end
-    part = tostring(part)
-    base.normal[part] = base.normal[part] or { materials = {} }
-    if material then
-        base.normal[part].materials = base.normal[part].materials or {}
-        base.normal[part].materials[material] = value
-    else base.normal[part].mesh_enabled = value end
+    Visibility.set(base.normal, part, material, value)
     base.revision = base.revision + 1
 end
 

@@ -4,7 +4,7 @@ local Adapter = {}
 
 -- 武器槽位可稀疏；全局组只记录隐藏项，空结果保留旧 _empty 标记。
 function Adapter.new(equipment)
-    return function(character, player, config, group, weapon, accepts)
+    return function(character, player, config, group, weapon, accepts, material_intent)
         local parts = {}
         local objects = weapon and equipment.weapons(character, player) or equipment.parts(character)
         for index = weapon and 1 or 0, weapon and 8 or 4 do
@@ -13,7 +13,11 @@ function Adapter.new(equipment)
             if mesh then parts[weapon and index - 1 or index] = {mesh} end
         end
         local global = group ~= "" and config.groups and config.groups[group] and config.groups[group].is_global
-        local result = Capture.read(parts, SceneObject.call, accepts, function(_, _, mesh, offset, call)
+        local result = Capture.read(parts, SceneObject.call, accepts, function(index, name, mesh, offset, call)
+            if not global and material_intent then
+                local value = material_intent(index, name)
+                if value ~= nil then return value end
+            end
             local visible = call(mesh, "getMaterialsEnable", offset)
             if not global or visible == false then return visible end
         end, true, not global)

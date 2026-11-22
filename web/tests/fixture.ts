@@ -73,10 +73,15 @@ const previewFixture = new URLSearchParams(location.search).has('preview');
 const previewSeam = new URLSearchParams(location.search).has('preview-seam');
 if (previewFixture) state.preview = { available: true, enabled: true, status: previewSeam ? 'preview_live' : 'preview_waiting' };
 const catalogFixture = new URLSearchParams(location.search).has('catalog');
-if (catalogFixture) state.group = '';
+if (catalogFixture) {
+  state.group = '';
+  const lining = state.parts[1].materials[1];
+  lining.hidden = true;
+  lining.groups = ['全局隐藏'];
+}
 if (new URLSearchParams(location.search).has('workspace')) {
   state.presets.push(...Array.from({ length: 40 }, (_, index) => ({ name: `预设 ${index + 1}`, active: false, default: false })));
-  state.parts[1].materials.push(...Array.from({ length: 70 }, (_, index) => ({ name: `body_detail_${index}`, enabled: true, hidden: false, groups: [] })));
+  state.parts[1].materials.push(...Array.from({ length: 70 }, (_, index) => ({ name: `body_detail_${index}`, enabled: index % 2 === 0, hidden: false, groups: [] })));
 }
 const layoutFixture = new URLSearchParams(location.search).has('layout');
 if (layoutFixture) {
@@ -277,13 +282,24 @@ function applyCondition(request: ConditionAction) {
       state.groups.push({ name: String(params.name), label: String(params.name), global: !!params.global }); state.group = String(params.name); state.selectionMode = false; state.pending = {};
     }
     else if (kind === 'selection') { state.selectionMode = !!params.enabled; if (!state.selectionMode) state.pending = {}; }
-    else if (kind === 'select-material') { const part = String(params.part); state.pending[part] ??= {}; state.pending[part][String(params.name)] = !!params.enabled; }
     else if (kind === 'mesh') { const part = state.parts.find(item => item.index === params.part); if (part) part.enabled = !!params.enabled; }
-    else if (kind === 'material') {
-      const material = state.parts.find(item => item.index === params.part)?.materials.find(item => item.name === params.name);
-      const projected = snapshot().parts.find(item => item.index === params.part)?.materials.find(item => item.name === params.name);
-      if (projected?.editable === false) throw new Error('材质不属于当前分组');
-      if (material) material.enabled = !!params.enabled;
+    else if (kind === 'material' || kind === 'select-material' || kind === 'materials') {
+      if (kind === 'materials' && (params.group !== state.group || params.selectionMode !== state.selectionMode)) throw new Error('分组或选择模式已变化');
+      const selecting = kind === 'select-material' || (kind === 'materials' && state.selectionMode);
+      const changes = kind === 'materials' ? params.changes as Record<string, boolean> : { [String(params.name)]: !!params.enabled };
+      const part = state.parts.find(item => item.index === params.part);
+      const projected = snapshot().parts.find(item => item.index === params.part);
+      for (const [name, enabled] of Object.entries(changes)) {
+        const material = projected?.materials.find(item => item.name === name);
+        if (!material || (!selecting && material.editable === false)) throw new Error('材质不属于当前分组');
+        if (selecting) {
+          const pending = state.pending[String(params.part)] ??= {};
+          if (enabled) pending[name] = true;
+          else delete pending[name];
+        } else {
+          part!.materials.find(item => item.name === name)!.enabled = enabled;
+        }
+      }
     }
     else if (kind === 'restore') { state.backupPending = false; state.parts.forEach(part => { part.enabled = true; part.materials.forEach(material => { material.enabled = true; }); }); }
     else if (kind === 'dismiss-backup') state.backupPending = false;

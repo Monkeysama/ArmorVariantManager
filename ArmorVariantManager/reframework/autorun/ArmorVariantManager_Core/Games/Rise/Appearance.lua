@@ -33,8 +33,9 @@ function Appearance.new(load_config)
             app.end_material_preview()
             preview = {id=id, fields={}}
         end
-        Rules.capture_mesh(id, part, mesh, {materials={[name]=enabled}}, SceneObject.call)
-        Visibility.set(preview.fields, part, name, enabled)
+        local materials = type(name) == "table" and name or {[name]=enabled}
+        Rules.capture_mesh(id, part, mesh, {materials=materials}, SceneObject.call)
+        Visibility.set(preview.fields, part, materials)
         preview.base = nil
         return true
     end
