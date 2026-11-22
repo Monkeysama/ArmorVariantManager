@@ -64,7 +64,8 @@ function App.new(options)
     function app.create_new_group(group_name, body_id, is_global)
         if not body_id then return false end
         local previous = deep_copy_table(workspace.config)
-        if not PresetGroups.create(workspace.config, group_name, state.pending, is_global, game.wilds) then return false end
+        local created, reason = PresetGroups.create(workspace.config, group_name, state.pending, is_global, game.wilds)
+        if not created then return false, reason end
         if app.save_current_config_to_file(body_id) == false then
             for key in pairs(workspace.config) do workspace.config[key] = nil end
             for key, value in pairs(previous) do workspace.config[key] = value end

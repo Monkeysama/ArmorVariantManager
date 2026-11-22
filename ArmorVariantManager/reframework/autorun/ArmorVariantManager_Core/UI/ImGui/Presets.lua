@@ -226,7 +226,16 @@ function Presets.new(app, view)
                     if cg then view.new_group_name = gtext end
                     -- 全局分组勾选框
                     local cg_global, new_is_global = imgui.checkbox(T("is_global_group") .. "##gisgl", view.new_group_is_global)
-                    if cg_global then view.new_group_is_global = new_is_global end
+                    if cg_global then
+                        view.new_group_is_global = new_is_global
+                        if not new_is_global then
+                            for part, materials in pairs(state.pending) do
+                                for name in pairs(materials) do
+                                    if workspace.get_material_group_owner(part,name) then materials[name] = nil end
+                                end
+                            end
+                        end
+                    end
                     if view.new_group_is_global then
                         imgui.same_line()
                         imgui.text_colored(T("is_global_group_desc"), 0xFF80FFFF)

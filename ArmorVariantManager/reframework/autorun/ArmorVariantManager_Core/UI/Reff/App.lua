@@ -261,14 +261,8 @@ function ReffApp.new(app)
             end,
             ["create-group"]=function(request,current)
                 if not preset_name(request) or not current.selecting then return false end
-                if not request.global then
-                    for part,names in pairs(state.pending) do
-                        for name,selected in pairs(names) do
-                            if selected and workspace.get_material_group_owner(part,name) then return false, "普通分组不能重复占用材质" end
-                        end
-                    end
-                end
-                if not app.create_new_group(request.name,current.id,request.global == true) then return false end
+                local created, reason = app.create_new_group(request.name,current.id,request.global == true)
+                if not created then return false, reason end
                 return select_group(request.name)
             end,
             ["delete-group"]=function(request,current) return preset_name(request) and app.delete_group(request.name,current.id) end,

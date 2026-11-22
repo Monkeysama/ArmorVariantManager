@@ -22,6 +22,11 @@ const customGroups = computed(() => groups.value.filter(item => item.name !== ''
 const group = computed(() => props.snapshot.groups.find(item => item.name === props.snapshot.group));
 const selected = computed(() => props.snapshot.presets.find(item => item.name === props.snapshot.selectedPreset));
 const selectionCount = computed(() => Object.values(props.snapshot.pending).reduce((total, part) => total + Object.values(part).filter(Boolean).length, 0));
+const requiresGlobal = computed(() => !global.value && props.snapshot.parts.some(part => {
+  const pending = props.snapshot.pending[String(part.index)];
+  return pending && part.materials.some(material => material.owner && pending[material.name]);
+}));
+const canCreate = computed(() => !disabled.value && !!groupName.value.trim() && !requiresGlobal.value);
 watch([() => props.snapshot.bodyId, () => props.snapshot.group], () => { confirmation.value = null; });
 watch([() => props.snapshot.game, () => props.snapshot.bodyId, () => props.snapshot.weapon, () => props.snapshot.selectionMode], () => {
   groupName.value = ''; global.value = false;
@@ -58,8 +63,9 @@ async function choosePreset(name: string) {
   if (await props.perform({ kind: 'preset', name })) presetName.value = name;
 }
 async function create() {
+  if (!canCreate.value) return;
   const name = groupName.value.trim();
-  if (name && await props.perform({ kind: 'create-group', name, global: global.value })) {
+  if (await props.perform({ kind: 'create-group', name, global: global.value })) {
     groupName.value = ''; emit('notice', `${props.t('created')} · ${name}`);
   }
 }
@@ -94,12 +100,12 @@ async function remove() {
     <div class="pane-actions"><strong class="action-heading">{{ t('groupActions') }}</strong>
       <ElButton v-if="!snapshot.selectionMode" class="new-group-button" :disabled="disabled" @click="startGroup">{{ t('newGroup') }}</ElButton>
       <template v-else>
-        <p class="field-note">{{ t('selected') }} {{ selectionCount }} · {{ t('selectionHelp') }}</p>
+        <p class="field-note">{{ t('selected') }} {{ selectionCount }} · {{ t(requiresGlobal ? 'selectionNeedsGlobal' : 'selectionHelp') }}</p>
         <label for="group-name" class="field-label">{{ t('groupName') }}</label>
         <ElInput id="group-name" v-model="groupName" :disabled="disabled" @keyup.enter="create" />
         <ElCheckbox v-model="global" class="global-group-toggle" :disabled="disabled">{{ t('global') }}</ElCheckbox>
         <div class="button-pair">
-          <ElButton class="create-group-button" :disabled="disabled || !groupName.trim()" @click="create">{{ t('create') }}</ElButton>
+          <ElButton class="create-group-button" :disabled="!canCreate" @click="create">{{ t('create') }}</ElButton>
           <ElButton class="cancel-group-button" :disabled="disabled" @click="perform({ kind: 'selection', enabled: false })">{{ t('cancel') }}</ElButton>
         </div>
       </template>

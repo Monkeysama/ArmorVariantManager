@@ -40,8 +40,13 @@ end
 function Groups.create(config, name, selections, is_global, selected_only)
     if not name or name == "" then return false end
     local has_selection = false
-    for _, materials in pairs(selections) do
-        if next(materials) then has_selection = true; break end
+    for part, materials in pairs(selections) do
+        if next(materials) then has_selection = true end
+        if is_global ~= true then
+            for material, selected in pairs(materials) do
+                if selected and Groups.owner(config, part, material) then return false, "普通分组不能重复占用材质" end
+            end
+        end
     end
     if not has_selection then return false end
     if not config.groups then config.groups = {} end

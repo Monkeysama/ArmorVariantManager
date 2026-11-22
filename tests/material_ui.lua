@@ -33,7 +33,7 @@ local function fixture(game, options)
             Show={default_preset="Visible", presets={Visible={[key]={materials={locked=true}}}}}}}}}
     local env = {T=function(key) return key end,
         get_material_group_owner=function(_, name) return name == "owned" and "Owner" or nil end,
-        get_material_global_groups=function(_, name) return name == "locked" and {"Hide","Show"} or {} end,
+        get_material_global_groups=function(_, name) return (name == "locked" or name == "owned") and {"Hide","Show"} or {} end,
         is_material_in_current_context=function(_, name) return name ~= "owned" end,
         is_globally_hidden=function(_, name) return name == "locked" end,
         get_body_id=function() return "armor" end, get_effective_group_presets=function() return {} end}
@@ -90,6 +90,16 @@ for _, game in ipairs({"Wilds", "Rise"}) do
         assert(normal.context.pending[key]==nil, "normal groups cannot select an owned material")
         local global=fixture(game,{weapon=weapon,selecting=true,global=true,action="[2] owned"}); global.draw()
         assert(global.context.pending[key].owned==true and global.mesh.values[3]==true)
+        for _, action in ipairs({"select_all##sa_", "invert_select##inv_"}) do
+            local selection=fixture(game,{weapon=weapon,selecting=true,global=true,action=action..key})
+            selection.draw()
+            S.equal(selection.context.pending[key],{cloth=true,locked=true,owned=true})
+            selection.draw()
+            S.equal(selection.context.pending[key],{})
+            local ordinary=fixture(game,{weapon=weapon,selecting=true,action=action..key})
+            ordinary.draw()
+            S.equal(ordinary.context.pending[key],{cloth=true,locked=true})
+        end
         local bulk=fixture(game,{weapon=weapon,action="select_all##sa_"..key}); bulk.draw()
         S.equal(bulk.context.overrides.armor[key].materials,{cloth=true,locked=true})
         assert(bulk.mesh.values[2]==(game=="Rise"), "game-specific bulk visibility policy")

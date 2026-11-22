@@ -36,14 +36,14 @@ function Materials.new(deps)
                 if mat_count and mat_count > 0 then
                     local s_idx = tostring(part_index)
 
-                    -- 辅助：判断某材质在当前模式下是否"可操作"（过滤后可见且未被普通分组占用）
+                    -- 批量按钮和单项选择使用相同的普通组归属规则。
                     local function mat_is_operable(mn)
                         local flt = context.filters[part_index] or ""
                         if flt ~= "" and not string.find(string.lower(mn), string.lower(flt), 1, true) then
                             return false
                         end
                         if context.selecting then
-                            return deps.owner(part_index, mn) == nil
+                            return context.new_global or deps.owner(part_index, mn) == nil
                         else
                             return deps.in_context(part_index, mn)
                         end
