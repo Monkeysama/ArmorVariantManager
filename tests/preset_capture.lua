@@ -39,15 +39,23 @@ local SceneObject = require("ArmorVariantManager_Core.Games.Rise.SceneObject")
 -- 明确捕获结果，独立覆盖多网格、草稿意图、空部件和全局组策略。
 local normal_a={mesh_enabled=false,materials={hide=false,show=true,intent=false}}
 local normal_b={mesh_enabled=true,materials={show=false,extra=true}}
-local wilds_union={mesh_enabled=false,materials={hide=false,show=false,intent=true,extra=true}}
 for _,game in ipairs({"wilds","rise"}) do
     for _,weapon in ipairs({false,true}) do
         for _,group in ipairs({"","ordinary","global"}) do
             local expected={["0"]=S.copy(normal_a),["1"]=S.copy(normal_b),["2"]={mesh_enabled=true,materials={}}}
             if not weapon then
                 expected["4"]=S.copy(normal_a)
-                if game=="wilds" then expected["0"]=S.copy(wilds_union); expected["5"]=S.copy(normal_b) end
-            elseif game=="wilds" then expected["0"].materials.intent=true end
+                if game=="wilds" then
+                    expected["0"].materials.show=false
+                    expected["0"].materials.extra=true
+                    expected["5"]=S.copy(normal_b)
+                end
+            end
+            if game=="wilds" and group~="global" then
+                expected["0"].materials.intent=true
+                expected["0"].materials.show=false
+                expected["1"].materials.extra=false
+            end
             if group=="global" then
                 expected["2"]=nil
                 for _,part in pairs(expected) do

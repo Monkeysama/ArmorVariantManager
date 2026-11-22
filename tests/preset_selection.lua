@@ -46,15 +46,16 @@ for _,game in ipairs({"Wilds","Rise"}) do
             S.equal(names,expected_names)
             S.equal(cfg,config,"selection does not edit defaults or stored presets")
         end
-        select("Lock","Show",initial[""]~="Alt",initial.Extra=="missing" and true or false,initial.Normal~="Other")
-        select("Normal","Other",initial[""]~="Alt",initial.Extra=="missing" and true or false,false)
+        local shown_by_global=game=="Wilds" or initial[""]~="Alt"
+        select("Lock","Show",shown_by_global,initial.Extra=="missing" and true or false,initial.Normal~="Other")
+        select("Normal","Other",shown_by_global,initial.Extra=="missing" and true or false,false)
         assert(result["0"].mesh_enabled==false)
         select("","Alt",false,initial.Extra=="missing" and true or false,false)
         local hidden_ribbon
         if initial.Extra~="missing" then hidden_ribbon=false end
         select("Lock","Hide",false,hidden_ribbon,false)
         select("Extra","Show",false,game=="Wilds" and true or nil,false)
-        select("Lock","Show",false,game=="Wilds" and true or nil,false)
+        select("Lock","Show",game=="Wilds",game=="Wilds" and true or nil,false)
         select("","Base",true,true,false)
         local before=S.copy(result)
         assert(Selection.apply(cfg,names,result,"Lock","missing",policy)==nil)
