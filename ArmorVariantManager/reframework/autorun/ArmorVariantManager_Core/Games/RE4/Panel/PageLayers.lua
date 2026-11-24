@@ -80,7 +80,10 @@ local function derive(snap)
     d.usage = {}
     for _, s in ipairs(d.slots) do
         local mu, gu = Viscon.usage(full[s.id], sparse[s.id])
-        d.usage[s.id] = { material = mu, group = gu }
+        -- both:部位里两类都有才谈得上收起哪一段;只有一类时那一段总是展开
+        local has = {}
+        for _, m in ipairs(s.materials) do has[m.kind == "group" and "group" or "material"] = true end
+        d.usage[s.id] = { material = mu, group = gu, both = has.material == true and has.group == true }
     end
     -- 组与组之间取值不同的重叠:below = 被下面的组覆盖,above = 覆盖上面的组
     d.overlaps = {}
@@ -536,8 +539,12 @@ function Page.draw(ctx, x, y, w)
                         local lx = mx0
                         if sec.id ~= "" then
                             local u = d.usage[sec.id] or {}
-                            local dm, dg = Viscon.default_open(u.material, u.group)
-                            local def = sec.kind == "group" and dg or dm
+                            local def = true
+                            if u.both then
+                                local dm, dg = Viscon.default_open(u.material, u.group)
+                                -- 不能写成 `kind == "group" and dg or dm`:dg 为 false 时会取到 dm
+                                if sec.kind == "group" then def = dg else def = dm end
+                            end
                             if st.sec_open[sk] == nil then sec_open, by_default = def, true else sec_open = st.sec_open[sk] end
                             if W.caret(mx0, cy, sec_open, 24) then st.sec_open[sk] = not sec_open end
                             lx = mx0 + 20
