@@ -18,6 +18,12 @@
 -- 时机仍由这里决定。选择存在配置目录(GameProfile.config_dir)下的 DissolveEffects.json
 local Dissolve = {}
 local EFFECTS_PATH = require("ArmorVariantManager_Core.Games.RE4.GameProfile").config_dir .. "/DissolveEffects.json"
+local GameProfile = require("ArmorVariantManager_Core.Games.RE4.GameProfile")
+local Viscon = require("ArmorVariantManager_Core.Games.RE4.Viscon")
+-- 材质开关:RE9 的 TDB 没有 setMaterialsEnable,改走 Viscon 的材质位图(帧末重建网格才生效)
+local function enable(mesh, j, on)
+    if GameProfile.material_bits then Viscon.set_material(mesh, j, on) else mesh:call("setMaterialsEnable", j, on) end
+end
 local Effects = require("ArmorVariantManager_Core.Games.RE4.EffectProviders").new({
     load = function() return json and json.load_file(EFFECTS_PATH) end,
     save = function(value) return json ~= nil and json.dump_file(EFFECTS_PATH, value) end,
@@ -118,7 +124,7 @@ function Dissolve.transition_layer(owner, prev, trans)
     return owner or prev
 end
 
--- 材质开关(setMaterialsEnable)。cur = 调用前的 getMaterialsEnable
+-- 材质开关(enable,见文件头)。cur = 调用前的开关状态
 function Dissolve.set_material(mesh, j, want, cur)
     local key = tostring(mesh) .. "_" .. tostring(j)
     if driven[key] then
@@ -133,14 +139,14 @@ function Dissolve.set_material(mesh, j, want, cur)
     local v = current.enabled and find_var(mesh, j)
     if not v then
         if a then restore(mesh, j, a.v); mat_anims[key] = nil end
-        if cur ~= (phase == "show") then mesh:call("setMaterialsEnable", j, phase == "show") end
+        if cur ~= (phase == "show") then enable(mesh, j, phase == "show") end
         return
     end
     if cur == (phase == "show") and not a then return end
     Effects.bind(mesh, j, { preset = current.preset })
     local n = { mesh = mesh, j = j, v = v, phase = phase, forward = current.forward, u = start_u(a), dur = current.dur }
     write(mesh, j, v, phase, n.forward, n.u)
-    if phase == "show" and cur ~= true then mesh:call("setMaterialsEnable", j, true) end
+    if phase == "show" and cur ~= true then enable(mesh, j, true) end
     mat_anims[key] = n
 end
 
@@ -229,7 +235,7 @@ function Dissolve.drive_material(mesh, j, with_on, p, cur)
     if v and p > 0 and p < 1 then
         -- 只在刚进入中间段时绑定一次;驱动期间每帧都会走到这里
         if driven[key] == nil then Effects.bind(mesh, j) end
-        if cur ~= true then mesh:call("setMaterialsEnable", j, true) end
+        if cur ~= true then enable(mesh, j, true) end
         if driven[key] ~= p or a then
             write(mesh, j, v, with_on and "show" or "hide", true, p)
             driven[key] = p
@@ -241,7 +247,7 @@ function Dissolve.drive_material(mesh, j, with_on, p, cur)
     local rv = v or (a and a.v)
     if (driven[key] or a) and rv then restore(mesh, j, rv) end
     driven[key] = nil
-    if cur ~= on then mesh:call("setMaterialsEnable", j, on) end
+    if cur ~= on then enable(mesh, j, on) end
 end
 
 -- 推进所有定时过渡;每帧调一次
@@ -256,7 +262,7 @@ function Dissolve.update()
         else
             a.u = math.min(1, a.u + dt * step(a.dur))
             if a.u >= 1 then
-                if a.phase == "hide" then try(function() a.mesh:call("setMaterialsEnable", a.j, false) end) end
+                if a.phase == "hide" then try(function() enable(a.mesh, a.j, false) end) end
                 restore(a.mesh, a.j, a.v)
                 mat_anims[key] = nil
             else

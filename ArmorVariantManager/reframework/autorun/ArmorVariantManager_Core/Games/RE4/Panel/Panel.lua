@@ -24,8 +24,7 @@ local PAGES = {
     { key = "states",  label = "tabStates",  mod = require("ArmorVariantManager_Core.Games.RE4.Panel.PageStates") },
     { key = "palette", label = "tabPalette", mod = require("ArmorVariantManager_Core.Games.RE4.Panel.PagePalette"), nf_page = true },
     { key = "presets", label = "tabPresets", mod = require("ArmorVariantManager_Core.Games.RE4.Panel.PagePresets") },
-    -- hide_in:这些游戏(快照的 game)不显示该页;RE9 没有溶解
-    { key = "dissolve", label = "tabDissolve", mod = require("ArmorVariantManager_Core.Games.RE4.Panel.PageDissolve"), nf_page = true, hide_in = { RE9 = true } },
+    { key = "dissolve", label = "tabDissolve", mod = require("ArmorVariantManager_Core.Games.RE4.Panel.PageDissolve"), nf_page = true },
     { key = "misc",    label = "tabMisc",    mod = require("ArmorVariantManager_Core.Games.RE4.Panel.PageMisc") },
 }
 
@@ -115,12 +114,8 @@ function Panel.new(deps)
     ctx = { act = act, toast = toast, documentation = documentation, confirm = confirm, global_config = deps.global_config,
         hotkeys = deps.hotkeys or { "F8" }, save_global = function() pcall(deps.save_global_settings) end }
 
-    local function page_shown(p)
-        return not (p.hide_in and ctx.snap and p.hide_in[ctx.snap.game])
-    end
-
     local function page_of(key)
-        for _, p in ipairs(PAGES) do if p.key == key and page_shown(p) then return p end end
+        for _, p in ipairs(PAGES) do if p.key == key then return p end end
         return PAGES[1]
     end
 
@@ -214,7 +209,6 @@ function Panel.new(deps)
         D.rect(x + w - 1, y, 1, h, C.line)
         local cy = y + 10
         for _, p in ipairs(PAGES) do
-            if not page_shown(p) then goto continue end
             local cur = ui.page == p.key
             local ih = 32
             local hover = I.hit(x, cy, w - 1, ih)
@@ -224,7 +218,6 @@ function Panel.new(deps)
             if p.key == "presets" and preset_dot() then D.fill_circle(x + w - 16, cy + ih / 2, 3, C.warn) end
             if I.click(x, cy, w - 1, ih) then goto_page(p.key) end
             cy = cy + ih + 2
-            ::continue::
         end
     end
 

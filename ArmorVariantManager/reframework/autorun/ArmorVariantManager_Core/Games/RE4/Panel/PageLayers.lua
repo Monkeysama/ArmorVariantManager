@@ -468,7 +468,7 @@ function Page.draw(ctx, x, y, w)
                         end
                     end
                     -- 模型高度、调色方案、溶解预设、形态键属于新版特性:关闭时灰掉、不可改。
-                    -- RE9 没有模型高度和溶解
+                    -- RE9 没有模型高度
                     local re9 = ctx.snap.game == "RE9"
                     if not re9 then
                         TF:text(t("heightLabel"), nf_off and C.faint or C.muted)
@@ -492,12 +492,10 @@ function Page.draw(ctx, x, y, w)
                         t("paletteRefNone"), t("paletteRefBroken"),
                         function(v) ctx.act({ kind = "palette-ref", layer = layer, option = opt.name, scheme = v }) end,
                         { disabled = nf_off, tip = (not card.is_base) and t("paletteRefOptionHint") or nil })
-                    if not re9 then
-                        R.ref_select(ctx, TF, "dis:" .. oid, t("dissolveRef"), R.dissolve_names(snap), opt.dissolve,
-                            t("dissolveRefNone"), t("dissolveRefBroken"),
-                            function(v) ctx.act({ kind = "dissolve-ref", layer = layer, option = opt.name, preset = v }) end,
-                            { disabled = nf_off })
-                    end
+                    R.ref_select(ctx, TF, "dis:" .. oid, t("dissolveRef"), R.dissolve_names(snap), opt.dissolve,
+                        t("dissolveRefNone"), t("dissolveRefBroken"),
+                        function(v) ctx.act({ kind = "dissolve-ref", layer = layer, option = opt.name, preset = v }) end,
+                        { disabled = nf_off })
                     cy = cy + TF:height() + 6
                     cy = cy + R.sks_box(ctx, st, oid, mx0, cy, mw, opt.sks, function(group, value)
                         ctx.act({ kind = "sks-ref", layer = layer, option = opt.name, group = group, value = value })

@@ -856,8 +856,8 @@ function Main.start(ctx)
                 if d or want ~= nil then
                     local ok_c, cur = pcall(Utils.visibility_get, mesh, i)
                     -- 可见性组没有溶解参数,瞬间切换;血量驱动时到区间一半切。
-                    -- RE9 的材质也一样:溶解走 setMaterialsEnable,RE9 没有它(材质位图见 Viscon.lua)
-                    if ok_c and (is_re9 or Utils.visibility_kind(mesh, i) == "group") then
+                    -- 材质走溶解(Dissolve.lua;RE9 的开关在那里改走材质位图),没有 Dissolve_Rate 的材质也是瞬间切
+                    if ok_c and Utils.visibility_kind(mesh, i) == "group" then
                         local enabled = d and ((d.p >= 0.5) == d.on)
                         if not d then enabled = want end
                         if cur ~= enabled then pcall(Utils.visibility_set, mesh, i, enabled) end
@@ -938,7 +938,7 @@ function Main.start(ctx)
                 if saved and (not saved[slot] or saved[slot].id ~= id) then
                     saved[slot] = { id = id, states = material_states(mesh) }
                 end
-                if not is_re9 then Dissolve.reset_mesh(mesh) end
+                Dissolve.reset_mesh(mesh)
                 -- 材质和可见性组各算各的:定位了哪一类,这一类只显示选中的;另一类全开,
                 -- 否则定位一个组时它里面的材质都是关的,什么也看不见。这个槛位什么都没选就整个隐藏
                 local ok, count = pcall(Utils.visibility_count, mesh)
@@ -1751,7 +1751,7 @@ function Main.start(ctx)
         if Targets.tick then Targets.tick() end
         Main.nf = Main.features_on()
         if Main.nf and Main.ensure_extras then Main.ensure_extras() end
-        if Main.nf and not is_re9 and not styles_preloaded then
+        if Main.nf and not styles_preloaded then
             styles_preloaded = true
             local ok, err = pcall(dissolve_styles.preload)
             if not ok then note_error("dissolve styles preload", err) end

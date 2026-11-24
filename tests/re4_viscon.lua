@@ -228,6 +228,11 @@ Viscon.flush()
 assert(hair9.enabled == false and hair9.rebuilds == 1)
 hair9.enabled = true
 
+-- 溶解在 RE9 也改材质位图(RE9 没有 setMaterialsEnable):没有 Dissolve_Rate 的材质直接切
+local Dissolve = require("ArmorVariantManager_Core.Games.RE4.Dissolve")
+Dissolve.set_material(hair9, 2, true, false)
+assert(Utils.visibility_get(hair9, 2) == true)
+
 -- 脚本重置还原原值并重建
 Viscon.reset()
 assert(hair9.mem[PARTS + 32] == 0xFF and hair9.rebuilds == 2)
