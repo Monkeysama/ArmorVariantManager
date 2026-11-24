@@ -144,18 +144,23 @@ end
 
 -- 固定槛位,来自 chainsaw.PlayerBodyUpdater 的公共 getter(实测里昂验证过)。
 Utils.MESH_SLOTS = { "body", "head", "hair", "armor" }
+-- RE9 的槛位顺序(按网格文件名里的部位编号):常用的身体 40、头部 10、头发 20 在前,左手 02、右手 01、
+-- 下半身 50 其次,其他部件按编号排在后面,饰品(手表、耳钉、眼镜、绕胸皮带、背包)最后。只影响显示和遍历顺序
+local RE9_FIRST = { body = 1, head = 2, hair = 3, mesh_02 = 4, mesh_01 = 5, mesh_50 = 6 }
+local RE9_ACCESSORY = { ["09"] = true, ["14"] = true, ["15"] = true, ["16"] = true, ["41"] = true, ["42"] = true }
+local function re9_rank(slot)
+    if RE9_FIRST[slot] then return RE9_FIRST[slot] end
+    local id = slot:match("^mesh_(%d%d)$")
+    return (RE9_ACCESSORY[id] and 300 or 100) + tonumber(id)
+end
+
 function Utils.slots(source)
     if not GameProfile.re9 or type(source) ~= "table" then return Utils.MESH_SLOTS end
     local slots = {}
-    for _, slot in ipairs(Utils.MESH_SLOTS) do
-        if source[slot] then slots[#slots + 1] = slot end
-    end
-    local extra = {}
     for slot in pairs(source) do
-        if slot:match("^mesh_%d%d$") then extra[#extra + 1] = slot end
+        if RE9_FIRST[slot] or (type(slot) == "string" and slot:match("^mesh_%d%d$")) then slots[#slots + 1] = slot end
     end
-    table.sort(extra)
-    for _, slot in ipairs(extra) do slots[#slots + 1] = slot end
+    table.sort(slots, function(a, b) return re9_rank(a) < re9_rank(b) end)
     return slots
 end
 local SLOT_GETTER = {

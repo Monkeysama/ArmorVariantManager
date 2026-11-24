@@ -221,6 +221,11 @@ Utils.visibility_set(grace, 0, false)
 assert(grace.part_on[0] == false and grace.mat_on[0] == true)
 local slots = Utils.slots({ body = grace, head = vanilla, mesh_60 = hair, mesh_50 = hair, resource_identity = "x" })
 assert(table.concat(slots, ",") == "body,head,mesh_50,mesh_60", table.concat(slots, ","))
+-- 顺序:身体、头部、头发,左手、右手、下半身,其他部件按编号,饰品最后
+local m = vanilla
+slots = Utils.slots({ mesh_15 = m, mesh_45 = m, mesh_01 = m, hair = m, mesh_09 = m, mesh_02 = m, body = m, mesh_50 = m,
+    mesh_08 = m, head = m, mesh_42 = m })
+assert(table.concat(slots, ",") == "body,head,hair,mesh_02,mesh_01,mesh_50,mesh_08,mesh_45,mesh_09,mesh_15,mesh_42", table.concat(slots, ","))
 Viscon.reset()
 assert(grace.part_on[0] == true)
 
