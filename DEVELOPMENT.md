@@ -125,7 +125,7 @@ release/release-notes.md
 
 tag 的版本会写入产物中的 Lua 入口和 REFF 清单，源码不改。省略 `--tag` 时沿用 Lua 入口版本，也可用 `--version` 指定本地候选版本；`--release-notes` 提取该版本日志到包外。
 
-通用包同时供 RE4 使用，REFF 清单声明 `MHWILDS`、`MHRISE` 和 `RE4`（`build_release.py` 的 `UNIVERSAL_GAMES`；旧的 `--game` 单游戏参数不含 RE4）。预览 DLL 在非荒野游戏中加载后不工作。`tools/re4/` 的调试脚本不进包。包内只有 Lua、独立预览 DLL、预览资产和 REFF 插件页面；不包含独立许可证、说明、更新日志、源码、测试、用户数据或 REFramework/REFF 本体。必要许可合并到页面的 `avm-notices` 元数据，源码许可文件继续保留。Lua、JavaScript、CSS 和 HTML 注释在打包副本中移除，字符串与游戏内帮助内容不变。
+通用包同时供 RE4、RE9 使用，入口按 REFramework 报告的游戏选择适配。REFF 清单声明 `MHWILDS`、`MHRISE` 和 `RE4`（`build_release.py` 的 `UNIVERSAL_GAMES`；旧的 `--game` 单游戏参数不含 RE4）；RE9 不注册 REFF 页面，不在清单里。预览 DLL 在非荒野游戏中初始化时直接返回，不注册任何能力。包里 RE4 内置溶解样式的噪声图是 RE4 的贴图版本（`.tex.143221013`），RE9 读不到。`tools/re4/`、`tools/re9/` 的脚本不进包。包内只有 Lua、独立预览 DLL、预览资产和 REFF 插件页面；不包含独立许可证、说明、更新日志、源码、测试、用户数据或 REFramework/REFF 本体。必要许可合并到页面的 `avm-notices` 元数据，源码许可文件继续保留。Lua、JavaScript、CSS 和 HTML 注释在打包副本中移除，字符串与游戏内帮助内容不变。
 
 同名产物已存在时默认拒绝覆盖，确认目标后才能用 `--overwrite`。旧自动化显式使用的 `--game wilds`、`--game rise`、`--game all` 仍保留原输出含义，日常构建不需要这些参数。
 
