@@ -90,7 +90,7 @@ function Appearance.new(deps)
         end
         if context.preview_originals then result = Presets.merge(context.preview_originals, result) end
         if context.material_preview then result = Presets.merge(result, context.material_preview) end
-        context.groups, context.overrides = selected, result
+        context.groups, context.targets, context.overrides = selected, targets, result
         app.height.set_runtime(character, config, result and result.ground_clipping_fix)
         return result, changed or first_apply
     end
