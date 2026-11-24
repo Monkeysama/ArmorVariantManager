@@ -145,7 +145,9 @@ local function counts(d, card, values)
 end
 
 -- 选项展开后的材质:按部位分段;状态组写了、但当前模型上没有的材质另列一段(可以改成「-」清掉)
-local function sections(d, t, card, values)
+-- view:nil = 两类都列(没有切换时);"material" / "group" = 选项顶上的切换选了哪一类。
+-- 没有材质的部位(RE9 位图校准失败时)在材质视图里照样列出它的组,免得整个部位不见
+local function sections(d, t, card, values, view)
     local out = {}
     for _, s in ipairs(d.slots) do
         -- 网格可见性组(kind = "group")单列一段,批量按钮也只作用于这一段
@@ -154,10 +156,13 @@ local function sections(d, t, card, values)
             local list = m.kind == "group" and groups or keys
             list[#list + 1] = U.key_of(s.id, m.name)
         end
-        if #keys > 0 then out[#out + 1] = { id = s.id, kind = "material", label = U.short_slot(s.label), keys = keys } end
-        if #groups > 0 and (d.usage[s.id] or {}).show_groups then
-            out[#out + 1] = { id = s.id, kind = "group", label = U.short_slot(s.label) .. " · " .. t("meshGroups"), keys = groups,
-                hint = t("meshGroupsHint") }
+        local show_groups = #groups > 0 and (d.usage[s.id] or {}).show_groups
+        if #keys > 0 and view ~= "group" then
+            out[#out + 1] = { id = s.id, kind = "material", label = U.short_slot(s.label), keys = keys }
+        end
+        if show_groups and (view ~= "material" or #keys == 0) then
+            local label = U.short_slot(s.label) .. (view == "group" and "" or (" · " .. t("meshGroups")))
+            out[#out + 1] = { id = s.id, kind = "group", label = label, keys = groups, hint = t("meshGroupsHint") }
         end
     end
     if not card.is_base then
@@ -499,7 +504,26 @@ function Page.draw(ctx, x, y, w)
                             ctx.act({ kind = "sks-ref", layer = layer, option = opt.name, group = group, value = value })
                         end)
                     end
-                    local secs = sections(d, t, card, opt.values or {})
+                    -- 有部位同时列出材质和组时,顶上给「材质 | 网格组」切换,一次只看一类(两类都照常生效)。
+                    -- 默认按预设用到哪一类:只用到组就先看组,否则先看材质;手动选过按选项记住
+                    st.view = st.view or {}
+                    local view = nil
+                    do
+                        local any_both, mu, gu = false, false, false
+                        for _, s in ipairs(d.slots) do
+                            local u = d.usage[s.id] or {}
+                            if u.both then
+                                any_both = true
+                                mu = mu or u.material
+                                gu = gu or u.group
+                            end
+                        end
+                        if any_both then
+                            local open_m = Viscon.default_open(mu, gu)
+                            view = st.view[oid] or (open_m and "material" or "group")
+                        end
+                    end
+                    local secs = sections(d, t, card, opt.values or {}, view)
                     if #secs == 0 then
                         D.text_mid(t("noMaterials"), mx0, cy, 22, C.muted, W.small(), mw)
                         cy = cy + 26
@@ -515,12 +539,20 @@ function Page.draw(ctx, x, y, w)
                             ctx.act({ kind = "option-material", group = card.name, option = opt.name, slot = slot, material = mat, value = nv })
                         end
                     end
-                    -- 搜索材质名或备注(只筛材质,组不筛);批量按钮只作用于筛出来的
+                    -- 搜索名字或备注;批量按钮只作用于筛出来的
                     st.query = st.query or {}
                     local q = trim(st.query[oid]):lower()
-                    if #secs > 0 then
-                        W.text_box("q:" .. oid, mx0, cy, min(220, mw), 24, st.query[oid] or "", t("searchMaterials"),
+                    if #secs > 0 or view then
+                        local sw = min(220, mw)
+                        W.text_box("q:" .. oid, mx0, cy, sw, 24, st.query[oid] or "", t("searchMaterials"),
                             function(v2) st.query[oid] = v2 end)
+                        if view then
+                            local items = { { t("viewMaterials"), "material", tip = t("viewHint") }, { t("viewGroups"), "group", tip = t("viewHint") } }
+                            local segw = 0
+                            for _, it in ipairs(items) do segw = segw + D.measure(W.small(), it[1]) + 24 end
+                            local picked = W.segments(mx0 + sw + 12, cy, segw, items, view, { h = 24 })
+                            if picked and picked ~= view then st.view[oid] = picked end
+                        end
                         cy = cy + 30
                     end
                     -- 三列排列(备注模式一行要放输入框和定位按钮,只排一列);列宽放不下就减列
@@ -531,7 +563,7 @@ function Page.draw(ctx, x, y, w)
                     st.sec_open = st.sec_open or {}
                     for _, sec in ipairs(secs) do
                         local keys = sec.keys
-                        if q ~= "" and sec.kind == "material" then
+                        if q ~= "" and sec.id ~= "" then
                             keys = {}
                             for _, k in ipairs(sec.keys) do
                                 local _, mat = U.split_key(k)
@@ -539,27 +571,18 @@ function Page.draw(ctx, x, y, w)
                                 if mat:lower():find(q, 1, true) or (note and note:lower():find(q, 1, true)) then keys[#keys + 1] = k end
                             end
                         end
-                        -- 部位里的材质段、组段可以折叠;默认按预设用到哪一类展开(Viscon.default_open),手动点过按手动的。
-                        -- 「当前模型上没有」那段不折叠
+                        -- 每段可以手动折叠,默认展开(先看哪一类由上面的切换决定)。「当前模型上没有」那段不折叠
                         local sk = sec.id .. "|" .. tostring(sec.kind)
-                        local sec_open, by_default = true, false
+                        local sec_open = true
                         local lx = mx0
                         if sec.id ~= "" then
-                            local u = d.usage[sec.id] or {}
-                            local def = true
-                            if u.both then
-                                local dm, dg = Viscon.default_open(u.material, u.group)
-                                -- 不能写成 `kind == "group" and dg or dm`:dg 为 false 时会取到 dm
-                                if sec.kind == "group" then def = dg else def = dm end
-                            end
-                            if st.sec_open[sk] == nil then sec_open, by_default = def, true else sec_open = st.sec_open[sk] end
+                            if st.sec_open[sk] ~= nil then sec_open = st.sec_open[sk] end
                             if W.caret(mx0, cy, sec_open, 24) then st.sec_open[sk] = not sec_open end
                             lx = mx0 + 20
                         end
                         local lw = D.text_mid(sec.label, lx, cy, 24, sec.id == "" and C.error or C.muted, W.bold())
                         if sec.hint then W.tooltip(sec.hint, lx, cy, lw, 24) end
                         local count_text = (#keys < #sec.keys) and t("sectionFiltered", #keys, #sec.keys) or t("sectionCount", #sec.keys)
-                        if not sec_open and by_default then count_text = t("sectionUnused", #sec.keys) end
                         local cw = D.text_mid(count_text, lx + lw + 8, cy, 24, C.muted, W.small())
                         -- 这一段的批量设置:全部 — / 关 / 开、反选(整套造型没有「—」);筛选时只作用于筛出来的
                         if sec_open and #keys > 0 and W.visible(cy, 24) then
