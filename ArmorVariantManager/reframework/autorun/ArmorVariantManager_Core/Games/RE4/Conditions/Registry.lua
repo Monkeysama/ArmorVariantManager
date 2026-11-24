@@ -112,7 +112,7 @@ end
 
 Registry.register(require("ArmorVariantManager_Core.Games.RE4.Conditions.Condition_HP"))
 Registry.register(require("ArmorVariantManager_Core.Games.RE4.Conditions.Condition_Vital"))
-local is_re9 = reframework:get_game_name() == "re9"
+local is_re9 = require("ArmorVariantManager_Core.Games.RE4.GameProfile").re9
 if not is_re9 then
     Registry.register(require("ArmorVariantManager_Core.Games.RE4.Conditions.Condition_HasArmor"))
     Registry.register(require("ArmorVariantManager_Core.Games.RE4.Conditions.Condition_WeaponKind"))

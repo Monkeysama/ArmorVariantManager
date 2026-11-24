@@ -19,7 +19,7 @@
 local Mdf2 = {}
 
 Mdf2.MAGIC = 4605005
-local is_re9 = reframework:get_game_name() == "re9"
+local is_re9 = require("ArmorVariantManager_Core.Games.RE4.GameProfile").re9
 Mdf2.VERSION = is_re9 and 51 or 32
 Mdf2.PRESET_VERSION = 5
 

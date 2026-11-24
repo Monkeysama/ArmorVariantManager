@@ -17,7 +17,7 @@ local Dissolve = require("ArmorVariantManager_Core.Games.RE4.Dissolve")
 local DissolveStyles = require("ArmorVariantManager_Core.Games.RE4.DissolveStyles")
 local SksLink = require("ArmorVariantManager_Core.Games.RE4.SksLink")
 -- 默认贴图失效规则(离线材质库生成);加载失败就不做判断,不影响调色盘本身
-local is_re9 = reframework:get_game_name() == "re9"
+local is_re9 = require("ArmorVariantManager_Core.Games.RE4.GameProfile").re9
 local ok_effects, MaterialEffects
 if not is_re9 then ok_effects, MaterialEffects = pcall(require, "ArmorVariantManager_Core.Games.RE4.MaterialEffects") end
 local effects_index = ok_effects and Palette.effects_index(MaterialEffects) or nil
@@ -644,7 +644,8 @@ function Reff.new(deps)
             for j = 0, count - 1 do
                 if mesh:call("getMaterialName", j) == p.material then
                     local preset, reason = Mdf2.export(mesh, j, p.material, Palette, effects_index)
-                    local directory = is_re9 and "ArmorVariantManagerRE9/mdf2_presets/RE9/" or "ArmorVariantManager/mdf2_presets/RE4/"
+                    local profile = require("ArmorVariantManager_Core.Games.RE4.GameProfile")
+                    local directory = profile.config_dir .. "/mdf2_presets/" .. profile.name .. "/"
                     local path = directory .. name .. ".json"
                     if not deps.palette_dump(path, preset) then return false end
                     notice = { kind = "palette-exported", path = "reframework/data/" .. path, exact = reason == nil, reason = reason }

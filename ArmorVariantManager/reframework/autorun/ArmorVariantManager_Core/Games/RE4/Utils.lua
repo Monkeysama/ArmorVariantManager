@@ -1,24 +1,29 @@
 local Utils = {}
-local is_re9 = reframework:get_game_name() == "re9"
-local Visibility = is_re9 and require("ArmorVariantManager_Core.Games.RE9.Visibility")
+local GameProfile = require("ArmorVariantManager_Core.Games.RE4.GameProfile")
 
+-- 按下标读写显隐:RE4 是材质开关;RE9 是网格可见性组(GameProfile.visibility,见 Games/RE9/Visibility.lua),
+-- 名字是 "Viscon 000" 这样的组号,配置里的"材质名"在 RE9 下就是它
 function Utils.visibility_count(mesh)
-    if Visibility then return Visibility.count(mesh) end
+    local v = GameProfile.visibility
+    if v then return v.count(mesh) end
     return mesh:call("get_MaterialNum")
 end
 
 function Utils.visibility_name(mesh, index)
-    if Visibility then return Visibility.name(mesh, index) end
+    local v = GameProfile.visibility
+    if v then return v.name(mesh, index) end
     return mesh:call("getMaterialName", index)
 end
 
 function Utils.visibility_get(mesh, index)
-    if Visibility then return Visibility.get(mesh, index) end
+    local v = GameProfile.visibility
+    if v then return v.get(mesh, index) end
     return mesh:call("getMaterialsEnable", index)
 end
 
 function Utils.visibility_set(mesh, index, enabled)
-    if Visibility then return Visibility.set(mesh, index, enabled) end
+    local v = GameProfile.visibility
+    if v then return v.set(mesh, index, enabled) end
     mesh:call("setMaterialsEnable", index, enabled)
 end
 
@@ -86,7 +91,7 @@ end
 -- 固定槛位,来自 chainsaw.PlayerBodyUpdater 的公共 getter(实测里昂验证过)。
 Utils.MESH_SLOTS = { "body", "head", "hair", "armor" }
 function Utils.slots(source)
-    if not is_re9 or type(source) ~= "table" then return Utils.MESH_SLOTS end
+    if not GameProfile.re9 or type(source) ~= "table" then return Utils.MESH_SLOTS end
     local slots = {}
     for _, slot in ipairs(Utils.MESH_SLOTS) do
         if source[slot] then slots[#slots + 1] = slot end
@@ -383,7 +388,7 @@ end
 -- 四个槛位当前 mesh 实例的身份串。mesh 被换掉(换装、模型重载、重生、场景切换)时它会变,
 -- 而 mesh 一换,我们之前写进去的材质开关就全丢了 —— 这是"差分被冲掉"的主因。
 function Utils.get_mesh_identity(source)
-    local parts = { is_re9 and source.resource_identity or nil }
+    local parts = { GameProfile.re9 and source.resource_identity or nil }
     for _, slot in ipairs(Utils.slots(source)) do
         local mesh = Utils.get_mesh(source, slot)
         table.insert(parts, slot .. "=" .. (mesh and tostring(mesh) or "nil"))

@@ -35,7 +35,7 @@ end
 function M.set_percent(context, percent)
     local hp = get_hitpoint(context)
     if not hp then return end
-    local maximum = reframework:get_game_name() == "re9" and "get_CurrentMaximumHitPoint" or "get_DefaultHitPoint"
+    local maximum = require("ArmorVariantManager_Core.Games.RE4.GameProfile").re9 and "get_CurrentMaximumHitPoint" or "get_DefaultHitPoint"
     local ok_max, default_hp = pcall(function() return hp:call(maximum) end)
     if not ok_max or type(default_hp) ~= "number" or default_hp <= 0 then return end
     local target = math.floor((percent / 100) * default_hp + 0.5)

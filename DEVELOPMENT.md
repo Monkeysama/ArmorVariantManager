@@ -25,6 +25,7 @@ ArmorVariantManager/
         Conditions/、Rules/、Runtime/  条件、规则与角色状态
         Games/Wilds/、Games/Rise/      各游戏 SDK、装备、材质和能力适配
         Games/RE4/                     RE4 独立适配：Main.start、v3 模型（ModelV3 / OpsV3 / Presets）、条件、REF 面板（ImGuiV3）与 REFF 接口（见目录内 AGENTS.md）
+        Games/RE9/                     RE9 适配：角色目标与 Viscon 显隐，其余复用 Games/RE4；差异经 Games/RE4/GameProfile.lua 选定
         UI/Workspace.lua              当前编辑配置与选择状态
         UI/ImGui/、UI/Reff/            REF 绘制、REFF 序列化与 RPC 适配
         Documentation.lua             游戏内中英文帮助与历史记录
@@ -42,7 +43,7 @@ build_release.py                      发布目录、ZIP 与库存检查
 .github/workflows/release.yml          tag 发布与同版本日志提取
 ```
 
-共享业务不直接依赖游戏 SDK；游戏适配层处理托管对象和专属能力。`Game.detect` 标记为 `standalone` 的游戏（目前是 RE4）由入口直接调用 `Games/<游戏>/Main.lua` 的 `start({game, version, author})`，不装配共享 `App` 与预览；RE4 的 REFF 接口在 `Games/RE4/Reff.lua`，只复用共享的 `UI/Reff/Bridge.lua` 注册；它的配置模型与 MH 的 groups 不同，迁入共享界面前先证明旧配置行为不变。界面通过 `App` 操作配置，角色活动状态不能混入界面选择状态。旧 JSON 与公开业务 `require` 转接仍有兼容用途，不按文件名批量删除。
+共享业务不直接依赖游戏 SDK；游戏适配层处理托管对象和专属能力。`Game.detect` 标记为 `standalone` 的游戏（RE4、RE9）由入口直接调用 `Games/<游戏>/Main.lua` 的 `start({game, version, author})`，不装配共享 `App` 与预览；RE4 的 REFF 接口在 `Games/RE4/Reff.lua`，只复用共享的 `UI/Reff/Bridge.lua` 注册；它的配置模型与 MH 的 groups 不同，迁入共享界面前先证明旧配置行为不变。界面通过 `App` 操作配置，角色活动状态不能混入界面选择状态。旧 JSON 与公开业务 `require` 转接仍有兼容用途，不按文件名批量删除。
 
 ## 开发环境
 

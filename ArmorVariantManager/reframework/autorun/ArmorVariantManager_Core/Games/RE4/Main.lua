@@ -7,8 +7,10 @@ local ImGuiV3 = require("ArmorVariantManager_Core.Games.RE4.ImGuiV3")
 local MdfReplace = require("ArmorVariantManager_Core.Games.RE4.MdfReplace")
 
 function Main.start(ctx)
-    local is_re9 = ctx.game.name == "RE9"
-    local config_dir = is_re9 and "ArmorVariantManagerRE9" or "ArmorVariantManager"
+    -- RE9 复用本模块(见 GameProfile.lua):is_re9 时关掉 RE9 没有的功能,配置存到 RE9 自己的目录。
+    -- 不另开 GameProfile 局部变量:Main.start 的局部变量已在 Lua 的 200 个上限边上
+    local is_re9 = require("ArmorVariantManager_Core.Games.RE4.GameProfile").re9
+    local config_dir = require("ArmorVariantManager_Core.Games.RE4.GameProfile").config_dir
     local mod_name = "ArmorVariantManager"
     local version = ctx.version
     -- 移植自 MHRise/MHWorld 差分管理器(v2.4.5 崛起版 / v3.3.0),按 RE4(chainsaw.*)的

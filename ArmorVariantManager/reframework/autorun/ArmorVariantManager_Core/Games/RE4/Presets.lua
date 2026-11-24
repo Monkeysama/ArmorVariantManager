@@ -23,7 +23,7 @@
 -- 指纹里有、当前模型上没有的槛位(比如没穿护甲)不参与判断。
 local Presets = {}
 
-local config_dir = reframework:get_game_name() == "re9" and "ArmorVariantManagerRE9" or "ArmorVariantManager"
+local config_dir = require("ArmorVariantManager_Core.Games.RE4.GameProfile").config_dir
 Presets.DIR = config_dir .. "/presets/"
 Presets.AUTOSAVE_DIR = config_dir .. "/autosave/"
 Presets.INDEX_ID = "_index"
