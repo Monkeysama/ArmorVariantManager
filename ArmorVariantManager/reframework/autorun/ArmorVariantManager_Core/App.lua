@@ -1,3 +1,4 @@
+local Palette = require("ArmorVariantManager_Core.Presets.Palette")
 local PresetGroups = require("ArmorVariantManager_Core.Presets.Groups")
 local PresetEditor = require("ArmorVariantManager_Core.Presets.Editor")
 local App = {}
@@ -153,6 +154,31 @@ function App.new(options)
     function app.auto_set_selected_preset_as_default(body_id)
         if not global_config.auto_set_selected_preset_as_default then return false end
         return app.set_preset_as_default(state.presets[state.preset_index], body_id)
+    end
+
+    -- 设置当前分组某个预设的材质参数覆盖；value 为 nil 时取消。写盘失败时恢复原值。
+    -- part 为部位键（"0".."5"，武器为对象序号），参数含义见 Presets/Palette.lua 的 set。
+    function app.set_preset_material_param(preset_name, part, material, param, value, component, body_id)
+        if not backend.palette then return false, "此游戏暂不支持调色" end
+        if not body_id or not workspace.config then return false end
+        local owner = PresetEditor.target(workspace.config, state.group)
+        local preset = owner and owner.presets and owner.presets[preset_name]
+        if not preset then return false, "预设已不存在" end
+        local previous = deep_copy_table(preset[Palette.FIELD])
+        local changed, reason = Palette.set(preset, tostring(part), material, param, value, component)
+        if not changed then return reason == nil, reason end
+        local saved, save_reason = app.save_current_config_to_file(body_id, true)
+        if saved == false then
+            preset[Palette.FIELD] = previous
+            return false, save_reason
+        end
+        return true
+    end
+
+    -- 本地猎人当前装备某个部位、某个材质的 float / float4 参数（名称、类型、当前值、被覆盖时的原值）。
+    function app.material_params(part, material)
+        if not backend.material_params then return nil, "此游戏暂不支持调色" end
+        return backend.material_params(tostring(part), material, state.weapon == true)
     end
 
     -- 将备份写回主配置文件，成功后同步工作区。

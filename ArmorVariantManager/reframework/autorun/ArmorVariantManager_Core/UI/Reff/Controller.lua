@@ -17,6 +17,7 @@ function Controller.new(deps)
             pending={}, backupPending=false, canImport=deps.imports ~= nil,
         }
         if deps.settings then snapshot.settings = deps.settings.snapshot(context) end
+        if deps.palette then snapshot.palette = deps.palette.snapshot(context) end
         if deps.preview then snapshot.preview = deps.preview.snapshot() end
         if not context.id then return snapshot end
         snapshot.backupPending = deps.backup_pending and deps.backup_pending(context.id) == true or false
@@ -63,6 +64,16 @@ function Controller.new(deps)
             result.files[#result.files+1] = {path=file.path, name=file.name}
         end
         return result
+    end
+
+    -- 材质参数列表只在调色面板读取时传输；装备已变化时返回空列表。
+    function controller.material_params(request)
+        request = type(request) == "table" and request or {}
+        local context = deps.context()
+        if not deps.palette or request.bodyId ~= context.id then
+            return {bodyId=context.id or "", part=request.part, material=request.material, params={}}
+        end
+        return deps.palette.params(request, context)
     end
 
     -- 换装和场景切换后的旧网页请求不能修改新装备。

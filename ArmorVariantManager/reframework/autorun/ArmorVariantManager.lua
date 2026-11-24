@@ -61,9 +61,10 @@ end
 -- 初始化加载
 load_global_settings()
 -- 场景变化只清运行状态，配置及手动预设选择保持不变。
-local appearance
+local appearance, palette
 local function reset_actor_context()
     appearance.reset()
+    if palette then palette.reset() end
 end
 
 local runtime, application
@@ -111,6 +112,7 @@ else
     app.game_options = require(game.prefix .. "Options").new(global_config, runtime, T, app.save_global_settings)
 end
 app.initialize_settings()
+palette = application.palette
 require("ArmorVariantManager_Core.UI.Reff.App").new(app)
 local draw = require("ArmorVariantManager_Core.UI.ImGui.Main").new(app)
 runtime.install_hooks()

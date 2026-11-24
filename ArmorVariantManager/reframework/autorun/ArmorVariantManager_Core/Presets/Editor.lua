@@ -1,3 +1,4 @@
+local Palette = require("ArmorVariantManager_Core.Presets.Palette")
 local Editor = {}
 
 -- 主列表与分组共用编辑规则，游戏侧只负责捕获预设内容和保存后的外观刷新。
@@ -26,6 +27,8 @@ function Editor.write(config, group_name, name, data, persist)
     end
     local presets, order = target.presets, target.preset_order
     local previous = presets and presets[name]
+    -- 覆盖时重新捕获的只有网格与材质开关，调色沿用旧预设。
+    Palette.carry(previous, data)
     target.presets = presets or {}
     if not previous then
         target.preset_order = copy_order(order) or {}

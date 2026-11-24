@@ -48,6 +48,7 @@ DEFAULT_TESTS = (
     "tests/high_heel_height_regression.lua",
     "tests/ground_clipping_targets_regression.lua",
     "tests/scanner_ui_regression.lua",
+    "tests/palette.lua",
 )
 
 
