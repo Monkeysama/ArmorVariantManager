@@ -651,6 +651,31 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
                 assert(not visible and metal_visible,"hiding the ordinary group retains the global material")
             end
         end
+        do
+            -- SKS 键组联动经真实入口：预设设置写入 JSON，本地猎人选中后每帧发送，取消后交还捏脸配置。
+            local picks, cleared = {}, 0
+            _G.ShapeKeySystemAPI = {
+                select_group_option=function(_,group,option) picks[group]=option; return true end,
+                clear_selection=function() cleared=cleared+1; picks={}; return true end,
+                key_groups=function() return {{name="Hair",value=1,options={"Short","Long"}}} end,
+            }
+            send("group",{name=""})
+            send("save",{name="Linked"})
+            current=send("shape-key",{preset="Linked",group="",keyGroup="Hair",option="Long"})
+            assert(current.shapeKeys.available and current.shapeKeys.editable)
+            assert(current.shapeKeys.presets.Linked.Hair=="Long" and current.shapeKeys.groups[1].value=="Short")
+            assert(data["ArmorVariantManager/armor.json"].presets.Linked.sks.Hair=="Long")
+            send("preset",{name="Linked"})
+            frames[1]()
+            assert(picks.Hair=="Long","the local hunter's active preset reaches SKS")
+            send("save",{name="Linked"})
+            assert(data["ArmorVariantManager/armor.json"].presets.Linked.sks.Hair=="Long","overwriting keeps the link")
+            send("shape-key",{preset="Linked",group="",keyGroup="Hair"})
+            frames[1]()
+            assert(cleared==1 and picks.Hair==nil,"an unlinked group returns to the sculpt config")
+            assert(data["ArmorVariantManager/armor.json"].presets.Linked.sks==nil)
+            _G.ShapeKeySystemAPI = nil
+        end
         local armor_after_material_tests=S.copy(data["ArmorVariantManager/armor.json"])
         send("mode",{weapon=true})
         assert(snapshot().bodyId=="","mode transition never pairs old config with new equipment")

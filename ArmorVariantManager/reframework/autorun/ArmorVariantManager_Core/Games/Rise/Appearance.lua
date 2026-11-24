@@ -140,7 +140,7 @@ function Appearance.new(load_config)
             end
             local changed = context.overrides ~= result
             if changed then context.version = (context.version or 0) + 1 end
-            context.overrides, context.groups = result, groups
+            context.overrides, context.groups, context.targets = result, groups, targets
             return result, changed
         end,
         apply = function(actor, slot, objects, result, changed, id, config)

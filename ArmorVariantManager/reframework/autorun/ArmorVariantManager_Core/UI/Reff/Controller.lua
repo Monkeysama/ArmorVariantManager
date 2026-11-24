@@ -18,6 +18,7 @@ function Controller.new(deps)
         }
         if deps.settings then snapshot.settings = deps.settings.snapshot(context) end
         if deps.preview then snapshot.preview = deps.preview.snapshot() end
+        if deps.shape_keys then snapshot.shapeKeys = deps.shape_keys.snapshot(context) end
         if not context.id then return snapshot end
         snapshot.backupPending = deps.backup_pending and deps.backup_pending(context.id) == true or false
         snapshot.groups[1] = {name="", label=deps.main_label(), global=false}
@@ -83,7 +84,8 @@ function Controller.new(deps)
             local context = deps.context()
             assert(context.id and not context.suspended, "角色不可用或正在切换装备")
             assert(request.bodyId == context.id, "装备已变化，请重新操作")
-            local operation = kind == "condition" and deps.conditions and deps.conditions.action or deps.operations[kind]
+            local operation = kind == "condition" and deps.conditions and deps.conditions.action
+                or kind == "shape-key" and deps.shape_keys and deps.shape_keys.action or deps.operations[kind]
             assert(operation, "未知操作: " .. tostring(kind))
             local success, reason = operation(request, context)
             assert(success, reason or "操作未保存，请重试")

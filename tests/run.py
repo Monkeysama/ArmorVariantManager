@@ -29,6 +29,7 @@ DEFAULT_TESTS = (
     "tests/global_settings.lua",
     "tests/preset_compatibility.lua",
     "tests/preset_editor.lua",
+    "tests/shape_keys.lua",
     "tests/preset_selection.lua",
     "tests/preset_capture.lua",
     "tests/preset_finder.lua",

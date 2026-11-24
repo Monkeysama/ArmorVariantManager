@@ -1,5 +1,6 @@
 local PresetGroups = require("ArmorVariantManager_Core.Presets.Groups")
 local PresetEditor = require("ArmorVariantManager_Core.Presets.Editor")
+local ShapeKeys = require("ArmorVariantManager_Core.Presets.ShapeKeys")
 local App = {}
 
 function App.new(options)
@@ -172,12 +173,57 @@ function App.new(options)
         local data = backend.capture(workspace.config, state.group, body_id, state.weapon,
             workspace.is_material_in_current_context, workspace.get_effective_group_presets(body_id), material_intent)
         if not data then return false end
+        local target = PresetEditor.target(workspace.config, state.group)
+        ShapeKeys.carry(target and target.presets and target.presets[preset_name], data)
         local saved, reason = PresetEditor.write(workspace.config, state.group, preset_name, data, function(preserve)
             return app.save_current_config_to_file(body_id, preserve)
         end)
         workspace.update_preset_names_list()
         return saved, reason
     end
+
+    -- 设置当前分组某个预设的 SKS 键组选项；option 为 nil 时取消该键组。只改防具配置，写盘失败恢复原值。
+    function app.set_preset_shape_key(preset_name, group, option, body_id)
+        if not body_id or not workspace.config then return false end
+        if state.weapon or (game.wilds and backend.is_weapon_id(body_id)) then return false, "键组联动只用于防具" end
+        local target = PresetEditor.target(workspace.config, state.group)
+        local preset = target and target.presets and target.presets[preset_name]
+        if not preset then return false, "预设已不存在" end
+        local previous = preset[ShapeKeys.FIELD]
+        local snapshot = type(previous) == "table" and {} or previous
+        if type(previous) == "table" then for key, value in pairs(previous) do snapshot[key] = value end end
+        local changed, reason = ShapeKeys.set(preset, group, option)
+        if not changed then return false, reason end
+        local saved, save_reason = app.save_current_config_to_file(body_id, true)
+        if saved == false then
+            preset[ShapeKeys.FIELD] = snapshot
+            return false, save_reason
+        end
+        return true
+    end
+
+    -- 本地猎人当前防具生效的键组选项。nil 表示本帧不动 SKS：暂停、无角色或该装备尚未解算。
+    function app.shape_key_selection()
+        if runtime.is_suspended() then return nil end
+        local character = runtime.actors.local_player()
+        if not character then return nil end
+        local id = runtime.equipment.body_id(character)
+        if not id then return nil end
+        local config = config_session.load(id)
+        if not config then return {} end
+        local context = appearance.state:peek(tostring(character), "armor", id, config)
+        if not context then return nil end
+        return ShapeKeys.resolve(config, context.groups, context.targets)
+    end
+
+    -- 联动是可选能力：出错后停止推送并保留原因给界面，不影响材质应用。
+    function app.update_shape_keys()
+        local link = app.shape_keys
+        if not link or link.failure then return end
+        local ok, reason = pcall(function() link.push(app.shape_key_selection()) end)
+        if not ok then link.failure = tostring(reason) end
+    end
+
     function app.load_manual_preset_file(file_path, body_id)
         if not manual_import or not body_id or body_id ~= workspace.get_body_id()
             or body_id ~= state.body_id or runtime.is_suspended() then

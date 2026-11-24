@@ -103,6 +103,7 @@ local app = require("ArmorVariantManager_Core.App").new({
     global_settings=global_settings, translate=T, version=version, author=author,
 })
 app.height = require(game.prefix .. "HeightEditor").new(app)
+app.shape_keys = require("ArmorVariantManager_Core.Runtime.ShapeKeyLink").new()
 if game.wilds then
     app.portrait, app.preview = require(game.prefix .. "Portrait").connect(global_config, {
         suspended=runtime.is_suspended,
@@ -119,5 +120,8 @@ local frame_callbacks = {
         retain=function(seen) appearance.state:retain(seen) end,
         update=app.workspace.update,
 }
-re.on_frame(function() runtime.tick(frame_callbacks) end)
+re.on_frame(function()
+    runtime.tick(frame_callbacks)
+    app.update_shape_keys()
+end)
 re.on_draw_ui(draw)

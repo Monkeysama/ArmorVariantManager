@@ -187,11 +187,14 @@ function ReffApp.new(app)
             return global_options.action(request,current)
         end,
     }
+    local shape_keys = app.shape_keys and require("ArmorVariantManager_Core.UI.Reff.ShapeKeys").new({
+        view=app.shape_keys.view, set=app.set_preset_shape_key,
+    })
     -- 启动时固定帮助依赖，REFF 回调期间宿主可能已恢复默认模块搜索路径。
     local reff_help = require("ArmorVariantManager_Core.UI.Reff.Help")
     local Controller = require("ArmorVariantManager_Core.UI.Reff.Controller")
     local controller = Controller.new({
-        game=game.name,version=version,context=context,conditions=conditions,settings=settings,
+        game=game.name,version=version,context=context,conditions=conditions,settings=settings,shape_keys=shape_keys,
         display_height=function()
             local size = imgui.get_display_size and imgui.get_display_size()
             return size and size.y > 0 and size.y or nil
