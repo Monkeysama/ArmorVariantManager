@@ -7,6 +7,8 @@ local ImGuiV3 = require("ArmorVariantManager_Core.Games.RE4.ImGuiV3")
 local MdfReplace = require("ArmorVariantManager_Core.Games.RE4.MdfReplace")
 
 function Main.start(ctx)
+    local is_re9 = ctx.game.name == "RE9"
+    local config_dir = is_re9 and "ArmorVariantManagerRE9" or "ArmorVariantManager"
     local mod_name = "ArmorVariantManager"
     local version = ctx.version
     -- 移植自 MHRise/MHWorld 差分管理器(v2.4.5 崛起版 / v3.3.0),按 RE4(chainsaw.*)的
@@ -15,7 +17,7 @@ function Main.start(ctx)
     local Utils = require("ArmorVariantManager_Core.Games.RE4.Utils")
     local TransformManager = require("ArmorVariantManager_Core.Games.RE4.TransformManager")
     local Registry = require("ArmorVariantManager_Core.Games.RE4.Conditions.Registry")
-    local Targets = require("ArmorVariantManager_Core.Games.RE4.Targets")
+    local Targets = ctx.targets or require("ArmorVariantManager_Core.Games.RE4.Targets")
     local CharacterId = require("ArmorVariantManager_Core.Games.RE4.CharacterId")
     local Localization = require("ArmorVariantManager_Core.Games.RE4.Localization")
     local Dissolve = require("ArmorVariantManager_Core.Games.RE4.Dissolve")
@@ -24,13 +26,13 @@ function Main.start(ctx)
     local Presets = require("ArmorVariantManager_Core.Games.RE4.Presets")
     local Hotkeys = require("ArmorVariantManager_Core.Games.RE4.Hotkeys")
 
-    local global_config_path = "ArmorVariantManager/GlobalSettings.json"
+    local global_config_path = config_dir .. "/GlobalSettings.json"
     -- 默认英文(面板顶部有「中文」勾选框,勾了才切中文)。语言是全局的,不跟角色配置走。
     -- ui_dissolve_*:在面板上手动切状态 / 预设时的溶解过渡(只作用于溶解模板的材质)
     -- block_game_mouse:REFF 面板显示时不让游戏读到鼠标按键(见 InputGuard.lua)
     -- height_enabled:模型高度总开关(高度本身按预设 / 选项存在角色配置里,见 HeightFix.lua)
     local global_config = { language = "en", ui_dissolve_enabled = true, ui_dissolve_time = 1.0, block_game_mouse = true,
-        height_enabled = true }
+        height_enabled = not is_re9 }
     local function load_global_settings()
         local loaded = json.load_file(global_config_path)
         if not loaded then return end
@@ -168,7 +170,7 @@ function Main.start(ctx)
         return k
     end
 
-    local function get_config_path(kind_id) return "ArmorVariantManager/" .. cfg_key(kind_id) .. ".json" end
+    local function get_config_path(kind_id) return config_dir .. "/" .. cfg_key(kind_id) .. ".json" end
 
     -- 解析结果要缓存:每次都 json.load_file 探一遍文件存不存在太贵(每帧、每目标)。
     -- 只在写配置/迁移之后失效 —— 那时候文件集合才可能变。
@@ -195,6 +197,11 @@ function Main.start(ctx)
     -- **默认开启** —— 护甲和身体用同一套材质导出是常见做法,开着比关着更常对。
     -- 见 TransformManager.resolve 里的实际逻辑;这里只是配置层的默认值/归一化。
     local function default_config()
+        if is_re9 then
+            local config = ModelV3.new_config()
+            config.armor_mirrors_body = false
+            return config
+        end
         return { version = 2, base = new_layer(), axes = {}, material_notes = {},
                  armor_mirrors_body = true }
     end
@@ -381,8 +388,8 @@ function Main.start(ctx)
     -- 比在 ImGui 里搭一套列表+时间戳+预览+部分恢复划算得多。
     -- ============================================================
 
-    local function get_backup_path(kind_id) return "ArmorVariantManager/backup/" .. cfg_key(kind_id) .. ".json" end
-    local function get_onload_backup_path(kind_id) return "ArmorVariantManager/backup/" .. cfg_key(kind_id) .. ".onload.json" end
+    local function get_backup_path(kind_id) return config_dir .. "/backup/" .. cfg_key(kind_id) .. ".json" end
+    local function get_onload_backup_path(kind_id) return config_dir .. "/backup/" .. cfg_key(kind_id) .. ".onload.json" end
 
     local backup_exists = {}          -- 缓存,免得每帧读文件探测
     local onload_backup_exists = {}
@@ -430,7 +437,7 @@ function Main.start(ctx)
         local best_name, best_ratio = nil, 0
         for _, other in ipairs(global_config.known or {}) do
             if other ~= kind_id and other ~= cfg_key(kind_id) then
-                local d = json.load_file("ArmorVariantManager/" .. other .. ".json")
+                local d = json.load_file(config_dir .. "/" .. other .. ".json")
                 if d then
                     -- 旧格式(v1)预设在顶层,新格式在 base 下 —— 读的是生文件,两种都得认
                     local presets = (type(d.base) == "table" and d.base.presets) or d.presets
@@ -464,7 +471,7 @@ function Main.start(ctx)
             local key = cfg_key(other)
             if not seen_files[key] then
                 seen_files[key] = true
-                local d = json.load_file("ArmorVariantManager/" .. key .. ".json")
+                local d = json.load_file(config_dir .. "/" .. key .. ".json")
                 if d then
                     local presets = (type(d.base) == "table" and d.base.presets) or d.presets
                     for _, preset in pairs(presets or {}) do
@@ -552,7 +559,7 @@ function Main.start(ctx)
     local function migrate_to_character(char, fallback_kind)
         if migrated[char] then return end
         migrated[char] = true
-        local target_path = "ArmorVariantManager/" .. char .. ".json"
+        local target_path = config_dir .. "/" .. char .. ".json"
         if json.load_file(target_path) then return end          -- 已经有了
 
         -- 正身优先。没写正身的角色(Leon/Wesker…)就用当前这个目标自己的旧键。
@@ -562,7 +569,7 @@ function Main.start(ctx)
         if fallback_kind then table.insert(candidates, fallback_kind) end
 
         for _, k in ipairs(candidates) do
-            local raw = json.load_file("ArmorVariantManager/" .. cfg_key(k) .. ".json")
+            local raw = json.load_file(config_dir .. "/" .. cfg_key(k) .. ".json")
             if raw then
                 json.dump_file(target_path, raw)
                 invalidate_key_cache()
@@ -578,6 +585,7 @@ function Main.start(ctx)
     -- 返回这个目标该用哪个配置键;nil = 没有可用配置(不受管)。
     -- 第二个返回值说明是怎么定下来的,给面板显示用。
     local function resolve_config_key(target)
+        if is_re9 then return target.config_key, "character" end
         local char = target.ident and target.ident.character
         local kid = target.kind_id
         local ck = (char or "?") .. "/" .. tostring(kid)
@@ -586,7 +594,7 @@ function Main.start(ctx)
 
         local key, how
         if char then
-            if json.load_file("ArmorVariantManager/" .. char .. ".json") then
+            if json.load_file(config_dir .. "/" .. char .. ".json") then
                 key, how = char, "character"
             elseif kid and json.load_file(get_config_path(kid)) then
                 -- 旧配置还在:迁移一份成角色名,之后就走上面那条
@@ -676,7 +684,7 @@ function Main.start(ctx)
     -- 而索引和实际文件迟早会不同步。放一个字典里,"有哪些档"就是它的键,不会漂。
     -- ============================================================
 
-    local function get_slots_path(kind_id) return "ArmorVariantManager/backup/" .. cfg_key(kind_id) .. ".slots.json" end
+    local function get_slots_path(kind_id) return config_dir .. "/backup/" .. cfg_key(kind_id) .. ".slots.json" end
 
     local slots_cache = {}
 
@@ -685,7 +693,7 @@ function Main.start(ctx)
     -- 跨角色读档要能碰到别的角色那份文件。读不到就缓存成空表,所以每个 key 一个会话只读盘一次。
     local function get_slots_by_key(key)
         if slots_cache[key] == nil then
-            local d = json.load_file("ArmorVariantManager/backup/" .. key .. ".slots.json")
+            local d = json.load_file(config_dir .. "/backup/" .. key .. ".slots.json")
             slots_cache[key] = (type(d) == "table" and type(d.slots) == "table") and d.slots or {}
         end
         return slots_cache[key]
@@ -768,16 +776,20 @@ function Main.start(ctx)
     --   drive[mat] = { on = 终点外观里的开关, p = 进度 }:血量驱动中、两种外观里开关不同的材质
     -- 只处理传进来的材质名,没提到的材质保持原状(同 Utils.apply_preset_to_slot)。
     local function apply_slot(mesh, slot, slot_data, owner_of, trans, drive)
-        local ok, count = pcall(function() return mesh:call("get_MaterialNum") end)
+        local ok, count = pcall(Utils.visibility_count, mesh)
         if not ok or not count or count <= 0 then return end
         for i = 0, count - 1 do
-            local ok_n, name = pcall(function() return mesh:call("getMaterialName", i) end)
+            local ok_n, name = pcall(Utils.visibility_name, mesh, i)
             if ok_n and name then
                 local d = drive and drive[name]
                 local want = slot_data.materials[name]
                 if d or want ~= nil then
-                    local ok_c, cur = pcall(function() return mesh:call("getMaterialsEnable", i) end)
-                    if ok_c then
+                    local ok_c, cur = pcall(Utils.visibility_get, mesh, i)
+                    if ok_c and is_re9 then
+                        local enabled = d and ((d.p >= 0.5) == d.on)
+                        if not d then enabled = want end
+                        if cur ~= enabled then pcall(Utils.visibility_set, mesh, i, enabled) end
+                    elseif ok_c then
                         if d then
                             pcall(Dissolve.drive_material, mesh, i, d.on, d.p, cur)
                         elseif cur ~= want or Dissolve.is_animating(mesh, i) then
@@ -795,7 +807,7 @@ function Main.start(ctx)
     local function apply_resolved(source, resolved, active_preview, owner_of, trans, drive_map)
         if not resolved then return end
         local preview_slot = active_preview and active_preview.slot
-        for _, slot in ipairs(Utils.MESH_SLOTS) do
+        for _, slot in ipairs(Utils.slots(source)) do
             local slot_data = resolved[slot]
             -- 预览中的槛位不走正常应用:正常应用会给被预览关掉 / 打开的材质起溶解过渡,
             -- 和预览每帧互相拉扯(目标材质被溶掉、其余材质反复"出现"),定位就失效了
@@ -808,7 +820,7 @@ function Main.start(ctx)
         if active_preview then
             local mesh = Utils.get_mesh(source, active_preview.slot)
             if mesh then
-                Dissolve.reset_mesh(mesh)
+                if not is_re9 then Dissolve.reset_mesh(mesh) end
                 Utils.isolate_material(mesh, active_preview.mat)
             end
         end
@@ -839,8 +851,8 @@ function Main.start(ctx)
     local Mdf2 = require("ArmorVariantManager_Core.Games.RE4.Mdf2")
     -- 必须在脚本加载时 require:REFramework 只在加载 autorun 期间把 autorun 目录放进 package.path,
     -- 之后(网页请求、每帧回调里)再 require 会找不到模块
-    local PaletteProfiles = require("ArmorVariantManager_Core.Games.RE4.PaletteProfiles")
-    local PALETTE_DIR = "ArmorVariantManager/material_profiles/"
+    local PaletteProfiles = is_re9 and {} or require("ArmorVariantManager_Core.Games.RE4.PaletteProfiles")
+    local PALETTE_DIR = config_dir .. "/material_profiles/"
     local palette_profiles, palette_by_id, palette_profile_errors = nil, nil, {}
     local palette_state = {}
     -- 调色方案:palette_sig[target.id] = 上次写入时生效的方案组合(名字串);组合变了就重写调色
@@ -882,7 +894,7 @@ function Main.start(ctx)
         state = state or {}
         palette_state[target.id] = state
         local live = {}
-        for _, slot in ipairs(Utils.MESH_SLOTS) do
+        for _, slot in ipairs(Utils.slots(source)) do
             local mesh = Utils.get_mesh(source, slot)
             if mesh then
                 live[tostring(mesh)] = true
@@ -907,7 +919,7 @@ function Main.start(ctx)
         palette_state[target.id] = state
         local fade = { plans = {}, pal = pal, dur = dur, elapsed = 0, last = os.clock() }
         local discrete = discrete_params()
-        for _, slot in ipairs(Utils.MESH_SLOTS) do
+        for _, slot in ipairs(Utils.slots(source)) do
             local mesh = Utils.get_mesh(source, slot)
             if mesh then
                 local plan = Palette.fade_begin(mesh, pal and pal[slot], state, discrete, file_original)
@@ -951,7 +963,7 @@ function Main.start(ctx)
     local function live_sets_of(source) return Presets.live_sets(Utils.all_enabled_preset(source)) end
     local function live_signature(sets)
         local parts = {}
-        for _, slot in ipairs(Utils.MESH_SLOTS) do
+        for _, slot in ipairs(Utils.slots(source)) do
             local names = {}
             for m in pairs(sets[slot] or {}) do names[#names + 1] = m end
             table.sort(names)
@@ -1321,8 +1333,8 @@ function Main.start(ctx)
         -- 预览期间要跳过:那时 mesh 上的状态是故意和 resolved 不一致的,不是漂移。
         local drifted = false
         if (not changed) and (not mesh_swapped) and (not force_reapply) and (not preview_active)
-            and (frame_counter % DRIFT_CHECK_INTERVAL == 0) then
-            for _, slot in ipairs(Utils.MESH_SLOTS) do
+            and not is_re9 and (frame_counter % DRIFT_CHECK_INTERVAL == 0) then
+            for _, slot in ipairs(Utils.slots(source)) do
                 local slot_data = resolved and resolved[slot]
                 if slot_data then
                     local mesh = Utils.get_mesh(source, slot)
@@ -1374,6 +1386,7 @@ function Main.start(ctx)
     end
 
     local function frame_logic()
+        if Targets.tick then Targets.tick() end
         -- 推进正在跑的溶解过渡(和有没有目标无关:目标消失时动画自己会清掉)
         Dissolve.update()
         frame_heights = {}
@@ -1390,8 +1403,10 @@ function Main.start(ctx)
         local context = targets[1].context
         if context then Registry.tick(context) end
 
-        local ok_ws, err_ws = pcall(apply_weapon_hide_storage, context)
-        if not ok_ws then note_error("weapon_hide_storage", err_ws) end
+        if not is_re9 then
+            local ok_ws, err_ws = pcall(apply_weapon_hide_storage, context)
+            if not ok_ws then note_error("weapon_hide_storage", err_ws) end
+        end
 
         -- 定位预览:过期就清掉并强制恢复一次
         local preview_active = false
@@ -1621,6 +1636,8 @@ function Main.start(ctx)
         return who or kid or "?"
     end
     local function slot_label(slot)
+        local id = is_re9 and slot:match("^mesh_(%d%d)$")
+        if id then return (global_config.language == "zh" and "网格 " or "Mesh ") .. id end
         local key = "slot_" .. slot
         local v = T(key)
         return (v ~= key) and v or slot
@@ -1635,7 +1652,7 @@ function Main.start(ctx)
     -- 备注只是给材质起个人能看懂的名字,跟镜像与否无关,armor 的材质名照样值得备注。
     local function visible_slots(source, hide_mirrored_armor)
         local out = {}
-        for _, slot in ipairs(Utils.MESH_SLOTS) do
+        for _, slot in ipairs(Utils.slots(source)) do
             if slot ~= "armor" or Utils.has_armor_mesh(source) then
                 if not (slot == "armor" and hide_mirrored_armor) then
                     if Utils.get_mesh(source, slot) then table.insert(out, slot) end
@@ -1668,7 +1685,7 @@ function Main.start(ctx)
         if ch then
             local changed, reapply = Ops.set_material(preset_data, slot, mat_name, nv, true)
             -- 先写一次模型让点击当帧就有反馈,下一帧的重算会给出最终结果
-            pcall(function() mesh:call("setMaterialsEnable", mat_index - 1, nv) end)
+            pcall(Utils.visibility_set, mesh, mat_index - 1, nv)
             commit(kind_id, changed, reapply)
         end
     end
@@ -1689,7 +1706,7 @@ function Main.start(ctx)
             local changed, reapply = Ops.set_material(preset_data, slot, mat_name,
                 ({ [0] = "none", [1] = "off", [2] = "on" })[state], false)
             if state ~= 0 then
-                pcall(function() mesh:call("setMaterialsEnable", mat_index - 1, state == 2) end)
+                pcall(Utils.visibility_set, mesh, mat_index - 1, state == 2)
             end
             commit(kind_id, changed, reapply)   -- 改成「—」时要退回基线值,交给下一帧重算
         end
@@ -1768,7 +1785,7 @@ function Main.start(ctx)
                         end
                     end
                     local summary = string.format("%s   %d %s / %d %s",
-                        slot_label(slot), #names, T("materials_unit"),
+                        slot_label(slot), #names, T(is_re9 and "re9_groups_unit" or "materials_unit"),
                         touched, is_base and T("off_unit") or T("owned_unit"))
 
                     if ui_tree(summary .. "###slot_" .. id_prefix .. slot) then
@@ -1780,7 +1797,7 @@ function Main.start(ctx)
                                     local changed, reapply = Ops.bulk_slot(preset_data, slot, op[1], names, nil, true)
                                     for i, n in ipairs(names) do
                                         local v = preset_data[slot].materials[n]
-                                        pcall(function() mesh:call("setMaterialsEnable", i - 1, v) end)
+                                        pcall(Utils.visibility_set, mesh, i - 1, v)
                                     end
                                     commit(kind_id, changed, reapply)
                                 end
@@ -2155,7 +2172,7 @@ function Main.start(ctx)
                 local preset = layer.presets[pname]
                 local usable = TransformManager.usable_slots(source, preset)
                 local skipped = {}
-                for _, slot in ipairs(Utils.MESH_SLOTS) do
+                for _, slot in ipairs(Utils.slots(source)) do
                     -- 只报"这个模型上真有、预设里也写了、但对不上"的槛位。
                     -- 模型上不存在的槛位(比如没穿护甲时的 armor)不是问题,别当噪音报出来。
                     local sd = preset and preset[slot]
@@ -2385,7 +2402,7 @@ function Main.start(ctx)
     end
 
     local function draw_panel()
-        if not ui_tree(T("title") .. " v" .. version) then return end
+        if not ui_tree((is_re9 and T("re9_title") or T("title")) .. " v" .. version) then return end
 
         -- 语言开关放在最顶上、且在所有提前 return 之前:否则"未找到角色"那类提示会卡在
         -- 用户看不懂的语言里,而他又没地方切。标签固定写「中文」,英文界面下也能认出来。
@@ -2417,10 +2434,14 @@ function Main.start(ctx)
 
         -- 隐藏收纳武器是全局功能,不属于任何一个角色分组,画在分组逻辑之外,就一个勾选框。
         imgui.separator()
-        local ch_st, st = imgui.checkbox(T("weapon_hide_storage_enabled") .. "###wh_storage",
-            global_config.weapon_hide_storage == true)
-        if ch_st and Ops.set_global(global_config, "weapon_hide_storage", st) then
-            save_global_settings()
+        if is_re9 then
+            imgui.text(T("re9_visibility_hint"))
+        else
+            local ch_st, st = imgui.checkbox(T("weapon_hide_storage_enabled") .. "###wh_storage",
+                global_config.weapon_hide_storage == true)
+            if ch_st and Ops.set_global(global_config, "weapon_hide_storage", st) then
+                save_global_settings()
+            end
         end
         -- 界面切换溶解:在面板上手动切状态 / 预设时播放溶解(只作用于溶解模板的材质)
         local ch_ud, ud = imgui.checkbox(T("ui_dissolve_enabled") .. "###ui_dissolve",
@@ -2873,6 +2894,7 @@ function Main.start(ctx)
     -- REFF 面板显示时屏蔽游戏的鼠标并接管光标模式(键盘不拦)。装不上(类型变了)只记日志,不影响其他功能。
     pcall(function()
         local InputGuard = require("ArmorVariantManager_Core.Games.RE4.InputGuard")
+        if is_re9 then return end
         InputGuard.install(function()
             return global_config.block_game_mouse ~= false
                 and (InputGuard.reff_visible() or (Main.panel ~= nil and Main.panel.is_open()))
@@ -2949,6 +2971,7 @@ function Main.start(ctx)
 
     -- 模型高度。装不上只记日志,不影响其他功能
     local ok_hf, err_hf = pcall(function()
+        if is_re9 then return end
         height_fix = require("ArmorVariantManager_Core.Games.RE4.HeightFix").new({
             skeleton_of = Utils.get_skeleton_transform,
             on_error = function(msg) note_error("height_fix", msg) end,
@@ -2962,7 +2985,7 @@ function Main.start(ctx)
     local function portrait_subject(target)
         local source = target.source
         local meshes = {}
-        for _, slot in ipairs(Utils.MESH_SLOTS) do
+        for _, slot in ipairs(Utils.slots(source)) do
             local mesh = Utils.get_mesh(source, slot)
             if mesh then meshes[#meshes + 1] = mesh end
         end
@@ -2990,7 +3013,9 @@ function Main.start(ctx)
     -- 网页与面板共用分组、配置读写和 Ops,只是各自记着自己选中的角色。
     local reff_ok, reff_err = pcall(function()
         -- 全身预览:相机与 GPU 交接在 Portrait.lua,网页只发心跳。拿不到玩家时不画。
-        local portrait, portrait_web = require("ArmorVariantManager_Core.Games.RE4.Portrait").connect({
+        local portrait, portrait_web
+        if not is_re9 then
+        portrait, portrait_web = require("ArmorVariantManager_Core.Games.RE4.Portrait").connect({
             settings = function()
                 return { enabled = global_config.portrait_enabled == true,
                     distance = global_config.portrait_distance, height = global_config.portrait_height }
@@ -3018,7 +3043,9 @@ function Main.start(ctx)
         })
         if not portrait.register() then portrait_web = nil end
         Main.portrait = portrait
+        end
         Main.reff = require("ArmorVariantManager_Core.Games.RE4.Reff").connect({
+            game = ctx.game.name,
             version = version, global_config = global_config, save_global_settings = save_global_settings, T = T,
             targets = Targets.collect, groups = collect_character_groups, pick_group = pick_character_group,
             resolve_key = resolve_config_key, cfg_key = cfg_key, register_kind = register_kind,
@@ -3072,7 +3099,7 @@ function Main.start(ctx)
                 controller = Main.reff, global_config = global_config, save_global_settings = save_global_settings,
                 version = version, hotkeys = Ops.PANEL_KEYS,
                 -- 入口(按钮和快捷键):没装 REFF 时;GlobalSettings 里 standalone_panel = true 时总是
-                entry_enabled = function() return not rawget(_G, "reff_native") or global_config.standalone_panel == true end,
+                entry_enabled = function() return is_re9 or not rawget(_G, "reff_native") or global_config.standalone_panel == true end,
                 set_language = function(lang)
                     if Ops.set_global(global_config, "language", lang) then save_global_settings() end
                 end,

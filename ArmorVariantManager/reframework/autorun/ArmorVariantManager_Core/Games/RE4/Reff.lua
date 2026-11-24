@@ -14,7 +14,9 @@ local Palette = require("ArmorVariantManager_Core.Games.RE4.Palette")
 local Mdf2 = require("ArmorVariantManager_Core.Games.RE4.Mdf2")
 local MdfReplace = require("ArmorVariantManager_Core.Games.RE4.MdfReplace")
 -- 默认贴图失效规则(离线材质库生成);加载失败就不做判断,不影响调色盘本身
-local ok_effects, MaterialEffects = pcall(require, "ArmorVariantManager_Core.Games.RE4.MaterialEffects")
+local is_re9 = reframework:get_game_name() == "re9"
+local ok_effects, MaterialEffects
+if not is_re9 then ok_effects, MaterialEffects = pcall(require, "ArmorVariantManager_Core.Games.RE4.MaterialEffects") end
 local effects_index = ok_effects and Palette.effects_index(MaterialEffects) or nil
 local Bridge = require("ArmorVariantManager_Core.UI.Reff.Bridge")
 
@@ -155,7 +157,7 @@ function Reff.new(deps)
     local function base_match(source, preset)
         local usable = TM.usable_slots(source, preset)
         local skipped = {}
-        for _, slot in ipairs(Utils.MESH_SLOTS) do
+        for _, slot in ipairs(Utils.slots(source)) do
             local sd = preset and preset[slot]
             local has_stored = type(sd) == "table" and next(sd.materials or {}) ~= nil
             if has_stored and Utils.get_mesh(source, slot) and not usable[slot] then
@@ -225,7 +227,7 @@ function Reff.new(deps)
         for _, slot in ipairs(deps.visible_slots(source, config.armor_mirrors_body == true)) do
             local mesh = Utils.get_mesh(source, slot)
             -- 「替换 mdf」能不能用:ok / packed(不是松散文件)/ plugin(原生插件太旧)
-            local replace = mesh and MdfReplace.check(mesh) or nil
+            local replace = not is_re9 and mesh and MdfReplace.check(mesh) or nil
             local ok, count = pcall(function() return mesh and mesh:call("get_MaterialNum") or 0 end)
             for j = 0, (ok and count or 0) - 1 do
                 local okc, c = pcall(palette_info, mesh, j, profiles)
@@ -393,7 +395,7 @@ function Reff.new(deps)
 
     function controller.snapshot()
         local g = deps.global_config
-        local snapshot = { game = "RE4", version = deps.version, language = language(),
+        local snapshot = { game = deps.game or "RE4", version = deps.version, language = language(),
             settings = { weaponHideStorage = g.weapon_hide_storage == true,
                 uiDissolveEnabled = g.ui_dissolve_enabled ~= false, blockGameMouse = g.block_game_mouse ~= false,
                 heightEnabled = g.height_enabled ~= false,
@@ -513,7 +515,8 @@ function Reff.new(deps)
             for j = 0, count - 1 do
                 if mesh:call("getMaterialName", j) == p.material then
                     local preset, reason = Mdf2.export(mesh, j, p.material, Palette, effects_index)
-                    local path = "ArmorVariantManager/mdf2_presets/RE4/" .. name .. ".json"
+                    local directory = is_re9 and "ArmorVariantManagerRE9/mdf2_presets/RE9/" or "ArmorVariantManager/mdf2_presets/RE4/"
+                    local path = directory .. name .. ".json"
                     if not deps.palette_dump(path, preset) then return false end
                     notice = { kind = "palette-exported", path = "reframework/data/" .. path, exact = reason == nil, reason = reason }
                     return "saved"
@@ -526,6 +529,7 @@ function Reff.new(deps)
         -- 替换 mdf:把这个槽位网格的 mdf2 里涉及的调色覆盖值写进原文件并当场换上,随后清空这些覆盖值(见 MdfReplace.lua)。
         -- 换上要等几帧(资源异步加载),清配置和存盘在那时做;这里只开始
         ["palette-replace"] = function(p, cfg, cur)
+            if is_re9 then return false end
             local slot = str(p.slot)
             local mesh = Utils.get_mesh(cur.target.source, slot)
             if not mesh then return false end
@@ -726,7 +730,7 @@ end
 -- REFF 未安装时 Bridge 直接返回 nil,REF 原生面板照常可用。
 function Reff.connect(deps)
     local controller = Reff.new(deps)
-    return controller, Bridge.register(controller)
+    return controller, not is_re9 and Bridge.register(controller)
 end
 
 return Reff

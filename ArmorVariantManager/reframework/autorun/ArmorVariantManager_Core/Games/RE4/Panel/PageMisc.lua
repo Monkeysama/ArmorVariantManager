@@ -44,16 +44,18 @@ function Page.draw(ctx, x, y, w)
         cy = cy + used + 2
     end
     local s = snap.settings
-    if snap.configVersion == 3 then
+    if snap.game ~= "RE9" and snap.configVersion == 3 then
         setting_row(t("armorMirror"), snap.armorMirror == true, t("armorMirrorHint"),
             function(v) ctx.act({ kind = "armor-mirror", enabled = v }) end)
     end
-    setting_row(t("blockGameMouse"), s.blockGameMouse ~= false, t("blockGameMouseHint"),
-        function(v) ctx.act({ kind = "setting", id = "block_game_mouse", value = v }) end)
-    setting_row(t("heightEnabled"), s.heightEnabled ~= false, t("heightEnabledHint"),
-        function(v) ctx.act({ kind = "setting", id = "height_enabled", value = v }) end)
-    setting_row(t("weaponHide"), s.weaponHideStorage == true, nil,
-        function(v) ctx.act({ kind = "setting", id = "weapon_hide_storage", value = v }) end)
+    if snap.game ~= "RE9" then
+        setting_row(t("blockGameMouse"), s.blockGameMouse ~= false, t("blockGameMouseHint"),
+            function(v) ctx.act({ kind = "setting", id = "block_game_mouse", value = v }) end)
+        setting_row(t("heightEnabled"), s.heightEnabled ~= false, t("heightEnabledHint"),
+            function(v) ctx.act({ kind = "setting", id = "height_enabled", value = v }) end)
+        setting_row(t("weaponHide"), s.weaponHideStorage == true, nil,
+            function(v) ctx.act({ kind = "setting", id = "weapon_hide_storage", value = v }) end)
+    end
     local changed, v, tw = W.toggle(t("uiDissolve"), x, cy, s.uiDissolveEnabled ~= false)
     if changed then ctx.act({ kind = "setting", id = "ui_dissolve_enabled", value = v }) end
     local lx = x + tw + 16

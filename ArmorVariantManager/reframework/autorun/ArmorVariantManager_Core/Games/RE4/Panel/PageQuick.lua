@@ -149,6 +149,7 @@ function Page.draw(ctx, x, y, w)
         end
         cy = cy + F:height() + 8
     end
+    if snap.game == "RE9" then return cy - y end
 
     -- 模型高度
     cy = cy + 4

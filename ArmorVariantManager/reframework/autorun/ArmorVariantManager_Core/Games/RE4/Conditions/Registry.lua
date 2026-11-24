@@ -105,13 +105,18 @@ end
 
 Registry.register(require("ArmorVariantManager_Core.Games.RE4.Conditions.Condition_HP"))
 Registry.register(require("ArmorVariantManager_Core.Games.RE4.Conditions.Condition_Vital"))
-Registry.register(require("ArmorVariantManager_Core.Games.RE4.Conditions.Condition_HasArmor"))
-Registry.register(require("ArmorVariantManager_Core.Games.RE4.Conditions.Condition_WeaponKind"))
+local is_re9 = reframework:get_game_name() == "re9"
+if not is_re9 then
+    Registry.register(require("ArmorVariantManager_Core.Games.RE4.Conditions.Condition_HasArmor"))
+    Registry.register(require("ArmorVariantManager_Core.Games.RE4.Conditions.Condition_WeaponKind"))
+end
 for _, def in ipairs(require("ArmorVariantManager_Core.Games.RE4.Conditions.Condition_HPChange")) do
     Registry.register(def)
 end
-for _, def in ipairs(require("ArmorVariantManager_Core.Games.RE4.Conditions.PlayerBools")) do
-    Registry.register(def)
+if not is_re9 then
+    for _, def in ipairs(require("ArmorVariantManager_Core.Games.RE4.Conditions.PlayerBools")) do
+        Registry.register(def)
+    end
 end
 
 return Registry

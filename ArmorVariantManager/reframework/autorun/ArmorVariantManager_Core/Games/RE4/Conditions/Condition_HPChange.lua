@@ -18,7 +18,7 @@
 -- 不这么做的话:Registry.tick 会对每个 def 各调一次 tick,第二次调用时"上一帧血量"已经
 -- 被第一次调用更新过了,于是算出来的差值恒为 0。
 
-local last_hp = nil
+local last_hp, last_context
 local last_frame = -1
 local dec, inc = false, false
 
@@ -36,6 +36,10 @@ end
 local function sample(context, frame)
     if frame == last_frame then return end
     last_frame = frame
+    local identity = context and context:get_address()
+    if identity ~= last_context then
+        last_context, last_hp = identity, nil
+    end
 
     local hp = current_hp(context)
     if hp == nil then

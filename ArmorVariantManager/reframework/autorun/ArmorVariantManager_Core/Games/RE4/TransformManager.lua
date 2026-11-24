@@ -436,9 +436,12 @@ end
 -- (血量驱动的进度不进签名:驱动期间调用方每帧都会重写。)
 local function signature(picks, usable, sparse)
     local usable_sig = ""
-    for _, slot in ipairs(Utils.MESH_SLOTS) do
-        if usable[slot] then usable_sig = usable_sig .. slot .. "," end
+    local slots = {}
+    for slot, matches in pairs(usable) do
+        if matches then slots[#slots + 1] = slot end
     end
+    table.sort(slots)
+    usable_sig = table.concat(slots, ",")
     local sig = "base=" .. tostring(picks.base) .. "[" .. usable_sig .. "]"
     for _, layer in ipairs(sparse) do
         sig = sig .. "|" .. layer.key .. "=" .. tostring(picks[layer.key])

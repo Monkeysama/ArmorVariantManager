@@ -392,19 +392,21 @@ function Page.draw(ctx, x, y, w)
                             if TF:button(t("cancel")) then st.confirming = nil end
                         end
                     end
-                    TF:text(t("heightLabel"), C.muted)
-                    local hx2, hy2 = TF:place(64, ROW)
-                    W.num_box(st.drafts, "h:" .. oid, hx2, hy2 + 1, 64, opt.height,
-                        { min = HEIGHT_MIN, max = HEIGHT_MAX, allow_empty = true, placeholder = t("heightUnset"), tip = t("heightHint") },
-                        function(n)
-                            local cm = n and math.floor(n * 10 + 0.5) / 10 or nil
-                            if card.is_base then ctx.act({ kind = "base-height", preset = opt.name, cm = cm })
-                            else ctx.act({ kind = "option-height", group = card.name, option = opt.name, cm = cm }) end
-                        end)
-                    TF:text("cm", C.muted)
-                    if opt.height ~= nil and TF:button(t("heightClear"), { kind = "ghost" }) then
-                        if card.is_base then ctx.act({ kind = "base-height", preset = opt.name })
-                        else ctx.act({ kind = "option-height", group = card.name, option = opt.name }) end
+                    if ctx.snap.game ~= "RE9" then
+                        TF:text(t("heightLabel"), C.muted)
+                        local hx2, hy2 = TF:place(64, ROW)
+                        W.num_box(st.drafts, "h:" .. oid, hx2, hy2 + 1, 64, opt.height,
+                            { min = HEIGHT_MIN, max = HEIGHT_MAX, allow_empty = true, placeholder = t("heightUnset"), tip = t("heightHint") },
+                            function(n)
+                                local cm = n and math.floor(n * 10 + 0.5) / 10 or nil
+                                if card.is_base then ctx.act({ kind = "base-height", preset = opt.name, cm = cm })
+                                else ctx.act({ kind = "option-height", group = card.name, option = opt.name, cm = cm }) end
+                            end)
+                        TF:text("cm", C.muted)
+                        if opt.height ~= nil and TF:button(t("heightClear"), { kind = "ghost" }) then
+                            if card.is_base then ctx.act({ kind = "base-height", preset = opt.name })
+                            else ctx.act({ kind = "option-height", group = card.name, option = opt.name }) end
+                        end
                     end
                     cy = cy + TF:height() + 6
                     if #card.scope == 0 then
