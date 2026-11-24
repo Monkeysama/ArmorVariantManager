@@ -753,6 +753,67 @@ function Palette.read_textures(mesh, j)
     return out
 end
 
+-- RE 引擎按名字查材质变量 / 贴图槽(getMaterialVariableIndex、getMaterialTextureIndex)用的哈希:
+-- 名字按 UTF-16LE 编码后的 murmur3_32,种子 0xFFFFFFFF
+local function mul32(a, b) return (a * b) & 0xFFFFFFFF end
+local function rotl32(x, r) return ((x << r) | (x >> (32 - r))) & 0xFFFFFFFF end
+local hash_cache = {}
+function Palette.name_hash(name)
+    local cached = hash_cache[name]
+    if cached then return cached end
+    local bytes = {}
+    local function unit(u) bytes[#bytes + 1] = u & 0xFF; bytes[#bytes + 1] = (u >> 8) & 0xFF end
+    for _, cp in utf8.codes(name) do
+        if cp >= 0x10000 then
+            local v = cp - 0x10000
+            unit(0xD800 | (v >> 10)); unit(0xDC00 | (v & 0x3FF))
+        else
+            unit(cp)
+        end
+    end
+    local h, n, i = 0xFFFFFFFF, #bytes, 1
+    while i + 3 <= n do
+        local k = bytes[i] | (bytes[i + 1] << 8) | (bytes[i + 2] << 16) | (bytes[i + 3] << 24)
+        k = mul32(rotl32(mul32(k, 0xcc9e2d51), 15), 0x1b873593)
+        h = (mul32(rotl32(h ~ k, 13), 5) + 0xe6546b64) & 0xFFFFFFFF
+        i = i + 4
+    end
+    local k, shift = 0, 0
+    while i <= n do k = k | (bytes[i] << shift); shift = shift + 8; i = i + 1 end
+    if shift > 0 then h = h ~ mul32(rotl32(mul32(k, 0xcc9e2d51), 15), 0x1b873593) end
+    h = h ~ n
+    h = mul32(h ~ (h >> 16), 0x85ebca6b)
+    h = mul32(h ~ (h >> 13), 0xc2b2ae35)
+    h = h ~ (h >> 16)
+    hash_cache[name] = h
+    return h
+end
+
+-- RE9 的 TDB 没有 getMaterialTextureNum / getMaterialTextureName,只能按槽名的哈希查下标(没有这个槽时是 255)。
+-- names = 要查的槽名;返回格式同 read_textures
+function Palette.read_textures_by_name(mesh, j, names)
+    local out = {}
+    for _, name in ipairs(names or {}) do
+        local idx = try(function() return mesh:call("getMaterialTextureIndex", j, Palette.name_hash(name)) end)
+        if type(idx) == "number" and idx >= 0 and idx < 255 then
+            local holder = try(function() return mesh:call("getMaterialTexture", j, idx) end)
+            local path = holder and try(function() return holder:call("get_ResourcePath") end)
+            out[name] = Palette.norm_texture(path) or false
+        end
+    end
+    return out
+end
+
+-- 通用规则(RE9 的 MaterialEffects)里和这个材质有关的贴图槽:只看材质上真有的参数,少查几个槽
+function Palette.rule_slots(master, has)
+    local seen, out = {}, {}
+    for _, r in ipairs(is_tbl(master) and master.rules or {}) do
+        if has[r[1]] and not seen[r[3]] then seen[r[3]] = true; out[#out + 1] = r[3] end
+    end
+    table.sort(out)
+    return out
+end
+
 local function signature(params, names)
     local list = {}
     for _, n in ipairs(names) do list[#list + 1] = n end

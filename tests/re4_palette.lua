@@ -258,4 +258,33 @@ local d = Palette.ineffective(fxr, lil, tex)
 assert(d and d.LIL_EmissionColor and d.LIL_EmissionColor.comps:find("x") and d.LIL_EmissionColor.why[1].texture == "LIL_EmissiveMap",
     "black emissive map kills the emission colour")
 
-print("PASS: RE4 palette: built-in profiles (114 lilToon entries), main + addon matching, priority, data override, generic fallback, type checks, sparse overrides, reset/clean, mesh writes (components, same-named materials, live components kept, restore), Dissolve_Flag sync, draft export and prune, null-texture effects (normalise, signature + texture-set match, merged components, any-null rules, real lilToon emission rule), master-matched auto vanilla profiles")
+
+-- RE9:按名字哈希查贴图槽(TDB 没有 getMaterialTextureNum / Name),规则用 RE4 合并来的通用规则
+-- 哈希值在 RE9 里核对过:WetMap_Tiling_Offset 查到变量 3,NormalRoughnessMap 查到贴图槽 9
+assert(Palette.name_hash("WetMap_Tiling_Offset") == 1333267882)
+assert(Palette.name_hash("NormalRoughnessMap") == 3409247632)
+local RE9Effects = require("ArmorVariantManager_Core.Games.RE9.MaterialEffects")
+local generic = RE9Effects.masters[1]
+assert(generic.generic and #generic.rules > 0)
+local rule
+for _, r in ipairs(generic.rules) do if type(r[4]) == "table" then rule = r; break end end
+assert(rule, "generic rules keep null-specific rules")
+local slot_hash = Palette.name_hash(rule[3])
+local null_path = RE9Effects.nulls[rule[4][1]]
+local re9_mesh = { call = function(_, method, j, a)
+    if method == "getMaterialTextureIndex" then return a == slot_hash and 4 or 255 end
+    if method == "getMaterialTexture" then
+        return a == 4 and { call = function(_, m) if m == "get_ResourcePath" then return null_path .. ".tex" end end } or nil
+    end
+    error("not in TDB: " .. tostring(method))
+end }
+local slots = Palette.rule_slots(generic, { [rule[1]] = Palette.TYPE_FLOAT4 })
+local found = false
+for _, s in ipairs(slots) do if s == rule[3] then found = true end end
+assert(found and not Palette.rule_slots(generic, {})[1], "only slots of parameters the material has")
+local re9_tex = Palette.read_textures_by_name(re9_mesh, 0, slots)
+assert(re9_tex[rule[3]] == null_path)
+local re9_dead = Palette.ineffective(Palette.effects_index(RE9Effects), generic, re9_tex)
+assert(re9_dead and re9_dead[rule[1]] and re9_dead[rule[1]].why[1].texture == rule[3])
+
+print("PASS: RE4 palette: built-in profiles (114 lilToon entries), main + addon matching, priority, data override, generic fallback, type checks, sparse overrides, reset/clean, mesh writes (components, same-named materials, live components kept, restore), Dissolve_Flag sync, draft export and prune, null-texture effects (normalise, signature + texture-set match, merged components, any-null rules, real lilToon emission rule), master-matched auto vanilla profiles, RE9 name-hash texture lookup with generic rules")

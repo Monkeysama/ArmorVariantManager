@@ -39,6 +39,7 @@ ArmorVariantManager/
 web/                                  Vue 页面、构建脚本与网页测试夹具
 tests/                                Lua 回归、共享测试工具与发布测试
 tools/re4/                            RE4 调试脚本与探针存档，不进发布包
+tools/re9/                            RE9 默认贴图失效规则的生成脚本（gen_material_effects.py，由 RE4 规则与 RE9 null 贴图清单生成 Games/RE9/MaterialEffects.lua；改了 RE4 规则后重新运行，--check 检查是否过期）
 build_release.py                      发布目录、ZIP 与库存检查
 .github/workflows/release.yml          tag 发布与同版本日志提取
 ```

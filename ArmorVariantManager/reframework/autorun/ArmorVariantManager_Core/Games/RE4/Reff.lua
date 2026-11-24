@@ -16,11 +16,17 @@ local MdfReplace = require("ArmorVariantManager_Core.Games.RE4.MdfReplace")
 local Dissolve = require("ArmorVariantManager_Core.Games.RE4.Dissolve")
 local DissolveStyles = require("ArmorVariantManager_Core.Games.RE4.DissolveStyles")
 local SksLink = require("ArmorVariantManager_Core.Games.RE4.SksLink")
--- 默认贴图失效规则(离线材质库生成);加载失败就不做判断,不影响调色盘本身
+-- 默认贴图失效规则;加载失败就不做判断,不影响调色盘本身。
+-- RE4:离线材质库生成,按母材质签名认;RE9:由 RE4 的规则合并成一份不分母材质的通用规则(effects_generic)
 local is_re9 = require("ArmorVariantManager_Core.Games.RE4.GameProfile").re9
-local ok_effects, MaterialEffects
-if not is_re9 then ok_effects, MaterialEffects = pcall(require, "ArmorVariantManager_Core.Games.RE4.MaterialEffects") end
+local ok_effects, MaterialEffects = pcall(require, is_re9 and "ArmorVariantManager_Core.Games.RE9.MaterialEffects"
+    or "ArmorVariantManager_Core.Games.RE4.MaterialEffects")
 local effects_index = ok_effects and Palette.effects_index(MaterialEffects) or nil
+local effects_generic = nil
+if ok_effects and type(MaterialEffects) == "table" and type(MaterialEffects.masters) == "table" then
+    local m = MaterialEffects.masters[1]
+    if type(m) == "table" and m.generic then effects_generic = m end
+end
 local Bridge = require("ArmorVariantManager_Core.UI.Reff.Bridge")
 
 local Reff = {}
@@ -197,12 +203,18 @@ function Reff.new(deps)
         local textures, master = nil, nil
         if effects_index then
             local ok_m = pcall(function()
-                textures = Palette.read_textures(mesh, j)
-                master = Palette.find_master(effects_index, mesh:call("getMaterialVariableNum", j), textures)
+                if effects_generic then
+                    -- RE9:没法列出贴图槽,只按规则里用到、材质上又有对应参数的槽名逐个查
+                    textures = Palette.read_textures_by_name(mesh, j, Palette.rule_slots(effects_generic, has))
+                    master = effects_generic
+                else
+                    textures = Palette.read_textures(mesh, j)
+                    master = Palette.find_master(effects_index, mesh:call("getMaterialVariableNum", j), textures)
+                end
             end)
             if not ok_m then textures, master = nil, nil end
         end
-        local main, addons = Palette.match(profiles, has, master and master.id or nil)
+        local main, addons = Palette.match(profiles, has, master and not master.generic and master.id or nil)
         -- 母材质没认出来(改过的原版材质、别的作者的母材质):按参数名借用已有映射的含义
         if not main then main = Palette.fallback(profiles, has, addons) end
         local missing, seen = {}, {}
