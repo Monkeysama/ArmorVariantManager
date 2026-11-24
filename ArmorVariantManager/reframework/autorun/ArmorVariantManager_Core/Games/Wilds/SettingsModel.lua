@@ -15,6 +15,14 @@ function Model.new(deps)
             { id = "scanner_batch_size", label = "scanner_batch_size", type = "number",
                 default = defaults.scanner_batch_size, min = 10, max = 1000, step = 10, integer = true },
         } }
+    -- 界面切换的溶解过渡；条件规则的溶解由各规则自己的字段决定。
+    model.sections[#model.sections + 1] = { id = "dissolve", label = "ui_dissolve_title",
+        description = "ui_dissolve_desc", scope = "global", fields = {
+            { id = "ui_dissolve_enabled", label = "ui_dissolve_enabled", type = "boolean",
+                default = defaults.ui_dissolve_enabled },
+            { id = "ui_dissolve_time", label = "ui_dissolve_time", type = "number",
+                default = defaults.ui_dissolve_time, min = 0, max = 30, step = 0.1 },
+        } }
     local function preview()
         return deps.get_portrait_preview and deps.get_portrait_preview()
     end

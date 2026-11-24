@@ -42,6 +42,32 @@ build_release.py                      发布目录、ZIP 与库存检查
 
 共享业务不直接依赖游戏 SDK；游戏适配层处理托管对象和专属能力。界面通过 `App` 操作配置，角色活动状态不能混入界面选择状态。旧 JSON 与公开业务 `require` 转接仍有兼容用途，不按文件名批量删除。
 
+## 溶解过渡
+
+材质参数约定、出现方式和《荒野》的配置字段见 [docs/DISSOLVE.md](docs/DISSOLVE.md)。
+
+`Runtime/Dissolve.lua` 是与游戏无关的溶解核心，只通过组件方法读写材质：
+
+| 接口 | 作用 |
+|---|---|
+| `Dissolve.settings(duration, forward, appear)` | 构造一次过渡；`appear` 为 `Dissolve.MORPH`（原地互换）或 `Dissolve.REVERSE`（倒放） |
+| `core:use(settings)` | 选定之后 `set_*` 使用的过渡；`nil` 为瞬间开关，并收回正在播放的动画 |
+| `core:set_material(mesh, j, want, cur)`、`core:set_mesh(mesh, want, cur, allow_enable)` | 代替 `setMaterialsEnable`、`set_Enabled`；`cur` 为调用前的引擎值 |
+| `core:material_target(mesh, j)`、`core:mesh_target(mesh)` | 动画期间返回目标显隐，没有动画时返回 `nil` |
+| `core:update()` | 每帧推进一次 |
+| `core:finish_all()`、`core:abandon()` | 脚本重置时播完并还原变量；切场景时只丢弃引用 |
+
+动画期间引擎里的消失方仍是开启状态。凡是根据显隐决定是否写入的地方，读取都要经过 `material_target` / `mesh_target`，否则会把正在消失的材质当成已显示而跳过写入。
+
+《荒野》的接入在 `Games/Wilds/Dissolve.lua`：`call` / `ui_call` 包装显隐读写，传给材质应用、预设捕获和 `MaterialView`；`Appearance.resolve` 在规则变化时调用 `rules_changed`，由引起变化的规则选过渡。
+
+《崛起》的 `DissolveTransition` 可改用同一核心，对应关系为：`Dissolve.settings(duration, true, Dissolve.REVERSE)`；`SceneObject.call` 中的 `getMaterialsEnable` / `setMaterialsEnable` 分别改走 `material_target` / `set_material`；`tick` 改为 `update`。迁移时要确认的行为差异：
+
+- 还原值：核心写回 `Dissolve_Rate = 0` 和首次读到的 `Dissolve_Flag`，`DissolveTransition` 写回动画开始前读到的值。
+- `Dissolve_Flag`：核心只改 y 分量，`DissolveTransition` 在动画期间写入 `(1, 0, 0, 0)`。
+- 材质条件：核心只要求 `Dissolve_Rate`，`DissolveTransition` 要求两个变量都存在。
+- 部件：核心也溶解整个部件；《崛起》目前不对部件调用。
+
 ## 开发环境
 
 - **Lua 5.4**：运行离线回归与语法检查。

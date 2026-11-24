@@ -1,11 +1,16 @@
 local MaterialView = {}
 
 -- 荒野原生面板直接查询组件，批量显示操作遵守全局隐藏。
+-- 设置了 MaterialView.dissolve 时，界面上的显隐读写经过溶解过渡（见 Games/Wilds/Dissolve.lua 的 ui_call）。
 function MaterialView.new()
     local type_mesh
     local access = {
         valid = function(object) return sdk.is_managed_object(object) end,
-        call = function(object, method, ...) return object:call(method, ...) end,
+        call = function(object, method, ...)
+            local dissolve = MaterialView.dissolve
+            if dissolve then return dissolve.ui_call(object, method, ...) end
+            return object:call(method, ...)
+        end,
         weapon_mesh_locked = false, bulk_lock = true,
     }
     function access.mesh(object)

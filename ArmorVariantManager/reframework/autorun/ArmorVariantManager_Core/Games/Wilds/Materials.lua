@@ -25,15 +25,15 @@ local function enable_check(character)
     end
 end
 
--- 防具与武器共用读后写；上下文过滤由调用方提供，不读取 UI 状态。
-local function apply_mesh(mesh, data, index, operable, hidden, allow_enable)
+-- 防具与武器共用读后写；上下文过滤由调用方提供，不读取 UI 状态。显隐读写经过 call（可接溶解过渡）。
+local function apply_mesh(call, mesh, data, index, operable, hidden, allow_enable)
     local count = mesh:call("get_MaterialNum") or 0
     if data.mesh_enabled ~= nil then
-        local current = mesh:call("get_Enabled")
+        local current = call(mesh, "get_Enabled")
         if data.mesh_enabled == false and current ~= false then
-            mesh:call("set_Enabled", false)
+            call(mesh, "set_Enabled", false)
         elseif data.mesh_enabled == true and current ~= true and allow_enable() then
-            mesh:call("set_Enabled", true)
+            call(mesh, "set_Enabled", true)
         end
     end
     if data.materials then
@@ -41,17 +41,18 @@ local function apply_mesh(mesh, data, index, operable, hidden, allow_enable)
             local name = mesh:call("getMaterialName", slot)
             if not operable or operable(index, name) then
                 local desired = data.materials[name]
-                local current = mesh:call("getMaterialsEnable", slot)
+                local current = call(mesh, "getMaterialsEnable", slot)
                 if desired == true and hidden and hidden(index, name) then desired = false end
                 if type(desired) == "boolean" and current ~= desired then
-                    mesh:call("setMaterialsEnable", slot, desired)
+                    call(mesh, "setMaterialsEnable", slot, desired)
                 end
             end
         end
     end
 end
 
-function Materials.new(meshes, game_object)
+function Materials.new(meshes, game_object, call)
+    call = call or function(object, method, ...) return object:call(method, ...) end
     local instance = {}
 
     function instance.armor(character, preset, operable, hidden)
@@ -62,7 +63,7 @@ function Materials.new(meshes, game_object)
             local data = preset[tostring(index)]
             if data then
                 for _, mesh in ipairs(meshes.part_meshes(character, index, data)) do
-                    apply_mesh(mesh, data, index, operable, hidden, allow_enable)
+                    apply_mesh(call, mesh, data, index, operable, hidden, allow_enable)
                 end
             end
         end
@@ -78,7 +79,7 @@ function Materials.new(meshes, game_object)
                 local data = preset[tostring(index - 1)]
                 if alive and data then
                     local mesh = meshes.first(object)
-                    if mesh then apply_mesh(mesh, data, index - 1, operable, nil, allow_enable) end
+                    if mesh then apply_mesh(call, mesh, data, index - 1, operable, nil, allow_enable) end
                 end
             end
         end

@@ -7,13 +7,14 @@ local Capture = require("ArmorVariantManager_Core.Games.Wilds.Capture")
 local Runtime = {}
 
 -- 运行会话持有引擎服务；场景清理由角色目录通知应用层丢弃计算结果。
+-- callbacks.call 为显隐读写入口（溶解过渡），省略时直接调用组件。
 function Runtime.new(config, callbacks)
     local runtime = { scene_object = SceneObject.new() }
     local game_object = runtime.scene_object.game_object
     runtime.equipment = Equipment.new(game_object, config, Actors.preview_names)
     runtime.meshes = Meshes.new(game_object, function(name) return sdk.find_type_definition(name) end)
-    runtime.materials = Materials.new(runtime.meshes, game_object)
-    runtime.capture = Capture.new(runtime.meshes, runtime.equipment)
+    runtime.materials = Materials.new(runtime.meshes, game_object, callbacks.call)
+    runtime.capture = Capture.new(runtime.meshes, runtime.equipment, callbacks.call)
     runtime.part_view = require("ArmorVariantManager_Core.Games.Wilds.PartView").new(runtime)
     runtime.find_preset = require("ArmorVariantManager_Core.Games.Wilds.Finder").new(
         runtime.meshes, runtime.equipment, {fs = fs, load = require("ArmorVariantManager_Core.Config.Store").load})

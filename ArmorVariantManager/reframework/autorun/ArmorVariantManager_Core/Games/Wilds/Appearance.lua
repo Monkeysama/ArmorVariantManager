@@ -69,16 +69,21 @@ function Appearance.new(deps)
             return overrides, false, nil, nil
         end
         local object = deps.game_object(character, "transform_rules")
-        local result, changed, targets, all_targets = deps.rules.apply_transform_rules(
+        local result, changed, targets, all_targets, rules = deps.rules.apply_transform_rules(
             tostring(object or character), config, character, overrides, merge)
         app.height.set_runtime(character, config, result and result.ground_clipping_fix)
-        return result, changed, targets, all_targets
+        return result, changed, targets, all_targets, rules
     end
 
     function app.resolve(id, config, character, slot)
         local context = app.state:get(tostring(character), slot, id, config)
         local first_apply = context.overrides == nil
-        local result, changed, targets, all_targets = app.transform(config, character, app.overrides[id], Presets.merge)
+        local result, changed, targets, all_targets, rules = app.transform(config, character, app.overrides[id], Presets.merge)
+        -- 防具的溶解过渡由引起切换的规则决定；首次应用不溶解。
+        if deps.dissolve and slot == "armor" then
+            if first_apply then deps.dissolve.reset_character(tostring(character), rules)
+            elseif changed then deps.dissolve.rules_changed(tostring(character), rules, config) end
+        end
         local selected, rebuild = Selection.resolve_groups(config, app.groups[id], targets, all_targets)
         if rebuild then
             result = Selection.compose(config, selected, targets, {
@@ -129,6 +134,7 @@ function Appearance.new(deps)
     function app.reset()
         app.end_material_preview()
         app.state:clear()
+        if deps.dissolve then deps.dissolve.reset() end
         deps.rules.clear_last_state_cache()
     end
 

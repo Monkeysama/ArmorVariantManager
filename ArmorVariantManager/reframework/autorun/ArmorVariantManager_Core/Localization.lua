@@ -1,6 +1,10 @@
 local Localization = {
     ["en"] = {
         ["preview_title"] = "Full-body preview",
+        ["ui_dissolve_title"] = "UI Switch Dissolve",
+        ["ui_dissolve_enabled"] = "Enable",
+        ["ui_dissolve_time"] = "Duration (s)",
+        ["ui_dissolve_desc"] = "Presets, group presets and part / material toggles applied from the UI dissolve (dissolve-template materials only).",
         ["d2d_settings_general"] = "General",
         ["preview_camera_tab"] = "Preview camera",
         ["preview_distance"] = "Distance",
@@ -306,6 +310,10 @@ local Localization = {
     },
     ["zh"] = {
         ["preview_title"] = "全身预览",
+        ["ui_dissolve_title"] = "界面切换溶解过渡",
+        ["ui_dissolve_enabled"] = "启用",
+        ["ui_dissolve_time"] = "过渡时长(秒)",
+        ["ui_dissolve_desc"] = "在界面上切换预设、分组预设或勾选部件 / 材质时播放溶解（仅溶解模板的材质）。",
         ["d2d_settings_general"] = "常规设置",
         ["preview_camera_tab"] = "预览镜头",
         ["preview_distance"] = "镜头距离",

@@ -69,6 +69,12 @@ local function check_wilds(actor,signals,show,height,names,changed,affected)
     assert(result[2]==changed,"Wilds changed "..actor)
     S.equal(result[3],names)
     S.equal(result[4],affected or {[""]=true,global=true})
+    -- 第五个值是生效的规则对象本身，溶解据此判断是哪条规则引起了切换。
+    assert(type(result[5])=="table" and (#result[5]>0 or next(names)==nil),"activated targets come from active rules")
+    for _,rule in ipairs(result[5]) do
+        assert(rule==config.transform_rules[1] or rule==config.weapon_transform_rules[1]
+            or rule==config.spirit_transform_rules[1],"active rules are the config tables")
+    end
     S.equal(base,preset(true,8),"manual baseline unchanged")
     return result
 end

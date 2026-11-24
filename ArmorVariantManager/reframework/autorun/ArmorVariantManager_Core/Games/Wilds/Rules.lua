@@ -316,7 +316,8 @@ function TransformManager.apply_transform_rules(char_addr, config, character, ac
         end
     end
 
-    return new_overrides, changed, activated_targets, all_targeted_groups
+    -- 第五个值：本次生效的规则（与合成顺序相同），供溶解判断是哪条规则引起了切换。
+    return new_overrides, changed, activated_targets, all_targeted_groups, rules
 end
 
 return TransformManager

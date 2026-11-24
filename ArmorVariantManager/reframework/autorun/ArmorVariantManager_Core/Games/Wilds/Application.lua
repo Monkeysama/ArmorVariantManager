@@ -2,9 +2,14 @@ local Processor = require("ArmorVariantManager_Core.Runtime.Processor")
 local Application = {}
 
 -- 连接配置会话、外观与运行服务，界面只负责选择和显示。
-function Application.new(runtime, appearance, session, rules, is_weapon_id)
+function Application.new(runtime, appearance, session, rules, is_weapon_id, dissolve)
     local app = {runtime=runtime, appearance=appearance, load=session.load}
     local equipment, materials = runtime.equipment, runtime.materials
+    -- 防具写入经过溶解过渡；没有溶解模块时直接写入。
+    local function armor(settings, character, result)
+        if dissolve then return dissolve.with(settings, materials.armor, character, result) end
+        return materials.armor(character, result)
+    end
     app.is_weapon_id, app.weapon_id = is_weapon_id, equipment.weapon_id
     function app.player_handle() return nil end
 
@@ -33,7 +38,7 @@ function Application.new(runtime, appearance, session, rules, is_weapon_id)
         end,
         resolve = appearance.resolve,
         apply = function(character, slot, objects, result)
-            if slot == "armor" then materials.armor(character, result)
+            if slot == "armor" then armor(dissolve and dissolve.character(tostring(character)), character, result)
             else materials.weapon(character, objects, result) end
         end,
     })
@@ -57,7 +62,7 @@ function Application.new(runtime, appearance, session, rules, is_weapon_id)
             if current and current == id then
                 local result = appearance.resolve(id, app.load(id), character, weapon and "weapon" or "armor")
                 if weapon then materials.weapon(character, objects, result)
-                else materials.armor(character, result) end
+                else armor(dissolve and dissolve.ui_settings(), character, result) end
             end
         end
     end

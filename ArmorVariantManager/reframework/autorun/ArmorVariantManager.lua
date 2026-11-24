@@ -66,10 +66,16 @@ local function reset_actor_context()
     appearance.reset()
 end
 
-local runtime, application
+local runtime, application, dissolve, app
 local config_session = ConfigSession.new(GameConfig, TransformManager.refresh_config_rules)
 if game.wilds then
-    runtime = require("ArmorVariantManager_Core.Games.Wilds.Runtime").new(global_config, {reset = reset_actor_context})
+    -- 溶解过渡：防具与界面写入经过它，编辑武器时界面切换不溶解。
+    dissolve = require("ArmorVariantManager_Core.Games.Wilds.Dissolve").new({
+        config = global_config, weapon_mode = function() return app and app.workspace.state.weapon == true end,
+    })
+    require("ArmorVariantManager_Core.Games.Wilds.MaterialView").dissolve = dissolve
+    runtime = require("ArmorVariantManager_Core.Games.Wilds.Runtime").new(global_config,
+        {reset = reset_actor_context, call = dissolve.call})
 else
     application = require("ArmorVariantManager_Core.Games.Rise.Application").new(global_config, config_session)
     runtime, appearance = application.runtime, application.appearance
@@ -93,12 +99,13 @@ appearance = require("ArmorVariantManager_Core.Games.Wilds.Appearance").new({
     local_player = actors.local_player,
     game_object = safe_get_game_object,
     is_weapon_id = is_weapon_id,
+    dissolve = dissolve,
 })
 application = require("ArmorVariantManager_Core.Games.Wilds.Application").new(
-    runtime, appearance, config_session, TransformManager, is_weapon_id)
+    runtime, appearance, config_session, TransformManager, is_weapon_id, dissolve)
 end
 
-local app = require("ArmorVariantManager_Core.App").new({
+app = require("ArmorVariantManager_Core.App").new({
     game=game, backend=application, session=config_session, schema=GameConfig, rules=TransformManager,
     global_settings=global_settings, translate=T, version=version, author=author,
 })
@@ -116,8 +123,16 @@ local draw = require("ArmorVariantManager_Core.UI.ImGui.Main").new(app)
 runtime.install_hooks()
 local frame_callbacks = {
         process=application.process,
-        retain=function(seen) appearance.state:retain(seen) end,
+        retain=function(seen)
+            appearance.state:retain(seen)
+            if dissolve then dissolve.retain(seen) end
+        end,
         update=app.workspace.update,
 }
-re.on_frame(function() runtime.tick(frame_callbacks) end)
+re.on_frame(function()
+    if dissolve then dissolve.update() end
+    runtime.tick(frame_callbacks)
+end)
+-- 脚本重置时播完溶解并还原材质变量，不留下半溶解的材质。
+if dissolve then re.on_script_reset(dissolve.finish) end
 re.on_draw_ui(draw)

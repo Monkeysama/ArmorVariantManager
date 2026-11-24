@@ -45,6 +45,7 @@ DEFAULT_TESTS = (
     "tests/wilds_application.lua",
     "tests/appearance.lua",
     "tests/rules_compatibility.lua",
+    "tests/dissolve.lua",
     "tests/high_heel_height_regression.lua",
     "tests/ground_clipping_targets_regression.lua",
     "tests/scanner_ui_regression.lua",

@@ -10,7 +10,9 @@ function Settings.new()
         scanner_batch_size = 200,
         new_ui_enabled = true,
         new_ui_key = 0x24,
-        auto_set_selected_preset_as_default = true
+        auto_set_selected_preset_as_default = true,
+        ui_dissolve_enabled = true,
+        ui_dissolve_time = 1.0
     }
 end
 
@@ -27,6 +29,8 @@ function Settings.apply(global_config, loaded)
     if loaded.auto_set_selected_preset_as_default ~= nil then
         global_config.auto_set_selected_preset_as_default = loaded.auto_set_selected_preset_as_default == true
     end
+    if loaded.ui_dissolve_enabled ~= nil then global_config.ui_dissolve_enabled = loaded.ui_dissolve_enabled == true end
+    if tonumber(loaded.ui_dissolve_time) then global_config.ui_dissolve_time = tonumber(loaded.ui_dissolve_time) end
 end
 
 return Settings
