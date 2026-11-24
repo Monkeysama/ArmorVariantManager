@@ -74,7 +74,9 @@ local function scan(root)
     end
     table.sort(paths)
     source.resource_identity = table.concat(paths, "|")
-    return source, by_slot.body.id
+    -- 头部网格的文件名(不带扩展名,同 RE4 CharacterId 的 head_mesh),SKS 联动按它认人
+    local head = by_slot.head and by_slot.head.path:match("([^/\\]+)%.[Mm][Ee][Ss][Hh]$")
+    return source, by_slot.body.id, head
 end
 
 function Targets.set_borrow_resolver() end
@@ -89,7 +91,7 @@ function Targets.collect()
     local address = context:get_address()
     if last_context ~= address or current_frame >= next_scan then
         if last_context ~= address then Visibility.reset() end
-        local source, body = scan(root)
+        local source, body, head = scan(root)
         last_context, next_scan = address, current_frame + scan_interval
         local name = labels[kind]
         local config_key = source and name .. "_" .. body
@@ -100,7 +102,7 @@ function Targets.collect()
             source = source,
             context = context,
             label = name,
-            ident = { character = name },
+            ident = { character = name, head_mesh = head },
         }} or {}
     end
     return last_result

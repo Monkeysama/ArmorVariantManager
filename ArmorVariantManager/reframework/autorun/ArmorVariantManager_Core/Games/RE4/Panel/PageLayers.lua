@@ -468,7 +468,7 @@ function Page.draw(ctx, x, y, w)
                         end
                     end
                     -- 模型高度、调色方案、溶解预设、形态键属于新版特性:关闭时灰掉、不可改。
-                    -- RE9 只有调色方案
+                    -- RE9 没有模型高度和溶解
                     local re9 = ctx.snap.game == "RE9"
                     if not re9 then
                         TF:text(t("heightLabel"), nf_off and C.faint or C.muted)
@@ -499,11 +499,9 @@ function Page.draw(ctx, x, y, w)
                             { disabled = nf_off })
                     end
                     cy = cy + TF:height() + 6
-                    if not re9 then
-                        cy = cy + R.sks_box(ctx, st, oid, mx0, cy, mw, opt.sks, function(group, value)
-                            ctx.act({ kind = "sks-ref", layer = layer, option = opt.name, group = group, value = value })
-                        end)
-                    end
+                    cy = cy + R.sks_box(ctx, st, oid, mx0, cy, mw, opt.sks, function(group, value)
+                        ctx.act({ kind = "sks-ref", layer = layer, option = opt.name, group = group, value = value })
+                    end)
                     -- 有部位同时列出材质和组时,顶上给「材质 | 网格组」切换,一次只看一类(两类都照常生效)。
                     -- 默认按预设用到哪一类:只用到组就先看组,否则先看材质;手动选过按选项记住
                     st.view = st.view or {}
