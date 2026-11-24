@@ -112,22 +112,28 @@ end
 
 Registry.register(require("ArmorVariantManager_Core.Games.RE4.Conditions.Condition_HP"))
 Registry.register(require("ArmorVariantManager_Core.Games.RE4.Conditions.Condition_Vital"))
-Registry.register(require("ArmorVariantManager_Core.Games.RE4.Conditions.Condition_HasArmor"))
-Registry.register(require("ArmorVariantManager_Core.Games.RE4.Conditions.Condition_WeaponKind"))
+local is_re9 = reframework:get_game_name() == "re9"
+if not is_re9 then
+    Registry.register(require("ArmorVariantManager_Core.Games.RE4.Conditions.Condition_HasArmor"))
+    Registry.register(require("ArmorVariantManager_Core.Games.RE4.Conditions.Condition_WeaponKind"))
+end
 for _, def in ipairs(require("ArmorVariantManager_Core.Games.RE4.Conditions.Condition_HPChange")) do
     Registry.register(def)
 end
-for _, def in ipairs(require("ArmorVariantManager_Core.Games.RE4.Conditions.Condition_Enums")) do
-    Registry.register(def)
-end
-for _, def in ipairs(require("ArmorVariantManager_Core.Games.RE4.Conditions.PlayerBools")) do
-    Registry.register(def)
-end
-
--- 合成条件(按功能合并的枚举),取值来自上面的布尔条件;被合并的布尔标成 legacy
 local Merged = require("ArmorVariantManager_Core.Games.RE4.Conditions.Merged")
-for _, def in ipairs(Merged.defs(Registry.get)) do Registry.register(def) end
-for id in pairs(Merged.LEGACY) do if defs[id] then defs[id].legacy = true end end
+-- 以下条件读 chainsaw.* 的人物状态,RE9 没有对应类型
+if not is_re9 then
+    for _, def in ipairs(require("ArmorVariantManager_Core.Games.RE4.Conditions.Condition_Enums")) do
+        Registry.register(def)
+    end
+    for _, def in ipairs(require("ArmorVariantManager_Core.Games.RE4.Conditions.PlayerBools")) do
+        Registry.register(def)
+    end
+
+    -- 合成条件(按功能合并的枚举),取值来自上面的布尔条件;被合并的布尔标成 legacy
+    for _, def in ipairs(Merged.defs(Registry.get)) do Registry.register(def) end
+    for id in pairs(Merged.LEGACY) do if defs[id] then defs[id].legacy = true end end
+end
 Registry.LEGACY = Merged.LEGACY
 
 return Registry

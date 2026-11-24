@@ -23,8 +23,9 @@
 -- 指纹里有、当前模型上没有的槛位(比如没穿护甲)不参与判断。
 local Presets = {}
 
-Presets.DIR = "ArmorVariantManager/presets/"
-Presets.AUTOSAVE_DIR = "ArmorVariantManager/autosave/"
+local config_dir = reframework:get_game_name() == "re9" and "ArmorVariantManagerRE9" or "ArmorVariantManager"
+Presets.DIR = config_dir .. "/presets/"
+Presets.AUTOSAVE_DIR = config_dir .. "/autosave/"
 Presets.INDEX_ID = "_index"
 Presets.INDEX = Presets.DIR .. Presets.INDEX_ID .. ".json"
 Presets.PROBE_GAP = 8

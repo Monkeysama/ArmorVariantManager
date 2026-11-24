@@ -1,4 +1,26 @@
 local Utils = {}
+local is_re9 = reframework:get_game_name() == "re9"
+local Visibility = is_re9 and require("ArmorVariantManager_Core.Games.RE9.Visibility")
+
+function Utils.visibility_count(mesh)
+    if Visibility then return Visibility.count(mesh) end
+    return mesh:call("get_MaterialNum")
+end
+
+function Utils.visibility_name(mesh, index)
+    if Visibility then return Visibility.name(mesh, index) end
+    return mesh:call("getMaterialName", index)
+end
+
+function Utils.visibility_get(mesh, index)
+    if Visibility then return Visibility.get(mesh, index) end
+    return mesh:call("getMaterialsEnable", index)
+end
+
+function Utils.visibility_set(mesh, index, enabled)
+    if Visibility then return Visibility.set(mesh, index, enabled) end
+    mesh:call("setMaterialsEnable", index, enabled)
+end
 
 local type_character_manager = nil
 local function get_character_manager()
@@ -63,6 +85,20 @@ end
 
 -- 固定槛位,来自 chainsaw.PlayerBodyUpdater 的公共 getter(实测里昂验证过)。
 Utils.MESH_SLOTS = { "body", "head", "hair", "armor" }
+function Utils.slots(source)
+    if not is_re9 or type(source) ~= "table" then return Utils.MESH_SLOTS end
+    local slots = {}
+    for _, slot in ipairs(Utils.MESH_SLOTS) do
+        if source[slot] then slots[#slots + 1] = slot end
+    end
+    local extra = {}
+    for slot in pairs(source) do
+        if slot:match("^mesh_%d%d$") then extra[#extra + 1] = slot end
+    end
+    table.sort(extra)
+    for _, slot in ipairs(extra) do slots[#slots + 1] = slot end
+    return slots
+end
 local SLOT_GETTER = {
     body = "get_BodyMesh",
     head = "get_HeadMesh",
@@ -136,11 +172,11 @@ end
 
 function Utils.get_material_names(mesh)
     if not mesh then return {} end
-    local ok, count = pcall(function() return mesh:call("get_MaterialNum") end)
+    local ok, count = pcall(function() return Utils.visibility_count(mesh) end)
     if not ok or not count or count <= 0 then return {} end
     local names = {}
     for i = 0, count - 1 do
-        local ok_n, name = pcall(function() return mesh:call("getMaterialName", i) end)
+        local ok_n, name = pcall(function() return Utils.visibility_name(mesh, i) end)
         if ok_n and name then table.insert(names, name) end
     end
     return names
@@ -151,11 +187,11 @@ end
 function Utils.current_material_states(mesh)
     local out = {}
     if not mesh then return out end
-    local ok, count = pcall(function() return mesh:call("get_MaterialNum") end)
+    local ok, count = pcall(function() return Utils.visibility_count(mesh) end)
     if not ok or not count or count <= 0 then return out end
     for i = 0, count - 1 do
-        local ok_n, name = pcall(function() return mesh:call("getMaterialName", i) end)
-        local ok_e, enabled = pcall(function() return mesh:call("getMaterialsEnable", i) end)
+        local ok_n, name = pcall(function() return Utils.visibility_name(mesh, i) end)
+        local ok_e, enabled = pcall(function() return Utils.visibility_get(mesh, i) end)
         if ok_n and name and ok_e and type(enabled) == "boolean" then out[name] = enabled end
     end
     return out
@@ -168,16 +204,16 @@ end
 -- true/false,来回切换才是确定性的。
 function Utils.capture_current_as_preset(source)
     local preset = {}
-    for _, slot in ipairs(Utils.MESH_SLOTS) do
+    for _, slot in ipairs(Utils.slots(source)) do
         preset[slot] = { materials = {} }
         local mesh = Utils.get_mesh(source, slot)
         if mesh then
-            local ok, count = pcall(function() return mesh:call("get_MaterialNum") end)
+            local ok, count = pcall(function() return Utils.visibility_count(mesh) end)
             if ok and count and count > 0 then
                 for i = 0, count - 1 do
-                    local ok_n, name = pcall(function() return mesh:call("getMaterialName", i) end)
+                    local ok_n, name = pcall(function() return Utils.visibility_name(mesh, i) end)
                     if ok_n and name then
-                        local ok_e, enabled = pcall(function() return mesh:call("getMaterialsEnable", i) end)
+                        local ok_e, enabled = pcall(function() return Utils.visibility_get(mesh, i) end)
                         -- 别写成 `cond and enabled or true`:enabled 为 false 时
                         -- `false or true` 会算成 true,于是**隐藏的材质永远抓不进来**。
                         -- 这条 bug 让"用当前外观覆写"等于什么都没存。
@@ -204,7 +240,7 @@ end
 function Utils.capture_preserving_unmatched(source, old_preset, usable)
     local fresh = Utils.capture_current_as_preset(source)
     if type(old_preset) ~= "table" then return fresh end
-    for _, slot in ipairs(Utils.MESH_SLOTS) do
+    for _, slot in ipairs(Utils.slots(source)) do
         local had = old_preset[slot]
         local has_stored = type(had) == "table" and next(had.materials or {}) ~= nil
         -- 原来这个槛位有内容、但当前模型上对不上 ⇒ 保留原值,别用当前模型的覆盖它
@@ -234,7 +270,7 @@ function Utils.preset_match_ratio(source, preset)
     local seen = {}
     local compared = 0
 
-    for _, slot in ipairs(Utils.MESH_SLOTS) do
+    for _, slot in ipairs(Utils.slots(source)) do
         local mesh = Utils.get_mesh(source, slot)
         local live, live_n = {}, 0
         if mesh then
@@ -295,7 +331,7 @@ end
 function Utils.preset_slot_ratios(source, preset)
     local out = {}
     if not preset then return out end
-    for _, slot in ipairs(Utils.MESH_SLOTS) do
+    for _, slot in ipairs(Utils.slots(source)) do
         local mesh = Utils.get_mesh(source, slot)
         local live = {}
         local live_n = 0
@@ -332,7 +368,7 @@ end
 -- 容量的位图辅助数组,不是材质分组),所以"不选预设"就无脑全启用,不做分组限定。
 function Utils.all_enabled_preset(source)
     local preset = {}
-    for _, slot in ipairs(Utils.MESH_SLOTS) do
+    for _, slot in ipairs(Utils.slots(source)) do
         preset[slot] = { materials = {} }
         local mesh = Utils.get_mesh(source, slot)
         if mesh then
@@ -347,8 +383,8 @@ end
 -- 四个槛位当前 mesh 实例的身份串。mesh 被换掉(换装、模型重载、重生、场景切换)时它会变,
 -- 而 mesh 一换,我们之前写进去的材质开关就全丢了 —— 这是"差分被冲掉"的主因。
 function Utils.get_mesh_identity(source)
-    local parts = {}
-    for _, slot in ipairs(Utils.MESH_SLOTS) do
+    local parts = { is_re9 and source.resource_identity or nil }
+    for _, slot in ipairs(Utils.slots(source)) do
         local mesh = Utils.get_mesh(source, slot)
         table.insert(parts, slot .. "=" .. (mesh and tostring(mesh) or "nil"))
     end
@@ -359,12 +395,12 @@ end
 -- 只核对预设里点名过的材质,没点名的本来就该保持原状。
 function Utils.slot_state_drifted(mesh, slot_data)
     if not mesh or not slot_data or not slot_data.materials then return false end
-    local ok, count = pcall(function() return mesh:call("get_MaterialNum") end)
+    local ok, count = pcall(function() return Utils.visibility_count(mesh) end)
     if not ok or not count or count <= 0 then return false end
     for i = 0, count - 1 do
-        local ok_n, name = pcall(function() return mesh:call("getMaterialName", i) end)
+        local ok_n, name = pcall(function() return Utils.visibility_name(mesh, i) end)
         if ok_n and name and slot_data.materials[name] ~= nil then
-            local ok_c, cur = pcall(function() return mesh:call("getMaterialsEnable", i) end)
+            local ok_c, cur = pcall(function() return Utils.visibility_get(mesh, i) end)
             if ok_c and cur ~= slot_data.materials[name] then return true end
         end
     end
@@ -376,15 +412,15 @@ end
 -- 纯预览,不写进任何预设。
 function Utils.isolate_material(mesh, target_name)
     if not mesh then return end
-    local ok, count = pcall(function() return mesh:call("get_MaterialNum") end)
+    local ok, count = pcall(function() return Utils.visibility_count(mesh) end)
     if not ok or not count or count <= 0 then return end
     for i = 0, count - 1 do
-        local ok_n, name = pcall(function() return mesh:call("getMaterialName", i) end)
+        local ok_n, name = pcall(function() return Utils.visibility_name(mesh, i) end)
         if ok_n and name then
             local want = (name == target_name)
-            local ok_c, cur = pcall(function() return mesh:call("getMaterialsEnable", i) end)
+            local ok_c, cur = pcall(function() return Utils.visibility_get(mesh, i) end)
             if ok_c and cur ~= want then
-                pcall(function() mesh:call("setMaterialsEnable", i, want) end)
+                pcall(function() Utils.visibility_set(mesh, i, want) end)
             end
         end
     end
@@ -394,15 +430,15 @@ end
 -- 只处理传进来的材质名,没提到的材质保持原状——差分只负责"开/关",不负责枚举全部材质。
 function Utils.apply_preset_to_slot(mesh, slot_data)
     if not mesh or not slot_data or not slot_data.materials then return end
-    local ok, count = pcall(function() return mesh:call("get_MaterialNum") end)
+    local ok, count = pcall(function() return Utils.visibility_count(mesh) end)
     if not ok or not count or count <= 0 then return end
     for i = 0, count - 1 do
-        local ok_n, name = pcall(function() return mesh:call("getMaterialName", i) end)
+        local ok_n, name = pcall(function() return Utils.visibility_name(mesh, i) end)
         if ok_n and name and slot_data.materials[name] ~= nil then
             local want = slot_data.materials[name]
-            local ok_c, cur = pcall(function() return mesh:call("getMaterialsEnable", i) end)
+            local ok_c, cur = pcall(function() return Utils.visibility_get(mesh, i) end)
             if ok_c and cur ~= want then
-                pcall(function() mesh:call("setMaterialsEnable", i, want) end)
+                pcall(function() Utils.visibility_set(mesh, i, want) end)
             end
         end
     end

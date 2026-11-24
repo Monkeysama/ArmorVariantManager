@@ -214,6 +214,7 @@ function Page.draw(ctx, x, y, w)
         end
         cy = cy + F:height() + 8
     end
+    if snap.game == "RE9" then return cy - y end
 
     -- 调色方案:点一下就选中(选中就生效);"" = 初始。被引用、这一帧正在叠加生效的方案标成生效样式。
     -- 调色、模型高度属于新版特性:关闭时灰掉、不可改

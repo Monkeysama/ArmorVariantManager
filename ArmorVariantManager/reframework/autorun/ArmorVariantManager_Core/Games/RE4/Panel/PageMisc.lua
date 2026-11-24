@@ -45,7 +45,7 @@ function Page.draw(ctx, x, y, w)
         cy = cy + used + 2
     end
     local s = snap.settings
-    if snap.configVersion == 3 then
+    if snap.game ~= "RE9" and snap.configVersion == 3 then
         setting_row(t("armorMirror"), snap.armorMirror == true, t("armorMirrorHint"),
             function(v) ctx.act({ kind = "armor-mirror", enabled = v }) end)
     end
@@ -54,12 +54,15 @@ function Page.draw(ctx, x, y, w)
         .. ((s.newFeatures == false and s.extrasInstalled) and ("\n" .. t("newFeaturesReset")) or "")
     setting_row(t("newFeatures"), s.newFeatures ~= false, nf_hint,
         function(v) ctx.act({ kind = "setting", id = "new_features", value = v }) end)
-    setting_row(t("blockGameMouse"), s.blockGameMouse ~= false, t("blockGameMouseHint"),
-        function(v) ctx.act({ kind = "setting", id = "block_game_mouse", value = v }) end)
-    setting_row(t("heightEnabled"), s.heightEnabled ~= false, t("heightEnabledHint"),
-        function(v) ctx.act({ kind = "setting", id = "height_enabled", value = v }) end, s.newFeatures == false)
-    setting_row(t("weaponHide"), s.weaponHideStorage == true, nil,
-        function(v) ctx.act({ kind = "setting", id = "weapon_hide_storage", value = v }) end)
+    -- RE9 没有鼠标屏蔽、模型高度和武器收纳显隐
+    if snap.game ~= "RE9" then
+        setting_row(t("blockGameMouse"), s.blockGameMouse ~= false, t("blockGameMouseHint"),
+            function(v) ctx.act({ kind = "setting", id = "block_game_mouse", value = v }) end)
+        setting_row(t("heightEnabled"), s.heightEnabled ~= false, t("heightEnabledHint"),
+            function(v) ctx.act({ kind = "setting", id = "height_enabled", value = v }) end, s.newFeatures == false)
+        setting_row(t("weaponHide"), s.weaponHideStorage == true, nil,
+            function(v) ctx.act({ kind = "setting", id = "weapon_hide_storage", value = v }) end)
+    end
     -- 溶解相关的设置在「溶解」页(PageDissolve.lua)
     -- 打开 / 关闭独立面板的快捷键(主键 + 可选修饰键)
     local g = ctx.global_config or {}

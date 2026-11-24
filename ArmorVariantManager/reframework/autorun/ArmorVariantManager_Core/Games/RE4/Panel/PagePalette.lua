@@ -278,7 +278,7 @@ function Page.draw(ctx, x, y, w)
         -- 替换 mdf:灰掉时只在悬停时说明原因;能用时先弹单独的确认框
         local state = chosen[1].replace
         local tip = state == "packed" and t("paletteReplacePacked") or (state == "plugin" and t("paletteReplacePlugin") or nil)
-        if HF:button(t("paletteReplace"), { kind = "danger", disabled = state ~= "ok" or pal.replacing == true, tip = tip }) then
+        if ctx.snap.game ~= "RE9" and HF:button(t("paletteReplace"), { kind = "danger", disabled = state ~= "ok" or pal.replacing == true, tip = tip }) then
             local slot = chosen[1].slot
             ctx.confirm(t("paletteReplace"), t("paletteReplaceConfirm"), function() ctx.act({ kind = "palette-replace", slot = slot }) end)
         end

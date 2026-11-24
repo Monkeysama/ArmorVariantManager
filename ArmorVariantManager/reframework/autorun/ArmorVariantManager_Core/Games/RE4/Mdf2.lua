@@ -19,7 +19,8 @@
 local Mdf2 = {}
 
 Mdf2.MAGIC = 4605005
-Mdf2.VERSION = 32
+local is_re9 = reframework:get_game_name() == "re9"
+Mdf2.VERSION = is_re9 and 51 or 32
 Mdf2.PRESET_VERSION = 5
 
 local function utf16(data, offset)
@@ -54,9 +55,11 @@ function Mdf2.parse(data)
     if u(data, "<I4", 0) ~= Mdf2.MAGIC then error("not an mdf2 file") end
     -- 头里的 version 字段固定是 1;mdf2 的格式版本看文件扩展名(RE4 是 .32,只支持它),插件也是这样认的
     local count = u(data, "<I2", 6)
+    local extra = is_re9 and 8 or 0
+    if 16 + count * (100 + extra) > #data then error("truncated mdf2 header") end
     local out = { version = Mdf2.VERSION, materials = {} }
     for m = 0, count - 1 do
-        local b = 16 + m * 100
+        local b = 16 + m * (100 + extra)
         local mat = {
             name = utf16(data, u(data, "<I8", b)),
             prop_block_size = u(data, "<i4", b + 12),
@@ -69,14 +72,26 @@ function Mdf2.parse(data)
         }
         local prop_count, tex_count = u(data, "<i4", b + 16), u(data, "<i4", b + 20)
         local gpbf_names = u(data, "<i4", b + 24)
-        local prop_headers, tex_headers = u(data, "<I8", b + 52), u(data, "<I8", b + 60)
-        local gpu_buffer, prop_data = u(data, "<I8", b + 68), u(data, "<I8", b + 76)
+        local prop_headers, tex_headers = u(data, "<I8", b + 52 + extra), u(data, "<I8", b + 60 + extra)
+        local gpu_buffer, prop_data = u(data, "<I8", b + 68 + extra), u(data, "<I8", b + 76 + extra)
         mat.prop_data = prop_data
-        mat.mmtr = utf16(data, u(data, "<I8", b + 84))
-        local mmtrs_offset = u(data, "<I8", b + 92)
+        mat.mmtr = utf16(data, u(data, "<I8", b + 84 + extra))
+        local mmtrs_offset = u(data, "<I8", b + 92 + extra)
+        local function block(offset, elements, stride)
+            if elements < 0 or offset < 0 or offset > #data or elements > (#data - offset) // stride then
+                error("invalid mdf2 table bounds")
+            end
+        end
+        block(prop_headers, prop_count, 24)
+        block(tex_headers, tex_count, 32)
+        block(gpu_buffer, gpbf_names, 32)
+        block(prop_data, mat.prop_block_size, 1)
         for i = 0, prop_count - 1 do
             local h = prop_headers + i * 24
             local p = { name = utf16(data, u(data, "<I8", h)), offset = u(data, "<i4", h + 16), count = u(data, "<I2", h + 20), values = {} }
+            if p.offset < 0 or p.offset + 4 * p.count > mat.prop_block_size then
+                error("invalid mdf2 parameter range")
+            end
             for k = 0, p.count - 1 do p.values[k + 1] = u(data, "<f", prop_data + p.offset + k * 4) end
             mat.props[#mat.props + 1] = p
         end
@@ -91,10 +106,12 @@ function Mdf2.parse(data)
             mat.textures[#mat.textures + 1] = { type = utf16(data, u(data, "<I8", h)), path = utf16(data, u(data, "<I8", h + 16)) }
         end
         if mmtrs_offset ~= 0 then
+            block(mmtrs_offset, 8, 8)
             for k = 0, 7 do
                 local o = u(data, "<I8", mmtrs_offset + k * 8)
                 local list = {}
                 local n = u(data, "<I4", o)
+                block(o + 4, n, 4)
                 for j = 0, n - 1 do list[#list + 1] = u(data, "<I4", o + 4 + j * 4) end
                 mat.mmtrs[#mat.mmtrs + 1] = list
             end
@@ -210,6 +227,20 @@ function Mdf2.preset_from_runtime(name, props, textures, mmtr)
         ["Property List"] = out, ["Texture Bindings"] = tex,
     }
 end
+local function read_file(rel)
+    if is_re9 then
+        local native_path = rel:match("^natives/(.+)$")
+        local file = native_path and io.open("$natives/" .. native_path, "rb")
+        if not file then return nil, "loose MDF2 file is unavailable" end
+        local data = file:read("*a")
+        file:close()
+        return data
+    end
+    local bridge = rawget(_G, "avm_portrait")
+    local reader = type(bridge) == "table" and bridge.read_game_file
+    if type(reader) ~= "function" then return nil, "native plugin too old (no read_game_file)" end
+    return reader(rel)
+end
 
 -- 运行时材质 j 的预设。先读 mod 的 mdf2;读不到时退回运行时数据。返回 preset, reason(nil = 来自 mdf2)
 -- palette:Palette 模块(读参数);effects_index:离线材质库(认母材质,给后备方案填 mmtr 路径)
@@ -224,10 +255,7 @@ function Mdf2.export(mesh, j, material, palette, effects_index)
         local holder = mesh:call("get_Material")
         local rel = Mdf2.file_path(holder and holder:call("get_ResourcePath"))
         if not rel then error("no mdf2 resource path") end
-        local bridge = rawget(_G, "avm_portrait")
-        local reader = type(bridge) == "table" and bridge.read_game_file
-        if type(reader) ~= "function" then error("native plugin too old (no read_game_file)") end
-        local data, err = reader(rel)
+        local data, err = read_file(rel)
         if not data then error(rel .. ": " .. tostring(err)) end
         local mat = Mdf2.find(Mdf2.parse(data), material)
         if not mat then error(rel .. ": material " .. tostring(material) .. " not in file") end
@@ -246,7 +274,7 @@ function Mdf2.export(mesh, j, material, palette, effects_index)
         props[#props + 1] = { name = e.name, count = is4 and 4 or 1, values = is4 and (v or {}) or { v or 0 } }
     end
     local textures = {}
-    local n = tonumber(mesh:call("getMaterialTextureNum", j)) or 0
+    local n = is_re9 and 0 or (tonumber(mesh:call("getMaterialTextureNum", j)) or 0)
     for t = 0, n - 1 do
         local tname = mesh:call("getMaterialTextureName", j, t)
         local holder = mesh:call("getMaterialTexture", j, t)
@@ -275,10 +303,7 @@ function Mdf2.file_value(mesh, material, param, cache)
         if not rel then return nil, "no mdf2 resource path" end
         local parsed = cache and cache[rel]
         if parsed == nil then
-            local bridge = rawget(_G, "avm_portrait")
-            local reader = type(bridge) == "table" and bridge.read_game_file
-            if type(reader) ~= "function" then return nil, "native plugin too old (no read_game_file)" end
-            local data = reader(rel)
+            local data = read_file(rel)
             parsed = data and Mdf2.parse(data) or false
             if cache then cache[rel] = parsed end
         end

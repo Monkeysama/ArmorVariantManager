@@ -420,35 +420,43 @@ function Page.draw(ctx, x, y, w)
                             if TF:button(t("cancel")) then st.confirming = nil end
                         end
                     end
-                    -- 模型高度、调色方案、溶解预设、形态键属于新版特性:关闭时灰掉、不可改
-                    TF:text(t("heightLabel"), nf_off and C.faint or C.muted)
-                    local hx2, hy2 = TF:place(64, ROW)
-                    W.num_box(st.drafts, "h:" .. oid, hx2, hy2 + 1, 64, opt.height,
-                        { min = HEIGHT_MIN, max = HEIGHT_MAX, allow_empty = true, placeholder = t("heightUnset"), tip = t("heightHint"),
-                          disabled = nf_off },
-                        function(n)
-                            local cm = n and math.floor(n * 10 + 0.5) / 10 or nil
-                            if card.is_base then ctx.act({ kind = "base-height", preset = opt.name, cm = cm })
-                            else ctx.act({ kind = "option-height", group = card.name, option = opt.name, cm = cm }) end
-                        end)
-                    TF:text("cm", C.muted)
-                    if opt.height ~= nil and TF:button(t("heightClear"), { kind = "ghost", disabled = nf_off }) then
-                        if card.is_base then ctx.act({ kind = "base-height", preset = opt.name })
-                        else ctx.act({ kind = "option-height", group = card.name, option = opt.name }) end
+                    -- 模型高度、调色方案、溶解预设、形态键属于新版特性:关闭时灰掉、不可改。
+                    -- RE9 只有调色方案
+                    local re9 = ctx.snap.game == "RE9"
+                    if not re9 then
+                        TF:text(t("heightLabel"), nf_off and C.faint or C.muted)
+                        local hx2, hy2 = TF:place(64, ROW)
+                        W.num_box(st.drafts, "h:" .. oid, hx2, hy2 + 1, 64, opt.height,
+                            { min = HEIGHT_MIN, max = HEIGHT_MAX, allow_empty = true, placeholder = t("heightUnset"), tip = t("heightHint"),
+                              disabled = nf_off },
+                            function(n)
+                                local cm = n and math.floor(n * 10 + 0.5) / 10 or nil
+                                if card.is_base then ctx.act({ kind = "base-height", preset = opt.name, cm = cm })
+                                else ctx.act({ kind = "option-height", group = card.name, option = opt.name, cm = cm }) end
+                            end)
+                        TF:text("cm", C.muted)
+                        if opt.height ~= nil and TF:button(t("heightClear"), { kind = "ghost", disabled = nf_off }) then
+                            if card.is_base then ctx.act({ kind = "base-height", preset = opt.name })
+                            else ctx.act({ kind = "option-height", group = card.name, option = opt.name }) end
+                        end
                     end
                     local layer = card.is_base and "base" or card.name
                     R.ref_select(ctx, TF, "pal:" .. oid, t("paletteRef"), R.scheme_names(snap), opt.palette,
                         t("paletteRefNone"), t("paletteRefBroken"),
                         function(v) ctx.act({ kind = "palette-ref", layer = layer, option = opt.name, scheme = v }) end,
                         { disabled = nf_off, tip = (not card.is_base) and t("paletteRefOptionHint") or nil })
-                    R.ref_select(ctx, TF, "dis:" .. oid, t("dissolveRef"), R.dissolve_names(snap), opt.dissolve,
-                        t("dissolveRefNone"), t("dissolveRefBroken"),
-                        function(v) ctx.act({ kind = "dissolve-ref", layer = layer, option = opt.name, preset = v }) end,
-                        { disabled = nf_off })
+                    if not re9 then
+                        R.ref_select(ctx, TF, "dis:" .. oid, t("dissolveRef"), R.dissolve_names(snap), opt.dissolve,
+                            t("dissolveRefNone"), t("dissolveRefBroken"),
+                            function(v) ctx.act({ kind = "dissolve-ref", layer = layer, option = opt.name, preset = v }) end,
+                            { disabled = nf_off })
+                    end
                     cy = cy + TF:height() + 6
-                    cy = cy + R.sks_box(ctx, st, oid, mx0, cy, mw, opt.sks, function(group, value)
-                        ctx.act({ kind = "sks-ref", layer = layer, option = opt.name, group = group, value = value })
-                    end)
+                    if not re9 then
+                        cy = cy + R.sks_box(ctx, st, oid, mx0, cy, mw, opt.sks, function(group, value)
+                            ctx.act({ kind = "sks-ref", layer = layer, option = opt.name, group = group, value = value })
+                        end)
+                    end
                     local secs = sections(d, t, card, opt.values or {})
                     if #secs == 0 then
                         D.text_mid(t("noMaterials"), mx0, cy, 22, C.muted, W.small(), mw)
