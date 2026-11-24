@@ -50,6 +50,25 @@ Viscon.set(body, 3, false)
 Viscon.reset()
 assert(body.part_on[3] == true and shadow.part_on[3] == true)
 
+-- 组开关只负责藏:「开」只放回 AVM 自己关掉的;游戏自己关掉的不强行打开,AVM 关掉后游戏又打开的也不再动
+local game = mesh({}, { 0, 1, 2 }, 3)
+game.part_on[1] = false
+Viscon.set(game, 1, true)
+assert(game.part_on[1] == false)
+Viscon.set(game, 0, false)
+assert(game.part_on[0] == false)
+Viscon.set(game, 0, true)
+assert(game.part_on[0] == true)
+Viscon.set(game, 2, false)
+game.part_on[2] = true
+Viscon.set(game, 2, false)
+assert(game.part_on[2] == false)
+game.part_on[2] = true
+Viscon.set(game, 2, true)
+assert(game.part_on[2] == true)
+Viscon.reset()
+assert(game.part_on[1] == false and game.part_on[0] == true)
+
 -- refresh:没扫到的网格还原并移出;换了资源的只移出;读写时建的记录第一次 refresh 记下路径、原值保留
 Viscon.add(body, "body.mesh")
 Viscon.set(body, 0, false)

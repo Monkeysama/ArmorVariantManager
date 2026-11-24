@@ -248,15 +248,24 @@ function Viscon.get(mesh, part)
     return mesh:call("getPartsEnable", part)
 end
 
+-- 组开关 AVM 只负责「藏」:enabled = false 时关掉并记原值;enabled = true 只把 AVM 自己关掉的放回原值,
+-- 从没被 AVM 关过的组不碰。原版游戏自己也用 Viscon 切部件(过场、剧情),强行打开会盖掉游戏的切换。
+-- 材质不同:游戏不改材质开关,材质仍按配置写开 / 关
 local function set(entry, part, enabled)
     local mesh = entry.mesh
-    local current = mesh:call("getPartsEnable", part)
-    if current == enabled then return end
     local record = entry.originals[part]
-    local original = current
-    if record and current == record.applied then original = record.value end
-    mesh:call("setPartsEnable", part, enabled)
-    entry.originals[part] = { value = original, applied = enabled }
+    if enabled then
+        if record then
+            -- 我们关掉以后别处又改过(游戏打开了)就不再动它
+            if mesh:call("getPartsEnable", part) == record.applied then mesh:call("setPartsEnable", part, record.value) end
+            entry.originals[part] = nil
+        end
+        return
+    end
+    local current = mesh:call("getPartsEnable", part)
+    if current == false then return end
+    mesh:call("setPartsEnable", part, false)
+    entry.originals[part] = { value = record and record.value or current, applied = false }
 end
 
 function Viscon.set(mesh, part, enabled)
