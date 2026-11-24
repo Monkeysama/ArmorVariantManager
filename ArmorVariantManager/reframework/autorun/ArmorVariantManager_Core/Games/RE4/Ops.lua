@@ -360,6 +360,7 @@ end
 -- 一个槛位的批量操作。names = 这个槛位当前的材质名(按引擎顺序),current = 名字 -> 当前显示状态。
 --   整套造型:all_on / all_off / invert(按预设里存的值取反,没存的算开)
 --   状态组:  claim(整块纳入:按当前显示状态写下每个材质 = 这个状态接管整个部位)/ release(全部释放)
+--            / release_names(只释放 names)
 function Ops.bulk_slot(preset, slot, op, names, current, is_base)
     if type(preset) ~= "table" or type(names) ~= "table" then return false end
     if is_base and (op == "all_on" or op == "all_off" or op == "invert") then
@@ -379,6 +380,12 @@ function Ops.bulk_slot(preset, slot, op, names, current, is_base)
         end
     elseif not is_base and op == "release" then
         if type(preset[slot]) == "table" then preset[slot].materials = {} end
+    elseif not is_base and op == "release_names" then
+        -- 只释放 names 里的(材质、可见性组分段时各放各的);release 连当前模型上没有的也一起清
+        local materials = type(preset[slot]) == "table" and preset[slot].materials
+        if type(materials) == "table" then
+            for _, n in ipairs(names) do materials[n] = nil end
+        end
     else
         return false
     end

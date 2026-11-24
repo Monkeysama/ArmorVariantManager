@@ -9,6 +9,7 @@ local W = require("ArmorVariantManager_Core.Games.RE4.Panel.Widgets")
 local U = require("ArmorVariantManager_Core.Games.RE4.Panel.Common")
 local I = require("ArmorVariantManager_Core.Games.RE4.Panel.Input")
 local R = require("ArmorVariantManager_Core.Games.RE4.Panel.Refs")
+local Viscon = require("ArmorVariantManager_Core.Games.RE4.Viscon")
 
 local C = T.c
 local max, min = math.max, math.min
@@ -56,6 +57,31 @@ local function derive(snap)
     end
     d.known = {}
     for _, k in ipairs(d.all_keys) do d.known[k] = true end
+    -- 每个部位里材质、组有没有被预设用到(Viscon.usage),决定两段默认展开哪一段
+    local full, sparse = {}, {}
+    local function split_into(dest, values)
+        local per = {}
+        for k, v in pairs(values or {}) do
+            local slot, name = U.split_key(k)
+            if slot then
+                per[slot] = per[slot] or {}
+                per[slot][name] = v
+            end
+        end
+        for slot, m in pairs(per) do
+            dest[slot] = dest[slot] or {}
+            table.insert(dest[slot], m)
+        end
+    end
+    for _, p in ipairs((snap.base and snap.base.presets) or {}) do split_into(full, p.values) end
+    for _, g in ipairs(snap.groups or {}) do
+        for _, o in ipairs(g.options or {}) do split_into(sparse, o.values) end
+    end
+    d.usage = {}
+    for _, s in ipairs(d.slots) do
+        local mu, gu = Viscon.usage(full[s.id], sparse[s.id])
+        d.usage[s.id] = { material = mu, group = gu }
+    end
     -- 组与组之间取值不同的重叠:below = 被下面的组覆盖,above = 覆盖上面的组
     d.overlaps = {}
     local gs = snap.groups or {}
@@ -118,9 +144,9 @@ local function sections(d, t, card, values)
             local list = m.kind == "group" and groups or keys
             list[#list + 1] = U.key_of(s.id, m.name)
         end
-        if #keys > 0 then out[#out + 1] = { id = s.id, label = U.short_slot(s.label), keys = keys } end
+        if #keys > 0 then out[#out + 1] = { id = s.id, kind = "material", label = U.short_slot(s.label), keys = keys } end
         if #groups > 0 then
-            out[#out + 1] = { id = s.id, label = U.short_slot(s.label) .. " · " .. t("meshGroups"), keys = groups,
+            out[#out + 1] = { id = s.id, kind = "group", label = U.short_slot(s.label) .. " · " .. t("meshGroups"), keys = groups,
                 hint = t("meshGroupsHint") }
         end
     end
@@ -470,17 +496,60 @@ function Page.draw(ctx, x, y, w)
                     end
                     local labels = { on = t("on"), off = t("off") }
                     local tri_w = card.is_base and 70 or 100
+                    local function set_value(key, val, nv)
+                        if not nv or nv == val then return end
+                        local slot, mat = U.split_key(key)
+                        if card.is_base then
+                            ctx.act({ kind = "base-material", preset = opt.name, slot = slot, material = mat, value = nv == "on" })
+                        else
+                            ctx.act({ kind = "option-material", group = card.name, option = opt.name, slot = slot, material = mat, value = nv })
+                        end
+                    end
+                    -- 搜索材质名或备注(只筛材质,组不筛);批量按钮只作用于筛出来的
+                    st.query = st.query or {}
+                    local q = trim(st.query[oid]):lower()
+                    if #secs > 0 then
+                        W.text_box("q:" .. oid, mx0, cy, min(220, mw), 24, st.query[oid] or "", t("searchMaterials"),
+                            function(v2) st.query[oid] = v2 end)
+                        cy = cy + 30
+                    end
                     -- 三列排列(备注模式一行要放输入框和定位按钮,只排一列);列宽放不下就减列
                     local gap = 16
                     local cols = st.notes and 1 or 3
                     while cols > 1 and (mw - gap * (cols - 1)) / cols < tri_w + 90 do cols = cols - 1 end
                     local col_w = (mw - gap * (cols - 1)) / cols
+                    st.sec_open = st.sec_open or {}
                     for _, sec in ipairs(secs) do
-                        local lw = D.text_mid(sec.label, mx0, cy, 24, sec.id == "" and C.error or C.muted, W.bold())
-                        if sec.hint then W.tooltip(sec.hint, mx0, cy, lw, 24) end
-                        -- 这一段的批量设置:全部 — / 关 / 开、反选(整套造型没有「—」)
-                        if W.visible(cy, 24) then
-                            local bx = mx0 + lw + 12
+                        local keys = sec.keys
+                        if q ~= "" and sec.kind == "material" then
+                            keys = {}
+                            for _, k in ipairs(sec.keys) do
+                                local _, mat = U.split_key(k)
+                                local note = d.notes[k]
+                                if mat:lower():find(q, 1, true) or (note and note:lower():find(q, 1, true)) then keys[#keys + 1] = k end
+                            end
+                        end
+                        -- 部位里的材质段、组段可以折叠;默认按预设用到哪一类展开(Viscon.default_open),手动点过按手动的。
+                        -- 「当前模型上没有」那段不折叠
+                        local sk = sec.id .. "|" .. tostring(sec.kind)
+                        local sec_open, by_default = true, false
+                        local lx = mx0
+                        if sec.id ~= "" then
+                            local u = d.usage[sec.id] or {}
+                            local dm, dg = Viscon.default_open(u.material, u.group)
+                            local def = sec.kind == "group" and dg or dm
+                            if st.sec_open[sk] == nil then sec_open, by_default = def, true else sec_open = st.sec_open[sk] end
+                            if W.caret(mx0, cy, sec_open, 24) then st.sec_open[sk] = not sec_open end
+                            lx = mx0 + 20
+                        end
+                        local lw = D.text_mid(sec.label, lx, cy, 24, sec.id == "" and C.error or C.muted, W.bold())
+                        if sec.hint then W.tooltip(sec.hint, lx, cy, lw, 24) end
+                        local count_text = (#keys < #sec.keys) and t("sectionFiltered", #keys, #sec.keys) or t("sectionCount", #sec.keys)
+                        if not sec_open and by_default then count_text = t("sectionUnused", #sec.keys) end
+                        local cw = D.text_mid(count_text, lx + lw + 8, cy, 24, C.muted, W.small())
+                        -- 这一段的批量设置:全部 — / 关 / 开、反选(整套造型没有「—」);筛选时只作用于筛出来的
+                        if sec_open and #keys > 0 and W.visible(cy, 24) then
+                            local bx = lx + lw + 8 + cw + 12
                             local ops = card.is_base and { "off", "on", "invert" } or { "none", "off", "on", "invert" }
                             local KEY = { none = "bulkNone", off = "bulkOff", on = "bulkOn", invert = "bulkInvert" }
                             for _, op in ipairs(ops) do
@@ -488,7 +557,7 @@ function Page.draw(ctx, x, y, w)
                                 local clicked, bw = W.tbutton(t(KEY[op]), bx, cy + 1, { tip = tip })
                                 if clicked then
                                     local items = {}
-                                    for _, k in ipairs(sec.keys) do
+                                    for _, k in ipairs(keys) do
                                         local s2, m2 = U.split_key(k)
                                         items[#items + 1] = { slot = s2, material = m2 }
                                     end
@@ -498,52 +567,68 @@ function Page.draw(ctx, x, y, w)
                             end
                         end
                         cy = cy + 24
-                        for i, key in ipairs(sec.keys) do
-                            local col = (i - 1) % cols
-                            local rx = mx0 + col * (col_w + gap)
-                            if W.visible(cy, ROW) then
-                                local slot, mat = U.split_key(key)
-                                local val = value_of(opt.values or {}, key)
-                                local nv = W.tri(rx, cy + 2, val, labels, card.is_base, false)
-                                if nv and nv ~= val then
-                                    if card.is_base then
-                                        ctx.act({ kind = "base-material", preset = opt.name, slot = slot, material = mat, value = nv == "on" })
-                                    else
-                                        ctx.act({ kind = "option-material", group = card.name, option = opt.name, slot = slot, material = mat, value = nv })
+                        if sec_open and sec.kind == "group" and not st.notes then
+                            -- 组一般不多,排成一行行小块:开关 + 组号 + 备注(备注模式下照材质那样逐行列出,好写备注、定位)
+                            local cx0 = mx0
+                            for _, key in ipairs(keys) do
+                                local _, mat = U.split_key(key)
+                                local note = d.notes[key]
+                                local text = (mat:match("(%d+)$") or mat) .. (note and ("  " .. note) or "")
+                                local tw = D.measure(W.small(), text)
+                                local chip_w = tri_w + tw + 22
+                                if cx0 > mx0 and cx0 + chip_w > mx0 + mw then cx0 = mx0; cy = cy + ROW + 4 end
+                                if W.visible(cy, ROW) then
+                                    local val = value_of(opt.values or {}, key)
+                                    D.rrect(cx0, cy, chip_w, ROW, 3, C.panel2)
+                                    set_value(key, val, W.tri(cx0 + 4, cy + 2, val, labels, card.is_base, false))
+                                    local name_col = val == "on" and C.text or (val == "off" and C.muted or C.faint)
+                                    D.text_mid(text, cx0 + tri_w + 12, cy, ROW, name_col, W.small(), tw + 4)
+                                    W.tooltip(mat .. (note and ("\n" .. note) or "") .. "\n" .. t("meshGroupsHint"), cx0 + tri_w + 12, cy, tw, ROW)
+                                end
+                                cx0 = cx0 + chip_w + 6
+                            end
+                            if #keys > 0 then cy = cy + ROW + 4 end
+                        elseif sec_open then
+                            for i, key in ipairs(keys) do
+                                local col = (i - 1) % cols
+                                local rx = mx0 + col * (col_w + gap)
+                                if W.visible(cy, ROW) then
+                                    local slot, mat = U.split_key(key)
+                                    local val = value_of(opt.values or {}, key)
+                                    set_value(key, val, W.tri(rx, cy + 2, val, labels, card.is_base, false))
+                                    local nx = rx + tri_w + 8
+                                    local right = rx + col_w
+                                    local ovr = overriders(d, card, opt.values or {}, key)
+                                    local warn_w = #ovr > 0 and 16 or 0
+                                    local name_col = val == "on" and C.text or (val == "off" and C.muted or C.faint)
+                                    local name_w = st.notes and 200 or max(20, right - nx - warn_w)
+                                    local nw = D.text_mid(sec.id == "" and key or mat, nx, cy, ROW, name_col, W.small(), name_w)
+                                    -- 提示:全名 + 备注 + 也写了它的其他组
+                                    local tip = { mat }
+                                    if d.notes[key] then tip[#tip + 1] = d.notes[key] end
+                                    local others = card.is_base and {} or others_of(d, key, card.name)
+                                    if #others > 0 then tip[#tip + 1] = t("alsoIn", table.concat(others, "、")) end
+                                    W.tooltip(table.concat(tip, "\n"), nx, cy, nw, ROW)
+                                    nx = nx + (st.notes and max(nw, 120) or nw) + 8
+                                    if st.notes then
+                                        W.commit_box(st.drafts, "note:" .. key, nx, cy + 2, 160, 22, d.notes[key] or "", t("notePlaceholder"), function(text)
+                                            ctx.act({ kind = "note", slot = slot, material = mat, text = text })
+                                        end)
+                                        nx = nx + 168
+                                        local c4, lw2 = W.tbutton(t("locate"), nx, cy + 2)
+                                        if c4 then ctx.act({ kind = "locate", slot = slot, material = mat }) end
+                                        nx = nx + lw2 + 8
+                                    elseif d.notes[key] and right - warn_w - nx > 24 then
+                                        nx = nx + D.text_mid(d.notes[key], nx, cy, ROW, C.muted, W.small(), right - warn_w - nx) + 6
+                                    end
+                                    if #ovr > 0 then
+                                        local wx = st.notes and nx or (right - warn_w)
+                                        D.text_mid("!", wx + 4, cy, ROW, C.error, W.bold())
+                                        W.tooltip(t("mayBeOverridden", table.concat(ovr, "、")) .. "\n" .. t("overlapHint"), wx, cy, 16, ROW)
                                     end
                                 end
-                                local nx = rx + tri_w + 8
-                                local right = rx + col_w
-                                local ovr = overriders(d, card, opt.values or {}, key)
-                                local warn_w = #ovr > 0 and 16 or 0
-                                local name_col = val == "on" and C.text or (val == "off" and C.muted or C.faint)
-                                local name_w = st.notes and 200 or max(20, right - nx - warn_w)
-                                local nw = D.text_mid(sec.id == "" and key or mat, nx, cy, ROW, name_col, W.small(), name_w)
-                                -- 提示:全名 + 备注 + 也写了它的其他组
-                                local tip = { mat }
-                                if d.notes[key] then tip[#tip + 1] = d.notes[key] end
-                                local others = card.is_base and {} or others_of(d, key, card.name)
-                                if #others > 0 then tip[#tip + 1] = t("alsoIn", table.concat(others, "、")) end
-                                W.tooltip(table.concat(tip, "\n"), nx, cy, nw, ROW)
-                                nx = nx + (st.notes and max(nw, 120) or nw) + 8
-                                if st.notes then
-                                    W.commit_box(st.drafts, "note:" .. key, nx, cy + 2, 160, 22, d.notes[key] or "", t("notePlaceholder"), function(text)
-                                        ctx.act({ kind = "note", slot = slot, material = mat, text = text })
-                                    end)
-                                    nx = nx + 168
-                                    local c4, lw = W.tbutton(t("locate"), nx, cy + 2)
-                                    if c4 then ctx.act({ kind = "locate", slot = slot, material = mat }) end
-                                    nx = nx + lw + 8
-                                elseif d.notes[key] and right - warn_w - nx > 24 then
-                                    nx = nx + D.text_mid(d.notes[key], nx, cy, ROW, C.muted, W.small(), right - warn_w - nx) + 6
-                                end
-                                if #ovr > 0 then
-                                    local wx = st.notes and nx or (right - warn_w)
-                                    D.text_mid("!", wx + 4, cy, ROW, C.error, W.bold())
-                                    W.tooltip(t("mayBeOverridden", table.concat(ovr, "、")) .. "\n" .. t("overlapHint"), wx, cy, 16, ROW)
-                                end
+                                if col == cols - 1 or i == #keys then cy = cy + ROW end
                             end
-                            if col == cols - 1 or i == #sec.keys then cy = cy + ROW end
                         end
                         cy = cy + 4
                     end

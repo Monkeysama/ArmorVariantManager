@@ -71,7 +71,8 @@ local function fixture(character, version)
     snap.auto = true
     snap.armorMirror = true
     snap.slots = {
-        { id = "body", label = "身体 (body / 00)", mirrored = false, materials = { { name = "Skin" }, { name = "Jacket", note = "夹克" }, { name = "Belt" } } },
+        { id = "body", label = "身体 (body / 00)", mirrored = false, materials = { { name = "Skin" }, { name = "Jacket", note = "夹克" }, { name = "Belt" },
+            { name = "Viscon 000", kind = "group" }, { name = "Viscon 001", kind = "group", note = "外套" } } },
         { id = "hair", label = "头发 (hair / 20)", mirrored = false, materials = { { name = "Hair" } } },
         { id = "armor", label = "护甲", mirrored = true, materials = { { name = "Vest" } } },
     }
@@ -85,7 +86,7 @@ local function fixture(character, version)
     } }
     snap.groups = {
         { name = "外套", active = "穿", options = {
-            { name = "穿", values = { ["body/Jacket"] = true } }, { name = "脱", values = { ["body/Jacket"] = false }, height = -2 } } },
+            { name = "穿", values = { ["body/Jacket"] = true } }, { name = "脱", values = { ["body/Jacket"] = false, ["body/Viscon 001"] = false }, height = -2 } } },
         { name = "破损", active = "", effective = "破", fromState = 1, options = {
             { name = "破", values = { ["body/Jacket"] = false } } } },
         { name = "空组", active = "", options = {} },

@@ -68,6 +68,30 @@ assert(lazy.part_on[1] == false)
 Viscon.refresh({})
 assert(lazy.part_on[1] == true)
 
+-- 哪一类被预设用到:整套造型里出现「关」才算,状态组写了就算;默认展开只展开用到的那类,都没用到时展开材质
+local function usage(full, sparse) return { Viscon.usage(full, sparse) } end
+local u = usage({ { Skin = true, ["Viscon 000"] = true } }, {})
+assert(u[1] == false and u[2] == false)
+u = usage({ { Skin = false, ["Viscon 000"] = true } }, {})
+assert(u[1] == true and u[2] == false)
+u = usage({ { Skin = true } }, { { ["Viscon 001"] = true } })
+assert(u[1] == false and u[2] == true)
+u = usage({ { Skin = false, ["Viscon 002"] = false } }, {})
+assert(u[1] == true and u[2] == true)
+local function open(mu, gu) return { Viscon.default_open(mu, gu) } end
+assert(open(true, false)[1] == true and open(true, false)[2] == false)
+assert(open(false, true)[1] == false and open(false, true)[2] == true)
+assert(open(true, true)[1] == true and open(true, true)[2] == true)
+assert(open(false, false)[1] == true and open(false, false)[2] == false)
+
+-- 分段的「全部释放」只释放自己那段;原来的 release 整个部位清空
+local Ops = require("ArmorVariantManager_Core.Games.RE4.Ops")
+local axis = { body = { materials = { Skin = false, Gone = true, ["Viscon 001"] = false } } }
+assert(Ops.bulk_slot(axis, "body", "release_names", { "Viscon 001" }, nil, false))
+assert(axis.body.materials.Skin == false and axis.body.materials.Gone == true and axis.body.materials["Viscon 001"] == nil)
+assert(Ops.bulk_slot(axis, "body", "release", { "Skin" }, nil, false))
+assert(next(axis.body.materials) == nil)
+
 -- 读不到组(不是 Mesh)时是空表
 assert(#Viscon.groups({ get_address = function() return "x" end, call = function() error("no method") end }) == 0)
 

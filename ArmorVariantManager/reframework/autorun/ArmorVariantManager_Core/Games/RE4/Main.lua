@@ -2173,6 +2173,22 @@ function Main.start(ctx)
             imgui.text(T("armor_mirror_editor_hint"))
         end
         local slots = visible_slots(source, config.armor_mirrors_body)
+        -- 一个部位里材质、组有没有被预设用到(Viscon.usage):整套造型是完整快照,状态组(v2 的轴、v3 的选项)是稀疏的
+        local function slot_usage(slot)
+            local full, sparse = {}, {}
+            local function take(dest, preset)
+                local sd = type(preset) == "table" and preset[slot]
+                if type(sd) == "table" and type(sd.materials) == "table" then dest[#dest + 1] = sd.materials end
+            end
+            for _, p in pairs((config.base and config.base.presets) or {}) do take(full, p) end
+            for _, ax in pairs(config.axes or {}) do
+                for _, p in pairs((type(ax) == "table" and ax.presets) or {}) do take(sparse, p) end
+            end
+            for _, g in ipairs(config.groups or {}) do
+                for _, p in pairs((type(g) == "table" and g.options) or {}) do take(sparse, p) end
+            end
+            return Utils.Viscon.usage(full, sparse)
+        end
         local filter_items = { T("slot_all") }
         for _, s in ipairs(slots) do table.insert(filter_items, slot_label(s)) end
         if state.slot_filter > #filter_items then state.slot_filter = 1 end
@@ -2209,46 +2225,67 @@ function Main.start(ctx)
                         touched, is_base and T("off_unit") or T("owned_unit"))
 
                     if ui_tree(summary .. "###slot_" .. id_prefix .. slot) then
-                        if is_base then
-                            -- 全开 / 全关 / 反选:改完按预设里的新值先写一次模型,让当帧就有反馈
-                            for _, op in ipairs({ { "all_on", "###on_" }, { "all_off", "###off_" }, { "invert", "###inv_" } }) do
-                                if op[1] ~= "all_on" then imgui.same_line() end
-                                if imgui.button(T(op[1]) .. op[2] .. id_prefix .. slot) then
-                                    local changed, reapply = Ops.bulk_slot(preset_data, slot, op[1], names, nil, true)
-                                    for i, n in ipairs(names) do
-                                        local v = preset_data[slot].materials[n]
-                                        pcall(Utils.visibility_set, mesh, i - 1, v)
+                        -- 材质、可见性组各一份 { i = names 里的下标, name };两类都有时分成两棵子树、
+                        -- 默认展开按预设用到哪一类(Viscon.default_open),只有一类时照原来平铺
+                        local parts = { material = {}, group = {} }
+                        for i, n in ipairs(names) do
+                            local list = Utils.Viscon.is_name(n) and parts.group or parts.material
+                            list[#list + 1] = { i = i, name = n }
+                        end
+                        -- 一段的批量按钮和逐项控件;tag 区分两段按钮的 ImGui ID,平铺时为空(ID 同原来)
+                        local function draw_part(list, tag, split)
+                            local sub = {}
+                            for _, e in ipairs(list) do sub[#sub + 1] = e.name end
+                            if is_base then
+                                -- 全开 / 全关 / 反选:改完按预设里的新值先写一次模型,让当帧就有反馈
+                                for _, op in ipairs({ { "all_on", "###on_" }, { "all_off", "###off_" }, { "invert", "###inv_" } }) do
+                                    if op[1] ~= "all_on" then imgui.same_line() end
+                                    if imgui.button(T(op[1]) .. op[2] .. tag .. id_prefix .. slot) then
+                                        local changed, reapply = Ops.bulk_slot(preset_data, slot, op[1], sub, nil, true)
+                                        for _, e in ipairs(list) do
+                                            pcall(Utils.visibility_set, mesh, e.i - 1, preset_data[slot].materials[e.name])
+                                        end
+                                        commit(kind_id, changed, reapply)
                                     end
-                                    commit(kind_id, changed, reapply)
+                                end
+                            else
+                                -- 「整块纳入」= 让这个状态接管整个部位,于是它就成了"这个部位独立选造型"。
+                                -- 这就是"按身体部位用不同造型"的实现方式 —— 不需要额外的架构层,
+                                -- 只是把逐个点三态这件事批量化了。分段时各段只纳入 / 释放自己的
+                                if imgui.button(T("claim_all") .. "###clm_" .. tag .. id_prefix .. slot) then
+                                    commit(kind_id, Ops.bulk_slot(preset_data, slot, "claim", sub,
+                                        Utils.current_material_states(mesh), false))
+                                end
+                                imgui.same_line()
+                                if imgui.button(T("release_all") .. "###rel_" .. tag .. id_prefix .. slot) then
+                                    commit(kind_id, Ops.bulk_slot(preset_data, slot, split and "release_names" or "release", sub, nil, false))
                                 end
                             end
-                        else
-                            -- 「整块纳入」= 让这个状态接管整个部位,于是它就成了"这个部位独立选造型"。
-                            -- 这就是"按身体部位用不同造型"的实现方式 —— 不需要额外的架构层,
-                            -- 只是把逐个点三态这件事批量化了。
-                            if imgui.button(T("claim_all") .. "###clm_" .. id_prefix .. slot) then
-                                commit(kind_id, Ops.bulk_slot(preset_data, slot, "claim", names,
-                                    Utils.current_material_states(mesh), false))
-                            end
-                            imgui.same_line()
-                            if imgui.button(T("release_all") .. "###rel_" .. id_prefix .. slot) then
-                                commit(kind_id, Ops.bulk_slot(preset_data, slot, "release", names, nil, false))
+                            for _, e in ipairs(list) do
+                                if is_base then
+                                    render_base_material(config, preset_data, slot, mesh, e.i, e.name, id_prefix, kind_id)
+                                else
+                                    render_axis_material(config, preset_data, slot, mesh, e.i, e.name, id_prefix, kind_id)
+                                end
                             end
                         end
-
-                        local groups_started = false
-                        for mat_index, mat_name in ipairs(names) do
-                            if not groups_started and Utils.Viscon.is_name(mat_name) then
-                                groups_started = true
-                                imgui.separator()
-                                imgui.text(T("groups_heading"))
+                        if #parts.material > 0 and #parts.group > 0 then
+                            local open_m, open_g = Utils.Viscon.default_open(slot_usage(slot))
+                            -- ImGuiCond_Once:每次加载脚本按规则定一次,之后随手动展开 / 收起
+                            pcall(imgui.set_next_item_open, open_m, 2)
+                            if ui_tree(T("materials_heading") .. " (" .. #parts.material .. ")###pm_" .. id_prefix .. slot) then
+                                draw_part(parts.material, "m", true)
+                                ui_tree_pop()
+                            end
+                            pcall(imgui.set_next_item_open, open_g, 2)
+                            if ui_tree(T("groups_heading") .. " (" .. #parts.group .. ")###pg_" .. id_prefix .. slot) then
                                 imgui.text(T("groups_hint"))
+                                draw_part(parts.group, "g", true)
+                                ui_tree_pop()
                             end
-                            if is_base then
-                                render_base_material(config, preset_data, slot, mesh, mat_index, mat_name, id_prefix, kind_id)
-                            else
-                                render_axis_material(config, preset_data, slot, mesh, mat_index, mat_name, id_prefix, kind_id)
-                            end
+                        else
+                            if #parts.group > 0 then imgui.text(T("groups_hint")) end
+                            draw_part(#parts.group > 0 and parts.group or parts.material, "", false)
                         end
                         ui_tree_pop()
                     end

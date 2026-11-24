@@ -10,6 +10,27 @@ local Viscon = {}
 function Viscon.name(id) return string.format("Viscon %03d", id) end
 function Viscon.is_name(name) return type(name) == "string" and name:match("^Viscon %d%d%d$") ~= nil end
 
+-- 一个部位里材质、组两类开关有没有被预设用到,界面据此决定默认展开哪一段。
+--   full   整套造型的 { 名字 → 布尔 } 列表:出现「关」才算用到(抓取时全部记成开,全开等于没动过)
+--   sparse 状态组选项的 { 名字 → 布尔 } 列表:写了就算用到(只存刻意改过的开关)
+-- 返回 materials_used, groups_used
+function Viscon.usage(full, sparse)
+    local used = { material = false, group = false }
+    local function mark(name) used[Viscon.is_name(name) and "group" or "material"] = true end
+    for _, values in ipairs(full or {}) do
+        for name, v in pairs(values) do if v == false then mark(name) end end
+    end
+    for _, values in ipairs(sparse or {}) do
+        for name, v in pairs(values) do if type(v) == "boolean" then mark(name) end end
+    end
+    return used.material, used.group
+end
+
+-- 默认展开:只有一类用到就只展开那一类;都没用到时展开材质(原来就是按材质切换);都用到就都展开
+function Viscon.default_open(materials_used, groups_used)
+    return materials_used or not groups_used, groups_used
+end
+
 -- 网格实际用到的组号,升序。getPartsEnableIndices 会重复、也可能超出组数,两样都滤掉。
 -- 读不到(不是 Mesh、还没加载好)时返回空表
 local function read_parts(mesh)
