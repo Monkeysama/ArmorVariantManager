@@ -18,6 +18,11 @@ function threshold(id: string, label: string, min: number): ConditionDefinition 
     rules: [{ index: 1, label, threshold: 50, targets: [{ index: 1, group: '上身', preset: '无外套' }] }, { index: 2, label, threshold: 25, targets: [] }] };
 }
 function wildsConditions(): Conditions {
+  const dissolveFields: ConditionField[] = [
+    { key: 'dissolve_enabled', label: '启用溶解过渡', kind: 'boolean', default: false },
+    { key: 'dissolve_hide_time', label: '进入时长（秒）', kind: 'number', min: 0, step: .1, sliderMax: 30, default: .5, enabledBy: 'dissolve_enabled' },
+    { key: 'dissolve_show_time', label: '退出时长（秒）', kind: 'number', min: 0, step: .1, sliderMax: 30, default: .5, enabledBy: 'dissolve_enabled' },
+  ];
   const damageFields: ConditionField[] = [
     { key: 'mode', label: '动作模式', kind: 'select', default: 1, options: [{ value: 1, label: '普通' }, { value: 2, label: '循环' }, { value: 3, label: '链式' }] },
     { key: 'condition_delay', label: '条件延迟（秒）', kind: 'number', min: 0, step: .1, sliderMax: 60, default: 0 },
@@ -41,7 +46,7 @@ function wildsConditions(): Conditions {
     fixed('greatsword_level', '大剑蓄力等级', 'level', [0, 1, 2, 3]),
     fixed('bow_level', '弓蓄力等级', 'level', [1, 2, 3, 4]),
     fixed('hammer_level', '大锤蓄力等级', 'level', [0, 1, 2, 3]),
-  ].map((definition, index) => ({ ...definition, priority: index + 1 })) };
+  ].map((definition, index) => ({ ...definition, priority: index + 1, fields: [...definition.fields, ...dissolveFields] })) };
 }
 function riseConditions(): Conditions {
   return { enabled: true, canEnable: true, parallel: false, selected: 'weapon', targets: structuredClone(targetGroups), definitions: [
@@ -192,7 +197,7 @@ function applyCondition(request: ConditionAction) {
   }
   if (request.op === 'rule_delete') { definition.rules.splice(request.rule! - 1, 1); definition.rules.forEach((rule, index) => { rule.index = index + 1; }); return; }
   const rule = definition.rules[request.rule! - 1];
-  if (request.op === 'rule_set') { rule[request.field!] = request.value as string | number; return; }
+  if (request.op === 'rule_set') { rule[request.field!] = request.value; return; }
   if (request.op === 'chain_add') { rule.chain_nodes!.push({ index: rule.chain_nodes!.length + 1, duration: 1, targets: [] }); return; }
   if (request.op === 'chain_delete') { rule.chain_nodes!.splice(request.node! - 1, 1); rule.chain_nodes!.forEach((node, index) => { node.index = index + 1; }); return; }
   const node = request.node ? rule.chain_nodes![request.node - 1] : undefined;

@@ -5,12 +5,12 @@ export interface ConditionTarget { index: number; group: string; preset: string 
 export interface ConditionNode { index: number; duration: number; targets: ConditionTarget[] }
 export interface ConditionRule {
   index: number; label: string; targets: ConditionTarget[]; chain_nodes?: ConditionNode[];
-  [key: string]: number | string | ConditionTarget[] | ConditionNode[] | undefined;
+  [key: string]: boolean | number | string | ConditionTarget[] | ConditionNode[] | undefined;
 }
-export interface ConditionField {
-  key: string; label: string; kind: 'number' | 'select'; default: number | string;
+export type ConditionField = {
+  key: string; label: string; enabledBy?: string;
   min?: number; max?: number; step?: number; sliderMax?: number; modes?: number[]; options?: { value: number | string; label: string }[];
-}
+} & ({ kind: 'boolean'; default: boolean } | { kind: 'number' | 'select'; default: number | string });
 export interface ConditionDefinition {
   id: string; label: string; enabled: boolean; priority: number; fields: ConditionField[];
   canAdd: boolean; canRemove: boolean; rules: ConditionRule[]; stateLabel?: string; warning?: string;

@@ -20,13 +20,16 @@ const choices = computed(() => props.conditions?.definitions.map(item => ({ ...i
 const ruleIndex = shallowRef(1);
 const deletingRule = shallowRef(false);
 const ruleRevision = shallowRef(0);
+const toggleRevision = shallowRef(0);
 const nodeKeys = shallowRef<Record<number, number>>({});
 let nodeRevision = 0;
 const hpTest = shallowRef('50');
 const validHpTest = computed(() => hpTest.value.trim() && Number.isFinite(Number(hpTest.value)) && Number(hpTest.value) >= 0 && Number(hpTest.value) <= 100);
 const definition = computed(() => choices.value.find(item => item.id === selectedId.value));
 const rule = computed(() => definition.value?.rules.find(item => item.index === ruleIndex.value));
-const fields = computed(() => definition.value?.fields.filter(field => !field.modes || field.modes.includes(Number(rule.value?.mode))) ?? []);
+const fields = computed(() => definition.value?.fields.filter(field =>
+  (!field.modes || field.modes.includes(Number(rule.value?.mode)))
+  && (!field.enabledBy || rule.value?.[field.enabledBy] === true)) ?? []);
 const chained = computed(() => Number(rule.value?.mode) === 3 && rule.value?.chain_nodes !== undefined);
 watch(() => props.conditions, conditions => {
   if (!conditions) return;
@@ -40,6 +43,10 @@ watch(ruleIndex, () => { deletingRule.value = false; });
 function action(op: ConditionAction['op'], extra: Partial<ConditionAction> = {}) {
   return props.perform({ kind: 'condition', op, condition: selectedId.value, rule: ruleIndex.value, ...extra });
 }
+async function saveToggle(field: string, value: boolean) {
+  // The native checkbox has already toggled even if the saved value stays the same.
+  if (!await action('rule_set', { field, value })) toggleRevision.value++;
+}
 async function selectCondition(id: string) {
   if (!props.conditions?.parallel && !await action('select', { value: id })) return;
   selectedId.value = id;
@@ -48,7 +55,7 @@ async function selectCondition(id: string) {
     if (pickerToggle.value?.getClientRects().length) pickerToggle.value.focus({ preventScroll: true });
   }
 }
-function fieldValue(field: ConditionField) {
+function fieldValue(field: Exclude<ConditionField, { kind: 'boolean' }>) {
   const value = rule.value?.[field.key];
   return typeof value === 'string' || typeof value === 'number' ? value : field.default;
 }
@@ -107,7 +114,9 @@ async function deleteNode(index: number) {
         <div v-if="rule" :key="definition.id + '-' + rule.index + '-' + ruleRevision" class="condition-rule">
           <div v-if="fields.length" class="condition-fields">
             <template v-for="field in fields" :key="field.key">
-              <ConditionNumber v-if="field.kind === 'number'" :id="'rule-' + definition.id + '-' + rule.index + '-' + field.key" :value="Number(fieldValue(field))" :label="field.label" :min="field.min" :max="field.max" :step="field.step" :slider-max="field.sliderMax" :disabled="busy" :save="value => action('rule_set', { field: field.key, value })" :t="t" />
+              <ElCheckbox v-if="field.kind === 'boolean'" :key="toggleRevision" class="condition-field-toggle"
+                :model-value="(rule[field.key] ?? field.default) === true" :disabled="busy" @change="value => saveToggle(field.key, !!value)">{{ field.label }}</ElCheckbox>
+              <ConditionNumber v-else-if="field.kind === 'number'" :id="'rule-' + definition.id + '-' + rule.index + '-' + field.key" :value="Number(fieldValue(field))" :label="field.label" :min="field.min" :max="field.max" :step="field.step" :slider-max="field.sliderMax" :disabled="busy" :save="value => action('rule_set', { field: field.key, value })" :t="t" />
               <ConditionSelect v-else :value="fieldValue(field)" :label="field.label" :options="field.options ?? []" :disabled="busy" :save="value => action('rule_set', { field: field.key, value })" :t="t" />
             </template>
           </div>

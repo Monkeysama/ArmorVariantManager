@@ -1,3 +1,5 @@
+local Model = require("ArmorVariantManager_Core.Games.Wilds.ConditionModel")
+local RuleEditor = require("ArmorVariantManager_Core.UI.Reff.Conditions")
 local Conditions = {}
 
 -- 原生条件面板；游戏状态和编辑操作由应用层提供。
@@ -9,7 +11,11 @@ function Conditions.new(deps)
     local can_use_transform = deps.can_transform
     local safe_get_game_object = deps.game_object
     local test_hp_input = "100"
-    return function(current_config, body_id, character)
+    local errors = setmetatable({}, {__mode="k"})
+    local editor = RuleEditor.new({model=Model, save=function(context)
+        return save_current_config_to_file(context.id, true)
+    end})
+    return function(current_config, body_id, character, weapon)
         if not can_use_transform(character) then return end
         -- 模块状态提示（选中条件或启用了该条件时才提示）
         local function should_show_warning(type_key)
@@ -141,6 +147,34 @@ function Conditions.new(deps)
         end
         imgui.separator()
 
+        local function draw_dissolve(rule, condition, index)
+            if weapon then return end
+            for _, field in ipairs(Model.dissolve_fields) do
+                if not field.enabled_by or rule[field.enabled_by] == true then
+                    local label = T(field.label) .. "##" .. field.key
+                    local value = field.read(rule[field.key])
+                    local changed, input
+                    if field.kind == "boolean" then
+                        changed, input = imgui.checkbox(label, value)
+                    else
+                        imgui.set_next_item_width(120)
+                        changed, input = imgui.input_text(label, tostring(value))
+                        input = tonumber(input)
+                    end
+                    if changed then
+                        if field.kind == "number" and (not input or input < field.min or input >= math.huge) then
+                            errors[rule] = T("rule_dissolve_invalid_time")
+                        else
+                            local saved, reason = editor.action({op="rule_set", condition=condition,
+                                rule=index, field=field.key, value=input}, {id=body_id, config=current_config})
+                            errors[rule] = not saved and tostring(reason) or nil
+                        end
+                    end
+                end
+            end
+            if errors[rule] then imgui.text_colored(errors[rule], 0xFF0000FF) end
+        end
+
         -- 辅助函数：显示某个规则类型的配置
         local function show_rule_list(rules, rule_type, get_display_name_func)
             if not rules then return end
@@ -151,6 +185,7 @@ function Conditions.new(deps)
                 imgui.text(display_name)
                 imgui.indent(20)
                 if not rule.targets then rule.targets = {} end
+                draw_dissolve(rule, rule_type == "dual" and "dual_blades" or rule_type, i)
                 draw_targets_ui(rule.targets, rule_type, i)
                 if imgui.button("+ " .. T("add_condition") .. "##add_" .. rule_type .. "_" .. i) then
                     table.insert(rule.targets, { group = "", preset = "" })
@@ -215,6 +250,7 @@ function Conditions.new(deps)
                 -- 缩进显示 Conditions
                 imgui.indent(20)
                 if not rule.targets then rule.targets = {} end
+                draw_dissolve(rule, "hp", i)
                 draw_targets_ui(rule.targets, "hp", i)
                 if imgui.button("+ " .. T("add_condition") .. "##hp_add_" .. i) then
                     table.insert(rule.targets, { group = "", preset = "" })
@@ -291,6 +327,8 @@ function Conditions.new(deps)
             local c_m, v_m = imgui.combo(T("action_mode") .. "##dmg", dmg_rule.mode, modes)
             if c_m then dmg_rule.mode = v_m; save_current_config_to_file(body_id) end
             imgui.separator()
+
+            draw_dissolve(dmg_rule, "damage", 1)
 
             if dmg_rule.mode == 1 or dmg_rule.mode == 2 then
                 imgui.set_next_item_width(120)

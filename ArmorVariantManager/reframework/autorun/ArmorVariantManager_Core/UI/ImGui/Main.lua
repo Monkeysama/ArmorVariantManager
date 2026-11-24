@@ -135,7 +135,7 @@ function Main.new(app)
                         -- ========== 变身管理区域 ==========
                         if imgui.tree_node(T("transform_manager") .. " (" .. body_id .. ")") then
                             local inner_status, inner_err = pcall(function()
-                                draw_game_conditions(workspace.config, body_id, character)
+                                draw_game_conditions(workspace.config, body_id, character, state.weapon)
                             end)
                             if not inner_status then
                                 imgui.text_colored("UI Error: " .. tostring(inner_err), 0xFFFF0000)

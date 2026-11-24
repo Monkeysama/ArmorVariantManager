@@ -1,3 +1,4 @@
+local Dissolve = require("ArmorVariantManager_Core.Games.Wilds.Dissolve")
 local Model = { default_selected = "hp", default_target_preset = false }
 
 local function fixed(id, key, values, labels)
@@ -32,5 +33,24 @@ Model.definitions = {
     fixed("bow_level", "level", { 1, 2, 3, 4 }),
     fixed("hammer_level", "level", { 0, 1, 2, 3 }),
 }
+
+local function read_duration(value)
+    return math.max(0, tonumber(value) or Dissolve.DEFAULT_RULE_TIME)
+end
+
+Model.dissolve_fields = {
+    {key="dissolve_enabled", label="rule_dissolve_enabled", kind="boolean", default=false,
+        read=function(value) return value == true end},
+    {key="dissolve_hide_time", label="rule_dissolve_enter_time", kind="number", default=Dissolve.DEFAULT_RULE_TIME,
+        min=0, step=0.1, slider_max=30, read=read_duration, enabled_by="dissolve_enabled"},
+    {key="dissolve_show_time", label="rule_dissolve_exit_time", kind="number", default=Dissolve.DEFAULT_RULE_TIME,
+        min=0, step=0.1, slider_max=30, read=read_duration, enabled_by="dissolve_enabled"},
+}
+for _, field in ipairs(Model.dissolve_fields) do
+    field.armor_only, field.refresh = true, false
+end
+for _, definition in ipairs(Model.definitions) do
+    for _, field in ipairs(Model.dissolve_fields) do definition.fields[#definition.fields + 1] = field end
+end
 
 return Model

@@ -302,10 +302,10 @@ test("Wilds hit modes and chain nodes cover original fields without normalizatio
     local f = fixture("Wilds")
     local before = S.copy(f.config)
     local row = row_for(f.api.snapshot(f.context), "damage")
-    assert(#row.fields == 6 and #row.rules == 1 and row.rules[1].duration == 5)
+    assert(#row.fields == 9 and #row.rules == 1 and row.rules[1].duration == 5)
     assert(row.rules[1].chain_loop_count == 1 and row.rules[1].chain_nodes[1].duration == 1)
     for _, field in ipairs(row.fields) do
-        if field.kind == "number" then
+        if field.kind == "number" and not field.enabledBy then
             assert(field.min == 0 and field.max == nil)
             local count = field.key == "loop_count" or field.key == "chain_loop_count"
             assert(field.step == (count and 1 or 0.1) and field.sliderMax == (count and 100 or 60))
@@ -378,6 +378,33 @@ test("runtime labels preserve false, numeric/string enums and HP tests never sav
     assert(not f.api.action({ op = "test_hp", value = "invalid" }, f.context))
     assert(not rise.api.action({ op = "test_hp", value = 50 }, rise.context))
     assert(f.saved == 0 and f.refreshed == 0)
+end)
+
+test("Wilds armor dissolve settings are per-rule and preserve missing fields and unknown data", function()
+    local f = fixture("Wilds")
+    f.config.transform_rules = {{threshold=50, targets={}, extra={keep=true}}, {threshold=25, targets={}}}
+    local rule = f.config.transform_rules[1]
+    local function snapshot() return row_for(f.api.snapshot(f.context), "hp").rules end
+    assert(snapshot()[1].dissolve_enabled == false and snapshot()[1].dissolve_hide_time == 0.5
+        and snapshot()[1].dissolve_show_time == 0.5 and rule.dissolve_enabled == nil)
+    f.act("rule_set", {condition="hp", rule=1, field="dissolve_enabled", value=true})
+    f.act("rule_set", {condition="hp", rule=1, field="dissolve_hide_time", value=1.25})
+    f.act("rule_set", {condition="hp", rule=1, field="dissolve_show_time", value=0})
+    assert(rule.dissolve_enabled and rule.dissolve_hide_time == 1.25 and rule.dissolve_show_time == 0 and rule.extra.keep)
+    assert(snapshot()[2].dissolve_enabled == false and f.config.transform_rules[2].dissolve_enabled == nil)
+    assert(f.saved == 3 and f.refreshed == 0)
+    f.save_ok = false
+    local request = {op="rule_set", condition="hp", rule=1, field="dissolve_enabled", value=false}
+    local ok, reason = f.api.action(request, f.context)
+    assert(not ok and reason == "disk unavailable" and rule.dissolve_enabled == true and f.refreshed == 0)
+    request.value = "false"
+    assert(not f.api.action(request, f.context) and f.saved == 4)
+    f.context.weapon = true
+    request.value = false
+    assert(snapshot()[1].dissolve_enabled == nil and not f.api.action(request, f.context))
+    local rise = fixture("Rise")
+    assert(not rise.api.action({op="rule_set", condition="weapon", rule=1,
+        field="dissolve_enabled", value=true}, rise.context))
 end)
 
 assert(#failures == 0, table.concat(failures, "\n"))

@@ -385,6 +385,19 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
             current=send("condition",{op="enabled",value=true})
             assert(current.conditions.enabled and data["ArmorVariantManager/armor.json"].enable_transform)
         else
+            assert(weapon_rule(current).dissolve_enabled == false and weapon_rule(current).dissolve_hide_time == 0.5)
+            local writes_before, applied_before = #writes, #applied
+            for field, value in pairs({dissolve_enabled=true, dissolve_hide_time=1.25, dissolve_show_time=0}) do
+                current=send("condition",{op="rule_set",condition="weapon",rule=1,field=field,value=value})
+            end
+            local edited = data["ArmorVariantManager/armor.json"].weapon_transform_rules[1]
+            assert(edited.dissolve_enabled and edited.dissolve_hide_time==1.25 and edited.dissolve_show_time==0)
+            local config_writes = 0
+            for index = writes_before + 1, #writes do
+                if writes[index]=="ArmorVariantManager/armor.json" then config_writes=config_writes+1 end
+            end
+            assert(config_writes==3 and #applied==applied_before and edited.targets[1].preset=="Show")
+            assert(weapon_rule(current).dissolve_show_time==0)
             assert(not pcall(send,"condition",{op="enabled",value=false}),"Wilds has no added total switch")
             assert(not pcall(send,"condition",{op="test_hp",value=50}),"menu actor cannot receive live HP writes")
         end

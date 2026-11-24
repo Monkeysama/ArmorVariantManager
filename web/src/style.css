@@ -248,6 +248,7 @@ body { background: transparent; }
 .rule-tabs button:disabled { opacity: .6; }
 .rule-toolbar > .el-button { flex: 0 0 auto; }
 .condition-fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px 14px; }
+.condition-fields > .condition-field-toggle { grid-column: 1 / -1; }
 .condition-number, .condition-select { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
 .number-input-line { display: flex; align-items: flex-start; gap: 5px; min-width: 0; }
 .number-input-line > .el-input, .number-input-line > .el-select { min-width: 0; flex: 1; }

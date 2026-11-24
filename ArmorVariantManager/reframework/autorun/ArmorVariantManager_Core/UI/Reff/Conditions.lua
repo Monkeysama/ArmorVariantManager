@@ -23,7 +23,9 @@ end
 
 local function new_rule(definition)
     local rule = { targets = {} }
-    for _, field in ipairs(definition.fields) do rule[field.key] = field.default end
+    for _, field in ipairs(definition.fields) do
+        if not field.armor_only then rule[field.key] = field.default end
+    end
     if definition.damage then rule.chain_nodes = { { duration = 1, targets = {} } } end
     return rule
 end
@@ -67,6 +69,10 @@ local function indexed(list, index, message)
     return list[index]
 end
 
+local function allowed(field, context)
+    return not field.armor_only or not context.weapon
+end
+
 -- Web 只编辑明确的旧字段；保存失败按修改记录原位撤销，保留调用方持有的表引用。
 function Conditions.new(deps)
     local model, T = deps.model, deps.translate
@@ -95,19 +101,24 @@ function Conditions.new(deps)
                 fields = {}, rules = {} }
             if setting.enabled == nil then row.enabled = definition.id == model.default_selected end
             if deps.state then row.stateLabel, row.warning = deps.state(context, definition.id) end
+            local fields = {}
             for _, field in ipairs(definition.fields) do
-                local item = { key = field.key, label = T(field.label), kind = field.kind,
-                    min = field.min, max = field.max, step = field.step, sliderMax = field.slider_max, default = field.default }
-                if field.options then
-                    item.options = {}
-                    for _, option in ipairs(field.options) do
-                        item.options[#item.options + 1] = { value = option.value, label = T(option.label) }
+                if allowed(field, context) then
+                    local item = { key = field.key, label = T(field.label), kind = field.kind,
+                        min = field.min, max = field.max, step = field.step, sliderMax = field.slider_max, default = field.default,
+                        enabledBy = field.enabled_by }
+                    if field.options then
+                        item.options = {}
+                        for _, option in ipairs(field.options) do
+                            item.options[#item.options + 1] = { value = option.value, label = T(option.label) }
+                        end
                     end
+                    if field.modes then
+                        item.modes = {}; for _, mode in ipairs(field.modes) do item.modes[#item.modes + 1] = mode end
+                    end
+                    row.fields[#row.fields + 1] = item
+                    fields[#fields + 1] = field
                 end
-                if field.modes then
-                    item.modes = {}; for _, mode in ipairs(field.modes) do item.modes[#item.modes + 1] = mode end
-                end
-                row.fields[#row.fields + 1] = item
             end
             for index, rule in ipairs(config[definition.field] or default_rules(definition)) do
                 local item = { index = index, label = row.label, targets = target_snapshot(rule.targets) }
@@ -115,8 +126,11 @@ function Conditions.new(deps)
                     item[definition.state_key] = rule[definition.state_key]
                     item.label = Conditions.format_state(model, definition.id, rule[definition.state_key], T) or row.label
                 end
-                for _, field in ipairs(definition.fields) do
-                    item[field.key] = rule[field.key]; if item[field.key] == nil then item[field.key] = field.default end
+                for _, field in ipairs(fields) do
+                    local value = rule[field.key]
+                    if field.read then value = field.read(value) end
+                    if value == nil then value = field.default end
+                    item[field.key] = value
                 end
                 if definition.damage then
                     item.chain_nodes = {}
@@ -142,7 +156,7 @@ function Conditions.new(deps)
             if not deps.test_damage then return false, "当前游戏不支持受击测试" end
             return deps.test_damage(context)
         end
-        local config, undo = context.config, {}
+        local config, undo, refresh = context.config, {}, true
         local function set(owner, key, value)
             if owner[key] == value then return end
             local previous = owner[key]
@@ -197,17 +211,21 @@ function Conditions.new(deps)
             if op == "rule_set" then
                 local field
                 for _, item in ipairs(definition.fields) do if item.key == request.field then field = item end end
-                assert(field, "条件规则字段不可编辑")
+                assert(field and allowed(field, context), "条件规则字段不可编辑")
                 if field.kind == "number" then
                     number(value)
                     if field.min then value = math.max(field.min, value) end
                     if field.max then value = math.min(field.max, value) end
+                elseif field.kind == "boolean" then
+                    assert(type(value) == "boolean", "条件开关无效")
                 else
                     local valid = false
                     for _, option in ipairs(field.options) do if option.value == value then valid = true end end
                     assert(valid, "条件选项无效")
                 end
                 set(rule, field.key, value)
+                -- 溶解参数在下一次规则切换读取，保存时无需重算当前外观。
+                refresh = field.refresh ~= false
                 return
             end
             local owner = rule
@@ -258,7 +276,7 @@ function Conditions.new(deps)
             for index = #undo, 1, -1 do undo[index]() end
             return false, reason or "条件配置保存失败"
         end
-        if deps.refresh then deps.refresh(context) end
+        if refresh and deps.refresh then deps.refresh(context) end
         return true
     end
 

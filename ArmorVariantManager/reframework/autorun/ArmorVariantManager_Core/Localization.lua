@@ -1,5 +1,9 @@
 local Localization = {
     ["en"] = {
+        ["rule_dissolve_enabled"] = "Enable dissolve",
+        ["rule_dissolve_enter_time"] = "Enter duration (s)",
+        ["rule_dissolve_exit_time"] = "Exit duration (s)",
+        ["rule_dissolve_invalid_time"] = "Enter a valid duration of 0 seconds or more.",
         ["preview_title"] = "Full-body preview",
         ["ui_dissolve_title"] = "UI Switch Dissolve",
         ["ui_dissolve_enabled"] = "Enable",
@@ -309,6 +313,10 @@ local Localization = {
         ["d2d_default_tag"] = "Default"
     },
     ["zh"] = {
+        ["rule_dissolve_enabled"] = "启用溶解过渡",
+        ["rule_dissolve_enter_time"] = "进入时长（秒）",
+        ["rule_dissolve_exit_time"] = "退出时长（秒）",
+        ["rule_dissolve_invalid_time"] = "请输入大于或等于 0 秒的有效时长。",
         ["preview_title"] = "全身预览",
         ["ui_dissolve_title"] = "界面切换溶解过渡",
         ["ui_dissolve_enabled"] = "启用",
