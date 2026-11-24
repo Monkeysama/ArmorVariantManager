@@ -2054,8 +2054,14 @@ function Main.start(ctx)
         return who or kid or "?"
     end
     local function slot_label(slot)
-        local id = is_re9 and slot:match("^mesh_(%d%d)$")
-        if id then return (global_config.language == "zh" and "网格 " or "Mesh ") .. id end
+        if is_re9 then
+            -- RE9 的部位名按网格文件名里的编号(Localization 的 re9_slot_* / re9_part_*);表里没有的编号显示「网格 YY」
+            local id = slot:match("^mesh_(%d%d)$")
+            local rkey = id and ("re9_part_" .. id) or ("re9_slot_" .. slot)
+            local rv = T(rkey)
+            if rv ~= rkey then return rv end
+            if id then return (global_config.language == "zh" and "网格 " or "Mesh ") .. id end
+        end
         local key = "slot_" .. slot
         local v = T(key)
         return (v ~= key) and v or slot
