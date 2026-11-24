@@ -80,10 +80,17 @@ local function derive(snap)
     d.usage = {}
     for _, s in ipairs(d.slots) do
         local mu, gu = Viscon.usage(full[s.id], sparse[s.id])
-        -- both:部位里两类都有才谈得上收起哪一段;只有一类时那一段总是展开
-        local has = {}
-        for _, m in ipairs(s.materials) do has[m.kind == "group" and "group" or "material"] = true end
-        d.usage[s.id] = { material = mu, group = gu, both = has.material == true and has.group == true }
+        -- show_groups:只有一个组、又有材质时,组只是整件开关,材质完全能代替,不显示组段;
+        -- 但预设已经用到这个组(比如 RE9 移植版用 Viscon 000 藏整件)时照常显示,免得改不回来。
+        -- both:两段都显示才谈得上收起哪一段;只有一段时它总是展开
+        local n = { material = 0, group = 0 }
+        for _, m in ipairs(s.materials) do
+            local k = m.kind == "group" and "group" or "material"
+            n[k] = n[k] + 1
+        end
+        local show_groups = n.group > 1 or (n.group == 1 and (n.material == 0 or gu))
+        d.usage[s.id] = { material = mu, group = gu, show_groups = show_groups,
+            both = n.material > 0 and show_groups }
     end
     -- 组与组之间取值不同的重叠:below = 被下面的组覆盖,above = 覆盖上面的组
     d.overlaps = {}
@@ -148,7 +155,7 @@ local function sections(d, t, card, values)
             list[#list + 1] = U.key_of(s.id, m.name)
         end
         if #keys > 0 then out[#out + 1] = { id = s.id, kind = "material", label = U.short_slot(s.label), keys = keys } end
-        if #groups > 0 then
+        if #groups > 0 and (d.usage[s.id] or {}).show_groups then
             out[#out + 1] = { id = s.id, kind = "group", label = U.short_slot(s.label) .. " · " .. t("meshGroups"), keys = groups,
                 hint = t("meshGroupsHint") }
         end

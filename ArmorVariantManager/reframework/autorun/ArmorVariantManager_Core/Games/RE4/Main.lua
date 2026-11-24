@@ -2273,8 +2273,11 @@ function Main.start(ctx)
                                 end
                             end
                         end
+                        -- 只有一个组、又有材质时不列组(材质能代替这个整件开关),预设已经用到它时照常列出
+                        local used_m, used_g = slot_usage(slot)
+                        if #parts.group == 1 and #parts.material > 0 and not used_g then parts.group = {} end
                         if #parts.material > 0 and #parts.group > 0 then
-                            local open_m, open_g = Utils.Viscon.default_open(slot_usage(slot))
+                            local open_m, open_g = Utils.Viscon.default_open(used_m, used_g)
                             -- ImGuiCond_Once:每次加载脚本按规则定一次,之后随手动展开 / 收起
                             pcall(imgui.set_next_item_open, open_m, 2)
                             if ui_tree(T("materials_heading") .. " (" .. #parts.material .. ")###pm_" .. id_prefix .. slot) then
