@@ -96,6 +96,36 @@ function Application.new(runtime, appearance, session, rules, is_weapon_id, diss
         return true
     end
 
+    -- 调色在材质开关写入之后应用：按处理器本帧处理过的槽位，读取同一份角色上下文。
+    app.palette = require("ArmorVariantManager_Core.Games.Wilds.Palette").new({meshes=runtime.meshes})
+    local function slot_context(character, slot)
+        local id, objects
+        if slot == "armor" then id = equipment.body_id(character)
+        else id, objects = equipment.weapon_id(character) end
+        local config = id and app.load(id)
+        local context = config and appearance.state:peek(tostring(character), slot, id, config)
+        return context, config, objects
+    end
+    local process = app.process
+    app.process = function(character)
+        local seen = process(character)
+        for slot in pairs(seen) do
+            local context, config, objects = slot_context(character, slot)
+            if context then app.palette.apply(character, slot, objects, context, config) end
+        end
+        return seen
+    end
+
+    -- 界面读取本地猎人当前装备某个部位、某个材质的参数。
+    function app.material_params(part, material, weapon)
+        local character = runtime.actors.local_player()
+        if not character then return {} end
+        local slot = weapon and "weapon" or "armor"
+        local context, _, objects = slot_context(character, slot)
+        local part_data = context and context.overrides and context.overrides[part]
+        return app.palette.inspect(character, slot, objects, part, material, part_data)
+    end
+
     return app
 end
 

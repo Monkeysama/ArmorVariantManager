@@ -123,6 +123,17 @@ Copy-Item release/build/portrait/Release/ArmorVariantManager_Portrait.dll ArmorV
 
 原生测试检查桥接加载顺序、双游戏隔离、姿态、公开独立预览及 REFF 借用命令的像素/裁剪/资源租约。只有通过相关检查的 DLL 才更新到运行源码目录；同时维护 `source/THIRD_PARTY_LICENSES.txt`。
 
+## 调色
+
+字段格式、合并顺序与其他插件同时使用时的行为见 [docs/PALETTE.md](docs/PALETTE.md)。
+
+- `Presets/Palette.lua`：`palette` 字段的读取、设置（`set`）、覆盖保存沿用（`carry`）与按合成顺序合并（`resolve`），不依赖游戏。
+- `Runtime/Palette.lua`：写入器，只用组件方法读写 float / float4 参数。`apply(角色键, 网格, 部位覆盖)` 每帧比对后写入并记录原值；`begin` / `finish` 包住一个角色本帧的应用，丢弃不再出现的网格；`inspect` 给界面列参数；`reset` 在切场景时调用。
+- 《荒野》在 `Games/Wilds/Palette.lua` 按部位查网格，`Games/Wilds/Application.lua` 包装处理器，在材质开关写入后应用，并提供 `material_params`。
+- 界面：快照字段 `palette`、操作 `material-param`、按需读取的 `monkeysama.avm.material_params`（`UI/Reff/Palette.lua`）。
+
+《崛起》接入时：后端提供 `palette`（含 `reset`）与 `material_params(part, material, weapon)`，在材质应用之后对每个角色、槽位调用写入器；外观上下文需要同时保存 `groups` 与 `targets`。
+
 ## 生成发布包
 
 `dev` 与 `main` 都保存完整源码，不再将去注释产物反向覆盖到 `main`。发布脚本不会替你构建 DLL 或网页；原生或网页变化时，先提交对应的已构建产物。

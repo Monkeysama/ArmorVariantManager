@@ -26,7 +26,13 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
     local material_count, body_id_reads, part_views = 2, 0, 0
     local td = {get_method=function() return nil end}
     local mesh = {get_type_definition=function() return td end}
-    function mesh:call(method, offset, value)
+    local rough = {[0]=0.5, [1]=0.5}
+    function mesh:call(method, offset, value, extra)
+        if method=="getMaterialVariableNum" then return 1 end
+        if method=="getMaterialVariableName" then return "Rough" end
+        if method=="getMaterialVariableType" then return 1 end
+        if method=="getMaterialFloat" then return rough[offset] end
+        if method=="setMaterialFloat" then rough[offset]=extra end
         if method=="get_Enabled" then return enabled end
         if method=="set_Enabled" then enabled=offset end
         if method=="get_MaterialNum" then return material_count end
@@ -663,6 +669,26 @@ for _, scenario in ipairs({{"mhwilds"}, {"mhrise"}, {"unknown"}, {"mhwilds", tru
                 send("preset",{name="Cloth off"})
                 assert(not visible and metal_visible,"hiding the ordinary group retains the global material")
             end
+        end
+        if game=="mhwilds" then
+            -- 调色经真实入口：参数覆盖写入 JSON，选中预设后每帧写到网格，取消后还原。
+            send("group",{name=""})
+            send("save",{name="Tinted"})
+            current=send("material-param",{preset="Tinted",group="",part=0,material="cloth",param="Rough",value=0.75})
+            assert(current.palette.editable and current.palette.presets.Tinted["0"].cloth.Rough==0.75)
+            assert(data["ArmorVariantManager/armor.json"].presets.Tinted.palette["0"].cloth.Rough==0.75)
+            send("preset",{name="Tinted"})
+            frames[1]()
+            assert(rough[0]==0.75 and rough[1]==0.5,"the active preset's override reaches the mesh")
+            local list=handlers["monkeysama.avm.material_params"]({bodyId="armor",part=0,material="cloth"})
+            S.equal(list.params,{{name="Rough",type="float",value=0.75,original=0.5}})
+            send("material-param",{preset="Tinted",group="",part=0,material="cloth",param="Rough"})
+            frames[1]()
+            assert(rough[0]==0.5,"a released override restores the original")
+            assert(data["ArmorVariantManager/armor.json"].presets.Tinted.palette==nil)
+        else
+            assert(snapshot().palette==nil and not pcall(send,"material-param",
+                {preset="Show",group="",part=0,material="cloth",param="Rough",value=1}),"Rise has no palette yet")
         end
         local armor_after_material_tests=S.copy(data["ArmorVariantManager/armor.json"])
         send("mode",{weapon=true})

@@ -173,6 +173,9 @@ function ReffApp.new(app)
         end or nil,
     })
     local global_options = app.settings
+    local palette = backend.palette and require("ArmorVariantManager_Core.UI.Reff.Palette").new({
+        set=app.set_preset_material_param, params=app.material_params,
+    })
     local height_options = app.height and require("ArmorVariantManager_Core.UI.Reff.HeightSettings").new({
         translate=T,get=get_ground_clipping_settings,set=set_ground_clipping_settings,status=get_ground_clipping_status,
     })
@@ -204,6 +207,7 @@ function ReffApp.new(app)
         backup_pending=config_session.pending,
         imports=manual_import and function(current) return manual_import.list(current.weapon) end or nil,
         preview=app.preview,
+        palette=palette,
         documentation=function()
             return reff_help.snapshot(global_config.language,game.name)
         end,
@@ -284,6 +288,7 @@ function ReffApp.new(app)
                 return app.load_manual_preset_file(request.path,current.id)
             end,
             restore=function(_,current) return app.restore_config_from_backup(current.id) end,
+            ["material-param"]=palette and palette.action or nil,
             ["dismiss-backup"]=function(_,current)
                 config_session.dismiss(current.id)
                 return true
