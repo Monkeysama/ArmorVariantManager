@@ -224,11 +224,12 @@ assert(not core:is_animating(m, 0) and m.materials[0].enabled)
 -- 荒野接入：按规则选过渡。
 local wilds_core = new_core()
 local dissolve = WildsDissolve.new({core=wilds_core, config={}})
-local r1 = {threshold=70, dissolve_enabled=true, dissolve_hide_time=2, dissolve_show_time=3}
-local r2 = {threshold=40, dissolve_enabled=true}
-local r3 = {state="drawn"}
-local config = {transform_rules={r1, r2}, weapon_transform_rules={r3}}
-dissolve.reset_character("hunter", {})
+local function target(name) return {{group="", preset=name}} end
+local r1 = {threshold=70, targets=target("A"), dissolve_enabled=true, dissolve_hide_time=2, dissolve_show_time=3}
+local r2 = {threshold=40, targets=target("B"), dissolve_enabled=true}
+local r3 = {state="drawn", targets=target("C")}
+local config = {presets={A={}, B={}, C={}}, transform_rules={r1, r2}, weapon_transform_rules={r3}}
+dissolve.reset_character("hunter", {}, config)
 assert(dissolve.character("hunter") == nil, "first application never dissolves")
 dissolve.rules_changed("hunter", {r1}, config)
 S.equal(dissolve.character("hunter"), {duration=2, forward=true, appear="morph"})
@@ -241,13 +242,53 @@ S.equal(dissolve.character("hunter"), {duration=3, forward=false, appear="morph"
 dissolve.rules_changed("hunter", {r3}, config)
 assert(dissolve.character("hunter") == nil, "rules without dissolve switch at once")
 dissolve.rules_changed("hunter", {r1}, config)
-local kept = dissolve.character("hunter")
-dissolve.rules_changed("hunter", {r1}, config)
-assert(dissolve.character("hunter") == kept, "same rule set keeps the transition")
 dissolve.retain({hunter={armor=true}})
-assert(dissolve.character("hunter") == kept)
+assert(dissolve.settings_for("hunter", false).duration == 2)
+assert(dissolve.settings_for("hunter", false) == nil, "a transition only applies to the rule change")
+dissolve.rules_changed("hunter", {r1}, config)
+assert(dissolve.character("hunter") == nil, "signal updates with the same target do not select a transition")
+
+-- 两条规则同时启动，选择合成时覆盖目标的规则；被遮盖规则进出不触发。
+dissolve.reset_character("hunter", {}, config)
+dissolve.rules_changed("hunter", {r3, r1}, config)
+assert(dissolve.character("hunter").duration == 2)
+dissolve.rules_changed("hunter", {r1}, config)
+assert(dissolve.character("hunter") == nil)
+dissolve.rules_changed("hunter", {r3, r1}, config)
+assert(dissolve.character("hunter") == nil)
+dissolve.rules_changed("hunter", {r3}, config)
+assert(dissolve.character("hunter") == nil, "unmasked winner disables dissolve for this change")
+
+-- 多个目标一起退出时沿用退出前最高优先级规则的返回时长。
+local ordinary = {targets={{group="Layer", preset="A"}}, dissolve_enabled=true, dissolve_show_time=7}
+config.groups = {Layer={presets={A={}}}}
+dissolve.reset_character("hunter", {ordinary, r1}, config)
+dissolve.rules_changed("hunter", {}, config)
+S.equal(dissolve.character("hunter"), {duration=3, forward=false, appear="morph"})
 dissolve.retain({})
 assert(dissolve.character("hunter") == nil)
+
+-- 真实受击链生成代理规则，时长来自源规则，重复采样不重启。
+local hp = 100
+local damage = assert(loadfile("ArmorVariantManager/reframework/autorun/ArmorVariantManager_Core/Games/Wilds/Conditions/Condition_Damage.lua",
+    "t", setmetatable({os={clock=function() return now end},
+        require=function() return {get_state=function() return hp end} end}, {__index=_G})))()
+local damage_rule = {mode=3, chain_loop_count=1, chain_nodes={{targets=target("B"), duration=1}, {targets=target("A"), duration=1}},
+    dissolve_enabled=true, dissolve_hide_time=2, dissolve_show_time=4}
+config.damage_transform_rules = {damage_rule}
+assert(not damage.evaluate(config, {}, "hunter"))
+dissolve.reset_character("hunter", {}, config)
+hp = 50
+dissolve.rules_changed("hunter", {(damage.evaluate(config, {}, "hunter"))}, config)
+assert(dissolve.character("hunter").duration == 2)
+dissolve.rules_changed("hunter", {(damage.evaluate(config, {}, "hunter"))}, config)
+assert(dissolve.character("hunter") == nil)
+now = now + 1.1
+dissolve.rules_changed("hunter", {(damage.evaluate(config, {}, "hunter"))}, config)
+assert(dissolve.character("hunter").duration == 2)
+now = now + 1.1
+dissolve.rules_changed("hunter", {(damage.evaluate(config, {}, "hunter"))}, config)
+S.equal(dissolve.character("hunter"), {duration=4, forward=false, appear="morph"})
 
 -- 界面设置：默认开启 1 秒，可关闭，时长限制在 0..30。
 local settings = {}

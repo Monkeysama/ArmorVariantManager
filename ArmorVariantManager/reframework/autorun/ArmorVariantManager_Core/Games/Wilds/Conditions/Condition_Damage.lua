@@ -139,8 +139,8 @@ function M.evaluate(config, character, char_addr)
         end
 
         if targets_out then
-            -- Create a proxy rule to return so TransformManager can read its targets
-            local proxy_rule = { targets = targets_out }
+            -- 当前阶段提供目标，溶解参数保留在源规则上。
+            local proxy_rule = { targets = targets_out, source = r }
             return proxy_rule, "dmg_" .. state_id
         end
     end

@@ -222,7 +222,7 @@ function TransformManager.apply_transform_rules(char_addr, config, character, ac
                 local rule, cur_state = get_active_rule_for_type(t_type, config, character, char_addr)
                 if cur_state ~= nil then current_states[t_type] = cur_state end
                 if rule then
-                    table.insert(active_rules, { rule = rule, priority = p_setting.priority })
+                    table.insert(active_rules, { rule = rule, priority = tonumber(p_setting.priority) or 1, kind = t_type })
                 end
                 ::continue_parallel::
             end
@@ -270,7 +270,10 @@ function TransformManager.apply_transform_rules(char_addr, config, character, ac
     end
 
     -- 数字越小优先级越高，后合成的目标覆盖前者。
-    table.sort(active_rules, function(a, b) return a.priority > b.priority end)
+    table.sort(active_rules, function(a, b)
+        if a.priority ~= b.priority then return a.priority > b.priority end
+        return a.kind > b.kind
+    end)
     local rules = {}
     for i, item in ipairs(active_rules) do rules[i] = item.rule end
     local activated_targets

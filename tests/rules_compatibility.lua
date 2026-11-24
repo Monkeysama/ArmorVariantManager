@@ -99,6 +99,24 @@ config.is_parallel,config.transform_type=false,"spirit"
 wilds.refresh_config_rules(config)
 check_wilds("A",{spirit=2,weapon_type=3},false,8,{global="hide"},true,{[""]=true,global=true,removed=true})
 check_wilds("A",{spirit=2,weapon_type=0},true,8,{},true,{[""]=true,global=true,removed=true})
+-- 真实规则合成顺序与过渡决策一致，包括旧 JSON 保存的数字字符串。
+local dissolve = require(prefix .. "Games.Wilds.Dissolve").new()
+local parallel = {is_parallel=true, parallel_settings={hp={enabled=true, priority="2"}, weapon={enabled=true, priority=1}},
+    presets=config.presets, transform_rules={node("", "hide")}, weapon_transform_rules={node("", "show")}}
+parallel.weapon_transform_rules[1].dissolve_enabled = true
+parallel.weapon_transform_rules[1].dissolve_hide_time = 2
+parallel.weapon_transform_rules[1].dissolve_show_time = 3
+states.A = {hp=30, weapon=true}
+local result, _, targets, _, active = wilds.apply_transform_rules("A", parallel, "A", base, wp.merge)
+assert(result["0"].materials.cape and targets[""] == "show")
+dissolve.reset_character("A", {}, parallel)
+dissolve.rules_changed("A", active, parallel)
+assert(dissolve.settings_for("A", false).duration == 2)
+states.A = {}
+result, _, targets, _, active = wilds.apply_transform_rules("A", parallel, "A", base, wp.merge)
+assert(result["0"].materials.cape and next(targets) == nil)
+dissolve.rules_changed("A", active, parallel)
+assert(dissolve.settings_for("A", false).duration == 3)
 print("PASS: Wilds priority, checked zero, actor changes and target rollback")
 
 local rise=host("Rise")

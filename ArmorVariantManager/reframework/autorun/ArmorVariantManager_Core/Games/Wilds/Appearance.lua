@@ -85,8 +85,8 @@ function Appearance.new(deps)
         local result, changed, targets, all_targets, rules = app.transform(config, character, app.overrides[id], Presets.merge)
         -- 防具的溶解过渡由引起切换的规则决定；首次应用不溶解。
         if deps.dissolve and slot == "armor" then
-            if first_apply then deps.dissolve.reset_character(tostring(character), rules)
-            elseif changed then deps.dissolve.rules_changed(tostring(character), rules, config) end
+            if first_apply then deps.dissolve.reset_character(tostring(character), rules, config)
+            elseif changed or not rules then deps.dissolve.rules_changed(tostring(character), rules, config) end
         end
         local selected, rebuild = Selection.resolve_groups(config, app.groups[id], targets, all_targets)
         if rebuild then

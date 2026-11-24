@@ -27,45 +27,74 @@ local function rule_settings(rule, forward, field)
     return Core.settings(tonumber(rule[field]) or Dissolve.DEFAULT_RULE_TIME, forward, Core.MORPH)
 end
 
+-- 顺序与外观合成相同。一个分组被多条规则命中时，最后合成的预设决定过渡。
+local function effective_targets(config, rules)
+    local result = {}
+    for priority, rule in ipairs(rules or {}) do
+        for _, target in ipairs(rule.targets or {}) do
+            local group, name = target.group or "", target.preset
+            local owner = group == "" and config or config and config.groups and config.groups[group]
+            if name and name ~= "None" and owner and owner.presets and owner.presets[name] then
+                result[group] = {name=name, rule=rule.source or rule, priority=priority}
+            end
+        end
+    end
+    return result
+end
+
+local function highest_changed(targets, before)
+    local top, group
+    for key, item in pairs(targets) do
+        if (not before[key] or before[key].name ~= item.name)
+            and (not top or item.priority > top.priority or item.priority == top.priority and key < group) then
+            top, group = item, key
+        end
+    end
+    return top, group
+end
+
 -- deps.config：全局设置；deps.weapon_mode()：界面当前编辑武器时为 true；deps.core 可替换核心（测试用）。
 function Dissolve.new(deps)
     deps = deps or {}
     local core = deps.core or Core.new({valid=deps.valid_mesh})
     local self = { core = core }
-    local transitions, last_rules = {}, {}
+    local transitions, last_targets = {}, {}
 
-    -- 首次应用只记下生效规则，不溶解。
-    function self.reset_character(key, rules)
-        core:finish_all(function(a) return a.owner == key end)
-        local now = {}
-        for _, rule in ipairs(rules or {}) do now[rule] = true end
-        last_rules[key], transitions[key] = now, nil
+    local function finish_character(key, conditions_only)
+        core:finish_all(function(a) return a.owner == key and (not conditions_only or not a.ui) end)
     end
 
-    -- 生效规则变化时由引起变化的规则决定过渡：新生效的规则用淡入；没有新规则时，结束的规则用淡出。
-    -- 进入状态默认前进；替换同一列表中排在后面的规则时后退（如气刃等级 4 -> 3）。
-    -- 规则集合不变的状态变化（如血量数值）沿用上一次的过渡。
+    -- 首次应用只记下生效目标，不溶解。
+    function self.reset_character(key, rules, config)
+        finish_character(key, false)
+        last_targets[key], transitions[key] = effective_targets(config, rules), nil
+    end
+
+    -- 新生效的目标使用进入时长；只有退出时，以之前实际生效的目标决定返回时长。
     function self.rules_changed(key, rules, config)
-        local previous, now, started, ended = last_rules[key] or {}, {}, nil, {}
-        for _, rule in ipairs(rules or {}) do
-            now[rule] = true
-            if not started and not previous[rule] then started = rule end
-        end
-        for rule in pairs(previous) do
-            if not now[rule] then ended[#ended + 1] = rule end
-        end
-        last_rules[key] = now
+        local previous = last_targets[key]
+        if not rules and (not previous or not next(previous)) then return end
+        previous = previous or {}
+        local now = effective_targets(config, rules)
+        last_targets[key], transitions[key] = now, nil
+        local started, group = highest_changed(now, previous)
+        local settings
         if started then
-            local list, index = rule_place(config, started)
             local forward = true
-            for _, rule in ipairs(ended) do
-                local other, position = rule_place(config, rule)
-                if list and other == list and position and position > index then forward = false end
+            local replaced = previous[group]
+            if replaced then
+                local list, index = rule_place(config, started.rule)
+                local other, position = rule_place(config, replaced.rule)
+                forward = not (list and list == other and position > index)
             end
-            transitions[key] = rule_settings(started, forward, "dissolve_hide_time")
-        elseif ended[1] then
-            transitions[key] = rule_settings(ended[1], false, "dissolve_show_time")
+            settings = rule_settings(started.rule, forward, "dissolve_hide_time")
+        else
+            local ended = highest_changed(previous, now)
+            if not ended then return end
+            settings = rule_settings(ended.rule, false, "dissolve_show_time")
         end
+        if settings and settings.duration > 0 then transitions[key] = settings
+        else finish_character(key, true) end
     end
 
     function self.character(key) return transitions[key] end
@@ -93,6 +122,7 @@ function Dissolve.new(deps)
             return settings
         end
         local settings = transitions[key]
+        transitions[key] = nil
         if settings then settings.owner = key end
         return settings
     end
@@ -130,14 +160,14 @@ function Dissolve.new(deps)
     function self.retain(seen)
         local function has_armor(key) return seen[key] and seen[key].armor end
         core:finish_all(function(a) return a.owner and not has_armor(a.owner) end)
-        for key in pairs(last_rules) do
-            if not has_armor(key) then last_rules[key], transitions[key] = nil, nil end
+        for key in pairs(last_targets) do
+            if not has_armor(key) then last_targets[key], transitions[key] = nil, nil end
         end
     end
 
     function self.reset()
         core:abandon()
-        transitions, last_rules = {}, {}
+        transitions, last_targets = {}, {}
     end
 
     function self.finish() return core:finish_all() end
