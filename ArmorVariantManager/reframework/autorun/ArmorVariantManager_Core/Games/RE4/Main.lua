@@ -996,8 +996,10 @@ function Main.start(ctx)
     local Palette = require("ArmorVariantManager_Core.Games.RE4.Palette")
     local Mdf2 = require("ArmorVariantManager_Core.Games.RE4.Mdf2")
     -- 必须在脚本加载时 require:REFramework 只在加载 autorun 期间把 autorun 目录放进 package.path,
-    -- 之后(网页请求、每帧回调里)再 require 会找不到模块
-    local PaletteProfiles = is_re9 and {} or require("ArmorVariantManager_Core.Games.RE4.PaletteProfiles")
+    -- 之后(网页请求、每帧回调里)再 require 会找不到模块。
+    -- RE9 用同一份:RE 引擎的材质参数名大多通用。按母材质路径匹配的映射在 RE9 不会命中(母材质要靠 RE4 的
+    -- 离线材质库认出,RE9 没有),生效的是按参数名匹配的映射和 fallback 按参数名借用的含义
+    local PaletteProfiles = require("ArmorVariantManager_Core.Games.RE4.PaletteProfiles")
     local PALETTE_DIR = config_dir .. "/material_profiles/"
     local palette_profiles, palette_by_id, palette_profile_errors = nil, nil, {}
     local palette_state = {}
