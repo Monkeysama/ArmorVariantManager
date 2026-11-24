@@ -58,20 +58,12 @@ function Dissolve.new(deps)
         return v or nil
     end
 
-    -- u = 动画进度 0..1
-    local function write(mesh, j, v, a, u)
-        local forward = a.appear == Dissolve.REVERSE or a.forward
-        local rate, morphed
-        if a.appear == Dissolve.REVERSE then
-            rate, morphed = a.phase == "show" and (1 - u) or u, 0
-        else
-            rate = forward and u or (1 - u)
-            morphed = ((a.phase == "show") == forward) and 1 or 0
-        end
-        try(call, mesh, "setMaterialFloat4", j, v.rate, vector(rate, rate, rate, forward and 0 or 1))
+    local function write(a)
+        local rate, mesh, j, v = a.rate, a.mesh, a.j, a.v
+        try(call, mesh, "setMaterialFloat4", j, v.rate, vector(rate, rate, rate, a.reversing))
         if v.flag then
             local f = v.flag0
-            try(call, mesh, "setMaterialFloat4", j, v.flag, vector(f[1], morphed, f[3], f[4]))
+            try(call, mesh, "setMaterialFloat4", j, v.flag, vector(f[1], a.morphed, f[3], f[4]))
         end
     end
 
@@ -83,15 +75,23 @@ function Dissolve.new(deps)
         end
     end
 
-    -- 反向切换：新动画从旧动画离开的位置开始。
-    local function start_u(a) return a and (1 - a.u) or 0 end
-    local function phase_of(want) return want == false and "hide" or "show" end
-    local function animation(phase, previous, extra)
-        local a = { phase = phase, forward = current.forward, appear = current.appear, duration = current.duration,
-            u = start_u(previous) }
-        for key, value in pairs(extra) do a[key] = value end
+    local function animation(mesh, j, v, show, previous)
+        local a = { mesh = mesh, j = j, v = v, show = show, duration = current.duration }
+        if previous then
+            -- 保持当前遮罩，反切只改变比例的终点。
+            a.rate, a.reversing, a.morphed = previous.rate, previous.reversing, previous.morphed
+            a.target = previous.show == show and previous.target or 1 - previous.target
+        elseif current.appear == Dissolve.REVERSE or not v.flag then
+            a.rate, a.target = show and 1 or 0, show and 0 or 1
+            a.reversing, a.morphed = 0, 0
+        else
+            a.rate, a.target = current.forward and 0 or 1, current.forward and 1 or 0
+            a.reversing = current.forward and 0 or 1
+            a.morphed = show == current.forward and 1 or 0
+        end
         return a
     end
+
     local function material_alive(a)
         return try(call, a.mesh, "getMaterialName", a.j) == a.v.name
     end
@@ -102,12 +102,12 @@ function Dissolve.new(deps)
     -- 动画期间返回目标显隐，读取方据此判断是否需要再写；没有动画时返回 nil。
     function core:material_target(mesh, j)
         local a = materials[tostring(mesh) .. "_" .. tostring(j)]
-        if a then return a.phase == "show" end
+        if a then return a.show end
         return nil
     end
     function core:mesh_target(mesh)
         local a = meshes[tostring(mesh)]
-        if a then return a.phase == "show" end
+        if a then return a.show end
         return nil
     end
     function core:is_animating(mesh, j)
@@ -115,57 +115,65 @@ function Dissolve.new(deps)
         return materials[tostring(mesh) .. "_" .. tostring(j)] ~= nil
     end
 
-    -- 材质开关。cur = 调用前的 getMaterialsEnable。
+    -- 材质开关可以接管已有的部件动画。同一材质只在一个列表中推进。
     function core:set_material(mesh, j, want, cur)
         local key = tostring(mesh) .. "_" .. tostring(j)
-        local a = materials[key]
-        local phase = phase_of(want)
-        if a and a.phase == phase then return end
-        local v = current and current.duration > 0 and find_var(mesh, j)
+        local a, part = materials[key], meshes[tostring(mesh)]
+        if a and a.show == want then return end
+        if not a and cur == want then return end
+        local previous = a or part and part.animations[j]
+        if part then part.animations[j] = nil end
+        local v = current and current.duration > 0 and try(call, mesh, "get_Enabled") ~= false
+            and (previous and previous.v or find_var(mesh, j))
         if not v then
-            if a then restore(mesh, j, a.v); materials[key] = nil end
-            if cur ~= (phase == "show") then call(mesh, "setMaterialsEnable", j, phase == "show") end
+            if previous then restore(mesh, j, previous.v); materials[key] = nil end
+            if cur ~= want then call(mesh, "setMaterialsEnable", j, want) end
             return
         end
-        if cur == (phase == "show") and not a then return end
-        local n = animation(phase, a, { mesh = mesh, j = j, v = v })
-        write(mesh, j, v, n, n.u)
-        if phase == "show" and cur ~= true then call(mesh, "setMaterialsEnable", j, true) end
+        local n = animation(mesh, j, v, want, previous)
+        write(n)
+        if want and cur ~= true then call(mesh, "setMaterialsEnable", j, true) end
         materials[key] = n
     end
 
-    local function mesh_vars(mesh)
-        local out = {}
-        for j = 0, (try(call, mesh, "get_MaterialNum") or 0) - 1 do
-            local v = find_var(mesh, j)
-            if v then out[#out + 1] = { j, v } end
-        end
-        return out
-    end
-
-    -- 部件开关。cur = 调用前的 get_Enabled；allow_enable = false 时不打开部件（原生隐藏期间）。
+    -- 只推进实际开启且没有独立动画的材质。
     function core:set_mesh(mesh, want, cur, allow_enable)
         local key = tostring(mesh)
         local a = meshes[key]
-        local phase = phase_of(want)
-        if a and a.phase == phase then return end
-        if phase == "show" and allow_enable == false then return end
-        local vars = current and current.duration > 0 and mesh_vars(mesh) or {}
-        if #vars == 0 then
-            if a then for _, jv in ipairs(a.vars) do restore(mesh, jv[1], jv[2]) end; meshes[key] = nil end
-            if cur ~= (phase == "show") then call(mesh, "set_Enabled", phase == "show") end
+        if a and a.show == want then return end
+        if want and allow_enable == false then return end
+        if cur == want and not a then return end
+        local animations = {}
+        if current and current.duration > 0 then
+            for j = 0, (try(call, mesh, "get_MaterialNum") or 0) - 1 do
+                if not materials[key .. "_" .. tostring(j)] and try(call, mesh, "getMaterialsEnable", j) then
+                    local previous = a and a.animations[j]
+                    local v = previous and previous.v or find_var(mesh, j)
+                    if v then
+                        local n = animation(mesh, j, v, want, previous)
+                        write(n)
+                        animations[j] = n
+                    end
+                end
+            end
+        end
+        if not next(animations) then
+            if a then
+                for _, old in pairs(a.animations) do restore(mesh, old.j, old.v) end
+                meshes[key] = nil
+            end
+            if cur ~= want then call(mesh, "set_Enabled", want) end
             return
         end
-        if cur == (phase == "show") and not a then return end
-        local n = animation(phase, a, { mesh = mesh, vars = vars })
-        for _, jv in ipairs(vars) do write(mesh, jv[1], jv[2], n, n.u) end
-        if phase == "show" and cur ~= true then call(mesh, "set_Enabled", true) end
-        meshes[key] = n
+        if want and cur ~= true then call(mesh, "set_Enabled", true) end
+        meshes[key] = {mesh = mesh, show = want, animations = animations}
     end
 
     local function advance(a, dt)
-        if a.duration <= 0 then return 1 end
-        return math.min(1, a.u + dt / a.duration)
+        local step = dt / a.duration
+        if a.rate < a.target then a.rate = math.min(a.target, a.rate + step)
+        else a.rate = math.max(a.target, a.rate - step) end
+        return a.rate == a.target
     end
 
     -- 每帧调用一次。对象失效或材质换了的动画直接丢弃，不再写入。
@@ -176,29 +184,31 @@ function Dissolve.new(deps)
         for key, a in pairs(materials) do
             if not material_alive(a) then
                 materials[key] = nil
+            elseif advance(a, dt) then
+                if not a.show then try(call, a.mesh, "setMaterialsEnable", a.j, false) end
+                restore(a.mesh, a.j, a.v)
+                materials[key] = nil
             else
-                a.u = advance(a, dt)
-                if a.u >= 1 then
-                    if a.phase == "hide" then try(call, a.mesh, "setMaterialsEnable", a.j, false) end
-                    restore(a.mesh, a.j, a.v)
-                    materials[key] = nil
-                else
-                    write(a.mesh, a.j, a.v, a, a.u)
-                end
+                write(a)
             end
         end
-        for key, a in pairs(meshes) do
-            if not try(call, a.mesh, "get_MaterialNum") then
-                meshes[key] = nil
-            else
-                a.u = advance(a, dt)
-                if a.u >= 1 then
-                    if a.phase == "hide" then try(call, a.mesh, "set_Enabled", false) end
-                    for _, jv in ipairs(a.vars) do restore(a.mesh, jv[1], jv[2]) end
-                    meshes[key] = nil
+        for key, part in pairs(meshes) do
+            local running = false
+            for j, a in pairs(part.animations) do
+                if not material_alive(a) then
+                    part.animations[j] = nil
                 else
-                    for _, jv in ipairs(a.vars) do write(a.mesh, jv[1], jv[2], a, a.u) end
+                    -- 其余材质仍在消失时，已到终点的材质保持完全溶解。
+                    if not advance(a, dt) then running = true end
+                    write(a)
                 end
+            end
+            if not running then
+                if not part.show and try(call, part.mesh, "get_MaterialNum") then
+                    try(call, part.mesh, "set_Enabled", false)
+                end
+                for j, a in pairs(part.animations) do restore(part.mesh, j, a.v) end
+                meshes[key] = nil
             end
         end
     end
@@ -207,15 +217,17 @@ function Dissolve.new(deps)
     function core:finish_all()
         for key, a in pairs(materials) do
             if material_alive(a) then
-                if a.phase == "hide" then try(call, a.mesh, "setMaterialsEnable", a.j, false) end
+                if not a.show then try(call, a.mesh, "setMaterialsEnable", a.j, false) end
                 restore(a.mesh, a.j, a.v)
             end
             materials[key] = nil
         end
-        for key, a in pairs(meshes) do
-            if try(call, a.mesh, "get_MaterialNum") then
-                if a.phase == "hide" then try(call, a.mesh, "set_Enabled", false) end
-                for _, jv in ipairs(a.vars) do restore(a.mesh, jv[1], jv[2]) end
+        for key, part in pairs(meshes) do
+            if try(call, part.mesh, "get_MaterialNum") then
+                if not part.show then try(call, part.mesh, "set_Enabled", false) end
+                for j, a in pairs(part.animations) do
+                    if material_alive(a) then restore(part.mesh, j, a.v) end
+                end
             end
             meshes[key] = nil
         end

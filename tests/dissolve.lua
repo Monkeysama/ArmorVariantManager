@@ -106,6 +106,13 @@ core:use(Core.settings(1, true))
 core:set_material(m, 0, false, true)
 assert(core:is_animating(m, 0) and m.materials[0].values[2] == nil)
 
+-- 仅有 Rate 的材质使用倒放出现，起点完全溶解。
+local rate_only = mesh({{name="rate-only", template=true, no_flag=true, enabled=false}})
+core:set_material(rate_only, 0, true, false)
+assert_vec(rate(rate_only, 0), {1, 1, 1, 0})
+tick(core, 0.05)
+assert_vec(rate(rate_only, 0), {0.95, 0.95, 0.95, 0})
+
 -- 中途反向：从旧动画离开的位置接着走；同方向重复写入不重启动画。
 core = new_core()
 m = mesh({{name="a", template=true}})
@@ -115,7 +122,8 @@ for _ = 1, 6 do tick(core, 0.05) end
 core:set_material(m, 0, false, true)
 assert_vec(rate(m, 0), {0.3, 0.3, 0.3, 0}, "same phase keeps running")
 core:set_material(m, 0, true, true)
-assert_vec(rate(m, 0), {0.7, 0.7, 0.7, 0}); assert(flag(m, 0)[2] == 1 and core:material_target(m, 0) == true)
+assert_vec(rate(m, 0), {0.3, 0.3, 0.3, 0}, "reversal preserves the current mask")
+assert(flag(m, 0)[2] == 0 and core:material_target(m, 0) == true)
 for _ = 1, 5 do tick(core, 0.05) end
 assert(core:is_animating(m, 0) and m.materials[0].enabled, "the reversed run only has the remaining 0.3 s")
 for _ = 1, 2 do tick(core, 0.05) end
@@ -206,7 +214,7 @@ assert(dissolve.ui_settings() == nil)
 settings.ui_dissolve_enabled, settings.ui_dissolve_time = true, 1
 
 -- 读写入口：动画期间读到目标值；界面写入防具溶解、编辑武器时瞬间切换。
-m = mesh({{name="a", template=true}, {name="b", template=true}})
+m = mesh({{name="a", template=true}, {name="b", template=true}, {name="c", template=true}})
 dissolve.ui_call(m, "setMaterialsEnable", 0, false)
 assert(m.materials[0].enabled and dissolve.call(m, "getMaterialsEnable", 0) == false)
 assert(dissolve.ui_call(m, "getMaterialsEnable", 0) == false)
@@ -244,6 +252,30 @@ assert(dissolve.call(armor_mesh, "getMaterialsEnable", 0) == true, "showing agai
 local plain_materials = Materials.new({part_meshes=function() return {armor_mesh} end}, function() return true end)
 plain_materials.armor(character, {["0"]={materials={cloth=false}}})
 assert(armor_mesh.materials[0].enabled == false, "without a call the write is direct")
+
+-- 预设同时打开部件和关闭材质：应隐藏的材质全程保持关闭。
+local combined = mesh({{name="cloth", template=true}, {name="trim", template=true}}, false)
+core = new_core()
+dissolve = WildsDissolve.new({core=core, config={}})
+materials = Materials.new({part_meshes=function(_, index) return index == 0 and {combined} or {} end},
+    function() return true end, dissolve.call)
+local menu_actor = {get_type_definition=function() return {get_full_name=function() return "app.MenuModel" end} end}
+dissolve.with(Core.settings(1, true), materials.armor, menu_actor,
+    {["0"]={mesh_enabled=true, materials={cloth=false, trim=true}}})
+assert(combined.enabled and not combined.materials[0].enabled)
+assert(core:mesh_target(combined) == true and core:material_target(combined, 0) == nil)
+tick(core, 0.05)
+assert(not combined.materials[0].enabled)
+assert_vec(rate(combined, 0), {0, 0, 0, 0}, "a part fade leaves the disabled material untouched")
+assert_vec(rate(combined, 1), {0.05, 0.05, 0.05, 0})
+
+-- 部件出现中单独关闭材质：接手同一遮罩，下一帧只有材质动画推进。
+dissolve.ui_call(combined, "setMaterialsEnable", 1, false)
+assert_vec(rate(combined, 1), {0.05, 0.05, 0.05, 0})
+assert(flag(combined, 1)[2] == 1)
+tick(core, 0.075)
+assert_vec(rate(combined, 1), {0, 0, 0, 0})
+assert(combined.enabled and not combined.materials[1].enabled)
 
 -- 外观解算：防具首次应用只记录规则，规则状态变化时交给溶解；武器槽不参与。
 local calls, rule_result = {}, {changed=false, rules={}}

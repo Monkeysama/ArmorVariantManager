@@ -28,13 +28,9 @@ end
 -- 防具与武器共用读后写；上下文过滤由调用方提供，不读取 UI 状态。显隐读写经过 call（可接溶解过渡）。
 local function apply_mesh(call, mesh, data, index, operable, hidden, allow_enable)
     local count = mesh:call("get_MaterialNum") or 0
-    if data.mesh_enabled ~= nil then
-        local current = call(mesh, "get_Enabled")
-        if data.mesh_enabled == false and current ~= false then
-            call(mesh, "set_Enabled", false)
-        elseif data.mesh_enabled == true and current ~= true and allow_enable() then
-            call(mesh, "set_Enabled", true)
-        end
+    local current_mesh = data.mesh_enabled ~= nil and call(mesh, "get_Enabled")
+    if data.mesh_enabled == false and current_mesh ~= false then
+        call(mesh, "set_Enabled", false)
     end
     if data.materials then
         for slot = 0, count - 1 do
@@ -48,6 +44,10 @@ local function apply_mesh(call, mesh, data, index, operable, hidden, allow_enabl
                 end
             end
         end
+    end
+    -- 打开部件前先写入材质显隐，避免预设隐藏的材质被部件动画带出。
+    if data.mesh_enabled == true and current_mesh ~= true and allow_enable() then
+        call(mesh, "set_Enabled", true)
     end
 end
 
