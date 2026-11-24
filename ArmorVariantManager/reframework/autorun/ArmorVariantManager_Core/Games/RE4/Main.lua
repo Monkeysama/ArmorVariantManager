@@ -61,7 +61,7 @@ function Main.start(ctx)
         -- 第一次读到时迁移成一个「默认」预设,外观不变
         local legacy = nil
         if loaded.dissolve_presets == nil then
-            local effects = json.load_file("ArmorVariantManager/DissolveEffects.json")
+            local effects = json.load_file(config_dir .. "/DissolveEffects.json")
             legacy = { shape = type(effects) == "table" and effects[DissolveStyles.PROVIDER_ID] or nil, edge = loaded.dissolve_edge }
         end
         global_config.dissolve_presets = DissolveStyles.clean_presets(loaded.dissolve_presets, legacy)

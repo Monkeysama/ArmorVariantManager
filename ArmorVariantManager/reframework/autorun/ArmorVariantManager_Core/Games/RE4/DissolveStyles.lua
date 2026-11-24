@@ -17,7 +17,7 @@ local Styles = {}
 
 Styles.PROVIDER_ID = "avm.builtin"
 Styles.NOISE_SLOT = "Dissolve_NoiseMap"
-local DIR = "ArmorVariantManager/Dissolve/"
+local DIR = require("ArmorVariantManager_Core.Games.RE4.GameProfile").config_dir .. "/Dissolve/"
 
 -- 样式表。noise = 噪声图资源路径(nil = 不换);params[变量名] = { x, y, z, w },nil 的分量保持材质原值
 Styles.LIST = {

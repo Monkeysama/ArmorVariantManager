@@ -15,11 +15,12 @@
 --     进度在 (0,1) 内两方都开着,到 0 / 1 才关掉完全隐藏的一方。没有 Dissolve_Rate 的材质在进度过半时切换
 --
 -- 溶解效果提供者(EffectProviders.lua):别的 mod 可以注册,接管溶解的外观;材质开始溶解时绑定,
--- 时机仍由这里决定。选择存在 ArmorVariantManager/DissolveEffects.json
+-- 时机仍由这里决定。选择存在配置目录(GameProfile.config_dir)下的 DissolveEffects.json
 local Dissolve = {}
+local EFFECTS_PATH = require("ArmorVariantManager_Core.Games.RE4.GameProfile").config_dir .. "/DissolveEffects.json"
 local Effects = require("ArmorVariantManager_Core.Games.RE4.EffectProviders").new({
-    load = function() return json and json.load_file("ArmorVariantManager/DissolveEffects.json") end,
-    save = function(value) return json ~= nil and json.dump_file("ArmorVariantManager/DissolveEffects.json", value) end,
+    load = function() return json and json.load_file(EFFECTS_PATH) end,
+    save = function(value) return json ~= nil and json.dump_file(EFFECTS_PATH, value) end,
 })
 Dissolve.register_effect_provider = Effects.register
 Dissolve.set_effect_selection = Effects.select
