@@ -3,11 +3,11 @@ local Palette = {}
 -- 预设可选字段 palette = { [部位] = { [材质名] = { [参数名] = 数值 | { x =, y =, z =, w = } } } }。
 -- 部位键与预设里的部位键相同（"0".."5"，武器按对象序号）。float 参数存数值；float4 只存改过的分量，
 -- 没改的分量保持材质当前的值。只存覆盖值，不存原值；缺少字段的旧 JSON 不受影响。
--- Dissolve_Rate、Dissolve_Flag 由溶解过渡写入，不接受覆盖。
+-- Dissolve_Rate、Dissolve_Flag 由溶解过渡写入，LIL_LightDir 由 lilToon 的光向脚本每帧写入，都不接受覆盖。
 Palette.FIELD = "palette"
 Palette.COMPONENTS = { "x", "y", "z", "w" }
 Palette.COMPONENT_INDEX = { x = 1, y = 2, z = 3, w = 4 }
-Palette.RESERVED = { Dissolve_Rate = true, Dissolve_Flag = true }
+Palette.RESERVED = { Dissolve_Rate = true, Dissolve_Flag = true, LIL_LightDir = true }
 
 local function is_table(value) return type(value) == "table" end
 local function finite(value) return type(value) == "number" and value == value and value ~= math.huge and value ~= -math.huge end
@@ -53,7 +53,7 @@ end
 function Palette.set(preset, part, material, param, value, component)
     if not is_table(preset) then return false, "预设不存在" end
     if not (name(part) and name(material) and name(param)) then return false, "材质参数无效" end
-    if Palette.RESERVED[param] then return false, "溶解参数由溶解过渡控制" end
+    if Palette.RESERVED[param] then return false, "该参数由其他功能每帧写入，不能覆盖" end
     if component ~= nil and not Palette.COMPONENT_INDEX[component] then return false, "分量无效" end
     local field = is_table(preset[Palette.FIELD]) and preset[Palette.FIELD] or nil
     local params = field and is_table(field[part]) and is_table(field[part][material]) and field[part][material] or nil

@@ -23,7 +23,7 @@
 - 第二层是材质名，第三层是参数名。
 - float 参数写数值。float4 参数写 `{ "x", "y", "z", "w" }` 中要改的分量，没写的分量保持材质当前的值。
 - 只支持 float 与 float4 参数。
-- `Dissolve_Rate`、`Dissolve_Flag` 由溶解过渡控制，写在这里不生效。
+- `Dissolve_Rate`、`Dissolve_Flag` 由溶解过渡控制，`LIL_LightDir` 由 lilToon 的光向脚本每帧写入，写在这里不生效。
 - 没有 `palette` 的预设不受影响；覆盖保存预设时保留原有的 `palette`。
 
 ## 生效规则
