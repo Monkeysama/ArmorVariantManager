@@ -24,8 +24,8 @@ ArmorVariantManager/
         Presets/                       分组、选择、合成、捕获与编辑
         Conditions/、Rules/、Runtime/  条件、规则与角色状态
         Games/Wilds/、Games/Rise/      各游戏 SDK、装备、材质和能力适配
-        Games/RE4/                     RE4 独立适配：Main.start、v3 模型（ModelV3 / OpsV3 / Presets）、条件、REF 面板（ImGuiV3）与 REFF 接口（见目录内 AGENTS.md）
-        Games/RE9/                     RE9 适配：角色目标与 Viscon 显隐，其余复用 Games/RE4；差异经 Games/RE4/GameProfile.lua 选定
+        Games/RE4/                     RE4 独立适配：Main.start、v3 模型（ModelV3 / OpsV3 / Presets）、条件、REF 面板（ImGuiV3）与 REFF 接口（见目录内 AGENTS.md）；显隐经 Utils.visibility_* 统一编号材质与网格可见性组（Viscon.lua）
+        Games/RE9/                     RE9 适配：角色目标，其余复用 Games/RE4；差异经 Games/RE4/GameProfile.lua 选定
         UI/Workspace.lua              当前编辑配置与选择状态
         UI/ImGui/、UI/Reff/            REF 绘制、REFF 序列化与 RPC 适配
         Documentation.lua             游戏内中英文帮助与历史记录

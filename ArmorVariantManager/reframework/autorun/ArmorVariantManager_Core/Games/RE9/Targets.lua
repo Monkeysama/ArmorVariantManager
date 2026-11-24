@@ -1,5 +1,5 @@
 local Utils = require("ArmorVariantManager_Core.Games.RE4.Utils")
-local Visibility = require("ArmorVariantManager_Core.Games.RE9.Visibility")
+local Visibility = require("ArmorVariantManager_Core.Games.RE4.Viscon")
 local Targets = {}
 local labels = { cp_A000 = "Leon", cp_A100 = "Grace", cp_A110 = "Grace" }
 local slot_ids = { ["10"] = "head", ["20"] = "hair", ["40"] = "body" }

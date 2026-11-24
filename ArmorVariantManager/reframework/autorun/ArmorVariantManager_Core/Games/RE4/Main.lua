@@ -855,7 +855,8 @@ function Main.start(ctx)
                 local want = slot_data.materials[name]
                 if d or want ~= nil then
                     local ok_c, cur = pcall(Utils.visibility_get, mesh, i)
-                    if ok_c and is_re9 then
+                    -- 可见性组没有溶解参数,瞬间切换;血量驱动时到区间一半切
+                    if ok_c and Utils.visibility_kind(mesh, i) == "group" then
                         local enabled = d and ((d.p >= 0.5) == d.on)
                         if not d then enabled = want end
                         if cur ~= enabled then pcall(Utils.visibility_set, mesh, i, enabled) end
@@ -937,14 +938,23 @@ function Main.start(ctx)
                     saved[slot] = { id = id, states = material_states(mesh) }
                 end
                 if not is_re9 then Dissolve.reset_mesh(mesh) end
+                -- 材质和可见性组各算各的:定位了哪一类,这一类只显示选中的;另一类全开,
+                -- 否则定位一个组时它里面的材质都是关的,什么也看不见。这个槛位什么都没选就整个隐藏
                 local ok, count = pcall(Utils.visibility_count, mesh)
+                local entries, picked = {}, {}
                 for i = 0, ((ok and count) or 0) - 1 do
                     local ok_n, name = pcall(Utils.visibility_name, mesh, i)
                     if ok_n and name then
-                        local want = preview_shows(active_preview, slot, name, mirror)
-                        local ok_c, cur = pcall(Utils.visibility_get, mesh, i)
-                        if ok_c and cur ~= want then pcall(Utils.visibility_set, mesh, i, want) end
+                        local kind = Utils.visibility_kind(mesh, i)
+                        local shows = preview_shows(active_preview, slot, name, mirror)
+                        entries[#entries + 1] = { i = i, kind = kind, shows = shows }
+                        if shows then picked[kind] = true end
                     end
+                end
+                for _, e in ipairs(entries) do
+                    local want = e.shows or (picked[e.kind] == nil and next(picked) ~= nil)
+                    local ok_c, cur = pcall(Utils.visibility_get, mesh, e.i)
+                    if ok_c and cur ~= want then pcall(Utils.visibility_set, mesh, e.i, want) end
                 end
             end
         end
@@ -1773,6 +1783,19 @@ function Main.start(ctx)
 
         frame_counter = frame_counter + 1
 
+        -- 可见性组的原值记录跟着目标网格走(Viscon.refresh);RE9 由它的 Targets 扫描时维护
+        if not is_re9 and frame_counter % DRIFT_CHECK_INTERVAL == 0 then
+            local seen = {}
+            for _, target in ipairs(targets) do
+                for _, slot in ipairs(Utils.slots(target.source)) do
+                    local mesh = Utils.get_mesh(target.source, slot)
+                    if mesh then seen[mesh:get_address()] = Utils.get_mesh_resource_path(mesh) or "" end
+                end
+            end
+            local ok_v, err_v = pcall(Utils.Viscon.refresh, seen)
+            if not ok_v then note_error("viscon", err_v) end
+        end
+
         for _, target in ipairs(targets) do
             local ok, err = pcall(apply_target, target, preview_active)
             Dissolve.effect_scope(nil)   -- apply_target 中途抛错时 apply_resolved 来不及清
@@ -1793,6 +1816,9 @@ function Main.start(ctx)
         preview_restoring = false
         preview_ending = nil
     end
+
+    -- 脚本重置时把改过的可见性组还原(材质开关没有原值记录,不还原)
+    re.on_script_reset(function() pcall(Utils.Viscon.reset) end)
 
     re.on_frame(function()
         local ok, err = pcall(frame_logic)
@@ -2172,8 +2198,14 @@ function Main.start(ctx)
                             end
                         end
                     end
-                    local summary = string.format("%s   %d %s / %d %s",
-                        slot_label(slot), #names, T(is_re9 and "re9_groups_unit" or "materials_unit"),
+                    -- 材质和可见性组分开计数(组排在材质后面,见 Utils.visibility_*)
+                    local group_n = 0
+                    for _, n in ipairs(names) do if Utils.Viscon.is_name(n) then group_n = group_n + 1 end end
+                    local counts = {}
+                    if #names > group_n then counts[#counts + 1] = (#names - group_n) .. " " .. T("materials_unit") end
+                    if group_n > 0 then counts[#counts + 1] = group_n .. " " .. T("groups_unit") end
+                    local summary = string.format("%s   %s / %d %s",
+                        slot_label(slot), table.concat(counts, " + "),
                         touched, is_base and T("off_unit") or T("owned_unit"))
 
                     if ui_tree(summary .. "###slot_" .. id_prefix .. slot) then
@@ -2204,7 +2236,14 @@ function Main.start(ctx)
                             end
                         end
 
+                        local groups_started = false
                         for mat_index, mat_name in ipairs(names) do
+                            if not groups_started and Utils.Viscon.is_name(mat_name) then
+                                groups_started = true
+                                imgui.separator()
+                                imgui.text(T("groups_heading"))
+                                imgui.text(T("groups_hint"))
+                            end
                             if is_base then
                                 render_base_material(config, preset_data, slot, mesh, mat_index, mat_name, id_prefix, kind_id)
                             else

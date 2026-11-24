@@ -112,10 +112,16 @@ end
 local function sections(d, t, card, values)
     local out = {}
     for _, s in ipairs(d.slots) do
-        if #s.materials > 0 then
-            local keys = {}
-            for _, m in ipairs(s.materials) do keys[#keys + 1] = U.key_of(s.id, m.name) end
-            out[#out + 1] = { id = s.id, label = U.short_slot(s.label), keys = keys }
+        -- 网格可见性组(kind = "group")单列一段,批量按钮也只作用于这一段
+        local keys, groups = {}, {}
+        for _, m in ipairs(s.materials) do
+            local list = m.kind == "group" and groups or keys
+            list[#list + 1] = U.key_of(s.id, m.name)
+        end
+        if #keys > 0 then out[#out + 1] = { id = s.id, label = U.short_slot(s.label), keys = keys } end
+        if #groups > 0 then
+            out[#out + 1] = { id = s.id, label = U.short_slot(s.label) .. " · " .. t("meshGroups"), keys = groups,
+                hint = t("meshGroupsHint") }
         end
     end
     if not card.is_base then
@@ -471,6 +477,7 @@ function Page.draw(ctx, x, y, w)
                     local col_w = (mw - gap * (cols - 1)) / cols
                     for _, sec in ipairs(secs) do
                         local lw = D.text_mid(sec.label, mx0, cy, 24, sec.id == "" and C.error or C.muted, W.bold())
+                        if sec.hint then W.tooltip(sec.hint, mx0, cy, lw, 24) end
                         -- 这一段的批量设置:全部 — / 关 / 开、反选(整套造型没有「—」)
                         if W.visible(cy, 24) then
                             local bx = mx0 + lw + 12

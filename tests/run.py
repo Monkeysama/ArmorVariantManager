@@ -31,7 +31,7 @@ DEFAULT_TESTS = (
     "tests/re4_panel.lua",
     "tests/re4_portrait_camera.lua",
     "tests/re4_portrait_copy.lua",
-    "tests/re9_visibility.lua",
+    "tests/re4_viscon.lua",
     "tests/app_ui.lua",
     "tests/material_ui.lua",
     "tests/parts_ui.lua",

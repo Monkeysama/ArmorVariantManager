@@ -362,9 +362,11 @@ function Reff.new(deps)
             for _, m in ipairs(Utils.get_material_names(mesh)) do
                 if not seen[m] then
                     seen[m] = true
-                    row.materials[#row.materials + 1] = { name = m, note = (notes[slot] or {})[m] }
+                    -- kind = "group":网格可见性组(Utils.visibility_*),界面单列一段
+                    local kind = Utils.Viscon.is_name(m) and "group" or nil
+                    row.materials[#row.materials + 1] = { name = m, note = (notes[slot] or {})[m], kind = kind }
                     local data = resolved[slot]
-                    snapshot.look[#snapshot.look + 1] = { slot = slot, material = m,
+                    snapshot.look[#snapshot.look + 1] = { slot = slot, material = m, kind = kind,
                         on = not (data and data.materials[m] == false) }
                 end
             end

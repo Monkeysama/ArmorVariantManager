@@ -23,7 +23,9 @@
 -- 指纹里有、当前模型上没有的槛位(比如没穿护甲)不参与判断。
 local Presets = {}
 
-local config_dir = require("ArmorVariantManager_Core.Games.RE4.GameProfile").config_dir
+local GameProfile = require("ArmorVariantManager_Core.Games.RE4.GameProfile")
+local Viscon = require("ArmorVariantManager_Core.Games.RE4.Viscon")
+local config_dir = GameProfile.config_dir
 Presets.DIR = config_dir .. "/presets/"
 Presets.AUTOSAVE_DIR = config_dir .. "/autosave/"
 Presets.INDEX_ID = "_index"
@@ -42,9 +44,15 @@ function Presets.deep_copy(v)
 end
 
 -- ============================================================ 指纹与匹配
+-- 指纹只认材质名(同 Utils.identity_name):列了材质时可见性组的组号不参与
+local function identity(name)
+    return not (GameProfile.materials and Viscon.is_name(name))
+end
+
 function Presets.fingerprint(cfg)
     local fp = {}
     local function add(slot, mat)
+        if not identity(mat) then return end
         fp[slot] = fp[slot] or {}
         fp[slot][mat] = true
     end
@@ -77,8 +85,9 @@ function Presets.live_sets(live)
     local out = {}
     for slot, data in pairs(is_tbl(live) and live or {}) do
         if is_tbl(data) and is_tbl(data.materials) and next(data.materials) then
-            out[slot] = {}
-            for m in pairs(data.materials) do out[slot][m] = true end
+            local set = {}
+            for m in pairs(data.materials) do if identity(m) then set[m] = true end end
+            if next(set) then out[slot] = set end
         end
     end
     return out
