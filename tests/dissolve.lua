@@ -41,7 +41,10 @@ local function rate(m, j) return vec(m.materials[j].values[1]) end
 local function flag(m, j) return vec(m.materials[j].values[2]) end
 
 local now = 0
-local function new_core() return Core.new({clock=function() return now end, vector=function(x, y, z, w) return {x=x, y=y, z=z, w=w} end}) end
+local function new_core(report)
+    return Core.new({clock=function() return now end, report=report,
+        vector=function(x, y, z, w) return {x=x, y=y, z=z, w=w} end})
+end
 local function tick(core, seconds) now = now + seconds; core:update() end
 
 -- 非溶解模板瞬间切换；没有选定过渡或时长为 0 时也瞬间切换。
@@ -139,9 +142,53 @@ core:set_material(m, 0, true, true)
 assert(not core:is_animating(m, 0) and m.materials[0].enabled)
 assert_vec(rate(m, 0), {0, 0, 0, 0}); assert_vec(flag(m, 0), {1, 0, 0.5, 0})
 
--- 材质被换掉（名字变了）时丢弃动画，不再写入。
+-- 瞬切的目标与旧动画相同也要收尾，并恢复启动前的参数。
+core = new_core()
+m = mesh({{name="a", template=true, morphed=0.25}})
+m.materials[0].values[1] = {x=0.1, y=0.2, z=0.3, w=0.4}
 core:use(Core.settings(1, true))
 core:set_material(m, 0, false, true)
+core:use(Core.settings(0, true))
+core:set_material(m, 0, false, true)
+assert(not m.materials[0].enabled and not core:is_animating(m, 0))
+assert_vec(rate(m, 0), {0.1, 0.2, 0.3, 0.4})
+assert_vec(flag(m, 0), {1, 0.25, 0.5, 0})
+m.materials[0].enabled = true
+core:use(Core.settings(1, true))
+core:set_mesh(m, false, true)
+assert(core:is_animating(m))
+core:use(nil)
+core:set_mesh(m, false, true)
+assert(not m.enabled and not core:is_animating(m))
+
+-- 首次或逐帧写入失败时回退到直接显隐，并恢复部分写入。
+for _, fail_on in ipairs({1, 2}) do
+    local messages = {}
+    local fault = new_core(function(reason) messages[#messages + 1] = reason end)
+    local model = mesh({{name="cloth", template=true}})
+    local call, writes = model.call, 0
+    function model:call(method, ...)
+        local _, index = ...
+        if method == "setMaterialFloat4" and index == 2 then
+            writes = writes + 1
+            if writes == fail_on then error("Flag write failed") end
+        end
+        return call(self, method, ...)
+    end
+    fault:use(Core.settings(1, true))
+    fault:set_material(model, 0, false, true)
+    tick(fault, 0.05)
+    assert(#messages == 1 and messages[1]:find("Flag write failed", 1, true))
+    assert(not model.materials[0].enabled and not fault:is_animating(model, 0))
+    assert_vec(rate(model, 0), {0, 0, 0, 0})
+    assert_vec(flag(model, 0), {1, 0, 0.5, 0})
+end
+
+-- 材质被换掉（名字变了）时丢弃动画，不再写入。
+m = mesh({{name="a", template=true}})
+core:use(Core.settings(1, true))
+core:set_material(m, 0, false, true)
+assert(core:is_animating(m, 0))
 m.materials[0].name = "replaced"
 tick(core, 0.05)
 assert(not core:is_animating(m, 0) and m.materials[0].enabled)
@@ -197,7 +244,7 @@ dissolve.rules_changed("hunter", {r1}, config)
 local kept = dissolve.character("hunter")
 dissolve.rules_changed("hunter", {r1}, config)
 assert(dissolve.character("hunter") == kept, "same rule set keeps the transition")
-dissolve.retain({hunter={}})
+dissolve.retain({hunter={armor=true}})
 assert(dissolve.character("hunter") == kept)
 dissolve.retain({})
 assert(dissolve.character("hunter") == nil)
@@ -233,6 +280,54 @@ dissolve.call(after, "setMaterialsEnable", 0, false)
 assert(after.materials[0].enabled == false, "a failed write does not leave a transition selected")
 dissolve.reset()
 assert(dissolve.call(m, "getMaterialsEnable", 0) == true)
+
+-- REF 和 REFF 共用的设置事务：落盘失败继续过渡，成功关闭时仅收尾界面过渡。
+core = new_core()
+local global = {ui_dissolve_enabled=true, ui_dissolve_time=1}
+local owner = "hunter"
+dissolve = WildsDissolve.new({core=core, config=global, actor_key=function() return owner end})
+local one, two, rule_mesh = mesh({{name="cloth", template=true}}), mesh({{name="cloth", template=true}}),
+    mesh({{name="cloth", template=true}})
+dissolve.ui_call(one, "setMaterialsEnable", 0, false)
+owner = "teammate"
+dissolve.ui_call(two, "setMaterialsEnable", 0, false)
+core:use(Core.settings(1, true))
+core:set_material(rule_mesh, 0, false, true)
+dissolve.retain({hunter={armor=true}, teammate={weapon=true}})
+assert(core:is_animating(one, 0) and not core:is_animating(two, 0) and not two.materials[0].enabled)
+dissolve.reset_character("hunter", {})
+assert(not core:is_animating(one, 0) and not one.materials[0].enabled, "equipment change finishes the old owner's animation")
+owner = "hunter"
+dissolve.ui_call(one, "setMaterialsEnable", 0, true)
+local saved = false
+local session = {value=global, save=function() return saved, "disk full" end}
+local model = require("ArmorVariantManager_Core.Games.Wilds.SettingsModel").new({config=global, transition=dissolve})
+local controls = require("ArmorVariantManager_Core.Config.Settings").new({
+    model=model, global_session=session, translate=function(key) return key end})
+assert(not controls.action({id="ui_dissolve_enabled", value=false}))
+assert(global.ui_dissolve_enabled and core:is_animating(one, 0))
+saved = true
+assert(controls.action({id="ui_dissolve_enabled", value=false}))
+assert(not core:is_animating(one, 0) and one.materials[0].enabled and core:is_animating(rule_mesh, 0))
+assert(controls.action({id="ui_dissolve_enabled", value=true}))
+dissolve.ui_call(one, "setMaterialsEnable", 0, false)
+assert(core:is_animating(one, 0) and controls.action({id="ui_dissolve_time", value=0}))
+assert(not core:is_animating(one, 0) and not one.materials[0].enabled and core:is_animating(rule_mesh, 0))
+
+-- 换装后的同名材质使用新布局及参数，旧部件动画不写入新材质。
+core = new_core()
+m = mesh({{name="cloth", template=true}})
+core:use(Core.settings(1, true))
+core:set_mesh(m, false, true)
+m.materials[0].vars = {"BaseColor", "Roughness", "Dissolve_Rate"}
+m.materials[0].values[1] = {x=0.8, y=0.7, z=0.6, w=0.5}
+m.materials[0].values[2] = {x=0.2, y=0.2, z=0.2, w=0}
+tick(core, 0.05)
+assert(m.enabled and not core:is_animating(m))
+assert_vec(vec(m.materials[0].values[1]), {0.8, 0.7, 0.6, 0.5})
+core:set_material(m, 0, false, true)
+core:finish_all()
+assert_vec(vec(m.materials[0].values[2]), {0.2, 0.2, 0.2, 0})
 
 -- 防具写入：动画期间按目标值判断，消失中改回显示时会反向，而不是被当成已显示跳过。
 _G.sdk = {is_managed_object=function(object) return object ~= nil end}

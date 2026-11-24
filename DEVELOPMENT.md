@@ -63,7 +63,6 @@ build_release.py                      发布目录、ZIP 与库存检查
 
 《崛起》的 `DissolveTransition` 可改用同一核心，对应关系为：`Dissolve.settings(duration, true, Dissolve.REVERSE)`；`SceneObject.call` 中的 `getMaterialsEnable` / `setMaterialsEnable` 分别改走 `material_target` / `set_material`；`tick` 改为 `update`。迁移时要确认的行为差异：
 
-- 还原值：核心写回 `Dissolve_Rate = 0` 和首次读到的 `Dissolve_Flag`，`DissolveTransition` 写回动画开始前读到的值。
 - `Dissolve_Flag`：核心只改 y 分量，`DissolveTransition` 在动画期间写入 `(1, 0, 0, 0)`。
 - 材质条件：核心只要求 `Dissolve_Rate`，`DissolveTransition` 要求两个变量都存在。
 - 部件：核心也溶解整个部件；《崛起》目前不对部件调用。

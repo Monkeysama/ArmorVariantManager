@@ -58,7 +58,11 @@ function Model.new(deps)
     model.sections[#model.sections + 1] = { id = "preview", label = "preview_title", scope = "global", fields = fields }
     function model.on_saved(id)
         if id == "portrait_enabled" then return preview().set_enabled(config.portrait_enabled)
-        elseif id:match("^portrait_camera%.") then return preview().set_camera_settings(config.portrait_camera) end
+        elseif id:match("^portrait_camera%.") then return preview().set_camera_settings(config.portrait_camera)
+        elseif deps.transition and (id == "ui_dissolve_enabled" and not config.ui_dissolve_enabled
+            or id == "ui_dissolve_time" and config.ui_dissolve_time == 0) then
+            return deps.transition.finish_ui()
+        end
     end
     return model
 end

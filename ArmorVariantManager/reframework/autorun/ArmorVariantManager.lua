@@ -72,10 +72,16 @@ if game.wilds then
     -- 溶解过渡：防具与界面写入经过它，编辑武器时界面切换不溶解。
     dissolve = require("ArmorVariantManager_Core.Games.Wilds.Dissolve").new({
         config = global_config, weapon_mode = function() return app and app.workspace.state.weapon == true end,
+        valid_mesh = function(mesh) return runtime.scene_object.game_object(mesh, "dissolve") ~= nil end,
+        actor_key = function()
+            local character = runtime.actors.local_player()
+            if character then return tostring(character) end
+        end,
     })
     require("ArmorVariantManager_Core.Games.Wilds.MaterialView").dissolve = dissolve
     runtime = require("ArmorVariantManager_Core.Games.Wilds.Runtime").new(global_config,
         {reset = reset_actor_context, call = dissolve.call})
+    runtime.transition = dissolve
 else
     application = require("ArmorVariantManager_Core.Games.Rise.Application").new(global_config, config_session)
     runtime, appearance = application.runtime, application.appearance
@@ -130,8 +136,8 @@ local frame_callbacks = {
         update=app.workspace.update,
 }
 re.on_frame(function()
-    if dissolve then dissolve.update() end
     runtime.tick(frame_callbacks)
+    if dissolve and not runtime.is_suspended() then dissolve.update() end
 end)
 -- 脚本重置时播完溶解并还原材质变量，不留下半溶解的材质。
 if dissolve then re.on_script_reset(dissolve.finish) end

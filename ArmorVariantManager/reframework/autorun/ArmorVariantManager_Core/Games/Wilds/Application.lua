@@ -38,7 +38,7 @@ function Application.new(runtime, appearance, session, rules, is_weapon_id, diss
         end,
         resolve = appearance.resolve,
         apply = function(character, slot, objects, result)
-            if slot == "armor" then armor(dissolve and dissolve.character(tostring(character)), character, result)
+            if slot == "armor" then armor(dissolve and dissolve.settings_for(tostring(character), false), character, result)
             else materials.weapon(character, objects, result) end
         end,
     })
@@ -60,9 +60,9 @@ function Application.new(runtime, appearance, session, rules, is_weapon_id, diss
             if weapon then current, objects = equipment.weapon_id(character)
             else current = equipment.body_id(character) end
             if current and current == id then
-                local result = appearance.resolve(id, app.load(id), character, weapon and "weapon" or "armor")
+                local result, _, first_apply = appearance.resolve(id, app.load(id), character, weapon and "weapon" or "armor")
                 if weapon then materials.weapon(character, objects, result)
-                else armor(dissolve and dissolve.ui_settings(), character, result) end
+                else armor(dissolve and not first_apply and dissolve.settings_for(tostring(character), true), character, result) end
             end
         end
     end

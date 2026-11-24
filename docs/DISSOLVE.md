@@ -13,7 +13,7 @@
 | `Dissolve_Flag` | y | IsMorphed：为 1 时可见判定反转，用于出现方。没有 `Dissolve_Flag` 的模板也能溶解，只是不支持原地互换 |
 | `Dissolve_Flag` | x、z、w | 差分管理器不修改，保持 mdf 中的值 |
 
-动画结束后，消失方的材质被关闭，两个变量写回 mdf 中的值：`Dissolve_Rate` 写回 0，`Dissolve_Flag` 写回原值。mdf 中这两个变量的默认值应当对应"完整显示"。
+动画结束后，消失方的材质被关闭，两个变量均恢复为动画开始前读取的值。mdf 中这两个变量的默认值应当对应"完整显示"。
 
 《荒野》支持以下模板：`Wilds_LIL_Toon_Dissolve`、`Wilds_LIL_Toon_AnimDissolve`、`Wilds_BlendAlpha_Dissolve`、`Wilds_BlendAlpha_AnimDissolve`。
 
@@ -66,6 +66,8 @@
 |---|---|---|
 | `ui_dissolve_enabled` | `true` | 界面切换播放溶解 |
 | `ui_dissolve_time` | `1.0` | 溶解时长（秒），范围 0–30 |
+
+关闭界面溶解或将时长设为 0 时，当前界面过渡也会立即结束并还原材质参数。
 
 ### 瞬间切换的情况
 

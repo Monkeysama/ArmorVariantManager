@@ -38,7 +38,11 @@ function Appearance.new(deps)
         for index = 0, mesh:call("get_MaterialNum") - 1 do
             local material = mesh:call("getMaterialName", index)
             if changes[material] ~= nil and baseline[material] == nil and part_originals.materials[material] == nil then
-                part_originals.materials[material] = mesh:call("getMaterialsEnable", index)
+                if deps.dissolve then
+                    part_originals.materials[material] = deps.dissolve.call(mesh, "getMaterialsEnable", index)
+                else
+                    part_originals.materials[material] = mesh:call("getMaterialsEnable", index)
+                end
             end
         end
         if next(part_originals.materials) then
@@ -97,7 +101,7 @@ function Appearance.new(deps)
         if context.material_preview then result = Presets.merge(result, context.material_preview) end
         context.groups, context.overrides = selected, result
         app.height.set_runtime(character, config, result and result.ground_clipping_fix)
-        return result, changed or first_apply
+        return result, changed or first_apply, first_apply
     end
 
     -- 未勾选高度只切换材质；勾选的零值可清除之前的高度修正。
