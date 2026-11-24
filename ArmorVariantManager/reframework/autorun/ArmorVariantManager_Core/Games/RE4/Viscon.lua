@@ -4,6 +4,8 @@
 -- 改过的组记下原值,网格不再是目标(refresh)或脚本重置(reset)时还原;还原前核对当前值仍是我们写的,
 -- 别处改过的不动。缓存按对象地址,refresh 时用资源路径核对:同一地址换了网格就丢掉旧记录。
 -- 生命周期由目标收集方负责:RE9 由 Games/RE9/Targets.lua 扫描时调用,RE4 由 Main 的帧循环调用。
+--
+-- 本模块也负责 RE9 的材质开关(见下面「材质位图」),和组共用同一套原值记录与生命周期。
 local Viscon = {}
 
 -- 组号 → 配置里的键名。RE9 移植版就用这个格式存配置,沿用以免旧配置失效
@@ -57,7 +59,7 @@ local function info(mesh)
     local key = mesh:get_address()
     local entry = cache[key]
     if not entry then
-        entry = { mesh = mesh, parts = read_parts(mesh), originals = {}, shadows = {} }
+        entry = { mesh = mesh, parts = read_parts(mesh), originals = {}, mat_originals = {}, shadows = {} }
         cache[key] = entry
     end
     return entry
@@ -66,6 +68,125 @@ end
 local function ready(mesh)
     local go = mesh:call("get_GameObject")
     return go and go:call("get_Valid") and mesh:call("get_MeshReady")
+end
+
+-- ============================================================ 材质位图(RE9)
+-- RE9 的 TDB 没有 get/setMaterialsEnable,但 Mesh 里仍有材质开关位图:紧跟在组位图(PartsEnable)之后,
+-- 第 j 位 = 材质 j。只写位图渲染端不会更新,要把组件关掉再打开、让它重建渲染数据才生效;重建不改位图,
+-- 也不动组开关。位图偏移随游戏版本可能变,第一次用到时校准(calibrate):翻一个网格没用到的组位,
+-- 比对内存找到组位图,材质位图在它后面。校准不出来就不提供材质开关,界面只列组。
+local SCAN_FROM, SCAN_TO = 0x100, 0x5F0   -- 在 Mesh 对象里找位图的范围(RE9 的 via.render.Mesh 大小 0x5F0)
+local MAX_ATTEMPTS = 3
+local calib = { offset = nil, error = nil, attempts = 0 }   -- offset:nil 未校准,false 放弃,数字 = 材质位图偏移
+local dirty = {}                                            -- [地址] = mesh:改过材质位、帧末重建
+
+local function bit_of(mesh, base, index)
+    return (mesh:read_byte(base + (index // 8)) >> (index % 8)) & 1 == 1
+end
+
+local function calibrate(mesh)
+    local limit = mesh:call("getPartsEnableCount")
+    if type(limit) ~= "number" or limit < 8 or limit % 8 ~= 0 then return nil, "parts count " .. tostring(limit) end
+    local used = {}
+    for _, p in ipairs(read_parts(mesh)) do used[p] = true end
+    local probe = limit - 1
+    while probe >= 0 and used[probe] do probe = probe - 1 end
+    if probe < 0 then return nil, "no unused part to probe" end
+    local before = {}
+    for off = SCAN_FROM, SCAN_TO - 1 do before[off] = mesh:read_byte(off) end
+    local current = mesh:call("getPartsEnable", probe)
+    local mask = 1 << (probe % 8)
+    mesh:call("setPartsEnable", probe, not current)
+    -- 候选:恰好翻了那一位的字节。包围盒、LOD 这类字段可能被渲染线程同时改写,所以再要求还原后回到原值
+    local candidates = {}
+    for off = SCAN_FROM, SCAN_TO - 1 do
+        if (mesh:read_byte(off) ~ before[off]) == mask then candidates[#candidates + 1] = off end
+    end
+    mesh:call("setPartsEnable", probe, current)
+    local hits = {}
+    for _, off in ipairs(candidates) do
+        if mesh:read_byte(off) == before[off] then hits[#hits + 1] = off end
+    end
+    if #hits ~= 1 then return nil, "probe matched " .. #hits .. " bytes" end
+    local parts_base = hits[1] - (probe // 8)
+    for p in pairs(used) do
+        if bit_of(mesh, parts_base, p) ~= (mesh:call("getPartsEnable", p) == true) then return nil, "parts bitmap mismatch" end
+    end
+    local base = parts_base + limit // 8
+    if base + 32 > SCAN_TO then return nil, "material bitmap out of range" end
+    return base
+end
+
+-- 这个网格能不能按位图开关材质;第一次调用时拿它校准,失败几次后放弃
+function Viscon.material_ready(mesh)
+    if calib.offset == nil then
+        local ok, base, err = pcall(calibrate, mesh)
+        if not ok then base, err = nil, tostring(base) end
+        calib.attempts = calib.attempts + 1
+        if base then
+            calib.offset, calib.error = base, nil
+        else
+            calib.error = err
+            if calib.attempts >= MAX_ATTEMPTS then calib.offset = false end
+        end
+        if log and log.info then
+            log.info("[ArmorVariantManager] material bitmap " .. (base and string.format("at 0x%X", base) or ("unavailable: " .. tostring(err))))
+        end
+    end
+    return type(calib.offset) == "number"
+end
+
+function Viscon.material_error() return calib.error end
+
+function Viscon.get_material(mesh, index)
+    if type(calib.offset) ~= "number" then return nil end
+    return bit_of(mesh, calib.offset, index)
+end
+
+local function write_material(mesh, index, enabled)
+    local addr = calib.offset + (index // 8)
+    local mask = 1 << (index % 8)
+    local b = mesh:read_byte(addr)
+    mesh:write_byte(addr, enabled and (b | mask) or (b & (~mask & 0xFF)))
+    dirty[mesh:get_address()] = mesh
+end
+
+local function set_material(entry, index, enabled)
+    local mesh = entry.mesh
+    local current = Viscon.get_material(mesh, index)
+    if current == nil or current == enabled then return end
+    local record = entry.mat_originals[index]
+    local original = current
+    if record and current == record.applied then original = record.value end
+    write_material(mesh, index, enabled)
+    entry.mat_originals[index] = { value = original, applied = enabled }
+end
+
+function Viscon.set_material(mesh, index, enabled)
+    if type(calib.offset) ~= "number" then return end
+    local entry = info(mesh)
+    set_material(entry, index, enabled)
+    for _, shadow in ipairs(entry.shadows) do
+        if ready(shadow) then set_material(info(shadow), index, enabled) end
+    end
+end
+
+-- 关掉再打开组件让渲染端读新位图。本来就关着的组件不碰(游戏藏起来的不能被我们打开),它下次启用时自然会读
+local function rebuild(mesh)
+    if mesh:call("get_Enabled") then
+        mesh:call("set_Enabled", false)
+        mesh:call("set_Enabled", true)
+    end
+end
+
+-- 帧末调用:这一帧改过材质位的网格各重建一次
+function Viscon.flush()
+    if next(dirty) == nil then return end
+    local list = dirty
+    dirty = {}
+    for _, mesh in pairs(list) do
+        pcall(function() if ready(mesh) then rebuild(mesh) end end)
+    end
 end
 
 local function restore(entry)
@@ -77,8 +198,20 @@ local function restore(entry)
                 entry.mesh:call("setPartsEnable", part, original.value)
             end
         end
+        local touched = false
+        for index, original in pairs(entry.mat_originals) do
+            if Viscon.get_material(entry.mesh, index) == original.applied then
+                write_material(entry.mesh, index, original.value)
+                touched = true
+            end
+        end
+        if touched then
+            dirty[entry.mesh:get_address()] = nil
+            rebuild(entry.mesh)
+        end
     end)
     entry.originals = {}
+    entry.mat_originals = {}
 end
 
 -- seen = { [网格地址] = 资源路径 }:这一轮仍是目标的网格。不在里面的还原后移出;路径变了的只移出;
@@ -89,10 +222,12 @@ function Viscon.refresh(seen)
         if resource == nil then
             restore(entry)
             cache[address] = nil
+            dirty[address] = nil
         elseif entry.resource == nil then
             entry.resource = resource
         elseif resource ~= entry.resource then
             cache[address] = nil
+            dirty[address] = nil
         end
     end
 end
@@ -132,9 +267,12 @@ function Viscon.set(mesh, part, enabled)
     end
 end
 
+-- 脚本重置:还原全部改动,下次用到时重新校准
 function Viscon.reset()
     for _, entry in pairs(cache) do restore(entry) end
     cache = {}
+    dirty = {}
+    calib = { offset = nil, error = nil, attempts = 0 }
 end
 
 return Viscon

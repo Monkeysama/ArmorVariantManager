@@ -126,27 +126,101 @@ assert(captured.body.materials["Viscon 000"] == false and captured.body.material
 Viscon.reset()
 assert(modded.part_on[0] == true and modded.part_on[2] == true)
 
--- 认模型时不算组号:只有材质的旧预设对加了组的网格仍是完全匹配
+-- 认模型时两边只比同一类开关:只有材质的旧预设对加了组的网格仍是完全匹配
 local old = { body = { materials = { Skin = true, Jacket = false, Belt = true } } }
 assert(Utils.preset_slot_ratios({ body = modded }, old).body == 1)
 assert(Utils.preset_match_ratio({ body = modded }, old) == 1)
 local live = Presets.live_sets(Utils.all_enabled_preset({ body = modded }))
-assert(live.body.Skin and live.body["Viscon 000"] == nil)
-local fp = Presets.fingerprint({ base = { presets = { A = { body = { materials = { Skin = true, ["Viscon 002"] = false } } } } } })
-assert(fp.body.Skin and fp.body["Viscon 002"] == nil)
+assert(live.body.Skin and live.body["Viscon 000"])
+local cfg = { base = { presets = { A = { body = { materials = { Skin = true, Jacket = true, Belt = true } } } } } }
+assert(Presets.match(cfg, live) == "full")
+-- 只存了组的预设(RE9 移植版)按组比
+local by_groups = { body = { materials = { ["Viscon 000"] = true, ["Viscon 002"] = false } } }
+assert(Utils.preset_slot_ratios({ body = modded }, by_groups).body == 1)
+local cfg_groups = { base = { presets = { A = by_groups } } }
+assert(Presets.match(cfg_groups, live) == "full")
+-- 指纹里没有的部位照原样比,不会因为过滤成两边都空而算作相同
+assert(Presets.match(cfg, { body = live.body, hair = { Hair = true } }) ~= "full")
 
--- RE9:只列组,单个组也列;认模型就靠组号
+-- RE9:组单个也列;材质走 Mesh 里的位图(组位图后面紧跟 32 字节材质位图),写完重建组件才生效
 GameProfile.select("RE9")
 assert(GameProfile.re9 and GameProfile.config_dir == "ArmorVariantManagerRE9")
-assert(not GameProfile.materials and GameProfile.groups_min == 1)
+assert(GameProfile.materials and GameProfile.material_bits and GameProfile.groups_min == 1)
+
+-- 假的 RE9 网格:没有 get/setMaterialsEnable;组开关在 PARTS 处的位图里,材质位图紧跟其后
+local PARTS = 0x2C8
+local function re9_mesh(materials, indices)
+    local m = mesh(materials, indices, 256)
+    local mem = {}
+    for off = 0x100, 0x5EF do mem[off] = 0 end
+    for off = PARTS, PARTS + 63 do mem[off] = 0xFF end
+    mem[0x200] = 0x3C                      -- 无关字段
+    m.mem, m.enabled, m.rebuilds = mem, true, 0
+    local base_call = m.call
+    function m:read_byte(off) return assert(self.mem[off], "read out of range") end
+    function m:write_byte(off, v) self.mem[off] = v end
+    function m:call(method, a, b)
+        if method == "getMaterialsEnable" or method == "setMaterialsEnable" then error("not in TDB") end
+        if method == "getPartsEnable" then return (self.mem[PARTS + a // 8] >> (a % 8)) & 1 == 1 end
+        if method == "setPartsEnable" then
+            local off = PARTS + a // 8
+            self.mem[off] = b and (self.mem[off] | (1 << (a % 8))) or (self.mem[off] & ~(1 << (a % 8)) & 0xFF)
+            self.mem[0x200] = (self.mem[0x200] + 1) & 0xFF     -- 渲染线程同时改的字段:校准要忽略它
+            return
+        end
+        if method == "get_Enabled" then return self.enabled end
+        if method == "set_Enabled" then
+            if a == true and not self.enabled then self.rebuilds = self.rebuilds + 1 end
+            self.enabled = a
+            return
+        end
+        return base_call(self, method, a, b)
+    end
+    return m
+end
+
+Viscon.reset()
+local hair9 = re9_mesh({ "Clothes", "Ear", "Hair" }, { 0, 3 })
+local shadow9 = re9_mesh({ "Clothes", "Ear", "Hair" }, { 0, 3 })
+Viscon.add(shadow9, "hair.mesh")
+Viscon.add(hair9, "hair.mesh", { shadow9 })
+assert(table.concat(Utils.get_material_names(hair9), ",") == "Clothes,Ear,Hair,Viscon 000,Viscon 003")
+assert(Viscon.material_error() == nil)
+assert(hair9.mem[PARTS + 31] == 0xFF, "calibration probe restored")
+assert(Utils.visibility_get(hair9, 2) == true and Utils.visibility_kind(hair9, 2) == "material")
+
+-- 关 Hair:只改材质位图第 2 位,阴影跟着改;帧末每个网格只重建一次
+Utils.visibility_set(hair9, 2, false)
+Utils.visibility_set(hair9, 1, false)
+assert(hair9.mem[PARTS + 32] == 0xF9 and shadow9.mem[PARTS + 32] == 0xF9)
+assert(hair9.mem[PARTS] == 0xFF, "group bitmap untouched")
+assert(hair9.rebuilds == 0)
+Viscon.flush()
+assert(hair9.rebuilds == 1 and shadow9.rebuilds == 1 and hair9.enabled)
+Viscon.flush()
+assert(hair9.rebuilds == 1)
+assert(Utils.visibility_get(hair9, 2) == false)
+assert(Utils.current_material_states(hair9).Hair == false)
+
+-- 游戏关掉的组件不会被重建打开
+Utils.visibility_set(hair9, 0, false)
+hair9.enabled = false
+Viscon.flush()
+assert(hair9.enabled == false and hair9.rebuilds == 1)
+hair9.enabled = true
+
+-- 脚本重置还原原值并重建
+Viscon.reset()
+assert(hair9.mem[PARTS + 32] == 0xFF and hair9.rebuilds == 2)
+
+-- 校准不出来(读不到内存)时不列材质,只列组
 local grace = mesh({ "Skin" }, { 0 }, 1)
 assert(table.concat(Utils.get_material_names(grace), ",") == "Viscon 000")
+assert(Viscon.material_error() ~= nil)
 Utils.visibility_set(grace, 0, false)
 assert(grace.part_on[0] == false and grace.mat_on[0] == true)
 local slots = Utils.slots({ body = grace, head = vanilla, mesh_60 = hair, mesh_50 = hair, resource_identity = "x" })
 assert(table.concat(slots, ",") == "body,head,mesh_50,mesh_60", table.concat(slots, ","))
-live = Presets.live_sets(Utils.all_enabled_preset({ body = grace }))
-assert(live.body["Viscon 000"])
 Viscon.reset()
 assert(grace.part_on[0] == true)
 

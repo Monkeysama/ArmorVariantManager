@@ -4,12 +4,14 @@ local GameProfile = require("ArmorVariantManager_Core.Games.RE4.GameProfile")
 local Viscon = require("ArmorVariantManager_Core.Games.RE4.Viscon")
 Utils.Viscon = Viscon
 
--- 显隐开关按下标统一编号:0 .. M-1 是材质(setMaterialsEnable),之后是可见性组(Viscon.lua),
+-- 显隐开关按下标统一编号:0 .. M-1 是材质,之后是可见性组(Viscon.lua),
 -- 组的名字是 "Viscon 003" 这样的组号。配置、作用域、解算都按「槛位 + 名字」工作,组和材质混在同一张
 -- materials 表里,各自写各自的引擎开关,最终显示由引擎取两者的交集。哪类列出来见 GameProfile。
 -- 网格上真有材质叫 "Viscon 000" 时会和组号撞名,按组处理。
+-- 材质开关:RE4 走 setMaterialsEnable;RE9 的 TDB 没有它,走 Viscon 的材质位图(位图校准不出来时不列材质)
 local function material_count(mesh)
     if not GameProfile.materials then return 0 end
+    if GameProfile.material_bits and not Viscon.material_ready(mesh) then return 0 end
     return tonumber(mesh:call("get_MaterialNum")) or 0
 end
 
@@ -45,20 +47,38 @@ end
 
 function Utils.visibility_get(mesh, index)
     local kind, i = locate(mesh, index)
-    if kind == "material" then return mesh:call("getMaterialsEnable", i) end
+    if kind == "material" then
+        if GameProfile.material_bits then return Viscon.get_material(mesh, i) end
+        return mesh:call("getMaterialsEnable", i)
+    end
     if kind == "group" then return Viscon.get(mesh, i) end
 end
 
 function Utils.visibility_set(mesh, index, enabled)
     local kind, i = locate(mesh, index)
-    if kind == "material" then mesh:call("setMaterialsEnable", i, enabled)
+    if kind == "material" then
+        if GameProfile.material_bits then Viscon.set_material(mesh, i, enabled)
+        else mesh:call("setMaterialsEnable", i, enabled) end
     elseif kind == "group" then Viscon.set(mesh, i, enabled) end
 end
 
--- 认模型(预设匹配、指纹)用的名字。列了材质时只认材质:组号在不同模型间到处重名,
--- 而且已有预设是没有组的时候抓的,算进去会让它们的匹配度下降。只有组(RE9)时组号就是全部依据
-function Utils.identity_name(name)
-    return not (GameProfile.materials and Viscon.is_name(name))
+-- 认模型(预设匹配)时两边只比同一类开关:存下来的一侧有材质就只比材质 —— 组号在不同模型间到处重名,
+-- 已有的预设也大多是没有组时抓的;只有组(RE9 移植版只按组存)就只比组。返回过滤后的两个集合与各自个数
+function Utils.comparable(live, stored)
+    local has_material = false
+    for name in pairs(stored) do
+        if not Viscon.is_name(name) then has_material = true; break end
+    end
+    local function keep(set)
+        local out, n = {}, 0
+        for name in pairs(set) do
+            if Viscon.is_name(name) ~= has_material then out[name] = true; n = n + 1 end
+        end
+        return out, n
+    end
+    local l, ln = keep(live)
+    local s, sn = keep(stored)
+    return l, ln, s, sn
 end
 
 local type_character_manager = nil
@@ -314,14 +334,14 @@ function Utils.preset_match_ratio(source, preset)
         local live, live_n = {}, 0
         if mesh then
             for _, name in ipairs(Utils.get_material_names(mesh)) do
-                if not live[name] and Utils.identity_name(name) then live[name] = true; live_n = live_n + 1 end
+                if not live[name] then live[name] = true; live_n = live_n + 1 end
             end
         end
         local stored, stored_n = {}, 0
         local sd = preset[slot]
         if type(sd) == "table" and type(sd.materials) == "table" then
             for name, _ in pairs(sd.materials) do
-                if not stored[name] and Utils.identity_name(name) then stored[name] = true; stored_n = stored_n + 1 end
+                if not stored[name] then stored[name] = true; stored_n = stored_n + 1 end
             end
         end
 
@@ -335,6 +355,7 @@ function Utils.preset_match_ratio(source, preset)
         -- 都会被判「材质不匹配,已跳过」**。那不是"预设不属于这个模型",纯属误判。
         --
         -- 只比"两边都有东西"的槛位,穿脱护甲就不再影响判断。
+        live, live_n, stored, stored_n = Utils.comparable(live, stored)
         if live_n > 0 and stored_n > 0 then
             compared = compared + 1
             -- 用「槛位/材质名」做键,避免不同部位的同名材质混算
@@ -376,17 +397,18 @@ function Utils.preset_slot_ratios(source, preset)
         local live_n = 0
         if mesh then
             for _, name in ipairs(Utils.get_material_names(mesh)) do
-                if not live[name] and Utils.identity_name(name) then live[name] = true; live_n = live_n + 1 end
+                if not live[name] then live[name] = true; live_n = live_n + 1 end
             end
         end
         local stored, stored_n = {}, 0
         local sd = preset[slot]
         if type(sd) == "table" and type(sd.materials) == "table" then
             for name, _ in pairs(sd.materials) do
-                if not stored[name] and Utils.identity_name(name) then stored[name] = true; stored_n = stored_n + 1 end
+                if not stored[name] then stored[name] = true; stored_n = stored_n + 1 end
             end
         end
         -- 和聚合版同一条保护:一边空就整槛跳过(armor 穿脱是最典型的情形)
+        live, live_n, stored, stored_n = Utils.comparable(live, stored)
         if live_n > 0 and stored_n > 0 then
             local inter, union = 0, 0
             for name, _ in pairs(live) do

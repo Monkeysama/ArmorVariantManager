@@ -855,8 +855,9 @@ function Main.start(ctx)
                 local want = slot_data.materials[name]
                 if d or want ~= nil then
                     local ok_c, cur = pcall(Utils.visibility_get, mesh, i)
-                    -- 可见性组没有溶解参数,瞬间切换;血量驱动时到区间一半切
-                    if ok_c and Utils.visibility_kind(mesh, i) == "group" then
+                    -- 可见性组没有溶解参数,瞬间切换;血量驱动时到区间一半切。
+                    -- RE9 的材质也一样:溶解走 setMaterialsEnable,RE9 没有它(材质位图见 Viscon.lua)
+                    if ok_c and (is_re9 or Utils.visibility_kind(mesh, i) == "group") then
                         local enabled = d and ((d.p >= 0.5) == d.on)
                         if not d then enabled = want end
                         if cur ~= enabled then pcall(Utils.visibility_set, mesh, i, enabled) end
@@ -1803,6 +1804,9 @@ function Main.start(ctx)
             if not ok then note_error("apply_target " .. tostring(target.label), err) end
         end
         if height_fix then height_fix.set_targets(frame_heights) end
+        -- RE9 改过材质位的网格在这里各重建一次(面板上的点击在下一帧这里生效)
+        local ok_vf, err_vf = pcall(Utils.Viscon.flush)
+        if not ok_vf then note_error("viscon_flush", err_vf) end
         local ok_sks, err_sks = pcall(SksLink.push, frame_sks)
         if not ok_sks then note_error("sks_link", err_sks) end
 

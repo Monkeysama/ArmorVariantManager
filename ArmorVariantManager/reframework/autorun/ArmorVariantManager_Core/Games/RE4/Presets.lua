@@ -23,9 +23,8 @@
 -- 指纹里有、当前模型上没有的槛位(比如没穿护甲)不参与判断。
 local Presets = {}
 
-local GameProfile = require("ArmorVariantManager_Core.Games.RE4.GameProfile")
 local Viscon = require("ArmorVariantManager_Core.Games.RE4.Viscon")
-local config_dir = GameProfile.config_dir
+local config_dir = require("ArmorVariantManager_Core.Games.RE4.GameProfile").config_dir
 Presets.DIR = config_dir .. "/presets/"
 Presets.AUTOSAVE_DIR = config_dir .. "/autosave/"
 Presets.INDEX_ID = "_index"
@@ -44,15 +43,9 @@ function Presets.deep_copy(v)
 end
 
 -- ============================================================ 指纹与匹配
--- 指纹只认材质名(同 Utils.identity_name):列了材质时可见性组的组号不参与
-local function identity(name)
-    return not (GameProfile.materials and Viscon.is_name(name))
-end
-
 function Presets.fingerprint(cfg)
     local fp = {}
     local function add(slot, mat)
-        if not identity(mat) then return end
         fp[slot] = fp[slot] or {}
         fp[slot][mat] = true
     end
@@ -85,12 +78,22 @@ function Presets.live_sets(live)
     local out = {}
     for slot, data in pairs(is_tbl(live) and live or {}) do
         if is_tbl(data) and is_tbl(data.materials) and next(data.materials) then
-            local set = {}
-            for m in pairs(data.materials) do if identity(m) then set[m] = true end end
-            if next(set) then out[slot] = set end
+            out[slot] = {}
+            for m in pairs(data.materials) do out[slot][m] = true end
         end
     end
     return out
+end
+
+-- 两边只比同一类开关(同 Utils.comparable):指纹里有材质就只比材质,只有组就只比组
+local function comparable(fp, live)
+    if next(fp) == nil then return fp, live end   -- 指纹里没有这个部位:照原样比(结果是不匹配)
+    local has_material = false
+    for k in pairs(fp) do if not Viscon.is_name(k) then has_material = true; break end end
+    local a, b = {}, {}
+    for k in pairs(fp) do if Viscon.is_name(k) ~= has_material then a[k] = true end end
+    for k in pairs(live) do if Viscon.is_name(k) ~= has_material then b[k] = true end end
+    return a, b
 end
 
 local function jaccard(a, b)
@@ -106,7 +109,7 @@ function Presets.match(cfg, live_sets)
     local ratios, all_equal, any_ok, any_slot = {}, true, false, false
     for slot, live in pairs(live_sets) do
         any_slot = true
-        local r, equal = jaccard(fp[slot] or {}, live)
+        local r, equal = jaccard(comparable(fp[slot] or {}, live))
         ratios[slot] = r
         if not equal then all_equal = false end
         if r >= Presets.SLOT_MATCH_THRESHOLD then any_ok = true end
