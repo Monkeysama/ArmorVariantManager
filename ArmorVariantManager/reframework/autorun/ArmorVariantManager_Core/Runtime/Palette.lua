@@ -144,6 +144,15 @@ function Writer.new(deps)
         return result
     end
 
+    -- 网格换了材质资源（写入 mdf2 后换上新资源）时丢弃它的状态，不写回旧原值；下次应用按新材质重新记录。
+    function writer.forget(mesh)
+        local key = tostring(mesh)
+        for actor, meshes in pairs(actors) do
+            if meshes[key] and meshes[key].mesh == mesh then meshes[key] = nil end
+            if next(meshes) == nil then actors[actor] = nil end
+        end
+    end
+
     -- 切场景时丢弃全部状态，不访问可能已销毁的对象。
     function writer.reset() actors = {} end
 

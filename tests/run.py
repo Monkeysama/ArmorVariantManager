@@ -49,6 +49,7 @@ DEFAULT_TESTS = (
     "tests/ground_clipping_targets_regression.lua",
     "tests/scanner_ui_regression.lua",
     "tests/palette.lua",
+    "tests/mdf2.lua",
 )
 
 

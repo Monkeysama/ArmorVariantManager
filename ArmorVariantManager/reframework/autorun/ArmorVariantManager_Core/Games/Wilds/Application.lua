@@ -91,8 +91,18 @@ function Application.new(runtime, appearance, session, rules, is_weapon_id)
         return true
     end
 
+    -- mdf2 文件服务（格式版本 45）：原生插件和 json 在调用时取，离线测试可经 runtime.material_files 替换。
+    -- 启动时删除上一次启动留下的重载副本。
+    app.files = runtime.material_files or require("ArmorVariantManager_Core.Runtime.MaterialFiles").new({
+        version=45,
+        bridge=function() return rawget(_G, "avm_portrait") end,
+        json={load=function(path) return json.load_file(path) end, dump=function(path, value) return json.dump_file(path, value) end},
+        log=function(message) if log and log.info then log.info("[AVM] " .. message) end end,
+    })
+    pcall(app.files.cleanup)
+
     -- 调色在材质开关写入之后应用：按处理器本帧处理过的槽位，读取同一份角色上下文。
-    app.palette = require("ArmorVariantManager_Core.Games.Wilds.Palette").new({meshes=runtime.meshes})
+    app.palette = require("ArmorVariantManager_Core.Games.Wilds.Palette").new({meshes=runtime.meshes, files=app.files})
     local function slot_context(character, slot)
         local id, objects
         if slot == "armor" then id = equipment.body_id(character)
@@ -119,6 +129,77 @@ function Application.new(runtime, appearance, session, rules, is_weapon_id)
         local context, _, objects = slot_context(character, slot)
         local part_data = context and context.overrides and context.overrides[part]
         return app.palette.inspect(character, slot, objects, part, material, part_data)
+    end
+
+    -- 本地猎人某个部位里含有该材质的网格；没有时返回 nil 与原因。
+    local function local_mesh(part, material, weapon)
+        local character = runtime.actors.local_player()
+        if not character then return nil, "no player" end
+        local slot = weapon and "weapon" or "armor"
+        local context, _, objects = slot_context(character, slot)
+        local part_data = context and context.overrides and context.overrides[part]
+        local mesh = app.palette.mesh_with(character, slot, objects, part, material, part_data)
+        if not mesh then return nil, "material not found" end
+        return mesh
+    end
+
+    -- 材质所在 mdf2 能否读写：{ path, status }，见 Runtime/MaterialFiles.lua 的 status。
+    function app.material_file(part, material, weapon)
+        local mesh, reason = local_mesh(part, material, weapon)
+        if not mesh then return { status = "none", reason = reason } end
+        return app.files.status(mesh)
+    end
+
+    -- 把本地猎人某个材质导出成 RE Mesh Editor 材质预设，参数取当前值。
+    function app.export_material(part, material, name, weapon)
+        local mesh, reason = local_mesh(part, material, weapon)
+        if not mesh then return nil, reason end
+        local ok, result = pcall(app.files.export, mesh, material, name)
+        if not ok then return nil, (tostring(result):gsub("^.-%.lua:%d+: ", "")) end
+        return result
+    end
+
+    -- 把一个部位的覆盖值写进该部位网格所用的 mdf2，并在本局换上。overrides 只含这个部位。
+    -- 同一部位可能有多个网格、多个 mdf2：只写含有 material 的那个网格的文件（material 省略时取第一个可写的）。
+    -- 换上后清掉写入器里这些网格的状态，并调用 done(written)，由调用方清掉已写进文件的覆盖值；最后刷新外观。
+    function app.write_material_file(part, overrides, material, weapon, done)
+        local character = runtime.actors.local_player()
+        if not character then return nil, "no player" end
+        local slot = weapon and "weapon" or "armor"
+        local context, _, objects = slot_context(character, slot)
+        local part_data = context and context.overrides and context.overrides[part]
+        local target
+        if material then
+            target = app.palette.mesh_with(character, slot, objects, part, material, part_data)
+        else
+            for _, mesh in ipairs(app.palette.meshes_of(character, slot, objects, part, part_data)) do
+                if app.files.status(mesh).status == "ok" then target = mesh; break end
+            end
+        end
+        if not target then return nil, "material not found" end
+        local id = slot == "armor" and equipment.body_id(character) or equipment.weapon_id(character)
+        local ok, result = pcall(app.files.start, {
+            mesh=target, overrides=overrides,
+            meshes=function()
+                local list = {}
+                for _, actor in ipairs(runtime.actors.all()) do
+                    for _, mesh in ipairs(runtime.meshes.all(actor)) do list[#list + 1] = mesh end
+                    local _, weapon_objects = equipment.weapon_id(actor)
+                    for _, object in ipairs(weapon_objects or {}) do
+                        local mesh = runtime.meshes.first(object)
+                        if mesh then list[#list + 1] = mesh end
+                    end
+                end
+                return list
+            end,
+            swapped=function(meshes, written)
+                for _, mesh in ipairs(meshes) do app.palette.writer.forget(mesh) end
+                if done then done(written) end
+                if id then app.refresh(id) end
+            end,
+        })
+        if not ok then return nil, (tostring(result):gsub("^.-%.lua:%d+: ", "")) end
+        return result
     end
 
     return app
