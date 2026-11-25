@@ -181,6 +181,45 @@ function App.new(options)
         return backend.material_params(tostring(part), material, state.weapon == true)
     end
 
+    -- 材质所在 mdf2 能否读写：{ path, status }，status 为 ok / packed / plugin / none。
+    function app.material_file(part, material)
+        if not backend.material_file then return { status = "none", reason = "此游戏暂不支持" } end
+        return backend.material_file(tostring(part), material, state.weapon == true)
+    end
+
+    -- 把本地猎人当前装备的一个材质导出成 RE Mesh Editor 材质预设（参数取当前值，含调色覆盖）。
+    -- 返回 { path, exact, reason }：exact 为 false 时读不到 mdf2，只用了运行时数据，reason 是原因。
+    function app.export_material_preset(part, material, name)
+        if not backend.export_material then return nil, "此游戏暂不支持" end
+        return backend.export_material(tostring(part), material, name, state.weapon == true)
+    end
+
+    -- 把当前分组某个预设在这个部位的调色覆盖写进 material 所在的 mdf2（第一次覆盖前留 .avm_bak），本局立即换上。
+    -- 换上后从该预设删除已写进文件的覆盖值并保存：这些值已成为文件原值，所有预设都会用到。
+    -- 换上要等几帧，返回 { path, values } 表示已开始；进度和结果见 backend.files.result()。
+    function app.write_material_file(preset_name, part, material, body_id)
+        if not backend.write_material_file then return nil, "此游戏暂不支持" end
+        if not body_id or not workspace.config then return nil, "没有当前装备" end
+        local config = workspace.config
+        local owner = PresetEditor.target(config, state.group)
+        local preset = owner and owner.presets and owner.presets[preset_name]
+        if not preset then return nil, "预设已不存在" end
+        part = tostring(part)
+        local overrides = Palette.read(preset)[part]
+        if not overrides then return nil, "该部位没有调色覆盖" end
+        return backend.write_material_file(part, overrides, material, state.weapon == true, function(written)
+            -- 换上时预设可能已被删除或改名：按对象本身清理，仍在配置里才保存
+            for name, params in pairs(written) do
+                for param in pairs(params) do Palette.set(preset, part, name, param, nil) end
+            end
+            local still = owner.presets and owner.presets[preset_name] == preset
+            if still then
+                local saved, reason = backend.save(body_id, config, true)
+                if saved == false then error(reason or "save failed") end
+            end
+        end)
+    end
+
     -- 将备份写回主配置文件，成功后同步工作区。
 
     function app.restore_config_from_backup(body_id)

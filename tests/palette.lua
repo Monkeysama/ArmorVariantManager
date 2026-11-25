@@ -154,9 +154,16 @@ for _, game in ipairs({"Wilds", "Rise"}) do
     local fail, saves = false, 0
     local backend = {save=function() saves = saves + 1; return not fail end,
         capture=function() return {["0"]={materials={cloth=true}}} end}
+    local pending
     if game == "Wilds" then
         backend.palette = {}
         backend.material_params = function(part, material, weapon) return {{name=part .. material .. tostring(weapon)}} end
+        backend.material_file = function(part, material, weapon) return {path=part .. material .. tostring(weapon), status="ok"} end
+        backend.export_material = function(part, material, name, weapon) return {path=part .. material .. name .. tostring(weapon)} end
+        backend.write_material_file = function(part, overrides, material, weapon, done)
+            pending = {part=part, overrides=S.copy(overrides), material=material, weapon=weapon, done=done}
+            return {path="file", values=2}
+        end
     end
     local app = Fixture.new(game, {backend=backend})
     app.workspace.config = cfg
@@ -164,6 +171,9 @@ for _, game in ipairs({"Wilds", "Rise"}) do
     if game == "Rise" then
         assert(not app.set_preset_material_param("On", "0", "cloth", "Rough", 0.5, nil, "armor"))
         assert(app.material_params("0", "cloth") == nil)
+        assert(app.material_file("0", "cloth").status == "none")
+        assert(not app.export_material_preset("0", "cloth", "Name"))
+        assert(not app.write_material_file("On", "0", "cloth", "armor"))
     else
         assert(app.set_preset_material_param("On", 0, "cloth", "Rough", 0.5, nil, "armor") and saves == 1)
         S.equal(cfg.groups.First.presets.On.palette["0"].cloth, {Tint={y=0.5}, Rough=0.5})
@@ -182,6 +192,36 @@ for _, game in ipairs({"Wilds", "Rise"}) do
         assert(app.save_preset("On", "armor"))
         S.equal(cfg.groups.First.presets.On.palette["0"].cloth, {Tint={y=0.5}, Rough=0.5}, "overwrite keeps palette")
         assert(cfg.groups.First.presets.On["0"].materials.cloth == true)
+
+        -- mdf2 文件：状态、导出转给后端；写入只取该预设这个部位的覆盖，换上后删掉已写进文件的参数并保存
+        S.equal(app.material_file(0, "cloth"), {path="0clothfalse", status="ok"})
+        S.equal(app.export_material_preset(0, "cloth", "Red"), {path="0clothRedfalse"})
+        local preset = cfg.groups.First.presets.On
+        assert(app.set_preset_material_param("On", "0", "cloth", "Metal", 0.2, nil, "armor"))
+        assert(app.set_preset_material_param("On", "0", "skin", "Rough", 0.7, nil, "armor"))
+        saves = 0
+        S.equal(app.write_material_file("On", 0, "cloth", "armor"), {path="file", values=2})
+        S.equal(pending.overrides, {cloth={Tint={y=0.5}, Rough=0.5, Metal=0.2}, skin={Rough=0.7}})
+        assert(pending.part == "0" and pending.material == "cloth" and pending.weapon == false and saves == 0)
+        pending.done({cloth={Rough=true, Tint=true}, skin={Rough=true}})
+        S.equal(preset.palette["0"], {cloth={Metal=0.2}}, "parameters written into the file leave the preset")
+        assert(saves == 1)
+        fail = true
+        assert(app.write_material_file("On", "0", "cloth", "armor"))
+        assert(not pcall(pending.done, {cloth={Metal=true}}), "a failed save is reported")
+        fail = false
+        assert(preset.palette == nil)
+        assert(app.set_preset_material_param("On", "0", "cloth", "Metal", 0.3, nil, "armor"))
+        assert(app.write_material_file("On", "0", "cloth", "armor"))
+        cfg.groups.First.presets.On = nil
+        saves = 0
+        pending.done({cloth={Metal=true}})
+        assert(saves == 0, "a preset deleted before the swap is not saved back")
+        cfg.groups.First.presets.On = preset
+        local ok, reason = app.write_material_file("Missing", "0", "cloth", "armor")
+        assert(not ok and reason)
+        ok, reason = app.write_material_file("Off", "1", "cloth", "armor")
+        assert(not ok and reason, "a part without overrides has nothing to write")
     end
 end
 
@@ -219,5 +259,54 @@ assert(not pcall(controller.action, {kind="material-param", bodyId="old", preset
     material="cloth", param="Metal"}))
 S.equal(controller.material_params({bodyId="armor", part=1, material="cloth"}).params, {{name="1:cloth"}})
 S.equal(controller.material_params({bodyId="old", part=1, material="cloth"}).params, {}, "stale equipment reads nothing")
+assert(controller.snapshot().palette.file == nil, "games without mdf2 files expose no file state")
+assert(not reff.export({part=0, material="cloth", name="A"}, context) and not reff.write({preset="On", group="First", part=0, material="cloth"}, context))
+
+-- REFF 的 mdf2 文件：参数附带文件状态；导出结果和写入进度在快照里；校验装备、分组和参数
+local file_calls, busy, last = {}, false, nil
+local reff_files = ReffPalette.new({
+    set=function() return true end,
+    params=function() return {} end,
+    file=function(part, material) return {path=part .. "/" .. material, status="packed"} end,
+    export=function(part, material, name)
+        file_calls[#file_calls + 1] = {"export", part, material, name}
+        if name == "bad" then return nil, "invalid preset name" end
+        return {path="ArmorVariantManager/mdf2_presets/MHWILDS/" .. name .. ".json", exact=false, reason="not found"}
+    end,
+    write=function(preset, part, material, body_id)
+        file_calls[#file_calls + 1] = {"write", preset, part, material, body_id}
+        if preset == "Busy" then return nil, "busy" end
+        return {path="p", values=1}
+    end,
+    files={busy=function() return busy end, result=function() return last end},
+})
+S.equal(reff_files.params({part=1, material="cloth"}, context).file, {path="1/cloth", status="packed"})
+S.equal(reff_files.snapshot(context).file, {busy=false})
+assert(reff_files.export({part=0, material="cloth", name="Red"}, context))
+local ok, reason = reff_files.export({part=0, material="cloth", name="bad"}, context)
+assert(not ok and reason == "invalid preset name")
+assert(not reff_files.export({part=0, material=1, name="Red"}, context))
+busy, last = true, {path="p", values=1, ok=true}
+S.equal(reff_files.snapshot(context).file, {busy=true, result={path="p", values=1, ok=true},
+    export={path="ArmorVariantManager/mdf2_presets/MHWILDS/Red.json", exact=false, reason="not found"}})
+assert(reff_files.write({preset="On", group="First", part=0, material="cloth"}, context))
+ok, reason = reff_files.write({preset="Busy", group="First", part=0, material="cloth"}, context)
+assert(not ok and reason == "busy")
+assert(not reff_files.write({preset="On", group="Second", part=0, material="cloth"}, context), "stale group")
+assert(not reff_files.write({preset="", group="First", part=0, material="cloth"}, context))
+context.suspended = true
+assert(not reff_files.export({part=0, material="cloth", name="Red"}, context))
+context.suspended = false
+S.equal(file_calls, {{"export", "0", "cloth", "Red"}, {"export", "0", "cloth", "bad"},
+    {"write", "On", "0", "cloth", "armor"}, {"write", "Busy", "0", "cloth", "armor"}})
+
+-- 荒野接入：按材质找网格；重置时一并放弃进行中的文件写入
+local resets = 0
+local with_files = WildsPalette.new({meshes={part_meshes=function() return {mesh({"skin"}), armor_mesh} end},
+    files={reset=function() resets = resets + 1 end}})
+assert(with_files.mesh_with(character, "armor", nil, "0", "cloth") == armor_mesh)
+assert(with_files.mesh_with(character, "armor", nil, "0", "missing") == nil)
+with_files.reset()
+assert(resets == 1)
 
 print("PASS palette")

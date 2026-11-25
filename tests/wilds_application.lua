@@ -61,4 +61,58 @@ assert(appearance.overrides.armor["0"].materials.cloth==true)
 assert(#writes==2 and writes[1][2]=="armor" and writes[2][2]=="weapon")
 
 assert(app.runtime==runtime and app.appearance==appearance and app.load==session.load)
+
+-- mdf2 文件：按材质找本地猎人的网格；写入时把所有角色的网格（含武器对象）交给文件服务，
+-- 换上后忘掉写入器状态、回调业务层并刷新外观
+local function fake_mesh(...)
+    local names = {...}
+    return {call=function(_, method, j)
+        if method == "get_MaterialNum" then return #names end
+        if method == "getMaterialName" then return names[j + 1] end
+    end}
+end
+local cloth_mesh, skin_mesh, remote_mesh, blade = fake_mesh("cloth"), fake_mesh("skin"), fake_mesh("cloth"), fake_mesh("blade")
+runtime.meshes = {
+    part_meshes=function(actor, index) return actor == primary and index == 1 and {skin_mesh, cloth_mesh} or {} end,
+    all=function(actor) return actor == primary and {skin_mesh, cloth_mesh} or actor == remote and {remote_mesh} or {} end,
+    first=function(object) return object == primary and blade or nil end,
+}
+local started, cleaned = nil, 0
+runtime.material_files = {
+    cleanup=function() cleaned = cleaned + 1 end,
+    status=function(mesh) return {path=mesh == cloth_mesh and "cloth.mdf2.45" or "x", status=mesh == cloth_mesh and "ok" or "packed"} end,
+    export=function(mesh, material, name)
+        if name == "bad" then error("invalid preset name") end
+        return {path=material .. name, mesh=mesh}
+    end,
+    start=function(opts) started = opts; return {path="cloth.mdf2.45", values=1} end,
+    reset=function() end,
+}
+roster = {primary, remote}
+local files_app = Application.new(runtime, appearance, session, rules, weapon)
+assert(cleaned == 1, "reload copies from the previous launch are cleaned at startup")
+S.equal(files_app.material_file("1", "cloth"), {path="cloth.mdf2.45", status="ok"})
+assert(files_app.material_file("1", "missing").status == "none")
+assert(files_app.export_material("1", "cloth", "Red").mesh == cloth_mesh)
+local ok, reason = files_app.export_material("1", "cloth", "bad")
+assert(not ok and reason == "invalid preset name")
+local written
+S.equal(files_app.write_material_file("1", {cloth={Rough=1}}, "cloth", false, function(value) written = value end),
+    {path="cloth.mdf2.45", values=1})
+assert(started.mesh == cloth_mesh)
+S.equal(started.overrides, {cloth={Rough=1}})
+local all = started.meshes()
+assert(#all == 4 and all[3] == blade and all[4] == remote_mesh, "every actor's armor and weapon meshes are candidates")
+local forgotten = {}
+files_app.palette.writer.forget = function(mesh) forgotten[#forgotten + 1] = mesh end
+writes = {}
+started.swapped({cloth_mesh, remote_mesh}, {cloth={Rough=true}})
+assert(#forgotten == 2 and written.cloth.Rough and #writes == 2, "swapped meshes are forgotten and appearance refreshed")
+started = nil
+assert(files_app.write_material_file("1", {cloth={Rough=1}}, nil, false) and started.mesh == cloth_mesh,
+    "without a material the first writable mesh of the part is used")
+ok, reason = files_app.write_material_file("1", {cloth={Rough=1}}, "missing", false)
+assert(not ok and reason == "material not found")
+runtime.material_files = nil
+print("PASS: Wilds mdf2 file lookup, export, write candidates, swap callback and launch cleanup")
 print("PASS: Wilds application immediate actor/slot refresh, primary inclusion, invalid selection, save failure/preserve/reset")

@@ -3,6 +3,7 @@
 #include <string_view>
 #include "PortraitPreview.hpp"
 #include "PortraitPose.hpp"
+#include "GameFiles.hpp"
 
 namespace {
 void register_portrait(sol::table table) {
@@ -27,6 +28,33 @@ void register_portrait(sol::table table) {
     table["portrait_pose_sync"] = &avm_portrait_pose_sync;
     table["portrait_pose_clear"] = &avm_portrait_pose_clear;
     table["portrait_pose_error"] = [] { return std::string(avm_portrait_pose_error()); };
+    // 游戏目录 natives/ 下的 mdf2：读取（导出材质预设）、覆盖原文件（第一次先留 .avm_bak）、
+    // 写 / 清重载副本（<名字>_avmr<数字>.mdf2.<版本>）。失败时返回 nil / false 加原因
+    table["read_game_file"] = [](sol::this_state state, const std::string& relative) {
+        sol::state_view lua{state};
+        std::string data, error;
+        if (avm_game_files::read(relative, data, error)) {
+            return std::make_tuple(sol::make_object(lua, data), sol::object(sol::lua_nil));
+        }
+        return std::make_tuple(sol::object(sol::lua_nil), sol::make_object(lua, error));
+    };
+    table["game_file_exists"] = [](const std::string& relative) { return avm_game_files::exists(relative); };
+    table["write_game_file"] = [](sol::this_state state, const std::string& relative, const std::string& data) {
+        sol::state_view lua{state};
+        std::string error;
+        if (avm_game_files::overwrite(relative, data, error)) return std::make_tuple(true, sol::object(sol::lua_nil));
+        return std::make_tuple(false, sol::make_object(lua, error));
+    };
+    table["write_reload_copy"] = [](sol::this_state state, const std::string& relative, const std::string& data) {
+        sol::state_view lua{state};
+        std::string error;
+        if (avm_game_files::write_reload_copy(relative, data, error)) return std::make_tuple(true, sol::object(sol::lua_nil));
+        return std::make_tuple(false, sol::make_object(lua, error));
+    };
+    table["remove_reload_copies"] = [](const std::string& original, sol::optional<std::string> keep) {
+        return avm_game_files::remove_reload_copies(original, keep.value_or(std::string()));
+    };
+    table["game_session"] = &avm_game_files::process_session;
 }
 
 void on_lua_state_created(lua_State* state) try {

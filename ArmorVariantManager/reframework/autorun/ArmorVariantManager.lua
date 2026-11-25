@@ -121,5 +121,8 @@ local frame_callbacks = {
         retain=function(seen) appearance.state:retain(seen) end,
         update=app.workspace.update,
 }
-re.on_frame(function() runtime.tick(frame_callbacks) end)
+re.on_frame(function()
+    runtime.tick(frame_callbacks)
+    if application.files then application.files.tick() end
+end)
 re.on_draw_ui(draw)

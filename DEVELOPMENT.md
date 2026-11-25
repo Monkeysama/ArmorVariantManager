@@ -107,6 +107,14 @@ Copy-Item release/build/portrait/Release/ArmorVariantManager_Portrait.dll ArmorV
 - 《荒野》在 `Games/Wilds/Palette.lua` 按部位查网格，`Games/Wilds/Application.lua` 包装处理器，在材质开关写入后应用，并提供 `material_params`。
 - 界面：快照字段 `palette`、操作 `material-param`、按需读取的 `monkeysama.avm.material_params`（`UI/Reff/Palette.lua`）。
 
+mdf2 文件（导出材质预设、写入 mdf2）：
+
+- `Runtime/Mdf2.lua`：mdf2 解析、原地改参数值、导出 RE Mesh Editor 材质预设，以及路径换算。结构照 RE Mesh Editor 的 `modules/mdf/file_re_mdf.py`，按扩展名里的版本号选择材质条目布局（v19–v30、v31–v50、v51 起），不依赖游戏。
+- `Runtime/MaterialFiles.lua`：文件服务。`status` / `export` / `start` / `tick` / `reset` / `cleanup`。写入时覆盖原文件，另写重载副本 `<名字>_avmr<n>.mdf2.<版本>` 并异步换上；副本路径记在 `reframework/data/ArmorVariantManager/mdf2_reload_copies.json`，下次启动游戏时删除，脚本重置时不删。
+- 原生插件 `GameFiles.cpp` 提供 `read_game_file`、`game_file_exists`、`write_game_file`（第一次覆盖前留 `.avm_bak`）、`write_reload_copy`、`remove_reload_copies`、`game_session`，只放行游戏目录 `natives/` 下的 `.mdf2.<版本>`。
+- 《荒野》在 `Games/Wilds/Application.lua` 提供 `material_file`、`export_material`、`write_material_file`，换上后清掉写入器中这些网格的状态（`writer.forget`）并刷新外观；`App` 的 `write_material_file` 在换上时从预设删除已写进文件的参数并保存。
+- 界面：`material_params` 结果附带 `file = { path, status }`；快照 `palette.file = { busy, result, export }`；操作 `material-export`、`material-file-write`。
+
 《崛起》接入时：后端提供 `palette`（含 `reset`）与 `material_params(part, material, weapon)`，在材质应用之后对每个角色、槽位调用写入器；外观上下文需要同时保存 `groups` 与 `targets`。
 
 ## 生成发布包

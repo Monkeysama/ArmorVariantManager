@@ -175,6 +175,10 @@ function ReffApp.new(app)
     local global_options = app.settings
     local palette = backend.palette and require("ArmorVariantManager_Core.UI.Reff.Palette").new({
         set=app.set_preset_material_param, params=app.material_params,
+        file=backend.files and app.material_file or nil,
+        export=backend.files and app.export_material_preset or nil,
+        write=backend.files and app.write_material_file or nil,
+        files=backend.files,
     })
     local height_options = app.height and require("ArmorVariantManager_Core.UI.Reff.HeightSettings").new({
         translate=T,get=get_ground_clipping_settings,set=set_ground_clipping_settings,status=get_ground_clipping_status,
@@ -289,6 +293,8 @@ function ReffApp.new(app)
             end,
             restore=function(_,current) return app.restore_config_from_backup(current.id) end,
             ["material-param"]=palette and palette.action or nil,
+            ["material-export"]=palette and backend.files and palette.export or nil,
+            ["material-file-write"]=palette and backend.files and palette.write or nil,
             ["dismiss-backup"]=function(_,current)
                 config_session.dismiss(current.id)
                 return true
