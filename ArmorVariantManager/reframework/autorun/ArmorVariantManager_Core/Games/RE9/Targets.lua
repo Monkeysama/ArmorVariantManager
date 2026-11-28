@@ -19,6 +19,15 @@ local function player()
     if labels[kind] then return context, root, kind end
 end
 
+-- 照相模式:游戏把玩家藏起来,在 PlayerPhotoObject 下按 MontageManager 另建一套服装网格(部位直接挂在它下面,
+-- 名字是部位编号 "40" 等)。屏幕上的是这套副本,所以照相模式期间改扫它;配置、角色上下文仍用玩家的。
+local function photo_root()
+    local manager = sdk.get_managed_singleton("app.PhotoModeManager")
+    if not manager or manager:call("get_IsBoot") ~= true then return end
+    local root = manager:call("getPlayerGameObjectPhotoMode")
+    if root and root:call("get_Valid") and root:call("get_DrawSelf") then return root end
+end
+
 local function scan(root)
     local source, by_slot, shadow_by_parent, seen = {}, {}, {}, {}
     local visits = 0
@@ -88,10 +97,12 @@ function Targets.collect()
         last_context, last_result = nil, nil
         return {}
     end
-    local address = context:get_address()
+    local scan_root = photo_root() or root
+    -- 进出照相模式时扫描对象换了,和换玩家一样当场重扫
+    local address = tostring(context:get_address()) .. ":" .. tostring(scan_root:get_address())
     if last_context ~= address or current_frame >= next_scan then
         if last_context ~= address then Visibility.reset() end
-        local source, body, head = scan(root)
+        local source, body, head = scan(scan_root)
         last_context, next_scan = address, current_frame + scan_interval
         local name = labels[kind]
         local config_key = source and name .. "_" .. body
