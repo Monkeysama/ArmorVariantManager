@@ -1,12 +1,12 @@
 import { computed, onBeforeUnmount, onMounted, shallowRef, watch, type Ref } from 'vue';
 import { REFF_UI_VERSION } from '@reff/ui';
 import { createEmbeddedTransport, createReffClient, installInputFocusReporter } from '@reff-sdk/index';
-import type { AnyAction, AnySnapshot, Documentation, Imports } from './types';
+import { isRe4Snapshot, type AnyAction, type AnySnapshot, type Documentation, type Imports } from './types';
 import { normalizeDocumentation, normalizeImports, normalizeSnapshot } from './snapshot';
 import { normalizeRe4 } from './re4/snapshot';
 
 // 同一条通道服务多款游戏：RE4 的快照走自己的归一化，MH 的保持原样。
-const normalize = (value: AnySnapshot): AnySnapshot => value.game === 'RE4' ? normalizeRe4(value) : normalizeSnapshot(value);
+const normalize = (value: AnySnapshot): AnySnapshot => isRe4Snapshot(value) ? normalizeRe4(value) : normalizeSnapshot(value);
 
 export function useAvm(helpOpen: Readonly<Ref<boolean>>) {
   const client = createReffClient(createEmbeddedTransport());
@@ -100,7 +100,7 @@ export function useAvm(helpOpen: Readonly<Ref<boolean>>) {
   const perform = async (actions: AnyAction | AnyAction[]): Promise<boolean> => {
     if (busy.value || !ready || disposed) return false;
     const current = snapshot.value;
-    const bodyId = current && current.game !== 'RE4' ? current.bodyId : '';
+    const bodyId = current && !isRe4Snapshot(current) ? current.bodyId : '';
     busy.value = true;
     notice.value = '';
     try {
@@ -110,7 +110,7 @@ export function useAvm(helpOpen: Readonly<Ref<boolean>>) {
       await importsRead?.catch(() => undefined);
       for (const action of Array.isArray(actions) ? actions : [actions]) {
         // RE4 的操作自带角色 id，不附加 MH 的装备 id。
-        const params = current?.game === 'RE4' ? { ...action }
+        const params = isRe4Snapshot(current) ? { ...action }
           : action.kind === 'mode' || action.kind === 'theme' ? action : { ...action, bodyId };
         const value = await client.call<AnySnapshot>('monkeysama.avm.action', params);
         if (disposed) return false;

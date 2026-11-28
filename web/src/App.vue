@@ -8,15 +8,15 @@ import SettingsPane from './SettingsPane.vue';
 import HelpPane from './HelpPane.vue';
 import PortraitPane from './PortraitPane.vue';
 import { useAvmState } from './avm';
-import type { Snapshot } from './types';
+import { isRe4Snapshot, type Snapshot } from './types';
 import { useText } from './i18n';
 
 const tab = shallowRef<'parts' | 'conditions' | 'settings' | 'help'>('parts');
 const avm = useAvmState();
 watchEffect(() => { avm.helpOpen.value = tab.value === 'help'; });
 const { client, busy, loading, error, notice, perform, connect, documentation, documentationLoading, documentationError, retryDocumentation, loadImports } = avm;
-// Root 只在快照不是 RE4 时渲染本页面；连接建立前快照为空，照常显示连接状态。
-const snapshot = computed(() => avm.snapshot.value?.game === 'RE4' ? null : avm.snapshot.value as Snapshot | null);
+// Root 只在快照不是 RE4 / RE9 时渲染本页面；连接建立前快照为空，照常显示连接状态。
+const snapshot = computed(() => isRe4Snapshot(avm.snapshot.value) ? null : avm.snapshot.value as Snapshot | null);
 const { t, english } = useText(snapshot);
 const disabled = computed(() => busy.value || !snapshot.value?.bodyId);
 const backupWarning = computed(() => !!snapshot.value?.bodyId && snapshot.value.backupPending);

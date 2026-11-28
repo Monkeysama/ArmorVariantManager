@@ -529,6 +529,8 @@ function Reff.new(deps)
             -- 别的 mod 注册的溶解效果提供者(EffectProviders.lua);没有就是空表,杂项页不显示这一行
             effectProviders = Dissolve.get_effect_providers(),
             characters = {}, character = "", notice = notice,
+            -- RE9 没有的功能(见 Main.lua 里 is_re9 的分支);RE4 不发,网页按全部可用处理
+            supports = is_re9 and { height = false, weaponHide = false, mouseGuard = false, mdfReplace = false } or nil,
             preview = deps.preview and deps.preview.snapshot() or nil }
         notice = nil
         local cur, groups, order = current()
@@ -932,7 +934,7 @@ end
 -- REFF 未安装时 Bridge 直接返回 nil,REF 原生面板照常可用。
 function Reff.connect(deps)
     local controller = Reff.new(deps)
-    return controller, not is_re9 and Bridge.register(controller)
+    return controller, Bridge.register(controller)
 end
 
 return Reff

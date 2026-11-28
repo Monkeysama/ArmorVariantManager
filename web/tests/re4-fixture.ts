@@ -250,10 +250,12 @@ export function installRe4Fixture() {
   const lab = (name: string) => language === 'en' && EN[name] ? EN[name] : undefined;
   let reffLanguage = '';
   function snapshot(): Re4Snapshot {
-    const base: Re4Snapshot = { game: 'RE4', version: '4.3.4', language, settings: { ...settings },
+    const re9 = params.has('re9');
+    const base: Re4Snapshot = { game: re9 ? 'RE9' : 'RE4', version: '4.3.4', language, settings: { ...settings },
+      supports: re9 ? { height: false, weaponHide: false, mouseGuard: false, mdfReplace: false } : undefined,
       characters: params.has('re4-empty') ? [] : [{ id: 'Leon', label: '里昂', configured: true, targets: ['玩家', '过场傀儡'] }, { id: 'Ada', label: '艾达', configured: false, targets: ['过场傀儡'] }],
       character: params.has('re4-empty') ? '' : character, notice,
-      preview: params.has('preview') ? { available: true, enabled: previewEnabled, status: 'preview_live' }
+      preview: re9 ? undefined : params.has('preview') ? { available: true, enabled: previewEnabled, status: 'preview_live' }
         : { available: false, enabled: previewEnabled, status: 'preview_native_missing' },
       effectProviders: [
         { id: 'avm.builtin', name: { 'zh-CN': '内置样式', 'en-US': 'Built-in' }, mode: 'preset', effects: ['preset'] },

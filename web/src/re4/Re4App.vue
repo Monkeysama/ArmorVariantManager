@@ -34,6 +34,7 @@ import Re4Misc from './Re4Misc.vue';
 import Re4Dissolve from './Re4Dissolve.vue';
 import { useRe4Text, type Re4Key } from './i18n';
 import type { Re4LiveWrite, Re4Notice, Re4Perform, Re4Snapshot } from './types';
+import { isRe4Snapshot } from '../types';
 
 // RE4 的 REFF 页面（v3）：按 RE4 的模型设计，不套用 MH 的分组页面。
 // 左侧常驻游戏状态（和编辑页的最终材质）；右侧六个页签。v2 配置只能先迁移。
@@ -44,7 +45,7 @@ const tab = shallowRef<Tab>('quick');
 const avm = useAvmState();
 watchEffect(() => { avm.helpOpen.value = tab.value === 'misc'; });
 const { busy, loading, error, connect, documentation, documentationLoading, documentationError, retryDocumentation } = avm;
-const snapshot = computed(() => avm.snapshot.value?.game === 'RE4' ? avm.snapshot.value as Re4Snapshot : null);
+const snapshot = computed(() => isRe4Snapshot(avm.snapshot.value) ? avm.snapshot.value : null);
 const perform: Re4Perform = actions => avm.perform(actions);
 // 调色页拖动中的写入:Lua 只回一个小确认(见 Reff.lua 的 palette-set live),这里不接快照
 const liveWrite: Re4LiveWrite = async action => {
@@ -119,7 +120,7 @@ watch(() => snapshot.value?.notice, value => { if (value) notice.value = value; 
         <!-- 按钮上写的是要切换到的语言,用那种语言自己的写法 -->
         <ElButton v-if="snapshot" class="re4-language" :class="{ 'push-right': !(snapshot.preview && hasCharacter) }" size="small" :disabled="busy"
           :aria-label="t('switchLanguage')" @click="toggleLanguage">{{ english ? '中文' : 'English' }}</ElButton>
-        <div class="game-identity"><span>RE4</span><span class="version">{{ snapshot?.version }}</span></div>
+        <div class="game-identity"><span>{{ snapshot?.game ?? 'RE4' }}</span><span class="version">{{ snapshot?.version }}</span></div>
       </header>
       <div class="avm-body">
         <!-- 和荒野同一布局:预览是正文外的整列(原生画面在网页下层,正文底色不能盖住它),随窗口高度伸缩 -->

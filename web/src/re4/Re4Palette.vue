@@ -520,7 +520,7 @@ const clampSlider = (e: Re4PaletteEntry, v?: number) => Math.max(sliderMin(e), M
           <template v-if="chosen.length === 1">
             <ElButton size="small" :disabled="busy" @click="startExport">{{ t('paletteExport') }}</ElButton>
             <!-- 灰掉时只在悬停时说明原因(禁用的按钮收不到悬停,包一层 span) -->
-            <ElTooltip v-if="scheme" :content="replaceTip" :disabled="!replaceTip" placement="bottom">
+            <ElTooltip v-if="scheme && snapshot.supports?.mdfReplace !== false" :content="replaceTip" :disabled="!replaceTip" placement="bottom">
               <span><ElButton size="small" type="danger" plain :disabled="busy || replaceState !== 'ok' || pal?.replacing"
                 @click="confirmReplace = true">{{ t('paletteReplace') }}</ElButton></span>
             </ElTooltip>

@@ -34,8 +34,8 @@ LICENSE = ROOT / "LICENSE"
 CHANGELOG = ROOT / "CHANGELOG.md"
 NATIVE_LICENSES = SOURCE_REFRAMEWORK / "plugins" / "source" / "THIRD_PARTY_LICENSES.txt"
 GAMES = {"wilds": "MHWILDS", "rise": "MHRISE"}
-# 通用包还服务 RE4(独立适配,只用 REF 原生面板与 REFF 页面);旧的单游戏参数不含 RE4。
-UNIVERSAL_GAMES = [*GAMES.values(), "RE4"]
+# 通用包还服务 RE4 与 RE9(独立适配,只用 REF 原生面板与 REFF 页面);旧的单游戏参数不含这两款。
+UNIVERSAL_GAMES = [*GAMES.values(), "RE4", "RE9"]
 
 
 def long_bracket_end(text: str, start: int) -> tuple[str, int] | None:

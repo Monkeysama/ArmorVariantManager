@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { normalizeRe4 as normalizeSnapshot } from '../src/re4/snapshot.ts';
+import { isRe4Snapshot } from '../src/types.ts';
 
 const settings = { weaponHideStorage: false, uiDissolveEnabled: true, uiDissolveTime: 1 };
 
@@ -98,4 +99,12 @@ test('hotkeys survive empty-table shapes (null skip lists, null list)', () => {
     assert.equal(r.hotkeys[1].cycle, false);
     assert.deepEqual(normalizeSnapshot({ game: 'RE4', version: '1', language: 'zh', settings, character: 'Leon', configVersion: 3, characters: [], hotkeys: empty }).hotkeys, []);
   }
+});
+
+test('RE9 snapshots use the RE4 page; MH snapshots do not', () => {
+  assert.equal(isRe4Snapshot({ game: 'RE4' }), true);
+  assert.equal(isRe4Snapshot({ game: 'RE9' }), true);
+  assert.equal(isRe4Snapshot({ game: 'Wilds' }), false);
+  assert.equal(isRe4Snapshot({ game: 'Rise' }), false);
+  assert.equal(isRe4Snapshot(null), false);
 });

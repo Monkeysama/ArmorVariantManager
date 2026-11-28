@@ -160,7 +160,7 @@ const cycleKey = (layer: string) => cycleOf(props.snapshot, layerTarget(layer))?
       </div>
     </section>
 
-    <section class="re4-panel re4-panel-body" :class="{ 're4-nf-lock': nfOff }" :inert="nfOff">
+    <section v-if="snapshot.supports?.height !== false" class="re4-panel re4-panel-body" :class="{ 're4-nf-lock': nfOff }" :inert="nfOff">
       <div class="re4-qrow">
         <span class="re4-qname">{{ t('heightQuick') }}</span>
         <span class="re4-hnow" :class="{ off: snapshot.settings.heightEnabled === false }">

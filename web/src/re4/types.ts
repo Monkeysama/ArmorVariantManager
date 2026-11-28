@@ -140,8 +140,12 @@ export interface Re4EffectProvider {
   id: string; name?: Re4EffectLabel; mode: string; effects: string[];
   labels?: Record<string, Re4EffectLabel> | unknown[];   // 空表从 Lua 来时可能是 []
 }
+// RE9 沿用 RE4 的 Lua 与数据契约，快照里的 game 只用来显示游戏名。
+export type Re4Game = 'RE4' | 'RE9';
+// 游戏不支持的功能为 false;缺省(RE4)即全部可用
+export interface Re4Supports { height?: boolean; weaponHide?: boolean; mouseGuard?: boolean; mdfReplace?: boolean }
 export interface Re4Snapshot {
-  game: 'RE4'; version: string; language: 'zh' | 'en';
+  game: Re4Game; version: string; language: 'zh' | 'en'; supports?: Re4Supports;
   settings: Re4Settings; characters: Re4Character[]; character: string;
   effectProviders?: Re4EffectProvider[] | Record<string, never>;   // 没有提供者时 Lua 空表可能编码成 {}
   configVersion?: 2 | 3; notice?: Re4Notice; preview?: Re4Preview;

@@ -56,7 +56,7 @@ const setting = (id:'weapon_hide_storage' | 'portrait_distance' | 'portrait_heig
           @change="v => perform({ kind: 'armor-mirror', character: snapshot.character, enabled: v === true })" />
         <span>{{ t('armorMirror') }}</span><span class="re4-muted re4-small">{{ t('armorMirrorHint') }}</span>
       </div>
-      <div class="re4-row">
+      <div v-if="snapshot.supports?.mouseGuard !== false" class="re4-row">
         <ElSwitch :model-value="snapshot.settings.blockGameMouse !== false" :disabled="busy" size="small" @change="v => setting('block_game_mouse', v === true)" />
         <span>{{ t('blockGameMouse') }}</span><span class="re4-muted re4-small">{{ t('blockGameMouseHint') }}</span>
       </div>
@@ -68,11 +68,11 @@ const setting = (id:'weapon_hide_storage' | 'portrait_distance' | 'portrait_heig
         <span class="re4-muted re4-small">{{ t('newFeaturesHint') }}</span>
         <span v-if="snapshot.settings.newFeatures === false && snapshot.settings.extrasInstalled" class="re4-small re4-bad-text">{{ t('newFeaturesReset') }}</span>
       </div>
-      <div class="re4-row" :class="{ 're4-nf-lock': nfOff }" :inert="nfOff">
+      <div v-if="snapshot.supports?.height !== false" class="re4-row" :class="{ 're4-nf-lock': nfOff }" :inert="nfOff">
         <ElSwitch :model-value="snapshot.settings.heightEnabled !== false" :disabled="busy" size="small" @change="v => setting('height_enabled', v === true)" />
         <span>{{ t('heightEnabled') }}</span><span class="re4-muted re4-small">{{ t('heightEnabledHint') }}</span>
       </div>
-      <div class="re4-row">
+      <div v-if="snapshot.supports?.weaponHide !== false" class="re4-row">
         <ElSwitch :model-value="snapshot.settings.weaponHideStorage" :disabled="busy" size="small" @change="v => setting('weapon_hide_storage', v === true)" />
         <span>{{ t('weaponHide') }}</span>
       </div>

@@ -71,4 +71,6 @@ export type Action =
 export type Perform = (actions: Action | Action[]) => Promise<boolean>;
 // RE4 走自己的数据契约（src/re4/types.ts），共用同一条 REFF 通道。
 export type AnySnapshot = Snapshot | Re4Snapshot;
+export const isRe4Snapshot = (value: AnySnapshot | null | undefined): value is Re4Snapshot =>
+  value?.game === 'RE4' || value?.game === 'RE9';
 export type AnyAction = Action | Re4Action;
